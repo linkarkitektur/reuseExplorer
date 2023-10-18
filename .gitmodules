@@ -1,0 +1,21 @@
+[submodule "extern/clean-core"]
+	path = extern/clean-core
+	url = https://github.com/project-arcana/clean-core.git
+[submodule "extern/typed-geometry"]
+	path = extern/typed-geometry
+	url = https://github.com/project-arcana/typed-geometry.git
+[submodule "extern/ctracer"]
+	path = extern/ctracer
+	url = https://github.com/project-arcana/ctracer.git
+[submodule "extern/reflector"]
+	path = extern/reflector
+	url = https://github.com/project-arcana/reflector.git
+[submodule "extern/task-dispatcher"]
+	path = extern/task-dispatcher
+	url = https://github.com/project-arcana/task-dispatcher.git
+[submodule "extern/rich-log"]
+	path = extern/rich-log
+	url = https://@github.com/project-arcana/rich-log.git
+[submodule "extern/polymesh"]
+	path = extern/polymesh
+	url = https://github.com/project-arcana/polymesh.git

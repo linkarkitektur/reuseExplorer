@@ -1,0 +1,48 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# qtcreator
+CMakeLists.txt.user
+
+# binary dir
+bin/
+build/
+
+# VS Code
+.vscode
+build_vs/
+.vs/
+*.code-workspace
+
+# misc workdir spam
+imgui.ini
