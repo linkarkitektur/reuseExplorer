@@ -19,3 +19,6 @@
 [submodule "extern/polymesh"]
 	path = extern/polymesh
 	url = https://github.com/project-arcana/polymesh.git
+[submodule "extern/nanoflann"]
+	path = extern/nanoflann
+	url = git@github.com:jlblancoc/nanoflann.git

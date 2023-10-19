@@ -110,9 +110,12 @@ add_subdirectory(extern/polymesh)
 # ===============================================
 # configure executable
 file(GLOB_RECURSE SOURCES
-    "src/*.cc"
-    "src/*.hh"
+#    "src/*.cc"
     "src/*.cpp"
+)
+
+file(GLOB_RECURSE HEADERS
+    "src/*.hh"
     "src/*.h"
 )
 
@@ -121,7 +124,7 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SOURCES})
 
 # ===============================================
 # add executable
-add_executable(${PROJECT_NAME} ${SOURCES})
+add_library(${PROJECT_NAME} ${SOURCES} ${HEADERS})
 target_link_libraries(${PROJECT_NAME} PUBLIC
     clean-core
     typed-geometry
