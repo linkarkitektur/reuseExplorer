@@ -6,9 +6,17 @@
 #include <iostream>
 #include <optional>
 #include <typed-geometry/tg.hh>
-#include "../../../External Repos/nanoflann/include/nanoflann.hpp"
+#include <nanoflann.hpp>
+#include <eigen3/Eigen/Core>
+
+typedef Eigen::MatrixXf Matrix;
 
 
+class Linkml
+{
+public:
+    Linkml() = default;
+};
 
 
 namespace linkml
@@ -43,6 +51,19 @@ namespace linkml
         {
             return false;
         }
+
+        point_cloud(const Matrix points, const  Matrix normals ){
+
+
+
+        };
+
+        point_cloud(const std::vector<tg::pos3> & points, const std::vector<tg::vec3> & normals ){
+
+            pts = points;
+            norm = normals;
+
+        };
     };
 
     struct reg
@@ -74,7 +95,7 @@ namespace linkml
                 normal.y = B;
                 normal.z = C;
                 dis = D;
-                origin = tg::pos3(x,z,z);
+                origin = tg::pos3(x,y,z);
             }
         };
 
@@ -104,6 +125,8 @@ namespace linkml
         int const plane_size_threshhold;
     };
 
+
+
     plane_fit_resutl fit_plane(
         nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<float /* Distance */,point_cloud /* Data */> /* Distance */, point_cloud /*Data*/,3 /* Dim */, int /*Index*/> &tree,
         point_cloud &cloud,
@@ -111,31 +134,12 @@ namespace linkml
         const linkml::plane_fitting_parameters params,
         int initial_point_idx = -1
         );
+
+
+    int my_pow(int x, int e)
+    {
+        return std::pow(x,e);
+    }
+
+
 }
-
-class Linkml
-{
-public:
-    Linkml() = default;
-};
-
-
-//struct vec_3
-//{
-//    float& operator[](size_t i){
-//        if(i == 0)
-//            return x;
-//        if(i == 1)
-//            return y;
-//        if(i == 2)
-//            return z;
-//    }
-//    float const& operator[](size_t i) const{
-//        if(i == 0)
-//            return x;
-//        if(i == 1)
-//            return y;
-//        if(i == 2)
-//            return z;
-//    }
-//};

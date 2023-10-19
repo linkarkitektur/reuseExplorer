@@ -1,6 +1,9 @@
-
 cmake_minimum_required(VERSION 3.8)
-project(linkml_cpp)
+#project(linkml)
+project(linkml)
+
+set(LIB_PROJECT_NAME "${PROJECT_NAME}_lib")
+set(PYBIND_PROJECT_NAME "${PROJECT_NAME}_py")
 
 # ===============================================
 # global settings
@@ -94,8 +97,6 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${BIN_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${BIN_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${BIN_DIR})
 
-
-
 # ===============================================s
 # add submodules
 add_subdirectory(extern/clean-core)
@@ -105,6 +106,9 @@ add_subdirectory(extern/reflector)
 add_subdirectory(extern/task-dispatcher)
 add_subdirectory(extern/rich-log)
 add_subdirectory(extern/polymesh)
+add_subdirectory(extern/nanoflann)
+#add_subdirectory(extern/eigen)
+add_subdirectory(extern/pybind11)
 
 
 # ===============================================
@@ -119,13 +123,17 @@ file(GLOB_RECURSE HEADERS
     "src/*.h"
 )
 
-# group sources according to folder structure
-source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SOURCES})
+list(FILTER SOURCES EXCLUDE REGEX ".*py.cpp")
 
-# ===============================================
-# add executable
-add_library(${PROJECT_NAME} ${SOURCES} ${HEADERS})
-target_link_libraries(${PROJECT_NAME} PUBLIC
+# group sources according to folder structure
+#source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SOURCES})
+#source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${HEADERS})
+
+
+## ===============================================
+## add executable
+add_library(${LIB_PROJECT_NAME} SHARED ${SOURCES} ${HEADERS})
+target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     clean-core
     typed-geometry
     ctracer
@@ -133,12 +141,14 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
     task-dispatcher
     rich-log
     polymesh
+    nanoflann
 
     ${COMMON_LINKER_FLAGS}
 )
 
-target_include_directories(${PROJECT_NAME} PUBLIC "src")
-target_compile_options(${PROJECT_NAME} PUBLIC ${COMMON_COMPILER_FLAGS})
+target_include_directories(${LIB_PROJECT_NAME} PUBLIC "src")
+target_compile_options(${LIB_PROJECT_NAME} PUBLIC ${COMMON_COMPILER_FLAGS})
+
 
 # dependency grouping in the IDE
 foreach(TARGET_NAME
@@ -149,8 +159,21 @@ foreach(TARGET_NAME
     task-dispatcher
     rich-log
     polymesh
+    nanoflann
 
 )
-    set_property(TARGET ${TARGET_NAME} PROPERTY FOLDER "Extern")
+set_property(TARGET ${TARGET_NAME} PROPERTY FOLDER "Extern")
 endforeach()
+
+
+# ===============================================
+# pyind11
+pybind11_add_module("${PYBIND_PROJECT_NAME}" src/linkmlpy.cpp)
+target_link_libraries("${PYBIND_PROJECT_NAME}" PUBLIC ${LIB_PROJECT_NAME} )
+
+#target_include_directories("${PYBIND_PROJECT_NAME}" PUBLIC "src")
+#target_compile_options("${PYBIND_PROJECT_NAME}" PUBLIC ${COMMON_COMPILER_FLAGS})
+#target_compile_definitions("${PYBIND_PROJECT_NAME}"
+#                           PRIVATE VERSION_INFO=${EXAMPLE_VERSION_INFO})
+
 

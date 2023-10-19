@@ -3,10 +3,32 @@
 #include <ctime>
 #include <iostream>
 #include <optional>
-#include "../../../External Repos/nanoflann/include/nanoflann.hpp"
 #include <typed-geometry/tg.hh>
-//#include <nanoflan/nanoflan.hpp>
+#include <nanoflann.hpp>
 
+
+
+
+bool is_perfect_square(int num)
+{
+    int sqrt_floor = std::floor(std::pow(num , 0.5));
+    return sqrt_floor * sqrt_floor == num;
+}
+
+bool is_fibonacci(int num)
+{
+    if (num == 0 or num ==1)
+        return true;
+
+    int check1 = 5 * num * num + 4;
+    int check2 = 5 * num * num - 4;
+
+    if (is_perfect_square(check1) or is_perfect_square( check2) )
+        return true;
+
+    return false;
+
+}
 
 int random_integert_in_range(int min, int max)
 {
@@ -38,6 +60,8 @@ void update_register(linkml::reg &reg){
 
 
 
+
+
 linkml::Plane fit_plane_thorugh_points(const linkml::point_cloud &cloud, const std::vector<int> &indecies){
 
     std::vector<tg::pos3> points = std::vector<tg::pos3>();
@@ -50,34 +74,14 @@ linkml::Plane fit_plane_thorugh_points(const linkml::point_cloud &cloud, const s
     for (size_t i = 0; i < points.size(); i++)
         centered.push_back(points.at(i) - (tg::vec3)com);
 
-//    tg::covariance_matrix(centered);
-//    tg::eigen_decomposition_symmetric();
-//    tg::eigenvalues_symmetric();
-//    tg::eigenvectors_symmetric();
+    tg::mat3x3 cov = tg::covariance_matrix(centered);
+    tg::array<float,3> eigenvalues = tg::eigenvalues_symmetric(cov);
+    tg::array<tg::vec3,3> eigenvectors = tg::eigenvectors_symmetric(cov);
 
+    tg::vec3 normal = eigenvectors[tg::min_index(eigenvalues)];
+    float distance = tg::dot(-com,normal);
 
-
-    return linkml::Plane();
-
-
-
-    /*
-
-    com = np.mean(points, axis=0)  # Maybe choose a different center
-    centered = points-com
-    cov = np.cov(centered.T)
-
-     eig = np.linalg.eigh(cov)
-     n = eig.eigenvectors[:, eig.eigenvalues.argmin()]
-
-     self[:3] = n
-          self[3] = np.dot(-com, n)
-
-     self._origin = None
-
-     return self
-
-         */
+    return linkml::Plane(normal.x,normal.y,normal.z,distance, com.x, com.y, com.z);
 
 }
 
@@ -126,6 +130,9 @@ std::vector<int> filter_by_normal_distance(const linkml::point_cloud &cloud, con
     return indecies_out;
 }
 
+
+
+// TODO: Rething the processed register and the plan register.
 linkml::plane_fit_resutl fit_plane(
     nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<float /* Distance */,linkml::point_cloud /* Data */> /* Distance */, linkml::point_cloud /*Data*/,3 /* Dim */, int /*Index*/> &tree,
     const linkml::point_cloud &cloud,
@@ -139,8 +146,8 @@ linkml::plane_fit_resutl fit_plane(
         initial_point_idx =  get_random_index_not_in_register(processed_reg);
 
 
-    reg front_reg = reg(processed_reg.mask.size());
-    reg plane_reg = reg(processed_reg.mask.size());
+    linkml::reg front_reg = linkml::reg(processed_reg.mask.size());
+    linkml::reg plane_reg = linkml::reg(processed_reg.mask.size());
 
     // Set initila point in front
     front_reg.mask[initial_point_idx] = 1;
@@ -224,7 +231,7 @@ linkml::plane_fit_resutl fit_plane(
 
 
         // Update plane
-        if (front_loop % 5 == 0){
+        if (is_fibonacci(front_loop)){
             update_register(plane_reg);
             if (plane_reg.indecies.size() > 3)
                 plane = fit_plane_thorugh_points(cloud, plane_reg.indecies);
@@ -257,3 +264,4 @@ void fit_planes()
     //      All points serached
     //      60% > searched etc.
 }
+
