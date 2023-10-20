@@ -12,10 +12,43 @@
 typedef Eigen::MatrixXf Matrix;
 
 
+
 class Linkml
 {
 public:
     Linkml() = default;
+};
+
+
+
+struct KDPos3
+{
+    std::vector<tg::pos3> pts = std::vector<tg::pos3>();
+
+    KDPos3(){};
+
+    KDPos3(std::vector<tg::pos3> &points){
+        pts = points;
+    }
+
+    inline size_t kdtree_get_point_count() const { return pts.size(); }
+
+    inline float kdtree_get_pt(const size_t idx, const size_t dim) const
+    {
+        if (dim == 0)
+            return pts.at(idx).x;
+        if (dim == 1)
+            return pts.at(idx).y;
+        if (dim == 2)
+            return pts.at(idx).z;
+        throw std::out_of_range("This only suppors to look up of 3D point cloud");
+    }
+
+    template <class BBOX>
+    bool kdtree_get_bbox(BBOX& /* bb */) const
+    {
+        return false;
+    }
 };
 
 
@@ -24,46 +57,51 @@ namespace linkml
 
     struct point_cloud
     {
+        typedef nanoflann::L2_Simple_Adaptor<float, KDPos3 > DistaceMatric;
+        typedef nanoflann::KDTreeSingleIndexAdaptor<DistaceMatric, KDPos3,3, int> KDTree;
+
         using coord_t = float;  //!< The type of each coordinate
 
         std::vector<tg::pos3> pts;
         std::vector<tg::vec3> norm;
 
-               // Must return the number of data points
-        inline size_t kdtree_get_point_count() const { return pts.size(); }
 
-               // Returns the dim'th component of the idx'th point in the class:
-               // Since this is inlined and the "dim" argument is typically an immediate
-               // value, the
-               //  "if/else's" are actually solved at compile time.
-        inline float kdtree_get_pt(const size_t idx, const size_t dim) const
-        {
-            return pts[idx][dim];
-        }
 
-               // Optional bounding-box computation: return false to default to a standard
-               // bbox computation loop.
-               //   Return true if the BBOX was already computed by the class and returned
-               //   in "bb" so it can be avoided to redo it again. Look at bb.size() to
-               //   find out the expected dimensionality (e.g. 2 or 3 for point clouds)
-        template <class BBOX>
-        bool kdtree_get_bbox(BBOX& /* bb */) const
-        {
-            return false;
-        }
 
-        point_cloud(const Matrix points, const  Matrix normals ){
 
+        std::vector<int> radiusSearch(int index, float radius) const {
+
+            //KDTree radius search
+            std::vector<nanoflann::ResultItem<int, float>> ret_matches;
+
+            tg::pos3 pt = pts.at(index);
+            float query_pt[3] ={pt.x,pt.y,pt.z};
+
+
+            tree_index.radiusSearch(&query_pt[0], radius, ret_matches);
+
+            //Extract indecies
+            std::vector<int> indecies = std::vector<int>();
+            for (size_t i = 0; i < ret_matches.size(); i++)
+                indecies.push_back(ret_matches.at(i).first);
+
+            return indecies;
 
 
         };
+
 
         point_cloud(const std::vector<tg::pos3> & points, const std::vector<tg::vec3> & normals ){
 
             pts = points;
             norm = normals;
-
+            KDPos3 pos(pts);
+            tree_index.buildIndex();
         };
+
+        private:
+            KDPos3 pos;
+            KDTree tree_index = KDTree(3,pos,{10});
     };
 
     struct reg
@@ -119,17 +157,25 @@ namespace linkml
     };
 
     struct plane_fitting_parameters{
-        float const cosalpha;
-        float const normal_distance_threshhold;
-        float const distance_threshhold;
-        int const plane_size_threshhold;
+        float cosalpha = 0.96592583;
+        float normal_distance_threshhold = 0.05;
+        float distance_threshhold = 0.15;
+        int plane_size_threshhold = 500;
+
+
+//        plane_fitting_parameters(float cos, float norm_dist, float dist_threshold, int min_size)
+//        {
+//            cosalpha = cos;
+//            normal_distance_threshhold = norm_dist;
+//            distance_threshhold = dist_threshold;
+//            plane_size_threshhold = min_size;
+//        }
     };
 
 
 
     plane_fit_resutl fit_plane(
-        nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<float /* Distance */,point_cloud /* Data */> /* Distance */, point_cloud /*Data*/,3 /* Dim */, int /*Index*/> &tree,
-        point_cloud &cloud,
+        const point_cloud &cloud,
         reg &processed_reg,
         const linkml::plane_fitting_parameters params,
         int initial_point_idx = -1

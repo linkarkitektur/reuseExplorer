@@ -134,7 +134,6 @@ std::vector<int> filter_by_normal_distance(const linkml::point_cloud &cloud, con
 
 // TODO: Rething the processed register and the plan register.
 linkml::plane_fit_resutl fit_plane(
-    nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<float /* Distance */,linkml::point_cloud /* Data */> /* Distance */, linkml::point_cloud /*Data*/,3 /* Dim */, int /*Index*/> &tree,
     const linkml::point_cloud &cloud,
     const linkml::reg &processed_reg,
     const linkml::plane_fitting_parameters params,
@@ -183,21 +182,13 @@ linkml::plane_fit_resutl fit_plane(
         // Loop all items in the current front
         for (size_t i = 0; i < front_reg.indecies.size(); i++){
 
-            //KDTree radius search
-            std::vector<nanoflann::ResultItem<int, float>> ret_matches;
 
-            tg::pos3 pt = cloud.pts.at(front_reg.indecies.at(i));
-            float query_pt[3] ={pt.x,pt.y,pt.z};
+            std::vector<int> indecies = cloud.radiusSearch(
+                front_reg.indecies.at(i),
+                params.distance_threshhold );
 
-            int count = tree.radiusSearch( &query_pt[0], params.distance_threshhold, ret_matches );
-
-            if (count == 0 or ret_matches.size() == 0)
+            if (indecies.size() == 0)
                 break;
-
-            //Extract indecies
-            std::vector<int> indecies = std::vector<int>();
-            for (size_t i = 0; i < ret_matches.size(); i++)
-                indecies.push_back(ret_matches.at(i).first);
 
 
             // Filter Angle
