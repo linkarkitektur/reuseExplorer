@@ -90,7 +90,12 @@ namespace linkml
 
         };
 
-
+        point_cloud(const point_cloud &cloud){
+            pts = cloud.pts;
+            norm = cloud.norm;
+            pos = cloud.pos;
+            tree_index.buildIndex();
+        };
         point_cloud(const std::vector<tg::pos3> & points, const std::vector<tg::vec3> & normals ){
 
             pts = points;
@@ -106,6 +111,10 @@ namespace linkml
 
     struct reg
     {
+        reg(reg &r){
+            mask.reserve(r.mask.size());
+            mask.assign(r.mask.size(),0);
+        }
         reg(int size)
         {
             mask.reserve(size);
@@ -119,7 +128,14 @@ namespace linkml
         {
             tg::pos3 origin = tg::pos3(0,0,0);
 
-            Plane();
+        Plane() :origin(){};
+//            Plane(const Plane &p){
+//                origin = p.origin;
+//                dis = p.dis;
+//                normal.x = p.normal.x;
+//                normal.y = p.normal.y;
+//                normal.z = p.normal.z;
+//            };
             Plane(float A, float B, float C, float D)
             {
                 normal.x = A;
@@ -163,29 +179,23 @@ namespace linkml
         int plane_size_threshhold = 500;
 
 
-//        plane_fitting_parameters(float cos, float norm_dist, float dist_threshold, int min_size)
-//        {
-//            cosalpha = cos;
-//            normal_distance_threshhold = norm_dist;
-//            distance_threshhold = dist_threshold;
-//            plane_size_threshhold = min_size;
-//        }
+        plane_fitting_parameters(){};
+        plane_fitting_parameters(float cos, float norm_dist, float dist_threshold, int min_size)
+        {
+            cosalpha = cos;
+            normal_distance_threshhold = norm_dist;
+            distance_threshhold = dist_threshold;
+            plane_size_threshhold = min_size;
+        }
     };
 
 
-
     plane_fit_resutl fit_plane(
-        const point_cloud &cloud,
-        reg &processed_reg,
-        const linkml::plane_fitting_parameters params,
+        point_cloud const &cloud,
+        plane_fitting_parameters const &params,
+        std::vector<int> const processed = std::vector<int>(),
         int initial_point_idx = -1
         );
-
-
-    int my_pow(int x, int e)
-    {
-        return std::pow(x,e);
-    }
 
 
 }

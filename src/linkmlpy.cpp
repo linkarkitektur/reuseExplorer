@@ -2,9 +2,19 @@
 #include <pybind11/numpy.h>
 #include <linkml.h>
 #include <eigen3/Eigen/Core>
+#include <sstream>
+#include <string>
 
+#include <pybind11/stl.h>
+#include <pybind11/complex.h>
+#include <pybind11/functional.h>
+#include <pybind11/chrono.h>
+#include <pybind11/stl.h>
+
+#define PYBIND11_DETAILED_ERROR_MESSAGES
 
 namespace py = pybind11;
+using namespace pybind11::literals;
 
 typedef Eigen::MatrixXf Matrix;
 typedef Matrix::Scalar Scalar;
@@ -16,9 +26,14 @@ typedef Matrix::Scalar Scalar;
 
 
 
+
+
+typedef tg::pos3 PosTest;
+
+
 PYBIND11_MODULE(linkml_py, m) {
 
-    // Headder
+           // Headder
     m.doc() = R"pbdoc(
         LINK Python Plugin
         -----------------------
@@ -27,16 +42,17 @@ PYBIND11_MODULE(linkml_py, m) {
     )pbdoc";
 
 
+    // Attributes
+    //    m.attr("default_params") = linkml::plane_fitting_parameters();
+
+    PYBIND11_NUMPY_DTYPE(tg::pos3, x, y, z);
+    PYBIND11_NUMPY_DTYPE(tg::vec3, x, y, z);
+
 
     // Classes
-    py::class_<linkml::point_cloud>(m, "PointCloud", py::return_value_policy::reference_internal);
-    py::class_<linkml::reg>(m, "Register", py::return_value_policy::reference_internal);
-    py::class_<linkml::plane_fitting_parameters>(m, "PlaneFittingParams", py::return_value_policy::reference_internal);
-    py::class_<linkml::plane_fit_resutl>(m, "PlaneFittingResults", py::return_value_policy::reference_internal);
-
-
-    // Functions
-    m.def("create_point_cloud", [](const py::array_t<float> & points, const py::array_t<float>& normals ){
+    py::class_<linkml::point_cloud>(m, "PointCloud")
+        .def(py::init<const std::vector<tg::pos3> &, const std::vector<tg::vec3> &>(), py::return_value_policy::automatic_reference)
+        .def("from_numpy", [](py::array_t<float> const & points, py::array_t<float> const & normals ){
 
             auto points_ = points.unchecked<2>();
             auto normals_ = normals.unchecked<2>();
@@ -49,83 +65,175 @@ PYBIND11_MODULE(linkml_py, m) {
                 throw std::length_error("Points and Normals need to have the same length");
 
 
-            auto pos_vec = std::vector<tg::pos3>(points_.shape(0));
-            auto norm_vec = std::vector<tg::vec3>(normals_.shape(0));
+            py::buffer_info points_info = points.request();
+            tg::pos3 *points_ptr = static_cast<tg::pos3 *>(points_info.ptr);
 
-            for (long i = 0; i < points_.shape(0); i++)
-            {
-                pos_vec.push_back(
-                    tg::pos3(
-                        *points_.data(i,0),
-                        *points_.data(i,1),
-                        *points_.data(i,2)
-                ));
-                norm_vec.push_back(
-                    tg::vec3(
-                        *normals_.data(i,0),
-                        *normals_.data(i,1),
-                        *normals_.data(i,2)
-                ));
+            py::buffer_info normals_info = normals.request();
+            tg::pos3 *normals_ptr = static_cast<tg::pos3 *>(normals_info.ptr);
 
-            };
+            return 1;
+        })
 
-            return linkml::point_cloud(pos_vec, norm_vec);
-        }, R"pbdoc(
-        Create a point cloud from two numpy arrays.
-    )pbdoc", py::return_value_policy::reference_internal);
+//        .def(py::init<const py::array_t<float> &, const py::array_t<float> &>(), [](py::array_t<float> const & points, py::array_t<float> const & normals ){
+//            auto points_ = points.unchecked<2>();
+//            auto normals_ = normals.unchecked<2>();
+
+//            if (points_.shape(1) != 3)
+//                throw std::length_error("The point row size needs to be 3");
+//            if (normals_.shape(1) != 3)
+//                throw std::length_error("The normal row size needs to be 3");
+//            if (points_.shape(0) != normals_.shape(0))
+//                throw std::length_error("Points and Normals need to have the same length");
+
+//             auto pos_vec = std::vector<tg::pos3>(points_.shape(0));
+//             auto norm_vec = std::vector<tg::vec3>(normals_.shape(0));
+
+//             for (long i = 0; i < points_.shape(0); i++)
+//             {
+//                 pos_vec.push_back(
+//                     tg::pos3(
+//                         *points_.data(i,0),
+//                         *points_.data(i,1),
+//                         *points_.data(i,2)
+//                         ));
+//                 norm_vec.push_back(
+//                     tg::vec3(
+//                         *normals_.data(i,0),
+//                         *normals_.data(i,1),
+//                         *normals_.data(i,2)
+//                         ));
+
+//             };
+
+//            return linkml::point_cloud(pos_vec, norm_vec);
+//        })
+        .def("__repr__", [](const linkml::point_cloud &a){
+            std::stringstream ss;
+            ss << "Point cloud (" << a.pts.size() << "," << a.norm.size() << ")";
+            return ss.str();
+            //std::format("Point cloud {}, {}",a.pts.size() ,a.norm.size());
+        })
+        ;
+    py::class_<tg::pos3>(m, "pos")
+        .def(py::init<const float, const float, const float>())
+        .def(("__repr__"), [](const tg::pos3 &p){
+            std::stringstream ss;;
+            ss << "Pos X=" << p.x << " y="<< p.y << " z=" << p.z;
+            return ss.str();
+        })
+        ;
+    py::class_<tg::vec3>(m, "vec")
+        .def(py::init<const float, const float, const float>())
+        .def(("__repr__"), [](const tg::vec3 &v){
+            std::stringstream ss;;
+            ss << "Vec X=" << v.x << " y="<< v.y << " z=" << v.z;
+            return ss.str();
+        })
+        ;
+    py::class_<linkml::Plane>(m, "Plane")
+        .def(py::init<>())
+        .def(py::init<const float ,const float ,const float ,const float>())
+        .def(py::init<const float ,const float ,const float ,const float, const float, const float, const float>())
+        .def("__repr__", [](const linkml::Plane &p){
+            std::stringstream ss;
+            ss << "Plane A("<< p.normal.x<<") B(" <<p.normal.y << ") C(" <<p.normal.z << ") D(" << p.dis << ")";
+            return ss.str();
+        })
+        ;
+    py::class_<linkml::reg>(m, "Register")
+        .def(py::init<const int>())
+        .def("__repr__", [](const linkml::reg &a){
+            std::stringstream ss;
+            ss << "Register of size => " << a.mask.size();
+            return ss.str();
+        })
+        ;
+    py::class_<linkml::plane_fitting_parameters>(m, "PlaneFittingParams")
+        .def(py::init<const float &,const float &,const float &,const int & >(),
+             "cosalpha"_a =0.96592583,
+             "normal_distance_threshhold"_a=0.05,
+             "distance_threshhold"_a=0.15,
+             "plane_size_threshhold"_a=500)
+        .def("__repr__", [](const linkml::plane_fitting_parameters &p){
+            std::stringstream ss;
+            ss << "Plane fitting Parameters:" << std::endl
+            << "cosalpha=" << p.cosalpha << std::endl
+            << "normal_distance_threshhold=" << p.normal_distance_threshhold << std::endl
+            << "distance_threshhold=" << p.distance_threshhold << std::endl
+            << "plane_size_threshhold=" << p.plane_size_threshhold;
+            return ss.str();
+        })
+        ;
+    py::class_<linkml::plane_fit_resutl>(m, "PlaneFittingResults")
+        .def(py::init<const int &>())
+        .def(py::init<const linkml::Plane &, const std::vector<int> &>())
+        .def("__repr__", [](const linkml::plane_fit_resutl &a){
+            std::stringstream ss;
+            if (a.valid){
+                ss << "Plane Result A("<< a.plane.normal.x<<") B(" <<a.plane.normal.y << ") C(" <<a.plane.normal.z << ") D(" << a.plane.dis << ")";
+            }
+            else{
+                ss << "Invalid Result, the starting index was :" << a.index;
+            }
+            return ss.str();
+        })
+        ;
 
 
-    m.def("fit_plane", [](const py::array_t<float> & points, const py::array_t<float>& normals ){
 
-        auto points_ = points.unchecked<2>();
-        auto normals_ = normals.unchecked<2>();
-
-        if (points_.shape(1) != 3)
-            throw std::length_error("The point row size needs to be 3");
-        if (normals_.shape(1) != 3)
-            throw std::length_error("The normal row size needs to be 3");
-        if (points_.shape(0) != normals_.shape(0))
-            throw std::length_error("Points and Normals need to have the same length");
+           // Functions
+    m.def("fit_plane", &linkml::fit_plane,
+          "point_cloud"_a,
+          "params"_a,
+          "processed"_a = std::vector<int>(),
+          "initial_point"_a = -1
+          );
 
 
-        auto pos_vec = std::vector<tg::pos3>(points_.shape(0));
-        auto norm_vec = std::vector<tg::vec3>(normals_.shape(0));
-
-        for (long i = 0; i < points_.shape(0); i++)
-        {
-            pos_vec.push_back(
-                tg::pos3(
-                    *points_.data(i,0),
-                    *points_.data(i,1),
-                    *points_.data(i,2)
-                    ));
-            norm_vec.push_back(
-                tg::vec3(
-                    *normals_.data(i,0),
-                    *normals_.data(i,1),
-                    *normals_.data(i,2)
-                    ));
-
-        };
-
-
-
-        linkml::point_cloud cloud = linkml::point_cloud(pos_vec, norm_vec);
-
-        linkml::reg processed_reg = linkml::reg(cloud.pts.size());
-        const linkml::plane_fitting_parameters params = linkml::plane_fitting_parameters();
-        py::print(cloud);
-        return 0;
-
-//        return linkml::fit_plane(
-//                    cloud,
-//                    processed_reg,
-//                    params
-//                );
-          },  py::return_value_policy::reference_internal);
 
 }
 
+
+
+
+
+//    m.def("create_point_cloud", [](const py::array_t<float> & points, const py::array_t<float>& normals ){
+
+//            auto points_ = points.unchecked<2>();
+//            auto normals_ = normals.unchecked<2>();
+
+//            if (points_.shape(1) != 3)
+//                throw std::length_error("The point row size needs to be 3");
+//            if (normals_.shape(1) != 3)
+//                throw std::length_error("The normal row size needs to be 3");
+//            if (points_.shape(0) != normals_.shape(0))
+//                throw std::length_error("Points and Normals need to have the same length");
+
+
+//            auto pos_vec = std::vector<tg::pos3>(points_.shape(0));
+//            auto norm_vec = std::vector<tg::vec3>(normals_.shape(0));
+
+//            for (long i = 0; i < points_.shape(0); i++)
+//            {
+//                pos_vec.push_back(
+//                    tg::pos3(
+//                        *points_.data(i,0),
+//                        *points_.data(i,1),
+//                        *points_.data(i,2)
+//                ));
+//                norm_vec.push_back(
+//                    tg::vec3(
+//                        *normals_.data(i,0),
+//                        *normals_.data(i,1),
+//                        *normals_.data(i,2)
+//                ));
+
+//            };
+
+//            return linkml::point_cloud(pos_vec, norm_vec);
+//        }, R"pbdoc(
+//        Create a point cloud from two numpy arrays.
+//    )pbdoc", py::return_value_policy::reference_internal);
 
 
 //PYBIND11_NUMPY_DTYPE(tg::pos3, x, y, z);

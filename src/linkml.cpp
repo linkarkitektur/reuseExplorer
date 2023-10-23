@@ -6,7 +6,7 @@
 #include <typed-geometry/tg.hh>
 #include <nanoflann.hpp>
 
-
+namespace linkml {
 
 
 bool is_perfect_square(int num)
@@ -57,7 +57,6 @@ void update_register(linkml::reg &reg){
 
     reg.indecies = compacted;
 }
-
 
 
 
@@ -133,29 +132,38 @@ std::vector<int> filter_by_normal_distance(const linkml::point_cloud &cloud, con
 
 
 // TODO: Rething the processed register and the plan register.
+// processed reg can probably be a const list
 linkml::plane_fit_resutl fit_plane(
     const linkml::point_cloud &cloud,
-    const linkml::reg &processed_reg,
-    const linkml::plane_fitting_parameters params,
-    int initial_point_idx = -1
+    const linkml::plane_fitting_parameters &params,
+    const std::vector<int> proccessed,
+    int initial_point_idx
     ){
+
+
+
+
+    linkml::reg processed_reg = linkml::reg(cloud.pts.size());
+    processed_reg.indecies = proccessed;
+    update_register(processed_reg);
 
     // Get starting point index
     if (initial_point_idx == -1)
         initial_point_idx =  get_random_index_not_in_register(processed_reg);
 
 
-    linkml::reg front_reg = linkml::reg(processed_reg.mask.size());
-    linkml::reg plane_reg = linkml::reg(processed_reg.mask.size());
+    linkml::reg front_reg = linkml::reg(cloud.pts.size());
+    linkml::reg plane_reg = linkml::reg(cloud.pts.size());
+
 
     // Set initila point in front
     front_reg.mask[initial_point_idx] = 1;
-    front_reg.indecies[0] = initial_point_idx;
+    front_reg.indecies.push_back(initial_point_idx);
 
 
     // Set initila point in plane
     plane_reg.mask[initial_point_idx] = 1;
-    plane_reg.indecies[0] = initial_point_idx;
+    plane_reg.indecies.push_back(initial_point_idx);
 
     // Set plane
     linkml::Plane plane = linkml::Plane(
@@ -167,6 +175,7 @@ linkml::plane_fit_resutl fit_plane(
         cloud.pts.at(initial_point_idx).y,
         cloud.pts.at(initial_point_idx).z
     );
+
 
     // Keep growing the plane
     int front_loop = 0;
@@ -204,21 +213,26 @@ linkml::plane_fit_resutl fit_plane(
             //Assign values
             for (size_t i= 0; i< indecies.size(); i++)
                 front_reg.mask[indecies.at(i)] = 1;
+
         }
 
+
         //Remove points that are already part of the current plane
-        for (int i = 0; 0 < plane_reg.indecies.size(); i++)
+        for (size_t i = 0; i < plane_reg.indecies.size(); i++)
             front_reg.mask[plane_reg.indecies.at(i)] = 0;
 
+
+
         //Remove point that have already been proccessed
-        for (int i = 0; 0 < processed_reg.indecies.size(); i++)
+        for (int i = 0; i < processed_reg.indecies.size(); i++)
             front_reg.mask[processed_reg.indecies.at(i)] = 0;
 
         update_register(front_reg);
 
         // Update Plane with furrent front
-        for (int i = 0; 0 < front_reg.indecies.size(); i++)
+        for (int i = 0; i < front_reg.indecies.size(); i++)
             plane_reg.mask[front_reg.indecies.at(i)] = 1;
+
 
 
         // Update plane
@@ -256,3 +270,4 @@ void fit_planes()
     //      60% > searched etc.
 }
 
+}

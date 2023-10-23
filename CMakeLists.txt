@@ -1,5 +1,4 @@
 cmake_minimum_required(VERSION 3.8)
-#project(linkml)
 project(linkml)
 
 set(LIB_PROJECT_NAME "${PROJECT_NAME}_lib")
@@ -8,7 +7,7 @@ set(PYBIND_PROJECT_NAME "${PROJECT_NAME}_py")
 # ===============================================
 # global settings
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
@@ -113,26 +112,27 @@ add_subdirectory(extern/pybind11)
 
 # ===============================================
 # configure executable
-file(GLOB_RECURSE SOURCES
+file(GLOB_RECURSE LIB_SOURCES
 #    "src/*.cc"
     "src/*.cpp"
 )
 
-file(GLOB_RECURSE HEADERS
+file(GLOB_RECURSE LIB_HEADERS
     "src/*.hh"
     "src/*.h"
 )
 
-list(FILTER SOURCES EXCLUDE REGEX ".*py.cpp")
+list(FILTER LIB_SOURCES EXCLUDE REGEX ".*py.cpp")
 
 # group sources according to folder structure
-#source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SOURCES})
-#source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${HEADERS})
+#source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${LIB_SOURCES})
+#source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${LIB_HEADERS})
 
 
 ## ===============================================
 ## add executable
-add_library(${LIB_PROJECT_NAME} SHARED ${SOURCES} ${HEADERS})
+add_library(${LIB_PROJECT_NAME} STATIC ${LIB_SOURCES} ${LIB_HEADERS})
+set_target_properties(${LIB_PROJECT_NAME} PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
 target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     clean-core
     typed-geometry
@@ -169,11 +169,5 @@ endforeach()
 # ===============================================
 # pyind11
 pybind11_add_module("${PYBIND_PROJECT_NAME}" src/linkmlpy.cpp)
-target_link_libraries("${PYBIND_PROJECT_NAME}" PUBLIC ${LIB_PROJECT_NAME} )
-
-#target_include_directories("${PYBIND_PROJECT_NAME}" PUBLIC "src")
-#target_compile_options("${PYBIND_PROJECT_NAME}" PUBLIC ${COMMON_COMPILER_FLAGS})
-#target_compile_definitions("${PYBIND_PROJECT_NAME}"
-#                           PRIVATE VERSION_INFO=${EXAMPLE_VERSION_INFO})
-
+target_link_libraries("${PYBIND_PROJECT_NAME}" PRIVATE ${LIB_PROJECT_NAME})
 
