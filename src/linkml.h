@@ -90,23 +90,16 @@ namespace linkml
 
         };
 
-        point_cloud(const point_cloud &cloud){
-            pts = cloud.pts;
-            norm = cloud.norm;
-            pos = cloud.pos;
+        point_cloud(const point_cloud &cloud): pts(cloud.pts), norm(cloud.norm), pos(cloud.pos), tree_index(3, pos, nanoflann::KDTreeSingleIndexAdaptorParams(10)){
             tree_index.buildIndex();
         };
-        point_cloud(const std::vector<tg::pos3> & points, const std::vector<tg::vec3> & normals ){
-
-            pts = points;
-            norm = normals;
-            KDPos3 pos(pts);
+        point_cloud(const std::vector<tg::pos3> & points, const std::vector<tg::vec3> & normals ): pts(points), norm(normals), pos(pts), tree_index(3, pos, nanoflann::KDTreeSingleIndexAdaptorParams(10)){
             tree_index.buildIndex();
         };
 
         private:
             KDPos3 pos;
-            KDTree tree_index = KDTree(3,pos,{10});
+            KDTree tree_index;
     };
 
     struct reg
@@ -172,6 +165,12 @@ namespace linkml
         }
     };
 
+    struct  fit_planes_resutl{
+        fit_planes_resutl() {}
+        std::vector<Plane> planes = std::vector<Plane>();
+        std::vector<std::vector<int>> indecies = std::vector<std::vector<int>>();
+    };
+
     struct plane_fitting_parameters{
         float cosalpha = 0.96592583;
         float normal_distance_threshhold = 0.05;
@@ -189,7 +188,6 @@ namespace linkml
         }
     };
 
-
     plane_fit_resutl fit_plane(
         point_cloud const &cloud,
         plane_fitting_parameters const &params,
@@ -197,5 +195,9 @@ namespace linkml
         int initial_point_idx = -1
         );
 
+    fit_planes_resutl fit_planes(
+        point_cloud const &cloud,
+        plane_fitting_parameters const &params
+        );
 
 }
