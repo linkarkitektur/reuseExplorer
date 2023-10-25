@@ -125,8 +125,8 @@ file(GLOB_RECURSE LIB_HEADERS
 list(FILTER LIB_SOURCES EXCLUDE REGEX ".*py.cpp")
 
 # group sources according to folder structure
-#source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${LIB_SOURCES})
-#source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${LIB_HEADERS})
+source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${LIB_SOURCES})
+source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${LIB_HEADERS})
 
 
 ## ===============================================

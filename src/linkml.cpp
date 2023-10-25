@@ -6,11 +6,16 @@
 #include<tuple>
 #include <typed-geometry/tg.hh>
 #include <nanoflann.hpp>
+#include <mutex>
+#include <shared_mutex>
 #include <thread>
 #include <barrier>
+#include <typed-geometry/functions/random/random.hh>
+//#include <omp.h>
 
 namespace linkml {
 
+tg::rng rng;
 
 bool is_perfect_square(int num)
 {
@@ -47,7 +52,9 @@ int get_random_index_not_in_register(const reg &reg)
         if (reg.mask.at(i) == 0)
             options.push_back(i);
 
-    return options[random_integert_in_range(0,options.size()-1)];
+    return uniform(rng, options);
+
+//    return options[random_integert_in_range(0,options.size()-1)];
 }
 
 void update_register(reg &reg){
@@ -137,23 +144,6 @@ std::vector<int> filter_by_normal_distance(const point_cloud &cloud, const std::
 
 
 
-// TODO: Implement different stoping contidions
-//      All points serached
-//      60% > searched etc.
-bool break_checker(const point_cloud &cloud, const std::vector<int> &proccesed, const std::vector<Plane> planes)
-{
-    int total = cloud.pts.size();
-    int remaining = total - proccesed.size();
-    float progress_percent = 1 - (((float)(remaining)) / ((float)cloud.pts.size()));
-
-    int found_planes = planes.size();
-
-    std::cout << progress_percent << " - " << remaining << " - " << found_planes << "  ";
-    if (proccesed.size() > cloud.pts.size())
-        return true;
-
-    return false;
-}
 
 // TODO: Rething the processed register and the plan register.
 // processed reg can probably be a const list
@@ -164,9 +154,14 @@ plane_fit_resutl fit_plane(
     int initial_point_idx
     ){
 
+    if (proccessed.size() >= cloud.pts.size()){
+        std::cout << "Done ? " << std::endl;
+        return plane_fit_resutl(0);
+    }
 
     reg processed_reg = reg(cloud.pts.size());
     processed_reg.indecies = proccessed;
+
     for (size_t i = 1; i< proccessed.size(); i++ )
         processed_reg.mask[i] = 1;
 
@@ -290,123 +285,6 @@ plane_fit_resutl fit_plane(
 };
 
 
-void finish_task(std::vector<int> &proccesed, std::vector<Plane>&planes, std::vector<std::vector<int>> &indecies ){
-    //TODO: Implement
-    //update processed
-};
-
-
-void fit_plane_thread_worker(
-    std::stop_token st,
-    std::atomic<bool> &halt,
-    std::barrier<std::function<void(std::stop_source &ss )>> b,
-    point_cloud const &cloud,
-    plane_fitting_parameters const &params,
-    std::vector<int> const &&proccesed){
-
-
-    std::cout << "Thead: " << std::thread::id() << std::endl;
-
-    std::vector<int> invalid_indecies = std::vector<int>();
-    plane_fit_resutl result =  plane_fit_resutl(0);
-
-
-    while (!st.stop_requested()){
-        while(!halt and !st.stop_requested()){
-
-            result = fit_plane(cloud, params, proccesed);
-            if (!result.valid){
-                invalid_indecies.push_back(result.index);
-                continue;
-            }
-            else
-                break;
-
-            halt = true;
-            break;
-        }
-
-        b.arrive_and_wait();
-    }
-}
-
-
-fit_planes_resutl fit_planes(
-    const point_cloud &cloud,
-    const plane_fitting_parameters &params
-    )
-{
-    std::vector<int> processed = std::vector<int>();
-    processed.reserve(cloud.pts.size());
-
-    std::vector<Plane> planes = std::vector<Plane>();
-    std::vector<std::vector<int>> indecies = std::vector<std::vector<int>>();
-    auto stop_source = std::stop_source();
-
-
-    auto on_loop = [](std::stop_source &ss ) noexcept
-    {
-        ss.request_stop();
-    };
-
-
-    int num_threads(16);
-    std::atomic terminated{false};
-    auto token = stop_source.get_token();
-    std::barrier b(num_threads, on_loop);
-
-
-
-    std::vector<std::jthread> threads = std::vector<std::jthread>();
-
-    // Launch a pool of threads looking for planes and manange the results they return.
-    for ( int i = 0; i < num_threads; i++)
-        threads.push_back(std::jthread(fit_plane_thread_worker, token, &terminated, b, cloud,  params, processed));
-
-
-    // Work is being done
-    for (auto& thread : threads)
-        if (thread.joinable())
-            thread.join();
-
-
-
-
-//    std::cout << "Pre Loop" << std::endl;
-
-//    std::cout.precision(4);
-//    int loop = 0;
-//    while (!break_checker(cloud,processed, planes)){
-
-//        plane_fit_resutl result = fit_plane(cloud, params, processed);
-//        std::cout << "Loop: " <<loop << std::endl;
-
-//        if (result.valid){
-//            for (size_t i =0; i < result.indecies.size();i++)
-//                processed.push_back(result.indecies.at(i));
-
-//            indecies.push_back(result.indecies);
-//            planes.push_back(result.plane);
-//        }
-//        else
-//            processed.push_back(result.index);
-
-
-//        loop++;
-
-
-//    }
-
-    auto result = fit_planes_resutl();
-    result.planes = planes;
-    result.indecies = indecies;
-    return result;
-}
-
-
-
-
-// CGAL
 
 
 }
