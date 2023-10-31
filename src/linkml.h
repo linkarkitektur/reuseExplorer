@@ -52,6 +52,7 @@ struct KDPos3
 };
 
 
+
 namespace linkml
 {
 
@@ -191,13 +192,34 @@ namespace linkml
     plane_fit_resutl fit_plane(
         point_cloud const &cloud,
         plane_fitting_parameters const &params,
-        std::vector<int> const processed = std::vector<int>(),
-        int initial_point_idx = -1
-        );
+        std::vector<int> const processed,
+        int initial_point_idx);
 
-    fit_planes_resutl fit_planes(
+    plane_fit_resutl fit_plane(
+        point_cloud const &cloud,
+        plane_fitting_parameters const &params,
+        std::vector<int> const proccessed);
+
+
+    plane_fit_resutl fit_plane(
         point_cloud const &cloud,
         plane_fitting_parameters const &params
         );
+
+
+    plane_fit_resutl fit_plane(
+        point_cloud const &cloud,
+        plane_fitting_parameters const &params,
+        int initial_point_idx);
+
+
+
+//    fit_planes_resutl fit_planes(
+//        point_cloud const &cloud,
+//        plane_fitting_parameters const &params
+//        );
+
+
+//    int main();
 
 }

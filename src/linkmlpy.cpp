@@ -1,6 +1,11 @@
+#pragma once
+
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
+
 #include <linkml.h>
+#include "fitPlaneSolver.h"
+
 #include <eigen3/Eigen/Core>
 #include <sstream>
 #include <string>
@@ -10,6 +15,7 @@
 #include <pybind11/functional.h>
 #include <pybind11/chrono.h>
 #include <pybind11/stl.h>
+#include <pybind11/iostream.h>
 
 #define PYBIND11_DETAILED_ERROR_MESSAGES
 
@@ -173,6 +179,7 @@ PYBIND11_MODULE(linkml_py, m) {
         })
         ;
 
+
     py::class_<linkml::fit_planes_resutl>(m, "PlaneFittingResults")
         .def_property_readonly("planes", [](linkml::fit_planes_resutl &r){return r.planes;})
         .def_property_readonly("indecies", [](linkml::fit_planes_resutl &r){return r.indecies;})
@@ -182,23 +189,43 @@ PYBIND11_MODULE(linkml_py, m) {
             return ss.str();
         })
         ;
+    py::class_<linkml::PlaneFit_Solver >(m, "PlaneFit_Solver")
+        ;
+    py::class_<std::vector<std::atomic_bool>>(m, "a_bool")
+        ;
 
 
 
-           // Functions
-    m.def("fit_plane", &linkml::fit_plane,
+
+
+    // Functions
+    m.def("fit_plane",
+            static_cast<
+              linkml::plane_fit_resutl(*)(
+                  linkml::point_cloud const  &,
+                  linkml::plane_fitting_parameters const &)>(&linkml::fit_plane),
           "point_cloud"_a,
-          "params"_a,
-          "processed"_a = std::vector<int>(),
-          "initial_point"_a = -1
-          );
+          "params"_a);
 
-    m.def("fit_planes", &linkml::fit_planes,
-          "point_cloud"_a,
-          "params"_a
-          );
+    m.def("fit_planes", [](linkml::point_cloud const &cloud, linkml::plane_fitting_parameters const &param) {
+        py::scoped_ostream_redirect stream(
+            std::cout,                               // std::ostream&
+            py::module_::import("sys").attr("stdout") // Python output
+            );
 
+        auto s = linkml::PlaneFit_Solver();
+        return s.run(cloud, param);
+    },
+    "point_cloud"_a,
+    "params"_a
+        );
 
+//    m.def("fit_planes", &linkml::fit_planes,
+//          "point_cloud"_a,
+//          "params"_a
+//          );
+
+//    m.def("main", &linkml::main);
 
 }
 

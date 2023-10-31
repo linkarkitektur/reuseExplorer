@@ -10,7 +10,9 @@
 #include <shared_mutex>
 #include <thread>
 #include <barrier>
-#include <typed-geometry/functions/random/random.hh>
+//#include <typed-geometry/functions/random/random.hh>
+#include <algorithm>
+#include <set>
 //#include <omp.h>
 
 namespace linkml {
@@ -38,29 +40,11 @@ bool is_fibonacci(int num)
 
 }
 
-int random_integert_in_range(int min, int max)
-{
-    std::srand(std::time(NULL));
-    return min + (rand() % (max - min + 1));
-}
-
-int get_random_index_not_in_register(const reg &reg)
-{
-    std::vector<int> options = std::vector<int>();
-
-    for (size_t i = 0; i < reg.mask.size() ; i++)
-        if (reg.mask.at(i) == 0)
-            options.push_back(i);
-
-    return uniform(rng, options);
-
-//    return options[random_integert_in_range(0,options.size()-1)];
-}
-
 void update_register(reg &reg){
 
     std::vector<int> compacted = std::vector<int>();
 
+    #pragma omp parallel for
     for (size_t i = 0; i< reg.mask.size(); i++)
         if ( reg.mask.at(i) == 1  )
             compacted.push_back(i);
@@ -68,6 +52,51 @@ void update_register(reg &reg){
     reg.indecies = compacted;
 }
 
+
+int random_integert_in_range(int min, int max)
+{
+    std::srand(std::time(NULL));
+    return min + (rand() % (max - min + 1));
+}
+
+int get_random_index_not_in_register(std::vector<int> const &ps, int size)
+{
+
+    std::vector<int> all = std::vector<int>();
+    std::vector<int> options = std::vector<int>();
+
+
+    #pragma omp parallel for
+    for (int i = 0; i<size; i++)
+        all.push_back(i);
+
+           //    std::set_difference(
+           //        all.begin(), all.end(),
+           //        ps.begin(), ps.end(),
+           //        std::inserter(options, options.begin()));
+
+    std::ranges::set_difference(all, ps, std::back_inserter(options) );
+
+
+           //    std::vector<int> options_mask = std::vector<int>();
+           //    std::vector<int> options = std::vector<int>();
+
+           //    #pragma omp parallel for
+           //    for (int i = 0; i < size; i++)
+           //        options_mask.push_back(0);
+
+           //    #pragma omp parallel for
+           //    for (size_t i = 0; i < ps.size(); i++)
+           //        options_mask[i] = 1;
+
+           //    #pragma omp parallel for
+           //    for (size_t i = 0; i < options_mask.size(); i++)
+           //        if (options_mask[i] == 0)
+           //            options.push_back(i);
+       return tg::uniform(rng, options);
+
+//    return options[random_integert_in_range(0,options.size()-1)];
+}
 
 
 
@@ -99,6 +128,7 @@ std::vector<int> filter_by_normal_angle(const point_cloud &cloud, const Plane pl
 
     std::vector<int> indecies_out = std::vector<int>();
 
+    #pragma omp parallel for
     for( size_t i = 0; i< indecies_in.size(); i++)
     {
         int index = indecies_in.at(i);
@@ -127,6 +157,7 @@ std::vector<int> filter_by_normal_distance(const point_cloud &cloud, const std::
 
     std::vector<int> indecies_out = std::vector<int>();
 
+    #pragma omp parallel for
     for (size_t i = 0; i < indecies_in.size(); i++)
     {
         float dist = tg::distance(plane, cloud.pts.at(indecies_in.at(i)));
@@ -142,35 +173,11 @@ std::vector<int> filter_by_normal_distance(const point_cloud &cloud, const std::
 }
 
 
-
-
-
-// TODO: Rething the processed register and the plan register.
-// processed reg can probably be a const list
-plane_fit_resutl fit_plane(
-    const point_cloud &cloud,
-    const plane_fitting_parameters &params,
-    const std::vector<int> proccessed,
-    int initial_point_idx
-    ){
-
-    if (proccessed.size() >= cloud.pts.size()){
-        std::cout << "Done ? " << std::endl;
-        return plane_fit_resutl(0);
-    }
-
-    reg processed_reg = reg(cloud.pts.size());
-    processed_reg.indecies = proccessed;
-
-    for (size_t i = 1; i< proccessed.size(); i++ )
-        processed_reg.mask[i] = 1;
-
-
-
-    // Get starting point index
-    if (initial_point_idx == -1)
-        initial_point_idx =  get_random_index_not_in_register(processed_reg);
-
+plane_fit_resutl fit_plane_(
+    point_cloud const &cloud,
+    plane_fitting_parameters const  &params,
+    std::vector<int> const  &processed,
+    int initial_point_idx){
 
     reg front_reg = reg(cloud.pts.size());
     reg plane_reg = reg(cloud.pts.size());
@@ -245,9 +252,9 @@ plane_fit_resutl fit_plane(
             front_reg.mask[plane_reg.indecies.at(i)] = 0;
 
 
-        //Remove point that have already been proccessed
-        for (size_t i = 0; i < processed_reg.indecies.size(); i++)
-            front_reg.mask[processed_reg.indecies.at(i)] = 0;
+        //Remove point that have already been processed
+        for (size_t i = 0; i < processed.size(); i++)
+            front_reg.mask[processed.at(i)] = 0;
 
         update_register(front_reg);
 
@@ -286,5 +293,47 @@ plane_fit_resutl fit_plane(
 
 
 
+plane_fit_resutl fit_plane(
+    point_cloud const &cloud,
+    plane_fitting_parameters const  &params,
+    std::vector<int> const  &processed,
+    int initial_point_idx){
+
+    return fit_plane_(cloud, params, processed, initial_point_idx);
+}
+
+
+plane_fit_resutl fit_plane(
+    point_cloud const &cloud,
+    plane_fitting_parameters const &params,
+    std::vector<int> const processed){
+
+    int initial_point_idx = get_random_index_not_in_register(processed, cloud.pts.size() );;
+
+    return fit_plane_(cloud, params, processed, initial_point_idx );
+}
+
+
+plane_fit_resutl fit_plane(
+    point_cloud const &cloud,
+    plane_fitting_parameters const &params
+    ){
+
+    auto processed = std::vector<int>();
+    int initial_point_idx = get_random_index_not_in_register(processed, cloud.pts.size() );;
+
+    return fit_plane_(cloud, params, processed, initial_point_idx);
+}
+
+
+plane_fit_resutl fit_plane(
+    point_cloud const &cloud,
+    plane_fitting_parameters const &params,
+    int const initial_point_idx){
+
+    auto processed = std::vector<int>();
+
+    return fit_plane_(cloud, params, processed, initial_point_idx );
+}
 
 }

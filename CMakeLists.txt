@@ -95,6 +95,15 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${BIN_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${BIN_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${BIN_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${BIN_DIR})
+#set(GLOW_BIN_DIR ${CMAKE_SOURCE_DIR}/bin)
+
+## ===============================================
+## disable glfw additionals
+#option(GLFW_BUILD_EXAMPLES  OFF)
+#option(GLFW_BUILD_TESTS  OFF)
+#option(GLFW_BUILD_DOCS  OFF)
+#option(GLFW_INSTALL  OFF)
+
 
 # ===============================================s
 # add submodules
@@ -106,9 +115,13 @@ add_subdirectory(extern/task-dispatcher)
 add_subdirectory(extern/rich-log)
 add_subdirectory(extern/polymesh)
 add_subdirectory(extern/nanoflann)
-#add_subdirectory(extern/eigen)
 add_subdirectory(extern/pybind11)
+#add_subdirectory(extern/glfw)
+#add_subdirectory(extern/glow)
+#add_subdirectory(extern/imgui)
+#add_subdirectory(extern/glow-extras)
 
+find_package( OpenCV REQUIRED )
 
 # ===============================================
 # configure executable
@@ -129,8 +142,15 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${LIB_SOURCES})
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${LIB_HEADERS})
 
 
+
+## Add support for OpenMP
+list(APPEND COMMON_COMPILER_FLAGS -fopenmp -lgomp)
+
+
 ## ===============================================
 ## add executable
+include_directories( ${OpenCV_INCLUDE_DIRS} )
+
 add_library(${LIB_PROJECT_NAME} STATIC ${LIB_SOURCES} ${LIB_HEADERS})
 set_target_properties(${LIB_PROJECT_NAME} PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
 target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
@@ -142,6 +162,12 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     rich-log
     polymesh
     nanoflann
+#    glfw
+#    glow
+#    imgui
+#    glow-extras
+
+    ${OpenCV_LIBS}
 
     ${COMMON_LINKER_FLAGS}
 )
@@ -160,6 +186,10 @@ foreach(TARGET_NAME
     rich-log
     polymesh
     nanoflann
+#    glfw
+#    glow
+#    imgui
+#    glow-extras
 
 )
 set_property(TARGET ${TARGET_NAME} PROPERTY FOLDER "Extern")

@@ -25,3 +25,16 @@
 [submodule "extern/pybind11"]
 	path = extern/pybind11
 	url = git@github.com:pybind/pybind11.git
+[submodule "extern/glfw"]
+        path = extern/glfw
+        url = https://github.com/glfw/glfw.git
+[submodule "extern/glow"]
+        path = extern/glow
+        url = https://www.graphics.rwth-aachen.de:9000/Glow/glow.git
+[submodule "extern/imgui"]
+        path = extern/imgui
+        url = https://www.graphics.rwth-aachen.de:9000/ptrettner/imgui-lean.git
+[submodule "extern/glow-extras"]
+        path = extern/glow-extras
+        url = https://www.graphics.rwth-aachen.de:9000/Glow/glow-extras.git
+
