@@ -346,7 +346,7 @@ void PlaneFit_Solver::update_results(thread_result r){
 
     void PlaneFit_Solver::push_result(thread_result r ){
         std::shared_lock<std::shared_mutex> lock(dataMutex);
-        notFull.wait(lock, [this]{ return buffer.size() < BUFFER_SIZE; });
+        notFull.wait(lock, [this]{ return (int)buffer.size() < BUFFER_SIZE; });
         buffer.push(r);
     }
 

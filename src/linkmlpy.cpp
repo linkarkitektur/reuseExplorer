@@ -1,10 +1,11 @@
-#pragma once
+// #pragma once
 
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 
 #include <linkml.h>
-#include "fitPlaneSolver.h"
+#include <fitPlaneSolver.h>
+#include <cellcomplex.h>
 
 #include <eigen3/Eigen/Core>
 #include <sstream>
@@ -53,7 +54,6 @@ PYBIND11_MODULE(linkml_py, m) {
 
     PYBIND11_NUMPY_DTYPE(tg::pos3, x, y, z);
     PYBIND11_NUMPY_DTYPE(tg::vec3, x, y, z);
-
 
     // Classes
     py::class_<linkml::point_cloud>(m, "PointCloud")
@@ -193,6 +193,15 @@ PYBIND11_MODULE(linkml_py, m) {
         ;
     py::class_<std::vector<std::atomic_bool>>(m, "a_bool")
         ;
+    py::class_<linkml::Cell>(m, "Cell")
+        .def_property_readonly("triangles", [](linkml::Cell &c){return c.triangels;})
+        .def_property_readonly("box", [](linkml::Cell &c){return c.box;})
+        .def("__repr__", [](const linkml::Cell &c){
+            std::stringstream ss;
+            ss << "Cell :" << c.triangels.size();
+            return ss.str();
+        })
+        ;
 
 
 
@@ -219,6 +228,8 @@ PYBIND11_MODULE(linkml_py, m) {
     "point_cloud"_a,
     "params"_a
         );
+
+    m.def("create_cell_complex", &linkml::CreateCellComplex, "point_cloud"_a, "planes"_a );
 
 //    m.def("fit_planes", &linkml::fit_planes,
 //          "point_cloud"_a,
