@@ -18,6 +18,7 @@ option(LIN_ENABLE_ASAN "if true, enables clang/MSVC address sanitizer" OFF)
 option(LIN_ENABLE_MSAN "if true, enables clang/MSVC memory sanitizer" OFF)
 option(LIN_ENABLE_UBSAN "if true, enables clang/MSVC undefined behaviour sanitizer" OFF)
 option(LIN_ENABLE_TSAN "if true, enables clang/MSVC thread sanitizer" OFF)
+option(OPENMP, "if true, enables ")
 
 if (LIN_ENABLE_ASAN AND LIN_ENABLE_TSAN)
     message(FATAL_ERROR "Can only enable one of TSan or ASan at a time")
@@ -37,12 +38,16 @@ set(COMMON_LINKER_FLAGS "")
 
 if (MSVC)
     list(APPEND COMMON_COMPILER_FLAGS /MP)
+    list(APPEND COMMON_COMPILER_FLAGS /openmp)
 
     if (LIN_ENABLE_WERROR)
         list(APPEND COMMON_COMPILER_FLAGS /WX)
     endif()
 else()
     list(APPEND COMMON_COMPILER_FLAGS -Wall -Wextra)
+
+    # Add support for OpenMP
+    list(APPEND COMMON_COMPILER_FLAGS -fopenmp -lgomp)
 
     if (LIN_ENABLE_WERROR)
         list(APPEND COMMON_COMPILER_FLAGS -Werror)
@@ -126,7 +131,7 @@ find_package( OpenCV REQUIRED )
 # ===============================================
 # configure executable
 file(GLOB_RECURSE LIB_SOURCES
-#    "src/*.cc"
+    "src/*.cc"
     "src/*.cpp"
 )
 
@@ -141,10 +146,6 @@ list(FILTER LIB_SOURCES EXCLUDE REGEX ".*py.cpp")
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${LIB_SOURCES})
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${LIB_HEADERS})
 
-
-
-## Add support for OpenMP
-list(APPEND COMMON_COMPILER_FLAGS -fopenmp -lgomp)
 
 
 ## ===============================================
