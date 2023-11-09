@@ -46,3 +46,7 @@ build_vs/
 
 # misc workdir spam
 imgui.ini
+
+
+# Ignore Images
+*.png

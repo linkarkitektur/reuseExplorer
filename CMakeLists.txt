@@ -121,6 +121,8 @@ add_subdirectory(extern/rich-log)
 add_subdirectory(extern/polymesh)
 add_subdirectory(extern/nanoflann)
 add_subdirectory(extern/pybind11)
+add_subdirectory(extern/polyscope)
+
 #add_subdirectory(extern/glfw)
 #add_subdirectory(extern/glow)
 #add_subdirectory(extern/imgui)
@@ -163,6 +165,7 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     rich-log
     polymesh
     nanoflann
+    polyscope
 #    glfw
 #    glow
 #    imgui
@@ -187,6 +190,7 @@ foreach(TARGET_NAME
     rich-log
     polymesh
     nanoflann
+    polyscope
 #    glfw
 #    glow
 #    imgui

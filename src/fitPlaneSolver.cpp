@@ -554,7 +554,7 @@ void PlaneFit_Solver::results_processes(
 //        sigaction(SIGTERM, &sigIntHandler, NULL);
 
         // Single thread
-        if (false){
+        if (true){
             while (!token.stop_requested() and !break_checker(cloud.pts.size())){
                 std::vector<int> proccesed_local = copy_thread_safe(processed);
                 plane_fit_resutl result = fit_plane(cloud, params, proccesed_local);
@@ -573,7 +573,7 @@ void PlaneFit_Solver::results_processes(
 
 
         // Multithreading
-        if (true){
+        if (false){
             std::vector<std::jthread> threads = std::vector<std::jthread>();
             thread_results.assign(num_threads, thread_result());
 

@@ -37,4 +37,6 @@
 [submodule "extern/glow-extras"]
         path = extern/glow-extras
         url = https://www.graphics.rwth-aachen.de:9000/Glow/glow-extras.git
-
+[submodule "extern/polyscope"]
+	path = extern/polyscope
+	url = git@github.com:nmwsharp/polyscope.git

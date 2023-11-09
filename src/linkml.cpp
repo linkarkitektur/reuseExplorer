@@ -44,7 +44,7 @@ void update_register(reg &reg){
 
     std::vector<int> compacted = std::vector<int>();
 
-    #pragma omp parallel for
+    // pragma omp parallel for
     for (size_t i = 0; i< reg.mask.size(); i++)
         if ( reg.mask.at(i) == 1  )
             compacted.push_back(i);
@@ -66,7 +66,7 @@ int get_random_index_not_in_register(std::vector<int> const &ps, int size)
     std::vector<int> options = std::vector<int>();
 
 
-    #pragma omp parallel for
+    // pragma omp parallel for
     for (int i = 0; i<size; i++)
         all.push_back(i);
 
@@ -128,7 +128,7 @@ std::vector<int> filter_by_normal_angle(const point_cloud &cloud, const Plane pl
 
     std::vector<int> indecies_out = std::vector<int>();
 
-    #pragma omp parallel for
+    // pragma omp parallel for
     for( size_t i = 0; i< indecies_in.size(); i++)
     {
         int index = indecies_in.at(i);
@@ -157,7 +157,7 @@ std::vector<int> filter_by_normal_distance(const point_cloud &cloud, const std::
 
     std::vector<int> indecies_out = std::vector<int>();
 
-    #pragma omp parallel for
+    // pragma omp parallel for
     for (size_t i = 0; i < indecies_in.size(); i++)
     {
         float dist = tg::distance(plane, cloud.pts.at(indecies_in.at(i)));

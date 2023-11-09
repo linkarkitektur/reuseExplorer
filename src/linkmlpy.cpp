@@ -117,6 +117,24 @@ PYBIND11_MODULE(linkml_py, m) {
             ss << "Pos X=" << p.x << " y="<< p.y << " z=" << p.z;
             return ss.str();
         })
+        .def_readwrite("x", &tg::pos3::x)
+        .def_readwrite("y", &tg::pos3::y)
+        .def_readwrite("z", &tg::pos3::z)
+        ;
+    py::class_<tg::triangle3>(m, "triangle")
+        .def(py::init<const tg::pos3, const tg::pos3, const tg::pos3>())
+        .def(("__repr__"), [](const tg::triangle3 &t){
+            std::stringstream ss;;
+            ss << "Triangle "
+                <<"P1("<< t.pos0.x <<","<< t.pos0.y<<","<<t.pos0.z<<") "
+                <<"P2("<< t.pos1.x <<","<< t.pos1.y<<","<<t.pos1.z<<") "
+                <<"P2("<< t.pos2.x <<","<< t.pos2.y<<","<<t.pos2.z<<")";
+            return ss.str();
+        })
+        .def_readwrite("pos0", &tg::triangle3::pos0)
+        .def_readwrite("pos1", &tg::triangle3::pos1)
+        .def_readwrite("pos2", &tg::triangle3::pos2)
+
         ;
     py::class_<tg::vec3>(m, "vec")
         .def(py::init<const float, const float, const float>())
@@ -135,6 +153,9 @@ PYBIND11_MODULE(linkml_py, m) {
             ss << "Plane A("<< p.normal.x<<") B(" <<p.normal.y << ") C(" <<p.normal.z << ") D(" << p.dis << ")";
             return ss.str();
         })
+        .def_readwrite("origin", &linkml::Plane::origin)
+        .def_readonly("normal", &linkml::Plane::normal)
+
         ;
     py::class_<linkml::reg>(m, "Register")
         .def(py::init<const int>())
@@ -196,6 +217,8 @@ PYBIND11_MODULE(linkml_py, m) {
     py::class_<linkml::Cell>(m, "Cell")
         .def_property_readonly("triangles", [](linkml::Cell &c){return c.triangels;})
         .def_property_readonly("box", [](linkml::Cell &c){return c.box;})
+        .def_property_readonly("vertecies", [](linkml::Cell &c){return c.vertecies;})
+        .def_property_readonly("faces", [](linkml::Cell &c){return c.faces;})
         .def("__repr__", [](const linkml::Cell &c){
             std::stringstream ss;
             ss << "Cell :" << c.triangels.size();
