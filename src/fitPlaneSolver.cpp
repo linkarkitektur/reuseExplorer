@@ -158,12 +158,15 @@ void PlaneFit_Solver::save(int cloud_size){
     cv::Mat image(l, l, CV_8UC3); // CV_8UC3 |  CV_8UC1
 
 
-    auto map = std::map<int, pair>();
+    auto map = std::map<int, PlaneFit_Solver::pair>();
     int index = 0;
 #pragma omp parallel for
     for (int row = 0; row < l; ++row) {
         for (int col = 0; col < l; ++col) {
-            map[index] = pair(row,col);
+            auto p = PlaneFit_Solver::pair();
+            p.row = row;
+            p.col = col;
+            map[index] = p;
 
             if (index < cloud_size){
 

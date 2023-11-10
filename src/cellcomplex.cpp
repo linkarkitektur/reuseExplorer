@@ -1,19 +1,17 @@
 #include "linkml.h"
 #include "cellcomplex.h"
 
-#include <omp.h>
-
-#include "polyscope/polyscope.h"
-#include "polyscope/surface_mesh.h"
-#include "polyscope/point_cloud.h"
-
 #include <typed-geometry/tg.hh>
+#include <typed-geometry/feature/std-interop.hh>
 
 #include <polymesh/pm.hh>
 #include <polymesh/Mesh.hh>
 #include <polymesh/algorithms.hh>
 #include <polymesh/algorithms/deduplicate.hh>
 
+#include "polyscope/polyscope.h"
+#include "polyscope/surface_mesh.h"
+#include "polyscope/point_cloud.h"
 
 // #include <CGAL/Polygon_mesh_processing/polygon_soup_to_polygon_mesh.h>
 // #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
@@ -22,14 +20,6 @@
 // #include <CGAL/Alpha_shape_face_base_2.h>
 // #include <CGAL/Delaunay_triangulation_2.h>
 // #include <CGAL/algorithm.h>
-
-
-
-
-void foo(pm::Mesh& m, pm::vertex_attribute<tg::pos3>& pos){
-  pm::deduplicate(m, pos);
-}
-
 
 
 
@@ -60,16 +50,21 @@ namespace linkml {
 
             cell.triangels.push_back(tg::triangle3(pt_0, pt_1, pt_5));
             cell.triangels.push_back(tg::triangle3(pt_5, pt_4, pt_0));
-            cell.triangels.push_back(tg::triangle3(pt_1, pt_3, pt_5));
-            cell.triangels.push_back(tg::triangle3(pt_5, pt_1, pt_3));
+
+            cell.triangels.push_back(tg::triangle3(pt_1, pt_3, pt_7));
+            cell.triangels.push_back(tg::triangle3(pt_7, pt_5, pt_1));
+            
             cell.triangels.push_back(tg::triangle3(pt_3, pt_2, pt_6));
             cell.triangels.push_back(tg::triangle3(pt_6, pt_7, pt_3));
-            cell.triangels.push_back(tg::triangle3(pt_2, pt_0, pt_6));
-            cell.triangels.push_back(tg::triangle3(pt_6, pt_0, pt_4));
-            cell.triangels.push_back(tg::triangle3(pt_0, pt_1, pt_3));
-            cell.triangels.push_back(tg::triangle3(pt_3, pt_2, pt_0));
-            cell.triangels.push_back(tg::triangle3(pt_4, pt_5, pt_6));
-            cell.triangels.push_back(tg::triangle3(pt_6, pt_5, pt_7));
+            
+            cell.triangels.push_back(tg::triangle3(pt_2, pt_0, pt_4));
+            cell.triangels.push_back(tg::triangle3(pt_4, pt_6, pt_2));
+            
+            cell.triangels.push_back(tg::triangle3(pt_0, pt_2, pt_3));
+            cell.triangels.push_back(tg::triangle3(pt_3, pt_1, pt_0));
+            
+            cell.triangels.push_back(tg::triangle3(pt_4, pt_5, pt_7));
+            cell.triangels.push_back(tg::triangle3(pt_7, pt_6, pt_4));
 
 
             return cell;
@@ -110,11 +105,15 @@ namespace linkml {
 
             auto norm0 = tg::cross(seg.pos0-pt0, seg.pos1-pt0);
 
+            
+
             bool flip = tg::dot(norm0, trig_norm) > .5;
             tg::triangle3 trig0 = (flip) ? tg::triangle3(pt0, seg.pos0, seg.pos1) : tg::triangle3(pt0, seg.pos1, seg.pos0);
             result.push_back(trig0);
 
-            auto set_pt = (flip) ? seg.pos1 : seg.pos0;
+            // TODO: Second Trainagle is not being constructed correctly
+
+            auto set_pt = (flip) ? seg.pos0 : seg.pos1;
             auto norm1 = tg::cross(pt0-pt1, set_pt-pt1);
             tg::triangle3 trig1 = (tg::dot(norm1, trig_norm) > .5) ? tg::triangle3(pt1, pt0, set_pt) : tg::triangle3(pt1, set_pt, pt0);
             result.push_back(trig1);
@@ -129,58 +128,113 @@ namespace linkml {
         return result;
 
     } 
-
-    // static pm::Mesh plane_aabb_intersect_as_mesh(tg::aabb3 b, tg::plane3 p){
-
-    //     pm::Mesh m = pm::Mesh();
-    //     auto pos = pm::vertex_attribute<tg::pos3>(m);
-
-    //     auto p0 = tg::plane3(tg::dir3(1,0,0), b.max.x );
-    //     auto p1 = tg::plane3(tg::dir3(0,1,0), b.max.y );
-    //     auto p2 = tg::plane3(tg::dir3(0,0,1), b.max.z );
-    //     auto p3 = tg::plane3(tg::dir3(-1,0,0), b.min.x );
-    //     auto p4 = tg::plane3(tg::dir3(0,-1,0), b.min.y );
-    //     auto p5 = tg::plane3(tg::dir3(0,0,-1), b.min.z );
-
-    //     auto s0 = tg::intersection(p0,p);
-    //     auto s1 = tg::intersection(p1,p);
-    //     auto s2 = tg::intersection(p2,p);
-    //     auto s3 = tg::intersection(p3,p);
-    //     auto s4 = tg::intersection(p4,p);
-    //     auto s5 = tg::intersection(p5,p);
-
-    //     auto b0 = tg::intersects(s0, b);
-    //     auto b1 = tg::intersects(s1, b);
-    //     auto b2 = tg::intersects(s2, b);
-    //     auto b3 = tg::intersects(s3, b);
-    //     auto b4 = tg::intersects(s4, b);
-    //     auto b5 = tg::intersects(s5, b);
-
-    //     std::vector<tg::line3> segments = std::vector<tg::line3>();
-
-    //     if (b0) segments.push_back(s0);
-    //     if (b1) segments.push_back(s1);
-    //     if (b2) segments.push_back(s2);
-    //     if (b3) segments.push_back(s3);
-    //     if (b4) segments.push_back(s4);
-    //     if (b5) segments.push_back(s5);
+    static bool plane_aabb_intersect_as_mesh(pm::Mesh & m, pm::vertex_attribute<tg::pos3> & pos, tg::aabb3 b, tg::plane3 p){
 
 
+        auto p0 = tg::pos3(b.min);
+        auto p1 = tg::pos3(b.max.x, b.min.y, b.min.z);
+        auto p2 = tg::pos3(b.min.x, b.max.y, b.min.z);
+        auto p3 = tg::pos3(b.max.x, b.max.y, b.min.z);
+        auto p4 = tg::pos3(b.min.x, b.min.y, b.max.z);
+        auto p5 = tg::pos3(b.max.x, b.min.y, b.max.z);
+        auto p6 = tg::pos3(b.min.x, b.max.y, b.max.z);
+        auto p7 = tg::pos3(b.max);
+
+        auto segments = std::vector<tg::segment3>();
+        segments.push_back(tg::segment3(p0,p1));
+        segments.push_back(tg::segment3(p1,p3));
+        segments.push_back(tg::segment3(p3,p2));
+        segments.push_back(tg::segment3(p2,p0));
+        segments.push_back(tg::segment3(p4,p5));
+        segments.push_back(tg::segment3(p5,p7));
+        segments.push_back(tg::segment3(p7,p6));
+        segments.push_back(tg::segment3(p6,p4));
+        segments.push_back(tg::segment3(p0,p4));
+        segments.push_back(tg::segment3(p1,p5));
+        segments.push_back(tg::segment3(p3,p7));
+        segments.push_back(tg::segment3(p2,p6));
+
+        auto plist = std::vector<tg::pos3>();
+        for (auto& seg: segments){
+            auto isec = tg::intersection(seg, p);
+            if (isec.has_value())
+                plist.push_back(isec.value());
+        }
+
+        if (plist.size() <= 2) return false;
+
+        auto center = tg::average(plist);
+        auto mat = tg::mat3();
+        auto aX = tg::normalize(plist[0]-center);
+        mat.set_col(0, aX);
+        mat.set_col(1, tg::normalize(tg::cross(p.normal, aX)));
+        mat.set_col(2, p.normal);
+
+        auto angs = std::vector<tg::angle>();
+        for (auto& p : plist){
+            auto v = (tg::vec3)tg::normalize(p-center);
+            v = tg::inverse(mat) *v;
+            auto a = tg::atan2(v.x, v.y);
+            angs.push_back(a);
+        }
+
+        // Combine the keys and values into pairs
+        std::vector<std::pair<tg::angle, tg::pos3>> pairs;
+        for (size_t i = 0; i < angs.size(); ++i) {
+            pairs.emplace_back(angs[i], plist[i]);
+        }
+        auto comparator = [](std::pair<tg::angle, tg::pos3> p1, std::pair<tg::angle, tg::pos3> p2) {
+            return p1.first < p2.first;
+        };
+
+        std::sort(pairs.begin(), pairs.end(), comparator);
+
+        for (int i = 0; i< pairs.size(); i++)
+            plist[i] = pairs[i].second;
 
 
+        for (int i = 0; i< (int)plist.size()-1; ++i){
 
-    // }
+            const auto vh0 = m.vertices().add();
+            const auto vh1 = m.vertices().add();
+            const auto vh2 = m.vertices().add();
+
+            pos[vh0] = plist[i];
+            pos[vh1] = plist[i+1];
+            pos[vh2] = center;
+
+            m.faces().add(vh0, vh1, vh2);
+        }
+
+        // Add last face
+        const auto vh0 = m.vertices().add();
+        const auto vh1 = m.vertices().add();
+        const auto vh2 = m.vertices().add();
+
+        pos[vh0] = plist[(int)plist.size()-1];
+        pos[vh1] = plist[0];
+        pos[vh2] = center;
+
+        m.faces().add(vh0, vh1, vh2);
+
+
+        pm::deduplicate(m, pos);
+        m.compactify();
+
+        return true;
+
+    }
+
 
     std::vector<Cell> CreateCellComplex(linkml::point_cloud const &cloud, std::vector<linkml::Plane> const &planes){
 
-        // polyscope::init();
+        polyscope::init();
+        polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
 
-        // polyscope::PointCloud* psCloud = polyscope::registerPointCloud("Cloud", cloud.pts);
-        // psCloud->setPointRadius(0.001);
-        // psCloud->setPointRenderMode(polyscope::PointRenderMode::Sphere);
-
-        // // polyscope::show();
-
+        polyscope::PointCloud* psCloud = polyscope::registerPointCloud("Cloud", cloud.pts);
+        psCloud->setPointRadius(0.001);
+        psCloud->setPointRenderMode(polyscope::PointRenderMode::Sphere);
+        
 
 
         auto cell = ConstructFromAABB(tg::aabb_of(cloud.pts)); //tg::aabb3(tg::min(cloud.pts)[0], tg::max(cloud.pts)[0]));
@@ -188,9 +242,39 @@ namespace linkml {
         cells.push_back(cell);
 
         // for (auto& plane : planes){
-        for (int i = 0; i < 5; i++){
+        for (int i = 189; i < 190; i++){ //planes.size()
 
             auto plane = planes[i];
+
+
+            pm::Mesh mp = pm::Mesh();
+            auto pos = pm::vertex_attribute<tg::pos3>(mp);
+            bool v = plane_aabb_intersect_as_mesh(mp, pos, tg::aabb_of(
+                tg::pos3(-30,-30,-30),
+                tg::pos3(30,30,30)
+            ), plane);
+
+            if (v){
+
+                auto faces = mp.faces().map([&](pm::face_handle f){
+
+                    auto indecies = std::vector<int>();
+                    for (auto vh : f.vertices())
+                        indecies.push_back(int(vh));
+
+                    return indecies;
+                    }).to_vector();
+                auto vertecies = mp.vertices().map([&](pm::vertex_handle h){
+                    return pos[h];
+                    }).to_vector();
+
+                std::stringstream name;
+                name << "Plane : " << i;
+                polyscope::SurfaceMesh * psPMesh = polyscope::registerSurfaceMesh(name.str(), vertecies, faces);
+                psPMesh->setTransparency(0.3);
+            }
+
+
 
 
             for (int i = 0; i < (int)cells.size(); i++){
@@ -350,6 +434,8 @@ namespace linkml {
                 return indexis;
                 }).to_vector();
         }
+
+        polyscope::show();
 
         return cells;
 

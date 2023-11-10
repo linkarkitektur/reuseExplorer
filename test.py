@@ -14,13 +14,11 @@ except Exception as e:
     print(e)
     exit()
 
-print("ID: ", os.getpid())
-
 points = np.load("/home/mephisto/repos/LinkML/Data/points.npy")
 normals = np.load("/home/mephisto/repos/LinkML/Data/normals.npy")
 
 
-# points = points[::5000,:]
+# points  = points[::5000,:]
 # normals = normals[::5000, :]
 
 
@@ -54,11 +52,11 @@ result = linkml_py.create_cell_complex(cloud, planes)
 print(len(result))
 
 
-with polyscope() as ps:
+# with polyscope() as ps:
 
-    ps.register_point_cloud("Cloud", points, radius=0.001)
+#     ps.register_point_cloud("Cloud", points, radius=0.001)
     
-    for idx, cell in enumerate(result):
-        vertices = np.array(cell.vertecies)
-        faces = np.array(cell.faces)
-        ps.register_surface_mesh(f"Cell {idx:03.0f}", vertices,faces , transparency=1)
+#     for idx, cell in enumerate(result):
+#         vertices = np.array(cell.vertecies)
+#         faces = np.array(cell.faces)
+#         ps.register_surface_mesh(f"Cell {idx:03.0f}", vertices,faces , transparency=1)
