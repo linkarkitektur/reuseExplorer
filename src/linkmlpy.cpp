@@ -144,6 +144,16 @@ PYBIND11_MODULE(linkml_py, m) {
             return ss.str();
         })
         ;
+    py::class_<tg::dir3>(m, "dir")
+        .def(py::init<const float, const float, const float>())
+        .def(("__repr__"), [](const tg::dir3 &v){
+            std::stringstream ss;;
+            ss << "Dir X=" << v.x << " y="<< v.y << " z=" << v.z;
+            return ss.str();
+        })
+        .def_property_readonly("valid", [](const tg::dir3 &v){ return tg::normalize_safe((tg::vec3)v) !=  tg::vec3::zero;
+         })
+        ;
     py::class_<linkml::Plane>(m, "Plane")
         .def(py::init<>())
         .def(py::init<const float ,const float ,const float ,const float>())
@@ -215,13 +225,12 @@ PYBIND11_MODULE(linkml_py, m) {
     py::class_<std::vector<std::atomic_bool>>(m, "a_bool")
         ;
     py::class_<linkml::Cell>(m, "Cell")
-        .def_property_readonly("triangles", [](linkml::Cell &c){return c.triangels;})
-        .def_property_readonly("box", [](linkml::Cell &c){return c.box;})
-        .def_property_readonly("vertecies", [](linkml::Cell &c){return c.vertecies;})
-        .def_property_readonly("faces", [](linkml::Cell &c){return c.faces;})
+        .def_property_readonly("box", [](linkml::Cell &c){return c.box();})
+        .def_property_readonly("vertecies", [](linkml::Cell &c){return c.vertecies();})
+        .def_property_readonly("faces", [](linkml::Cell &c){return c.faces();})
         .def("__repr__", [](const linkml::Cell &c){
             std::stringstream ss;
-            ss << "Cell :" << c.triangels.size();
+            ss << "Cell :" << c.m.faces().size();
             return ss.str();
         })
         ;

@@ -1,6 +1,8 @@
 #include "linkml.h"
 #include "cellcomplex.h"
 
+// #include "list"
+
 #include <typed-geometry/tg.hh>
 #include <typed-geometry/feature/std-interop.hh>
 
@@ -25,19 +27,41 @@
 
 namespace linkml {
 
+    typedef std::vector<std::array<int, 3>> Faces;
+    typedef std::vector<std::array<float, 3>> Verts;
+
+    Faces Cell::faces(){
+        return m.faces().map([&](pm::face_handle f){
+            auto vx = f.vertices().to_vector();
+            std::array<int, 3> indexis{int(vx[0]),int(vx[1]),int(vx[2])};
+            return indexis;
+        }).to_vector();
+    }
+    Verts Cell::vertecies(){
+        return m.all_vertices().map([&](pm::vertex_handle h){
+            auto p = pos[h];
+            std::array<float,3> arr = std::array<float,3>();
+            arr[0] = p.x;
+            arr[1] = p.y;
+            arr[2] = p.z;
+            return arr;
+        }).to_vector();
+    }
+
     
 
 
     float THREASHHOLD = 0.001;
 
+    static auto comparator = [](std::pair<tg::angle, tg::pos3> p1, std::pair<tg::angle, tg::pos3> p2) {
+        return p1.first < p2.first;
+    };
 
-    static Cell ConstructFromAABB(tg::aabb3 box){
 
-            auto cell = Cell();
-            cell.box = box;
+    static void ConstructFromAABB(Cell * cell, tg::aabb3 box){
             
-            auto min = cell.box.min;
-            auto max = cell.box.max;
+            auto min = box.min;
+            auto max = box.max;
 
             auto pt_0 = tg::pos3(min.x, min.y, min.z);
             auto pt_1 = tg::pos3(max.x, min.y, min.z);
@@ -48,26 +72,37 @@ namespace linkml {
             auto pt_6 = tg::pos3(min.x, max.y, max.z);
             auto pt_7 = tg::pos3(max.x, max.y, max.z);
 
-            cell.triangels.push_back(tg::triangle3(pt_0, pt_1, pt_5));
-            cell.triangels.push_back(tg::triangle3(pt_5, pt_4, pt_0));
+            auto pt_0h = cell->m.vertices().add();
+            auto pt_1h = cell->m.vertices().add();
+            auto pt_2h = cell->m.vertices().add();
+            auto pt_3h = cell->m.vertices().add();
+            auto pt_4h = cell->m.vertices().add();
+            auto pt_5h = cell->m.vertices().add();
+            auto pt_6h = cell->m.vertices().add();
+            auto pt_7h = cell->m.vertices().add();
 
-            cell.triangels.push_back(tg::triangle3(pt_1, pt_3, pt_7));
-            cell.triangels.push_back(tg::triangle3(pt_7, pt_5, pt_1));
-            
-            cell.triangels.push_back(tg::triangle3(pt_3, pt_2, pt_6));
-            cell.triangels.push_back(tg::triangle3(pt_6, pt_7, pt_3));
-            
-            cell.triangels.push_back(tg::triangle3(pt_2, pt_0, pt_4));
-            cell.triangels.push_back(tg::triangle3(pt_4, pt_6, pt_2));
-            
-            cell.triangels.push_back(tg::triangle3(pt_0, pt_2, pt_3));
-            cell.triangels.push_back(tg::triangle3(pt_3, pt_1, pt_0));
-            
-            cell.triangels.push_back(tg::triangle3(pt_4, pt_5, pt_7));
-            cell.triangels.push_back(tg::triangle3(pt_7, pt_6, pt_4));
+            cell->pos[pt_0h] = pt_0;
+            cell->pos[pt_1h] = pt_1;
+            cell->pos[pt_2h] = pt_2;
+            cell->pos[pt_3h] = pt_3;
+            cell->pos[pt_4h] = pt_4;
+            cell->pos[pt_5h] = pt_5;
+            cell->pos[pt_6h] = pt_6;
+            cell->pos[pt_7h] = pt_7;
 
+            cell->m.faces().add(pt_0h, pt_1h, pt_5h);
+            cell->m.faces().add(pt_5h, pt_4h, pt_0h);
+            cell->m.faces().add(pt_1h, pt_3h, pt_7h);
+            cell->m.faces().add(pt_7h, pt_5h, pt_1h);
+            cell->m.faces().add(pt_3h, pt_2h, pt_6h);
+            cell->m.faces().add(pt_6h, pt_7h, pt_3h);
+            cell->m.faces().add(pt_2h, pt_0h, pt_4h);
+            cell->m.faces().add(pt_4h, pt_6h, pt_2h);
+            cell->m.faces().add(pt_0h, pt_2h, pt_3h);
+            cell->m.faces().add(pt_3h, pt_1h, pt_0h);
+            cell->m.faces().add(pt_4h, pt_5h, pt_7h);
+            cell->m.faces().add(pt_7h, pt_6h, pt_4h);
 
-            return cell;
         };
     static std::tuple<std::vector<tg::pos3>, std::vector<tg::pos3>> split_vertecies(tg::triangle3 t, tg::plane3 p){
 
@@ -113,7 +148,7 @@ namespace linkml {
 
             // TODO: Second Trainagle is not being constructed correctly
 
-            auto set_pt = (flip) ? seg.pos0 : seg.pos1;
+            auto set_pt = (!flip) ? seg.pos0 : seg.pos1;
             auto norm1 = tg::cross(pt0-pt1, set_pt-pt1);
             tg::triangle3 trig1 = (tg::dot(norm1, trig_norm) > .5) ? tg::triangle3(pt1, pt0, set_pt) : tg::triangle3(pt1, set_pt, pt0);
             result.push_back(trig1);
@@ -128,6 +163,64 @@ namespace linkml {
         return result;
 
     } 
+
+    void MakeFace(pm::Mesh &m, pm::vertex_attribute<tg::pos3> &pos,std::vector<tg::pos3> &plist, tg::plane3 const &p){
+
+            // Cetert point
+            auto center = tg::average(plist);
+
+            // Transformation matix
+            auto mat = tg::mat3();
+            auto aX = tg::normalize(plist[0]-center);
+            mat.set_col(0, aX);
+            mat.set_col(1, (tg::vec3)tg::normalize(tg::cross(p.normal, aX)));
+            mat.set_col(2, p.normal);
+
+            // Angles
+            auto angs = std::vector<tg::angle>();
+            for (auto& p : plist){
+                auto v = (tg::vec3)tg::normalize(p-center);
+                v = tg::inverse(mat) *v;
+                auto a = tg::atan2(v.x, v.y);
+                angs.push_back(a);
+            }
+
+            // Combine the keys and values into pairs
+            std::vector<std::pair<tg::angle, tg::pos3>> pairs;
+            for (size_t i = 0; i < angs.size(); ++i) {
+                pairs.emplace_back(angs[i], plist[i]);
+            }
+
+            // Sort
+            std::sort(pairs.begin(), pairs.end(), comparator);
+
+            // Reasigne
+            for (int i = 0; i< (int)pairs.size(); i++)
+                plist[i] = pairs[i].second;
+            
+            auto add_trinagel = [&pos, &m, &plist, &center](int i, int j){
+                const auto vh0 = m.vertices().add();
+                const auto vh1 = m.vertices().add();
+                const auto vh2 = m.vertices().add();
+
+                pos[vh0] = plist[i];
+                pos[vh1] = plist[j];
+                pos[vh2] = center;
+
+                m.faces().add(vh0, vh1, vh2);
+            };
+
+            // Loop over point list and add i and i+1 trinagles
+            for (int i = 0; i< (int)plist.size()-1; ++i)
+                add_trinagel(i, i+1);
+            
+            // Add last face
+            add_trinagel((int)plist.size() -1, 0);
+
+
+        }
+
+
     static bool plane_aabb_intersect_as_mesh(pm::Mesh & m, pm::vertex_attribute<tg::pos3> & pos, tg::aabb3 b, tg::plane3 p){
 
 
@@ -163,60 +256,7 @@ namespace linkml {
 
         if (plist.size() <= 2) return false;
 
-        auto center = tg::average(plist);
-        auto mat = tg::mat3();
-        auto aX = tg::normalize(plist[0]-center);
-        mat.set_col(0, aX);
-        mat.set_col(1, tg::normalize(tg::cross(p.normal, aX)));
-        mat.set_col(2, p.normal);
-
-        auto angs = std::vector<tg::angle>();
-        for (auto& p : plist){
-            auto v = (tg::vec3)tg::normalize(p-center);
-            v = tg::inverse(mat) *v;
-            auto a = tg::atan2(v.x, v.y);
-            angs.push_back(a);
-        }
-
-        // Combine the keys and values into pairs
-        std::vector<std::pair<tg::angle, tg::pos3>> pairs;
-        for (size_t i = 0; i < angs.size(); ++i) {
-            pairs.emplace_back(angs[i], plist[i]);
-        }
-        auto comparator = [](std::pair<tg::angle, tg::pos3> p1, std::pair<tg::angle, tg::pos3> p2) {
-            return p1.first < p2.first;
-        };
-
-        std::sort(pairs.begin(), pairs.end(), comparator);
-
-        for (int i = 0; i< pairs.size(); i++)
-            plist[i] = pairs[i].second;
-
-
-        for (int i = 0; i< (int)plist.size()-1; ++i){
-
-            const auto vh0 = m.vertices().add();
-            const auto vh1 = m.vertices().add();
-            const auto vh2 = m.vertices().add();
-
-            pos[vh0] = plist[i];
-            pos[vh1] = plist[i+1];
-            pos[vh2] = center;
-
-            m.faces().add(vh0, vh1, vh2);
-        }
-
-        // Add last face
-        const auto vh0 = m.vertices().add();
-        const auto vh1 = m.vertices().add();
-        const auto vh2 = m.vertices().add();
-
-        pos[vh0] = plist[(int)plist.size()-1];
-        pos[vh1] = plist[0];
-        pos[vh2] = center;
-
-        m.faces().add(vh0, vh1, vh2);
-
+        MakeFace(m, pos, plist, p);
 
         pm::deduplicate(m, pos);
         m.compactify();
@@ -226,7 +266,7 @@ namespace linkml {
     }
 
 
-    std::vector<Cell> CreateCellComplex(linkml::point_cloud const &cloud, std::vector<linkml::Plane> const &planes){
+    std::vector<Cell *> CreateCellComplex(linkml::point_cloud const &cloud, std::vector<linkml::Plane> const &planes){
 
         polyscope::init();
         polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
@@ -236,13 +276,12 @@ namespace linkml {
         psCloud->setPointRenderMode(polyscope::PointRenderMode::Sphere);
         
 
-
-        auto cell = ConstructFromAABB(tg::aabb_of(cloud.pts)); //tg::aabb3(tg::min(cloud.pts)[0], tg::max(cloud.pts)[0]));
-        std::vector<Cell> cells = std::vector<Cell>();
-        cells.push_back(cell);
-
+        std::vector<Cell *> cells = std::vector<Cell *>();
+        cells.push_back(std::make_unique<Cell>().release());
+        ConstructFromAABB(cells[0], tg::aabb_of(cloud.pts));
+        
         // for (auto& plane : planes){
-        for (int i = 189; i < 190; i++){ //planes.size()
+        for (int i = 0; i < (int)planes.size(); i++){
 
             auto plane = planes[i];
 
@@ -277,23 +316,34 @@ namespace linkml {
 
 
 
-            for (int i = 0; i < (int)cells.size(); i++){
+            for (int j = 0; j < (int)cells.size(); j++){
 
                 // Check if the whole volume is being intersected.
                 // Otherwise there is no need to check each face.
-                bool ib = tg::intersects(cells[i].box, (tg::plane3)plane);
+                bool ib = tg::intersects(cells[j]->box(), (tg::plane3)plane);
 
                 if (ib){
 
-                    auto cell1 = Cell();
-                    auto cell2 = Cell();
-                    auto segments = std::vector<tg::segment3>(); 
+                    auto cell1 = new Cell();
+                    auto cell2 = new Cell();
+                    auto segments = std::vector<tg::segment3>();
 
-                    for (auto& t : cells[i].triangels){
 
-                        auto dpos0 = tg::distance(t.pos0, plane) < THREASHHOLD;
-                        auto dpos1 = tg::distance(t.pos1, plane) < THREASHHOLD;
-                        auto dpos2 = tg::distance(t.pos2, plane) < THREASHHOLD;
+                    // Loop over all faces
+                    for (int k =0; k < cells[j]->m.faces().size(); k++){
+
+                        auto fh = cells[j]->m.faces()[k];
+                        auto vertecies = fh.vertices().to_vector();
+
+                        auto pos0 = cells[j]->pos[vertecies[0]];
+                        auto pos1 = cells[j]->pos[vertecies[1]];
+                        auto pos2 = cells[j]->pos[vertecies[2]];
+
+                        auto t = tg::triangle3(pos0, pos1, pos2);
+
+                        auto dpos0 = tg::distance(pos0, plane) < THREASHHOLD;
+                        auto dpos1 = tg::distance(pos1, plane) < THREASHHOLD;
+                        auto dpos2 = tg::distance(pos2, plane) < THREASHHOLD;
 
                         // Contine of and point is just touching the plane
                         bool too_close = dpos0 | dpos1 | dpos2;
@@ -317,11 +367,26 @@ namespace linkml {
                             auto [ pts_cell1, pts_cell2 ]= split_vertecies(t, plane);
 
                             // Construct and add triangle to sells
-                            for (auto& t : triagles_from_points_and_segment(pts_cell1, seg, trig_norm))
-                                cell1.triangels.push_back(t);
+                            for (auto& t : triagles_from_points_and_segment(pts_cell1, seg, trig_norm)){
+                                auto p0 = cell1->m.vertices().add();
+                                auto p1 = cell1->m.vertices().add();
+                                auto p2 = cell1->m.vertices().add();
+                                cell1->pos[p0] = t.pos0;
+                                cell1->pos[p1] = t.pos1;
+                                cell1->pos[p2] = t.pos2;
+                                cell1->m.faces().add(p0, p1, p2);
+                            }
                             
-                            for (auto& t : triagles_from_points_and_segment(pts_cell2, seg, trig_norm))
-                                cell2.triangels.push_back(t);
+                            for (auto& t : triagles_from_points_and_segment(pts_cell2, seg, trig_norm)){
+                                auto p0 = cell2->m.vertices().add();
+                                auto p1 = cell2->m.vertices().add();
+                                auto p2 = cell2->m.vertices().add();
+                                cell2->pos[p0] = t.pos0;
+                                cell2->pos[p1] = t.pos1;
+                                cell2->pos[p2] = t.pos2;
+                                cell2->m.faces().add(p0, p1, p2);
+                            }
+
 
 
                         } else {
@@ -334,54 +399,86 @@ namespace linkml {
                             comp.comp2 = tg::dot(t.pos2, plane.normal) >=0;
 
                             if (tg::all(comp)){
-                                cell1.triangels.push_back(t);
+                                auto p0 = cell1->m.vertices().add();
+                                auto p1 = cell1->m.vertices().add();
+                                auto p2 = cell1->m.vertices().add();
+                                cell1->pos[p0] = t.pos0;
+                                cell1->pos[p1] = t.pos1;
+                                cell1->pos[p2] = t.pos2;
+                                cell1->m.faces().add(p0, p1, p2);
                             } else {
-                                cell2.triangels.push_back(t);
+                                auto p0 = cell2->m.vertices().add();
+                                auto p1 = cell2->m.vertices().add();
+                                auto p2 = cell2->m.vertices().add();
+                                cell2->pos[p0] = t.pos0;
+                                cell2->pos[p1] = t.pos1;
+                                cell2->pos[p2] = t.pos2;
+                                cell2->m.faces().add(p0, p1, p2);
                             }
 
                         }
                     }
 
-                    // // Triangulate the last face between the volumes.
-                    // auto pts = std::vector<tg::pos3>();
+                    // Triangulate the last face between the volumes.
+                    auto pts = std::vector<tg::pos3>();
 
-                    // for (auto& seg :segments){
-                    //     pts.push_back(seg.pos0);
-                    //     pts.push_back(seg.pos1);
-                    // }
+                    for (auto& seg :segments){
+                        pts.push_back(seg.pos0);
+                        pts.push_back(seg.pos1);
+                    }
 
-                    // tg::pos3 center;
-                    // if( pts.size() > 1) center = tg::project(tg::average(pts), plane);
+                    tg::pos3 center;
+                    if( pts.size() > 1) center = tg::project(tg::average(pts), plane);
 
-                    // for (auto& seg :segments){
+                    for (auto& seg :segments){
 
-                    //     auto trig1 = tg::triangle3(center, seg.pos0, seg.pos1);
-                    //     auto trig2 = tg::triangle3(center, seg.pos1, seg.pos0);
+                        auto norm = tg::normalize(tg::cross(seg.pos0-center, seg.pos1-center));
 
-                    //     auto norm = tg::cross(trig1.pos1-trig1.pos0, trig1.pos2-trig1.pos0);
+                        // pos0 => center
+                        // pos1 => pos0 | pos1
+                        // pos2 => pos1 | pos0
 
-                    //     if (tg::dot(norm, plane.normal) > .5){
-                    //         cell1.triangels.push_back(trig1);
-                    //         cell2.triangels.push_back(trig2);
-                    //     } else {
-                    //         cell1.triangels.push_back(trig2);
-                    //         cell2.triangels.push_back(trig1);
-                    //     }
-                    // }
+
+                        auto t1p0 = cell1->m.vertices().add();
+                        auto t1p1 = cell1->m.vertices().add();
+                        auto t1p2 = cell1->m.vertices().add();
+
+                        auto t2p0 = cell2->m.vertices().add();
+                        auto t2p1 = cell2->m.vertices().add();
+                        auto t2p2 = cell2->m.vertices().add();
+
+                        cell1->pos[t1p0] = center;
+                        cell1->pos[t1p1] = seg.pos0;
+                        cell1->pos[t1p2] = seg.pos1;
+
+                        cell2->pos[t2p0] = center;
+                        cell2->pos[t2p1] = seg.pos1;
+                        cell2->pos[t2p2] = seg.pos0;
+
+
+                        if (tg::dot(norm, plane.normal) < .5){
+                            cell1->m.faces().add(t1p0, t1p1, t1p2);
+                            cell2->m.faces().add(t2p0, t2p1, t2p2);
+
+                        } else {
+                            cell1->m.faces().add(t1p0, t1p2, t1p1);
+                            cell2->m.faces().add(t2p0, t2p2, t2p1);
+                        }
+                    }
                     
                     // Add cells to cell complex
-                    bool c1 = cell1.triangels.size() > 0;
-                    bool c2 = cell2.triangels.size() > 0;
+                    bool c1 = cell1->m.faces().size() > 0;
+                    bool c2 = cell2->m.faces().size() > 0;
 
-
-                    if (c1) cell1.box = tg::aabb_of(cell1.triangels);
-                    if (c2) cell2.box = tg::aabb_of(cell2.triangels);
 
                     if (c1 & c2){
-                        cells[i] = cell1;
+                        delete cells[j];
+                        cells[j] = cell1;
+
                         cells.push_back(cell2);
                     } else if (c1 | c2) {
-                        cells[i] = c1 ? cell1: cell2;
+                        delete cells[j];
+                        cells[j] = c1 ? cell1: cell2;
                     }
 
                 }
@@ -391,49 +488,10 @@ namespace linkml {
         };
 
         for (auto& cell : cells){
-            pm::Mesh m;
-            auto pos = pm::vertex_attribute<tg::pos3>(m);
-
-            for (auto& tri: cell.triangels){
-
-                /// add vertices to topology
-                const auto vh0 = m.vertices().add();
-                const auto vh1 = m.vertices().add();
-                const auto vh2 = m.vertices().add();
-
-                /// add vertex positions
-                pos[vh0] = tri.pos0;
-                pos[vh1] = tri.pos1;
-                pos[vh2] = tri.pos2;
-
-                /// add face to topology
-                m.faces().add(vh0, vh1, vh2);
-            }
-            
-            pm::deduplicate(m, pos);
-            m.compactify();
-
-            // cell.triangels = m.faces().map([&](pm::face_handle f){
-            //     return tg::triangle3(
-            //         pos[f.vertices().to_vector()[0]],
-            //         pos[f.vertices().to_vector()[1]],
-            //         pos[f.vertices().to_vector()[2]]);
-            // }).to_vector();
-
-            cell.vertecies = m.all_vertices().map([&](pm::vertex_handle h){
-                auto p = pos[h];
-                std::array<float,3> arr = std::array<float,3>();
-                arr[0] = p.x;
-                arr[1] = p.y;
-                arr[2] = p.z;
-                return arr;
-                }).to_vector();
-            cell.faces = m.faces().map([&](pm::face_handle f){
-                auto vx = f.vertices().to_vector();
-                std::array<int, 3> indexis{int(vx[0]),int(vx[1]),int(vx[2])};
-                return indexis;
-                }).to_vector();
+            pm::deduplicate(cell->m, cell->pos);
+            cell->m.compactify();
         }
+
 
         polyscope::show();
 

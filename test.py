@@ -48,15 +48,17 @@ print(cloud)
 # print(result)
 
 
-result = linkml_py.create_cell_complex(cloud, planes)
+result = linkml_py.create_cell_complex(cloud, planes[189:190])
 print(len(result))
 
 
-# with polyscope() as ps:
+with polyscope() as ps:
 
-#     ps.register_point_cloud("Cloud", points, radius=0.001)
+    ps.set_ground_plane_mode("shadow_only")
+
+    ps.register_point_cloud("Cloud", points, radius=0.001)
     
-#     for idx, cell in enumerate(result):
-#         vertices = np.array(cell.vertecies)
-#         faces = np.array(cell.faces)
-#         ps.register_surface_mesh(f"Cell {idx:03.0f}", vertices,faces , transparency=1)
+    for idx, cell in enumerate(result):
+        vertices = np.array(cell.vertecies)
+        faces = np.array(cell.faces)
+        ps.register_surface_mesh(f"Cell {idx:03.0f}", vertices,faces , transparency=0.8)
