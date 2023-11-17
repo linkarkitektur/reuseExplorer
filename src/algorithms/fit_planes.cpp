@@ -1,5 +1,6 @@
-#include "linkml.h"
-#include "fitPlaneSolver.h"
+#include <algorithms/fit_planes.h>
+#include <algorithms/fit_plane.h>
+
 #include <cstdlib>
 #include <ctime>
 #include <iostream>
@@ -533,7 +534,7 @@ void PlaneFit_Solver::results_processes(
     std::vector<PlaneFit_Solver *> PlaneFit_Solver::instances = std::vector<PlaneFit_Solver *>();
 
 
-    fit_planes_resutl PlaneFit_Solver::run(
+    result_fit_planes PlaneFit_Solver::run(
         point_cloud const &cloud,
         plane_fitting_parameters const &params
         )
@@ -560,7 +561,7 @@ void PlaneFit_Solver::results_processes(
         if (true){
             while (!token.stop_requested() and !break_checker(cloud.pts.size())){
                 std::vector<int> proccesed_local = copy_thread_safe(processed);
-                plane_fit_resutl result = fit_plane(cloud, params, proccesed_local);
+                result_fit_plane result = fit_plane(cloud, params, proccesed_local);
 
                 if (result.valid){
                     for (size_t i =0; i < result.indecies.size();i++)
@@ -631,7 +632,7 @@ void PlaneFit_Solver::results_processes(
 
         }
 
-        auto result = fit_planes_resutl();
+        auto result = result_fit_planes();
         result.planes = planes;
         result.indecies = indecies;
 

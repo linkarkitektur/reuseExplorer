@@ -1,22 +1,17 @@
-// #pragma once
-
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
-
-#include <linkml.h>
-#include <fitPlaneSolver.h>
-#include <cellcomplex.h>
-
-#include <eigen3/Eigen/Core>
-#include <sstream>
-#include <string>
-
 #include <pybind11/stl.h>
 #include <pybind11/complex.h>
 #include <pybind11/functional.h>
 #include <pybind11/chrono.h>
 #include <pybind11/stl.h>
 #include <pybind11/iostream.h>
+
+#include <linkml.h>
+
+#include <eigen3/Eigen/Core>
+#include <sstream>
+#include <string>
 
 #define PYBIND11_DETAILED_ERROR_MESSAGES
 
@@ -25,12 +20,6 @@ using namespace pybind11::literals;
 
 typedef Eigen::MatrixXf Matrix;
 typedef Matrix::Scalar Scalar;
-//constexpr bool rowMajor = Matrix::Flags & Eigen::RowMajorBit;
-
-
-//typedef Eigen::Map<Eigen::VectorXf, 0, Eigen::InnerStride<sizeof(tg::pos3)/sizeof(float)> > PosMap;
-//typedef Eigen::Map<Eigen::VectorXf, 0, Eigen::InnerStride<sizeof(tg::vec3)/sizeof(float)> > VecMap;
-
 
 
 
@@ -191,14 +180,14 @@ PYBIND11_MODULE(linkml_py, m) {
             return ss.str();
         })
         ;
-    py::class_<linkml::plane_fit_resutl>(m, "PlaneFittingResult")
+    py::class_<linkml::result_fit_plane>(m, "PlaneFittingResult")
         .def(py::init<const int &>())
         .def(py::init<const linkml::Plane &, const std::vector<int> &>())
-        .def_property_readonly("valid", [](linkml::plane_fit_resutl &r){return r.valid;})
-        .def_property_readonly("plane", [](linkml::plane_fit_resutl &r){return r.plane;})
-        .def_property_readonly("indecies", [](linkml::plane_fit_resutl &r){return r.indecies;})
-        .def_property_readonly("index", [](linkml::plane_fit_resutl &r){return r.index;})
-        .def("__repr__", [](const linkml::plane_fit_resutl &a){
+        .def_property_readonly("valid", [](linkml::result_fit_plane &r){return r.valid;})
+        .def_property_readonly("plane", [](linkml::result_fit_plane &r){return r.plane;})
+        .def_property_readonly("indecies", [](linkml::result_fit_plane &r){return r.indecies;})
+        .def_property_readonly("index", [](linkml::result_fit_plane &r){return r.index;})
+        .def("__repr__", [](const linkml::result_fit_plane &a){
             std::stringstream ss;
             if (a.valid){
                 ss << "Plane Result A("<< a.plane.normal.x<<") B(" <<a.plane.normal.y << ") C(" <<a.plane.normal.z << ") D(" << a.plane.dis << ")";
@@ -211,10 +200,10 @@ PYBIND11_MODULE(linkml_py, m) {
         ;
 
 
-    py::class_<linkml::fit_planes_resutl>(m, "PlaneFittingResults")
-        .def_property_readonly("planes", [](linkml::fit_planes_resutl &r){return r.planes;})
-        .def_property_readonly("indecies", [](linkml::fit_planes_resutl &r){return r.indecies;})
-        .def("__repr__", [](const linkml::fit_planes_resutl &a){
+    py::class_<linkml::result_fit_planes>(m, "PlaneFittingResults")
+        .def_property_readonly("planes", [](linkml::result_fit_planes &r){return r.planes;})
+        .def_property_readonly("indecies", [](linkml::result_fit_planes &r){return r.indecies;})
+        .def("__repr__", [](const linkml::result_fit_planes &a){
             std::stringstream ss;
             ss << "Planes :" << a.planes.size();
             return ss.str();
@@ -242,7 +231,7 @@ PYBIND11_MODULE(linkml_py, m) {
     // Functions
     m.def("fit_plane",
             static_cast<
-              linkml::plane_fit_resutl(*)(
+              linkml::result_fit_plane(*)(
                   linkml::point_cloud const  &,
                   linkml::plane_fitting_parameters const &)>(&linkml::fit_plane),
           "point_cloud"_a,
@@ -261,7 +250,7 @@ PYBIND11_MODULE(linkml_py, m) {
     "params"_a
         );
 
-    m.def("create_cell_complex", &linkml::CreateCellComplex, "point_cloud"_a, "planes"_a );
+    m.def("create_cell_complex", &linkml::create_cell_complex, "point_cloud"_a, "planes"_a );
 
 //    m.def("fit_planes", &linkml::fit_planes,
 //          "point_cloud"_a,

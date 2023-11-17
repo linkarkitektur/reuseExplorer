@@ -2,6 +2,10 @@ import os
 import sys
 import importlib
 
+
+print(os.getpid())
+
+
 from linkml.visualize import polyscope
 
 sys.path.insert(
@@ -17,9 +21,8 @@ except Exception as e:
 points = np.load("/home/mephisto/repos/LinkML/Data/points.npy")
 normals = np.load("/home/mephisto/repos/LinkML/Data/normals.npy")
 
-
-# points  = points[::5000,:]
-# normals = normals[::5000, :]
+points =  np.concatenate((points[::5000,:],  np.atleast_2d(np.min(points, axis=0)),  np.atleast_2d(np.max(points, axis=0))))
+normals = np.concatenate((normals[::5000,:], np.atleast_2d(np.min(normals, axis=0)), np.atleast_2d(np.max(normals, axis=0))))
 
 
 planes = np.load("/home/mephisto/repos/LinkML/Data/planes2.npy")
@@ -48,17 +51,17 @@ print(cloud)
 # print(result)
 
 
-result = linkml_py.create_cell_complex(cloud, planes[189:190])
+result = linkml_py.create_cell_complex(cloud, planes)
 print(len(result))
 
 
-with polyscope() as ps:
+# with polyscope() as ps:
 
-    ps.set_ground_plane_mode("shadow_only")
+#     ps.set_ground_plane_mode("shadow_only")
 
-    ps.register_point_cloud("Cloud", points, radius=0.001)
+#     ps.register_point_cloud("Cloud", points, radius=0.001)
     
-    for idx, cell in enumerate(result):
-        vertices = np.array(cell.vertecies)
-        faces = np.array(cell.faces)
-        ps.register_surface_mesh(f"Cell {idx:03.0f}", vertices,faces , transparency=0.8)
+#     for idx, cell in enumerate(result):
+#         vertices = np.array(cell.vertecies)
+#         faces = np.array(cell.faces)
+#         ps.register_surface_mesh(f"Cell {idx:03.0f}", vertices,faces , transparency=0.8)
