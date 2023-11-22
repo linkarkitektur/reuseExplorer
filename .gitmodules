@@ -40,3 +40,12 @@
 [submodule "extern/polyscope"]
 	path = extern/polyscope
 	url = git@github.com:nmwsharp/polyscope.git
+[submodule "extern/glpk"]
+	path = extern/glpk
+	url = git@github.com:linkarkitektur/glpk.git
+[submodule "extern/lpsolve"]
+	path = extern/lpsolve
+	url = git@github.com:linkarkitektur/lpsolve.git
+[submodule "extern/scip"]
+	path = extern/scip
+	url = git@github.com:linkarkitektur/scip.git
