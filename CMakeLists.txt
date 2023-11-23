@@ -111,6 +111,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${BIN_DIR})
 #option(GLFW_INSTALL  OFF)
 
 
+
 # ===============================================s
 # add submodules
 add_subdirectory(extern/clean-core)
@@ -123,6 +124,13 @@ add_subdirectory(extern/polymesh)
 add_subdirectory(extern/nanoflann)
 add_subdirectory(extern/pybind11)
 add_subdirectory(extern/polyscope)
+add_subdirectory(extern/glpk)
+add_subdirectory(extern/lpsolve)
+add_subdirectory(extern/scip)
+add_subdirectory(extern/soplex)
+
+
+
 
 #add_subdirectory(extern/glfw)
 #add_subdirectory(extern/glow)
@@ -167,6 +175,10 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     polymesh
     nanoflann
     polyscope
+    glpk
+    lpsolve
+    scip
+    soplex
 #    glfw
 #    glow
 #    imgui
@@ -176,6 +188,7 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
 
     ${COMMON_LINKER_FLAGS}
 )
+
 
 target_include_directories(${LIB_PROJECT_NAME} PUBLIC "src")
 target_compile_options(${LIB_PROJECT_NAME} PUBLIC ${COMMON_COMPILER_FLAGS})
@@ -192,6 +205,10 @@ foreach(TARGET_NAME
     polymesh
     nanoflann
     polyscope
+    glpk
+    lpsolve
+    scip
+    soplex
 #    glfw
 #    glow
 #    imgui

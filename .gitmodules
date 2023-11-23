@@ -49,3 +49,6 @@
 [submodule "extern/scip"]
 	path = extern/scip
 	url = git@github.com:linkarkitektur/scip.git
+[submodule "extern/soplex"]
+	path = extern/soplex
+	url = git@github.com:linkarkitektur/soplex.git
