@@ -1,4 +1,5 @@
 #include <algorithms/fit_plane.h>
+#include <functions/fit_plane_thorugh_points.h>
 
 #include <types/plane.h>
 #include <types/plane_fit_parameters.h>
@@ -91,32 +92,6 @@ int get_random_index_not_in_register(std::vector<int> const &ps, int size)
 
 //    return options[random_integert_in_range(0,options.size()-1)];
 }
-
-
-
-linkml::Plane fit_plane_thorugh_points(const linkml::point_cloud &cloud, const std::vector<int> &indecies){
-
-    std::vector<tg::pos3> points = std::vector<tg::pos3>();
-    std::vector<tg::pos3> centered = std::vector<tg::pos3>();
-
-    for (size_t i = 0; i < indecies.size(); i++ )
-        points.push_back(cloud.pts.at(indecies[i]));
-
-    tg::pos3 com = tg::mean(points);
-    for (size_t i = 0; i < points.size(); i++)
-        centered.push_back(points.at(i) - (tg::vec3)com);
-
-    tg::mat3x3 cov = tg::covariance_matrix(centered);
-    tg::array<float,3> eigenvalues = tg::eigenvalues_symmetric(cov);
-    tg::array<tg::vec3,3> eigenvectors = tg::eigenvectors_symmetric(cov);
-
-    tg::vec3 normal = tg::normalize_safe(eigenvectors[tg::min_index(eigenvalues)]);
-    float distance = tg::dot(-com,normal);
-
-    return linkml::Plane(normal.x,normal.y,normal.z,distance, com.x, com.y, com.z);
-
-}
-
 
 std::vector<int> filter_by_normal_angle(const linkml::point_cloud &cloud, const linkml::Plane plane, float cosalpha, std::vector<int> indecies_in ){
 

@@ -89,6 +89,40 @@ static bool intersects_by_face(linkml::Cell * cell, tg::plane3 const & plane){
 
 }
 
+static auto vertex_filter = [](pm::vertex_handle h){ return h.is_valid();};
+static auto face_filter = [](pm::face_handle h){ return h.is_valid();};
+static auto edges_filter = [](pm::edge_handle h){ return h.is_valid();};
+
+static bool is_valid(linkml::Cell *cell){
+    int n_faces = cell->m.faces().where(face_filter).count();
+    int n_verts = cell->m.vertices().where(vertex_filter).count();
+    int n_endges = cell->m.edges().where(edges_filter).count();
+
+
+
+    if (n_verts - n_endges + n_faces != 2) {
+        std::printf("V %d, E %d F %d\n", n_verts, n_endges, n_faces);
+        return false;
+    };
+
+    if (n_verts == 3) return false;
+
+    for (auto h : cell->m.vertices()){
+        auto pt = cell->pos[h];
+        if (tg::is_inf(pt.x)) return false;
+        if (tg::is_inf(pt.y)) return false;
+        if (tg::is_inf(pt.z)) return false;
+
+        if (tg::is_nan(pt.x)) return false;
+        if (tg::is_nan(pt.y)) return false;
+        if (tg::is_nan(pt.z)) return false;
+    }
+
+
+    return true;
+
+
+}
 
 template <class T, class F>
 decltype(auto) map(const std::vector<T> a, const F fn) {
@@ -97,6 +131,8 @@ decltype(auto) map(const std::vector<T> a, const F fn) {
     return result;
 }
 
+
+// namespace
 
 std::vector<linkml::Cell *> linkml::create_cell_complex(linkml::point_cloud const &cloud, std::vector<linkml::Plane> const &planes){
 
@@ -127,15 +163,31 @@ std::vector<linkml::Cell *> linkml::create_cell_complex(linkml::point_cloud cons
         // Loop over all cells
         for (int j = 0; j < (int)cells.size(); j++){
 
+            std::printf("Plane %d, Cell %d \n", i, j);
 
-            // Check if all indecies are valid
-            bool stop = false;
-            for (auto v :cells[j]->m.vertices()){
-                auto p = cells[j]->pos[v];
-                if (tg::any(tg::is_inf(p)) or tg::any(tg::is_nan(p))) stop = true;
+
+            // // Check if all indecies are valid
+            // bool stop = false;
+            // for (auto v :cells[j]->m.vertices()){
+            //     auto p = cells[j]->pos[v];
+            //     if (tg::any(tg::is_inf(p)) or tg::any(tg::is_nan(p))) stop = true;
+            // }
+            // if (stop) continue;
+
+
+            int SEL_PLNAE = 185;
+            int SEL_CELL = 6580;
+
+
+
+            if (i == SEL_PLNAE and j== SEL_CELL){
+                for (auto h : cells[j]->m.vertices()){
+                    auto pt = cells[j]->pos[h];
+                    std::printf("X=%d Y=%d Z=%d\n", pt.x, pt.y, pt.z);
+                }
+                polyscope::registerSurfaceMesh("Input", cells[j]->vertecies(), cells[j]->faces());
+                polyscope::show();
             }
-            if (stop) continue;
-
 
             
             // Check if the whole volume is being intersected.
@@ -187,12 +239,25 @@ std::vector<linkml::Cell *> linkml::create_cell_complex(linkml::point_cloud cons
 
             
 
+            if (i == SEL_PLNAE and j== SEL_CELL){
+                polyscope::registerSurfaceMesh("Split A", cells[j]->vertecies(), cells[j]->faces());
+                polyscope::registerSurfaceMesh("Split B", cell2->vertecies(), cells[j]->faces());
+                polyscope::show();
+            }
+            
+
             // Fill hole
             auto bs1 = cells[j]->m.halfedges().where([](pm::halfedge_handle h){return h.is_boundary(); } ).first();
             pm::fill_hole(cells[j]->m, cells[j]->pos, bs1);
             auto bs2 = cell2->m.halfedges().where([](pm::halfedge_handle h){return h.is_boundary(); } ).first();
             pm::fill_hole(cell2->m, cell2->pos, bs2);
 
+
+            if (i == SEL_PLNAE and j== SEL_CELL){
+                polyscope::registerSurfaceMesh("Patched A", cells[j]->vertecies(), cells[j]->faces());
+                polyscope::registerSurfaceMesh("Patched B", cell2->vertecies(), cells[j]->faces());
+                polyscope::show();
+            }
 
 
             // Display Geometry
@@ -205,11 +270,11 @@ std::vector<linkml::Cell *> linkml::create_cell_complex(linkml::point_cloud cons
 
             
             // Decimated
-            auto cfg1 = pm::decimate_config<Pos, tg::quadric3>::up_to_error(0);
-            cfg1.max_normal_dev = 0;
+            auto cfg1 = pm::decimate_config<Pos, tg::quadric3>::up_to_error(0.1);
+            cfg1.max_normal_dev = 0.1;
 
-            auto cfg2 = pm::decimate_config<Pos, tg::quadric3>::up_to_error(0);
-            cfg2.max_normal_dev = 0;
+            auto cfg2 = pm::decimate_config<Pos, tg::quadric3>::up_to_error(0.1);
+            cfg2.max_normal_dev = 0.1;
 
             auto errors1 = compute_quadrics(cells[j]->m,cells[j]->pos);
             auto errors2 = compute_quadrics(cell2->m,cell2->pos);
@@ -217,10 +282,19 @@ std::vector<linkml::Cell *> linkml::create_cell_complex(linkml::point_cloud cons
             pm::decimate(cells[j]->m, cells[j]->pos, errors1, cfg1);
             pm::decimate(cell2->m, cell2->pos, errors2, cfg2);
 
+
+            if (i == SEL_PLNAE and j== SEL_CELL){
+                polyscope::registerSurfaceMesh("Deceminated A", cells[j]->vertecies(), cells[j]->faces());
+                polyscope::registerSurfaceMesh("Deceminated B", cell2->vertecies(), cells[j]->faces());
+                polyscope::show();
+            }
+
             cells[j]->m.compactify();
             cell2->m.compactify();
 
 
+
+            if (!is_valid(cells[j])) cells.erase(cells.begin()+j);
 
             // check if the mesh is good
             // auto cj_non_mainfold = cells[j]->m.faces().where(manifold_check).count() > 1;
@@ -229,8 +303,8 @@ std::vector<linkml::Cell *> linkml::create_cell_complex(linkml::point_cloud cons
             // std::printf("CJ %d\n", cj_non_mainfold);
             // std::printf("C2 %d\n", c2_non_mainfold);
 
-
-            cells_new.push_back(cell2);
+            if (is_valid(cell2))
+                cells_new.push_back(cell2);
 
 
         }

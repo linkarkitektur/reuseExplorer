@@ -201,6 +201,15 @@ PYBIND11_MODULE(linkml_py, m) {
 
 
     py::class_<linkml::result_fit_planes>(m, "PlaneFittingResults")
+        .def("from_numpy", [](std::vector<linkml::Plane> const & planes, std::vector<std::vector<int>> const & indecies ){
+
+            auto res = linkml::result_fit_planes();
+
+            res.planes = planes;
+            res.indecies = indecies;
+
+            return  res;
+        })
         .def_property_readonly("planes", [](linkml::result_fit_planes &r){return r.planes;})
         .def_property_readonly("indecies", [](linkml::result_fit_planes &r){return r.indecies;})
         .def("__repr__", [](const linkml::result_fit_planes &a){
@@ -223,7 +232,9 @@ PYBIND11_MODULE(linkml_py, m) {
             return ss.str();
         })
         ;
-
+    py::class_<linkml::refinement_parameters>(m, "Refinement_Parameters")
+        .def(py::init<>())
+        ;
 
 
 
@@ -251,6 +262,7 @@ PYBIND11_MODULE(linkml_py, m) {
         );
 
     m.def("create_cell_complex", &linkml::create_cell_complex, "point_cloud"_a, "planes"_a );
+    m.def("refine_planes", &linkml::refine, "cloud_a", "fit_plane_results_a", "params_a");
 
 //    m.def("fit_planes", &linkml::fit_planes,
 //          "point_cloud"_a,
