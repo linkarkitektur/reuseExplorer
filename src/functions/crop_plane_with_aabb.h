@@ -1,34 +1,71 @@
 
 #pragma once
+#include <types/plane.h>
+
 #include <typed-geometry/tg.hh>
+#include <typed-geometry/feature/std-interop.hh>
+
 #include <polymesh/pm.hh>
 #include <polymesh/Mesh.hh>
+#include <polymesh/algorithms/deduplicate.hh>
 #include <clean-core/set.hh>
 #include <clean-core/array.hh>
 #include <clean-core/vector.hh>
 #include <clean-core/pair.hh>
 #include <clean-core/tuple.hh>
 
-#include <types/plane.h>
 
 static auto comparator = [](cc::pair<tg::angle, tg::pos3> p1, cc::pair<tg::angle, tg::pos3> p2) {
     return p1.first < p2.first;
 };
-static cc::array<tg::line3, 6> get_lines(tg::aabb3 box, linkml::Plane plane){
+static cc::array<cc::optional<tg::line3>, 6> get_lines(tg::aabb3 &box, linkml::Plane &plane){
 
-        auto lines = cc::array<tg::line3, 6>();
+        auto lines = cc::array<cc::optional<tg::line3>, 6>();
 
-        lines[0] = tg::intersection(tg::plane3(tg::dir3(0,0,1), box.max.z) , plane);
-        lines[1] = tg::intersection(tg::plane3(tg::dir3(0,0,-1), box.min.z), plane);
-        lines[2] = tg::intersection(tg::plane3(tg::dir3(0,1,0), box.max.y) , plane);
-        lines[3] = tg::intersection(tg::plane3(tg::dir3(0,-1,0), box.min.y), plane);
-        lines[4] = tg::intersection(tg::plane3(tg::dir3(1,0,0), box.max.x) , plane);
-        lines[5] = tg::intersection(tg::plane3(tg::dir3(-1,0,0), box.min.x), plane);
+        auto p0 = tg::plane3(tg::dir3( 1,0,0), tg::abs(box.max.x));
+        auto p1 = tg::plane3(tg::dir3(-1,0,0), tg::abs(box.min.x));
+        auto p2 = tg::plane3(tg::dir3(0, 1,0), tg::abs(box.max.y));
+        auto p3 = tg::plane3(tg::dir3(0,-1,0), tg::abs(box.min.y));
+        auto p4 = tg::plane3(tg::dir3(0,0, 1), tg::abs(box.max.z));
+        auto p5 = tg::plane3(tg::dir3(0,0,-1), tg::abs(box.min.z));
+
+
+        lines[0] = (tg::abs(tg::dot(p0.normal, plane.normal)) < 0.9999)? tg::intersection(p0, (tg::plane3)plane): cc::optional<tg::line3>();
+        lines[1] = (tg::abs(tg::dot(p1.normal, plane.normal)) < 0.9999)? tg::intersection(p1, (tg::plane3)plane): cc::optional<tg::line3>();
+        lines[2] = (tg::abs(tg::dot(p2.normal, plane.normal)) < 0.9999)? tg::intersection(p2, (tg::plane3)plane): cc::optional<tg::line3>();
+        lines[3] = (tg::abs(tg::dot(p3.normal, plane.normal)) < 0.9999)? tg::intersection(p3, (tg::plane3)plane): cc::optional<tg::line3>();
+        lines[4] = (tg::abs(tg::dot(p4.normal, plane.normal)) < 0.9999)? tg::intersection(p4, (tg::plane3)plane): cc::optional<tg::line3>();
+        lines[5] = (tg::abs(tg::dot(p5.normal, plane.normal)) < 0.9999)? tg::intersection(p5, (tg::plane3)plane): cc::optional<tg::line3>();
 
         return lines;
 
 }
-static cc::vector<tg::angle> get_angles_in_plane(tg::mat3 mat, cc::set<tg::pos3> points, tg::pos3 center ){
+static cc::vector<tg::line3> get_valid_lines(cc::array<cc::optional<tg::line3>, 6>  &lines){
+    auto v_list = cc::vector<tg::line3>();
+    for (auto & l : lines)
+        if (l.has_value())
+            v_list.push_back(l.value());
+
+    return v_list;
+}
+static cc::vector<tg::pos3> get_points(cc::vector<tg::line3> &lines, tg::aabb3 &box){
+
+    auto points = cc::vector<tg::pos3>();
+
+    for (auto & line : lines){
+        auto s = tg::intersection(line, box);
+        if (!s.has_value())  continue;
+        auto value = s.value();
+        if (tg::distance(value.pos0, value.pos1) < 0.0009) continue;
+        points.push_back(value.pos0);
+        points.push_back(value.pos1);
+    }
+
+
+    return points;
+
+}
+static cc::vector<tg::angle> get_angles_in_plane(tg::mat3 mat, cc::vector<tg::pos3> points, tg::pos3 center ){
     auto angs = cc::vector<tg::angle>();
     for (auto& p : points){
         auto v = (tg::vec3)tg::normalize(p-center);
@@ -38,7 +75,7 @@ static cc::vector<tg::angle> get_angles_in_plane(tg::mat3 mat, cc::set<tg::pos3>
     }
     return angs;
 }
-static cc::tuple<tg::mat3, tg::pos3> get_csystem(cc::set<tg::pos3> points, linkml::Plane plane){
+static cc::tuple<tg::mat3, tg::pos3> get_csystem(cc::vector<tg::pos3> points, linkml::Plane plane){
         auto center = tg::average(points);
         auto point =  *points.begin();
         auto mat = tg::mat3();
@@ -49,24 +86,31 @@ static cc::tuple<tg::mat3, tg::pos3> get_csystem(cc::set<tg::pos3> points, linkm
         mat.set_col(2, plane.normal);
         return cc::tuple(mat, center); 
 }
+static void make_unique(cc::vector<tg::pos3> & collection){
+    auto set = std::set<tg::pos3>();
+
+    for (auto & item : collection)
+        set.insert(item);
+
+    collection.clear();
+
+    for (auto & item : set)
+        collection.push_back(item);
+}
+
 
 namespace linkml {
 
-    static bool crop_plane_with_aabb(pm::Mesh & m, pm::vertex_attribute<tg::pos3> pos, tg::aabb3 box, Plane plane ){
-
+    static bool crop_plane_with_aabb(pm::Mesh& m, pm::vertex_attribute<tg::pos3>& pos, tg::aabb3 box, Plane plane ){
 
         auto lines = get_lines(box, plane);
-
-        auto points = cc::set<tg::pos3>();
-
-        for (auto & line : lines){
-            auto s = tg::intersection(line, box);
-            if (!s.has_value())  continue;
-            points.add(s.value().pos0);
-            points.add(s.value().pos1);
-        }
+        auto valid_lines = get_valid_lines(lines);
+        auto points = get_points(valid_lines, box);
+        
+        make_unique(points);
 
         if (points.size() < 3) return false;
+
 
         auto [mat, center] = get_csystem(points, plane);
         auto agles = get_angles_in_plane(mat, points, center);
@@ -80,7 +124,7 @@ namespace linkml {
 
         auto plist = cc::vector<tg::pos3>();
         for (auto & p : pairs)
-            plist.push_back();
+            plist.push_back(p.second);
 
 
 

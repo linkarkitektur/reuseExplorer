@@ -76,7 +76,7 @@ planes = np.load("/home/mephisto/server_data/Amtssygehus/planes.npy")
 
 # Fix, scale & shape
 points = points*0.1
-planes = planes.reshape((-1, 4))
+planes = planes.reshape((-1,4))
 
 cloud = linkml_py.PointCloud.from_numpy(points, normals)
 planes = [linkml_py.Plane(plane[0], plane[1], plane[2], plane[3]) for plane in planes]
