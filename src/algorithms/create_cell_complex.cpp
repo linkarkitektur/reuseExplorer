@@ -213,13 +213,58 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
         auto facet = cw.m.faces().where([&](pm::face_handle h){ return cell_id[h] == id;});
         auto plane = cw.supporting_plans[facet.first()];
 
-        auto vert_hs = cc::vector<pm::vertex_handle>();
         auto verts = cc::vector<tg::pos3>();
         for (auto f : facet)
             for ( auto v: f.vertices())
                 verts.push_back(cw.pos[v]);
 
-        face_indecies[i] = convex_hull(project_2d(verts, plane));
+        auto indecies = convex_hull(project_2d(verts, plane));
+
+
+        // auto selection = cc::vector<tg::pos3>();
+        // for (auto i : indecies)
+        //     selection.push_back(verts[i]);
+        
+        // polyscope::registerPointCloud("Facet", verts );
+        // polyscope::registerPointCloud("Selection", selection );
+
+
+        // polyscope::show();
+
+
+        // auto indecies_simplified = std::vector<size_t>();
+        // // Simplify convex hull by comparing entrance and exit vector if they are close to a streight line.
+        // if (indecies.size() > 3){
+        
+        //     auto v_in = tg::normalize_safe(verts[indecies[0]] - verts[indecies[indecies.size()-1]]);
+        //     int i = 0;
+        //     auto reduce = [&](int n, int m){
+        //         auto p_o = verts[indecies[n]];
+        //         auto p_n = verts[indecies[m]];
+
+        //         auto v1_out = tg::normalize_safe(p_n-p_o);
+
+
+        //         if (tg::dot(v_in,v1_out) < 1-EPSILON ) {
+        //             indecies_simplified.push_back(indecies[i]);
+        //             v_in = v1_out;
+
+        //         };
+
+        //     };
+        //     while (i < indecies.size() -1){
+        //         reduce(i, i+1);
+        //         i++;
+        //     }
+
+        //     reduce(indecies.size() -1, 0);
+
+        // }else{
+        //     indecies_simplified = indecies;
+        // }
+
+
+        face_indecies[i] = indecies;
         face_vertecies[i] = verts;
         refference_face_handle[i] = facet.first();
     }
@@ -235,19 +280,32 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
 
         for (int j = 1; j < ((int)indecies.size()-1); j++){
             
-            auto vh1 = cw2.m.vertices().add();
-            auto vh2 = cw2.m.vertices().add();
+            auto vhj = cw2.m.vertices().add();
+            auto vhk = cw2.m.vertices().add();
 
-            cw2.pos[vh1] = verts[indecies[j]];
-            cw2.pos[vh2] = verts[indecies[j+1]];
+            cw2.pos[vhj] = verts[indecies[j]];
+            cw2.pos[vhk] = verts[indecies[j+1]];
 
-            auto fh = cw2.m.faces().add(vh0,vh1, vh2);
+            auto fh = cw2.m.faces().add(vh0,vhj, vhk);
 
 
             cw2.colors[fh] = cw.colors[facet_h];
             cw2.facets_colors[fh] = cw.facets_colors[facet_h];
         }
     }
+
+    polyscope::init();
+
+    auto ps_mesh_old = polyscope::registerSurfaceMesh("Mesh Old", ps_helpers::vertecies(cw.m, cw.pos), ps_helpers::faces(cw.m));
+    auto face_color_old = ps_mesh_old->addFaceColorQuantity("Face Color", cw.m.faces().map([&](pm::face_handle h){ 
+        auto c = cw.colors[h]; 
+        return cc::array<float,3>{c.r,c.g,c.b};
+    }).to_vector());
+
+    auto facet_color_old = ps_mesh_old->addFaceColorQuantity("Facets Color", cw.m.faces().map([&](pm::face_handle h){ 
+        auto c = cw.facets_colors[h]; 
+        return cc::array<float,3>{c.r,c.g,c.b};
+    }).to_vector());
 
 
     cw.m.clear();
@@ -256,9 +314,8 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
     cw.colors.clear();
 
     cw2.m.compactify();
-    pm::deduplicate(cw2.m, cw2.pos);
+    // pm::deduplicate(cw2.m, cw2.pos);
 
-    polyscope::init();
     polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
     polyscope::view::setUpDir(polyscope::UpDir::ZUp);
 
