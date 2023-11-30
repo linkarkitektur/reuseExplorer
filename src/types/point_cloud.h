@@ -8,6 +8,7 @@
 
 #include <typed-geometry/types/pos.hh>
 #include <typed-geometry/types/vec.hh>
+#include <typed-geometry/feature/colors.hh>
 
 
 namespace linkml{
@@ -23,6 +24,8 @@ namespace linkml{
 
         std::vector<tg::pos3> pts;
         std::vector<tg::vec3> norm;
+        std::vector<tg::color3> colors;
+
 
 
         std::vector<int> radiusSearch(int index, float radius) const {

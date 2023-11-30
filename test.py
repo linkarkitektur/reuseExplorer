@@ -99,9 +99,11 @@ for path, folders, files in os.walk("/home/mephisto/server_data/Amtssygehus/plan
 
 plane_results = linkml_py.PlaneFittingResults.from_numpy(planes, indecies)
 
-print("Plans before refinement:", plane_results)
+# print("Plans before refinement:", plane_results)
 
 params = linkml_py.Refinement_Parameters()
 res = linkml_py.refine_planes(cloud, plane_results, params)
 
-print("N Plans after refinement:", len(res))
+linkml_py.create_cell_complex(cloud, res)
+
+# print("N Plans after refinement:", len(res))

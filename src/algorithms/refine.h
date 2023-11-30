@@ -13,9 +13,9 @@ namespace linkml {
     struct refinement_parameters
     {
         tg::angle angle_threashhold = tg::degree(25);
-        float distance_threshhold = 0.5;
+        float distance_threshhold = 0.5; //0.1
     };
     
 
-    std::vector<linkml::Plane> refine(point_cloud cloud, result_fit_planes & rs,  refinement_parameters const & param);
+    result_fit_planes refine(point_cloud cloud, result_fit_planes & rs,  refinement_parameters const & param);
 }

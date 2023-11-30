@@ -222,13 +222,13 @@ PYBIND11_MODULE(linkml_py, m) {
         ;
     py::class_<std::vector<std::atomic_bool>>(m, "a_bool")
         ;
-    py::class_<linkml::Cell>(m, "Cell")
-        .def_property_readonly("box", [](linkml::Cell &c){return c.box();})
-        .def_property_readonly("vertecies", [](linkml::Cell &c){return c.vertecies();})
-        .def_property_readonly("faces", [](linkml::Cell &c){return c.faces();})
-        .def("__repr__", [](const linkml::Cell &c){
+    py::class_<linkml::CellComplex>(m, "CellComplex")
+        .def_property_readonly("box", [](linkml::CellComplex &c){return c.box();})
+        .def_property_readonly("vertecies", [](linkml::CellComplex &c){return c.vertecies();})
+        .def_property_readonly("faces", [](linkml::CellComplex &c){return c.faces();})
+        .def("__repr__", [](const linkml::CellComplex &c){
             std::stringstream ss;
-            ss << "Cell :" << c.m.faces().size();
+            ss << "CellComplex :" << c.m.faces().size();
             return ss.str();
         })
         ;
@@ -261,7 +261,7 @@ PYBIND11_MODULE(linkml_py, m) {
     "params"_a
         );
 
-    m.def("create_cell_complex", &linkml::create_cell_complex, "point_cloud"_a, "planes"_a );
+    m.def("create_cell_complex", &linkml::create_cell_complex, "point_cloud"_a, "plane_fit_results"_a );
     m.def("refine_planes", &linkml::refine, "cloud_a", "fit_plane_results_a", "params_a");
 
 //    m.def("fit_planes", &linkml::fit_planes,

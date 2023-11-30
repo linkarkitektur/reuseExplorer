@@ -1,6 +1,11 @@
 
 #pragma once
 #include <types/plane.h>
+#include <types/CellComplex.h>
+#include <types/result_fit_planes.h>
+
+#include <functions/color.h>
+#include <functions/get_csystem.h>
 
 #include <typed-geometry/tg.hh>
 #include <typed-geometry/feature/std-interop.hh>
@@ -75,17 +80,7 @@ static cc::vector<tg::angle> get_angles_in_plane(tg::mat3 mat, cc::vector<tg::po
     }
     return angs;
 }
-static cc::tuple<tg::mat3, tg::pos3> get_csystem(cc::vector<tg::pos3> points, linkml::Plane plane){
-        auto center = tg::average(points);
-        auto point =  *points.begin();
-        auto mat = tg::mat3();
-        auto aX = tg::normalize_safe(point-center);
-        auto aY = tg::normalize_safe(tg::cross(plane.normal, aX));
-        mat.set_col(0, aX);
-        mat.set_col(1, aY);
-        mat.set_col(2, plane.normal);
-        return cc::tuple(mat, center); 
-}
+
 static void make_unique(cc::vector<tg::pos3> & collection){
     auto set = std::set<tg::pos3>();
 
@@ -101,7 +96,10 @@ static void make_unique(cc::vector<tg::pos3> & collection){
 
 namespace linkml {
 
-    static bool crop_plane_with_aabb(pm::Mesh& m, pm::vertex_attribute<tg::pos3>& pos, tg::aabb3 box, Plane plane ){
+    static cc::optional<std::vector<pm::face_handle>> crop_plane_with_aabb(pm::Mesh& m, pm::vertex_attribute<tg::pos3>& pos, tg::aabb3 box, Plane plane ){
+
+
+        std::vector<pm::face_handle> faces;
 
         auto lines = get_lines(box, plane);
         auto valid_lines = get_valid_lines(lines);
@@ -109,7 +107,7 @@ namespace linkml {
         
         make_unique(points);
 
-        if (points.size() < 3) return false;
+        if (points.size() < 3) return {};
 
 
         auto [mat, center] = get_csystem(points, plane);
@@ -139,7 +137,7 @@ namespace linkml {
             pos[vh1] = plist[i+1];
             pos[vh2] = center;
 
-            m.faces().add(vh0, vh1, vh2);
+            faces.emplace_back(m.faces().add(vh0, vh1, vh2));
         }
 
         // Add last face
@@ -151,12 +149,26 @@ namespace linkml {
         pos[vh1] = plist[0];
         pos[vh2] = center;
 
-        m.faces().add(vh0, vh1, vh2);
+        faces.emplace_back(m.faces().add(vh0, vh1, vh2));
 
         pm::deduplicate(m, pos);
         m.compactify();
     
-        return true;
+        return faces;
     }
     
+    static void crop_plane_with_aabb(linkml::CellComplex& cw, tg::aabb3& box, result_fit_planes& results ){
+
+
+        // Intersect all planes wiht the bounding box to generate initila face candidates.
+        for (int i = 0; i < (int)results.planes.size(); i++){
+            auto faces = crop_plane_with_aabb(cw.m, cw.pos, box, results.planes[i]);
+            if (!faces.has_value()) continue;
+            for (auto h : faces.value()){
+                if (!h.is_valid()) continue;
+                cw.supporting_plans[h] = results.planes[i];
+                cw.colors[h] = get_color_forom_angle(sample_circle(i));
+            }
+        }
+    }
 }
