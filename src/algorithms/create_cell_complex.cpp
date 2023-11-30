@@ -221,50 +221,39 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
         auto indecies = convex_hull(project_2d(verts, plane));
 
 
-        // auto selection = cc::vector<tg::pos3>();
-        // for (auto i : indecies)
-        //     selection.push_back(verts[i]);
+        auto indecies_simplified = std::vector<size_t>();
+        // Simplify convex hull by comparing entrance and exit vector if they are close to a streight line.
+        if (indecies.size() > 3){
         
-        // polyscope::registerPointCloud("Facet", verts );
-        // polyscope::registerPointCloud("Selection", selection );
+            auto v_in = tg::normalize_safe(verts[indecies[0]] - verts[indecies[indecies.size()-1]]);
+            int i = 0;
+            auto reduce = [&](int n, int m){
+                auto p_o = verts[indecies[n]];
+                auto p_n = verts[indecies[m]];
+
+                auto v1_out = tg::normalize_safe(p_n-p_o);
+
+                //TODO: Check value
+                if (tg::dot(v_in,v1_out) < 0.97 ) {
+                    indecies_simplified.push_back(indecies[i]);
+                    v_in = v1_out;
+
+                };
+
+            };
+            while (i < indecies.size() -1){
+                reduce(i, i+1);
+                i++;
+            }
+
+            reduce(indecies.size() -1, 0);
+
+        }else{
+            indecies_simplified = indecies;
+        }
 
 
-        // polyscope::show();
-
-
-        // auto indecies_simplified = std::vector<size_t>();
-        // // Simplify convex hull by comparing entrance and exit vector if they are close to a streight line.
-        // if (indecies.size() > 3){
-        
-        //     auto v_in = tg::normalize_safe(verts[indecies[0]] - verts[indecies[indecies.size()-1]]);
-        //     int i = 0;
-        //     auto reduce = [&](int n, int m){
-        //         auto p_o = verts[indecies[n]];
-        //         auto p_n = verts[indecies[m]];
-
-        //         auto v1_out = tg::normalize_safe(p_n-p_o);
-
-
-        //         if (tg::dot(v_in,v1_out) < 1-EPSILON ) {
-        //             indecies_simplified.push_back(indecies[i]);
-        //             v_in = v1_out;
-
-        //         };
-
-        //     };
-        //     while (i < indecies.size() -1){
-        //         reduce(i, i+1);
-        //         i++;
-        //     }
-
-        //     reduce(indecies.size() -1, 0);
-
-        // }else{
-        //     indecies_simplified = indecies;
-        // }
-
-
-        face_indecies[i] = indecies;
+        face_indecies[i] = indecies_simplified;
         face_vertecies[i] = verts;
         refference_face_handle[i] = facet.first();
     }
