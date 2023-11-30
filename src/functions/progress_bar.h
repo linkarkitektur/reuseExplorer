@@ -3,6 +3,10 @@
 #include <clean-core/string.hh>
 #include <clean-core/string_view.hh>
 
+
+
+// TODO: Consider making the progressbar support multithreading.
+// https://stackoverflow.com/questions/28050669/can-i-report-progress-for-openmp-tasks
 namespace util
 {
 struct progress_bar
