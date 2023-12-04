@@ -12,10 +12,13 @@
 #include <functions/crop_plane_with_aabb.h>
 #include <functions/convex_hull_2d.h>
 #include <functions/project_2d.h>
+#include <functions/split_cellcomplex_with_planes.h>
+#include <functions/color_facetes.h>
+#include <functions/decimate_cell_complex.h>
 
 #include <typed-geometry/tg.hh>
 #include <typed-geometry/feature/std-interop.hh>
-#include <typed-geometry/detail/optional.hh>
+
 
 #include <clean-core/map.hh>
 
@@ -25,7 +28,7 @@
 #include <polymesh/algorithms.hh>
 #include <polymesh/algorithms/deduplicate.hh>
 #include <polymesh/algorithms/fill_hole.hh>
-#include <polymesh/algorithms/edge_split.hh>
+
 
 #include "polyscope/polyscope.h"
 #include "polyscope/surface_mesh.h"
@@ -33,8 +36,7 @@
 
 #define  EPSILON 0.001
 
-typedef std::vector<polymesh::face_handle> FacHs;
-typedef polymesh::face_handle FacH;
+
 
 
 
@@ -91,7 +93,6 @@ auto do_intersect = [](pm::face_handle h, linkml::CellComplex& cw, linkml::Plane
 
 void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_planes& results){
 
-
     linkml::CellComplex cw;
 
     auto box = get_aabb(cloud.pts);
@@ -99,189 +100,27 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
     // Intersect CW with bounding box to generate bounded planes.
     linkml::crop_plane_with_aabb(cw, box, results);
 
-
-    // Intersect all planes in CW with each other
-    auto bar = util::progress_bar(results.planes.size(), "Split planes");
-    for (auto& plane : results.planes){
-        pm::split_edges_trimesh(cw.m,
-            // Check if an edge intersects the plane
-            [&](pm::edge_handle e) -> tg::optional<float> {
-                auto seg = tg::segment3(cw.pos[e.vertexA()], cw.pos[e.vertexB()]);
-                if (!tg::intersects(seg, plane)) {
-                    return {};
-                }
-                if (tg::distance(seg.pos0, plane) < EPSILON )
-                    return {};
-                if (tg::distance(seg.pos1, plane) < EPSILON )
-                    return {};
-                return 1;
-            },
-            // Split edge along plane
-            [&](pm::vertex_handle v, pm::halfedge_handle he, pm::vertex_handle v_from, pm::vertex_handle v_to) {
-                auto seg = tg::segment3(cw.pos[v_to], cw.pos[v_from]);
-                cw.pos[v] = tg::intersection(seg, plane).value();
-
-                auto faces = v.faces().where([](pm::face_handle h){ return h.is_valid() and !h.is_removed(); }).to_vector();
-                auto n = faces.size();
-
-                FacH A, B, C, D;
+    // Intersect CW with planes
+    linkml::split_cellcomplex_with_planes(cw, results);
 
 
-                if (n == 2){
-                    A = int(faces[0]) < int(faces[1]) ? faces[0] : faces[1];
-                    B = int(faces[0]) < int(faces[1]) ? faces[1] : faces[0];
-                    cw.colors[B] = cw.colors[A];
-                    cw.supporting_plans[B] = cw.supporting_plans[A];
-                }
-                else if (n == 4) {
-                    A = he.face();
-                    B = he.next().opposite().face();
-                    C = he.next().opposite().next().opposite().face();
-                    D = he.opposite().face();
-
-                    cw.colors[B] = cw.colors[A];
-                    cw.colors[C] = cw.colors[D];
-                    cw.supporting_plans[B] = cw.supporting_plans[A];
-                    cw.supporting_plans[C] = cw.supporting_plans[D];
-                }
-                else {
-                    std::printf("Unresolved case with %d faces", n);
-                    for (auto & face :faces){
-                        std::printf("Face IDX: %d  ", int(face) );
-                        auto color = cw.colors[face];
-                        std::printf("Color  R=%.2f, G=%.2f, B=%.2f\n", color.r, color.g, color.b );
-                    }
-                }
-
-            });
-        bar.update();
-    }
-
-
-    //Color Facetes
+    // Group facets
     const std::vector<int> default_id(results.planes.size()+1, 0);
     auto cell_id = pm::face_attribute<std::vector<int>>(cw.m, default_id);
-    auto bar_color_facets = util::progress_bar(results.planes.size(), "Color Facets");
-    for (int i = 0; i < (int)results.planes.size(); i++){
-
-        for (auto face : cw.m.faces()){
-
-            if (cw.supporting_plans[face] == results.planes[i] ){
-                cell_id[face][results.planes.size()] = i;
-                continue;
-            }
-
-            auto center = face.vertices().avg(cw.pos);
-            auto distance = tg::signed_distance(center, results.planes[i]);
-            // if (tg::abs(distance)< EPSILON) continue;
-            cell_id[face][i] = (distance > 0)? 1 :0;
-        }
-        bar_color_facets.update();
-    }
-
-    int i = 0;
-    auto cell_color_look_up = cell_id.to_map([&](std::vector<int>){auto c = get_color_forom_angle(sample_circle(i)); i++; return c;});
-
-    for (auto face : cw.m.faces()){
-        cw.facets_colors[face] = cell_color_look_up[cell_id[face]];
-    }
-
-
-
+    linkml::color_facets(cw, results, cell_id);
 
 
     // Decimated
     auto cw2 = CellComplex();
-
-    auto ids = std::vector<std::vector<int>>();
-    for (auto& pair : cell_color_look_up)
-        ids.push_back(pair.first );
-
-
-    auto face_indecies = std::vector<std::vector<size_t>>(ids.size());
-    auto face_vertecies = std::vector<cc::vector<tg::pos3>>(ids.size());
-    auto refference_face_handle = std::vector<pm::face_handle>(ids.size());
-
-
-#pragma omp parallel
-#pragma omp for
-
-    for (int i = 0; i < ids.size(); i++){
-
-        auto id = ids[i];
-
-        auto facet = cw.m.faces().where([&](pm::face_handle h){ return cell_id[h] == id;});
-        auto plane = cw.supporting_plans[facet.first()];
-
-        auto verts = cc::vector<tg::pos3>();
-        for (auto f : facet)
-            for ( auto v: f.vertices())
-                verts.push_back(cw.pos[v]);
-
-        auto indecies = convex_hull(project_2d(verts, plane));
-
-
-        auto indecies_simplified = std::vector<size_t>();
-        // Simplify convex hull by comparing entrance and exit vector if they are close to a streight line.
-        if (indecies.size() > 3){
-        
-            auto v_in = tg::normalize_safe(verts[indecies[0]] - verts[indecies[indecies.size()-1]]);
-            int i = 0;
-            auto reduce = [&](int n, int m){
-                auto p_o = verts[indecies[n]];
-                auto p_n = verts[indecies[m]];
-
-                auto v1_out = tg::normalize_safe(p_n-p_o);
-
-                //TODO: Check value
-                if (tg::dot(v_in,v1_out) < 0.97 ) {
-                    indecies_simplified.push_back(indecies[i]);
-                    v_in = v1_out;
-
-                };
-
-            };
-            while (i < indecies.size() -1){
-                reduce(i, i+1);
-                i++;
-            }
-
-            reduce(indecies.size() -1, 0);
-
-        }else{
-            indecies_simplified = indecies;
-        }
-
-
-        face_indecies[i] = indecies_simplified;
-        face_vertecies[i] = verts;
-        refference_face_handle[i] = facet.first();
+    int i = 0;
+    auto cell_color_look_up = cell_id.to_map([&](std::vector<int>){auto c = get_color_forom_angle(sample_circle(i)); i++; return c;});
+    for (auto face : cw.m.faces()){
+        cw.facets_colors[face] = cell_color_look_up[cell_id[face]];
     }
-
-    for (int i = 0; i < face_indecies.size(); i++){
-
-        auto indecies = face_indecies[i];
-        auto facet_h = refference_face_handle[i];
-        auto verts = face_vertecies[i];
-
-        auto vh0 = cw2.m.vertices().add();
-        cw2.pos[vh0] = verts[indecies[0]];
-
-        for (int j = 1; j < ((int)indecies.size()-1); j++){
-            
-            auto vhj = cw2.m.vertices().add();
-            auto vhk = cw2.m.vertices().add();
-
-            cw2.pos[vhj] = verts[indecies[j]];
-            cw2.pos[vhk] = verts[indecies[j+1]];
-
-            auto fh = cw2.m.faces().add(vh0,vhj, vhk);
+    linkml::decimate_cell_complex(cw, cw2, cell_id, cell_color_look_up);
 
 
-            cw2.colors[fh] = cw.colors[facet_h];
-            cw2.facets_colors[fh] = cw.facets_colors[facet_h];
-        }
-    }
+
 
     polyscope::init();
 
