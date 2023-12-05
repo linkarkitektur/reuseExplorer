@@ -22,7 +22,7 @@ namespace linkml {
         // Intersect all planes in CW with each other
         auto bar = util::progress_bar(results.planes.size(), "Split planes");
         for (auto& plane : results.planes){
-            pm::split_edges_trimesh(cw.m,
+            pm::split_edges_trimesh(cw,
                 // Check if an edge intersects the plane
                 [&](pm::edge_handle e) -> tg::optional<float> {
                     auto seg = tg::segment3(cw.pos[e.vertexA()], cw.pos[e.vertexB()]);
@@ -49,8 +49,9 @@ namespace linkml {
                     if (n == 2){
                         A = int(faces[0]) < int(faces[1]) ? faces[0] : faces[1];
                         B = int(faces[0]) < int(faces[1]) ? faces[1] : faces[0];
-                        cw.colors[B] = cw.colors[A];
-                        cw.supporting_plans[B] = cw.supporting_plans[A];
+
+                        cw.copy_face_attributes(B, cw, A);
+
                     }
                     else if (n == 4) {
                         A = he.face();
@@ -58,16 +59,15 @@ namespace linkml {
                         C = he.next().opposite().next().opposite().face();
                         D = he.opposite().face();
 
-                        cw.colors[B] = cw.colors[A];
-                        cw.colors[C] = cw.colors[D];
-                        cw.supporting_plans[B] = cw.supporting_plans[A];
-                        cw.supporting_plans[C] = cw.supporting_plans[D];
+                        cw.copy_face_attributes(B, cw, A);
+                        cw.copy_face_attributes(C, cw, D);
+
                     }
                     else {
                         std::printf("Unresolved case with %d faces", n);
                         for (auto & face :faces){
                             std::printf("Face IDX: %d  ", int(face) );
-                            auto color = cw.colors[face];
+                            auto color = cw.plane_colors[face];
                             std::printf("Color  R=%.2f, G=%.2f, B=%.2f\n", color.r, color.g, color.b );
                         }
                     }

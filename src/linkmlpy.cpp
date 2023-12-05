@@ -224,11 +224,11 @@ PYBIND11_MODULE(linkml_py, m) {
         ;
     py::class_<linkml::CellComplex>(m, "CellComplex")
         .def_property_readonly("box", [](linkml::CellComplex &c){return c.box();})
-        .def_property_readonly("vertecies", [](linkml::CellComplex &c){return c.vertecies();})
+        .def_property_readonly("vertecies", [](linkml::CellComplex &c){return c.ps_vertecies();})
         .def_property_readonly("faces", [](linkml::CellComplex &c){return c.faces();})
-        .def("__repr__", [](const linkml::CellComplex &c){
+        .def("__repr__", [](linkml::CellComplex &cw){
             std::stringstream ss;
-            ss << "CellComplex :" << c.m.faces().size();
+            ss << "CellComplex :" << cw.ps_faces().size();
             return ss.str();
         })
         ;

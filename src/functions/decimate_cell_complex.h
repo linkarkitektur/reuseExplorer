@@ -1,38 +1,40 @@
 #pragma once
+#include <functions/alpha_shape.h>
+#include <types/CellComplex.h>
 
 namespace linkml {
 
-    void decimate_cell_complex(
-        linkml::CellComplex const & cw, 
-        linkml::CellComplex & cw2, 
-        polymesh::face_attribute<std::vector<int>> const &cell_id,
-        std::map<std::vector<int>, tg::color3> const & cell_color_look_up ){
+    void decimate_cell_complex(linkml::CellComplex & cw){
+
+        // Make a set vector of all facet ids.
+        auto set = cw.faces().to_set([&](pm::face_handle h){return cw.facets[h]; });
+        std::vector<std::vector<int>> ids(set.begin(), set.end());
 
 
-        auto ids = std::vector<std::vector<int>>();
-        for (auto& pair : cell_color_look_up)
-            ids.push_back(pair.first );
+        auto face_indecies = std::vector<std::vector<size_t>>(ids.size()); // Indecies of selected veticies
+        auto face_vertecies = std::vector<cc::vector<tg::pos3>>(ids.size()); // All vertecies
+        auto old_faces = std::vector<std::vector<pm::face_handle>>(ids.size()); //List of all faces that have been simplified
 
-
-        auto face_indecies = std::vector<std::vector<size_t>>(ids.size());
-        auto face_vertecies = std::vector<cc::vector<tg::pos3>>(ids.size());
-        auto refference_face_handle = std::vector<pm::face_handle>(ids.size());
 
 
 #pragma omp parallel
 #pragma omp for
-
         for (int i = 0; i < ids.size(); i++){
 
             auto id = ids[i];
 
-            auto facet = cw.m.faces().where([&](pm::face_handle h){ return cell_id[h] == id;});
+            auto facet = cw.faces().where([&](pm::face_handle h){ return cw.facets[h] == id;});
+            old_faces[i] = facet.to_vector();
+
             auto plane = cw.supporting_plans[facet.first()];
 
             auto verts = cc::vector<tg::pos3>();
             for (auto f : facet)
                 for ( auto v: f.vertices())
                     verts.push_back(cw.pos[v]);
+            face_vertecies[i] = verts;
+
+
 
             auto indecies = convex_hull(project_2d(verts, plane));
 
@@ -70,37 +72,37 @@ namespace linkml {
 
 
             face_indecies[i] = indecies_simplified;
-            face_vertecies[i] = verts;
-            refference_face_handle[i] = facet.first();
         }
+
+
+// End parallel loop
+
 
         for (int i = 0; i < face_indecies.size(); i++){
 
             auto indecies = face_indecies[i];
-            auto facet_h = refference_face_handle[i];
+            auto faces = old_faces[i];
             auto verts = face_vertecies[i];
 
-            auto vh0 = cw2.m.vertices().add();
-            cw2.pos[vh0] = verts[indecies[0]];
+
+            // Construct face
+            auto vh0 = cw.vertices().add();
+            cw.pos[vh0] = verts[indecies[0]];
 
             for (int j = 1; j < ((int)indecies.size()-1); j++){
                 
-                auto vhj = cw2.m.vertices().add();
-                auto vhk = cw2.m.vertices().add();
+                auto vhj = cw.vertices().add();
+                auto vhk = cw.vertices().add();
 
-                cw2.pos[vhj] = verts[indecies[j]];
-                cw2.pos[vhk] = verts[indecies[j+1]];
+                cw.pos[vhj] = verts[indecies[j]];
+                cw.pos[vhk] = verts[indecies[j+1]];
 
-                auto fh = cw2.m.faces().add(vh0,vhj, vhk);
-
-
-                cw2.colors[fh] = cw.colors[facet_h];
-                cw2.facets_colors[fh] = cw.facets_colors[facet_h];
+                auto fh = cw.faces().add(vh0,vhj, vhk);
+                cw.copy_face_attributes(fh, cw,faces[0] );
             }
+            for (auto h : faces)
+                cw.faces().remove(h);
         }
-
-
-
 
     }
 }

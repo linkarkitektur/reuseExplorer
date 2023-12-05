@@ -7,23 +7,23 @@
 
 namespace linkml{
 
-    Faces CellComplex::faces(){
-        return m.faces().map([&](pm::face_handle f){
-            auto vx = f.vertices().to_vector();
-            std::array<int, 3> indexis{int(vx[0]),int(vx[1]),int(vx[2])};
+    Faces CellComplex::ps_faces(){
+
+        return this->faces().map([&](pm::face_handle f){
+            auto [vh0, vh1, vh2] = f.vertices().to_array<3>();
+            std::array<int, 3> indexis{int(vh0),int(vh1),int(vh2)};
             return indexis;
         }).to_vector();
     }
 
-    Verts CellComplex::vertecies(){
-        return m.vertices().map([&](pm::vertex_handle h){
-            auto p = pos[h];
-            std::array<float,3> arr = std::array<float,3>();
-            arr[0] = p.x;
-            arr[1] = p.y;
-            arr[2] = p.z;
-            return arr;
-        }).to_vector();
+    Verts CellComplex::ps_vertecies(){
+
+        auto array_view = pos.view([](tg::pos3& p) -> std::array<float, 3>& { 
+            std::array<float, 3> pt{{ p.x, p.y, p.z }};
+            return pt;
+            });
+
+        return this->vertices().map([&](pm::vertex_handle h){ return array_view[h]; }).to_vector();
     }
 
     tg::aabb3 CellComplex::box(){

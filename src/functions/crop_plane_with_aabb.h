@@ -162,12 +162,12 @@ namespace linkml {
 
         // Intersect all planes wiht the bounding box to generate initila face candidates.
         for (int i = 0; i < (int)results.planes.size(); i++){
-            auto faces = crop_plane_with_aabb(cw.m, cw.pos, box, results.planes[i]);
+            auto faces = crop_plane_with_aabb(cw, cw.pos, box, results.planes[i]);
             if (!faces.has_value()) continue;
             for (auto h : faces.value()){
                 if (!h.is_valid()) continue;
                 cw.supporting_plans[h] = results.planes[i];
-                cw.colors[h] = get_color_forom_angle(sample_circle(i));
+                cw.plane_colors[h] = get_color_forom_angle(sample_circle(i));
             }
         }
     }
