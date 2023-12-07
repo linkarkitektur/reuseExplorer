@@ -51,3 +51,4 @@ imgui.ini
 # Ignore Images
 *.png
 .polyscope.ini
+**/__pycache__/**/*

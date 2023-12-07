@@ -52,7 +52,7 @@ namespace linkml {
                     auto v1_out = tg::normalize_safe(p_n-p_o);
 
                     //TODO: Check value
-                    if (tg::dot(v_in,v1_out) < 0.97 ) {
+                    if (tg::dot(v_in,v1_out) < 0.99 ) {
                         indecies_simplified.push_back(indecies[i]);
                         v_in = v1_out;
 

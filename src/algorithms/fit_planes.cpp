@@ -241,10 +241,10 @@ std::vector<int> PlaneFit_Solver::copy_thread_safe(std::set<int> vec){
 bool PlaneFit_Solver::break_checker(int cloud_size)
 {
     // TODO: Implement different stoping contidions
-    //      All points serached
-    //      60% > searched etc.
+    // - All points serached
+    // - 60% > searched etc.
 
-           //Aquired lock enjure no one else is updating the data.
+    //Aquired lock enjure no one else is updating the data.
     std::shared_lock<std::shared_mutex> lock(dataMutex);
 
 

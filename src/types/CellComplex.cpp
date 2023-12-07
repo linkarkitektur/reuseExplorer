@@ -26,8 +26,5 @@ namespace linkml{
         return this->vertices().map([&](pm::vertex_handle h){ return array_view[h]; }).to_vector();
     }
 
-    tg::aabb3 CellComplex::box(){
-        auto box = this->pos.aabb();
-        return tg::aabb3(box.min, box.max ); }
 }
    

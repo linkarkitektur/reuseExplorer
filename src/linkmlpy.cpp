@@ -223,7 +223,7 @@ PYBIND11_MODULE(linkml_py, m) {
     py::class_<std::vector<std::atomic_bool>>(m, "a_bool")
         ;
     py::class_<linkml::CellComplex>(m, "CellComplex")
-        .def_property_readonly("box", [](linkml::CellComplex &c){return c.box();})
+        .def_property_readonly("box", [](linkml::CellComplex &c){return c.pos.aabb();})
         .def_property_readonly("vertecies", [](linkml::CellComplex &c){return c.ps_vertecies();})
         .def_property_readonly("faces", [](linkml::CellComplex &c){return c.faces();})
         .def("__repr__", [](linkml::CellComplex &cw){
@@ -234,6 +234,8 @@ PYBIND11_MODULE(linkml_py, m) {
         ;
     py::class_<linkml::refinement_parameters>(m, "Refinement_Parameters")
         .def(py::init<>())
+        .def_readwrite("angle_threashhold", &linkml::refinement_parameters::angle_threashhold)
+        .def_readwrite("distance_threshhold", &linkml::refinement_parameters::distance_threshhold)
         ;
 
 
@@ -263,6 +265,7 @@ PYBIND11_MODULE(linkml_py, m) {
 
     m.def("create_cell_complex", &linkml::create_cell_complex, "point_cloud"_a, "plane_fit_results"_a );
     m.def("refine_planes", &linkml::refine, "cloud_a", "fit_plane_results_a", "params_a");
+    m.def("fit_plane_thorugh_points", &linkml::fit_plane_thorugh_points, "cloud"_a, "indecies"_a);
 
 //    m.def("fit_planes", &linkml::fit_planes,
 //          "point_cloud"_a,
