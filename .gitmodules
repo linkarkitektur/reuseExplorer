@@ -52,3 +52,6 @@
 [submodule "extern/soplex"]
 	path = extern/soplex
 	url = git@github.com:linkarkitektur/soplex.git
+[submodule "extern/pcl"]
+	path = extern/pcl
+	url = git@github.com:PointCloudLibrary/pcl.git
