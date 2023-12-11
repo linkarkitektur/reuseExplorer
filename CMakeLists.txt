@@ -112,6 +112,8 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${BIN_DIR})
 
 
 
+# set(ENV{CUDACXX} "/usr/local/cuda/bin/nvcc")
+
 # ===============================================s
 # add submodules
 add_subdirectory(extern/clean-core)
@@ -128,6 +130,8 @@ add_subdirectory(extern/glpk)
 add_subdirectory(extern/lpsolve)
 add_subdirectory(extern/scip)
 add_subdirectory(extern/soplex)
+# add_subdirectory(extern/pcl)
+
 
 
 
@@ -165,6 +169,7 @@ include_directories( ${OpenCV_INCLUDE_DIRS} )
 
 add_library(${LIB_PROJECT_NAME} STATIC ${LIB_SOURCES} ${LIB_HEADERS})
 set_target_properties(${LIB_PROJECT_NAME} PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
+target_link_libraries(${LIB_PROJECT_NAME} PRIVATE pybind11::embed)
 target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     clean-core
     typed-geometry
@@ -179,6 +184,7 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     lpsolve
     scip
     soplex
+    # pcl
 #    glfw
 #    glow
 #    imgui
@@ -188,6 +194,7 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
 
     ${COMMON_LINKER_FLAGS}
 )
+
 
 
 target_include_directories(${LIB_PROJECT_NAME} PUBLIC "src")

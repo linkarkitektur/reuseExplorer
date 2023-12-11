@@ -198,6 +198,12 @@ PYBIND11_MODULE(linkml_py, m) {
             return ss.str();
         })
         ;
+    py::class_<linkml::speckle>(m, "Speckle")
+        .def(py::init<std::string, std::string>())
+        .def("__repr__", [](linkml::speckle &a){
+            return a.get_status();
+        })
+        ;
 
 
     py::class_<linkml::result_fit_planes>(m, "PlaneFittingResults")
@@ -266,6 +272,7 @@ PYBIND11_MODULE(linkml_py, m) {
     m.def("create_cell_complex", &linkml::create_cell_complex, "point_cloud"_a, "plane_fit_results"_a );
     m.def("refine_planes", &linkml::refine, "cloud_a", "fit_plane_results_a", "params_a");
     m.def("fit_plane_thorugh_points", &linkml::fit_plane_thorugh_points, "cloud"_a, "indecies"_a);
+
 
 //    m.def("fit_planes", &linkml::fit_planes,
 //          "point_cloud"_a,
