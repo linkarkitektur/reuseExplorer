@@ -375,6 +375,9 @@ void PlaneFit_Solver::producer(std::stop_token st, int thread_num, point_cloud c
     thread_result result_local = thread_result();
     int counter =0;
 
+
+    cloud.buildIndex();
+
     while(!st.stop_requested()){
         if (update[thread_num]){
             proccesed_local = copy_thread_safe(processed);
