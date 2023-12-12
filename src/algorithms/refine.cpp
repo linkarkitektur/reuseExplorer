@@ -6,7 +6,6 @@
 
 #include <functions/fit_plane_thorugh_points.h>
 #include <functions/progress_bar.h>
-#include <functions/get_aabb.h>
 
 // #include <polyscope/polyscope.h>
 // #include <polyscope/surface_mesh.h>
@@ -76,25 +75,6 @@
 
 namespace linkml{
     result_fit_planes refine(point_cloud &cloud, result_fit_planes & rs,  refinement_parameters const & param){
-
-
-        // polyscope::init();
-        // polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
-        // polyscope::view::setUpDir(polyscope::UpDir::ZUp);
-
-        // auto ps_cloud = polyscope::registerPointCloud("Cloud", cloud.pts);
-        // ps_cloud->setPointRenderMode(polyscope::PointRenderMode::Sphere);
-        // ps_cloud->setPointRadius(0.0030);
-
-
-        // auto box = get_aabb(cloud.pts);
-
-        // ShowBox(box);
-
-        // auto names = ShowPlanes(rs.planes, box);
-        // polyscope::show();
-        // for (auto& name : names)
-        //     polyscope::removeStructure(name);
 
 
         std::vector<Plane> planes;

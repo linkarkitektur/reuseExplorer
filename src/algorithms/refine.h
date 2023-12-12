@@ -17,5 +17,5 @@ namespace linkml {
     };
     
 
-    result_fit_planes refine(point_cloud cloud, result_fit_planes & rs,  refinement_parameters const & param);
+    result_fit_planes refine(point_cloud &cloud, result_fit_planes & rs,  refinement_parameters const & param);
 }

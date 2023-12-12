@@ -76,6 +76,7 @@ namespace linkml{
                 bbox.min.x = tg::min(bbox.min.x, vv.x);
                 bbox.min.y = tg::min(bbox.min.y, vv.y);
                 bbox.min.z = tg::min(bbox.min.z, vv.z);
+                
                 bbox.max.x = tg::max(bbox.max.x, vv.x);
                 bbox.max.y = tg::max(bbox.max.y, vv.y);
                 bbox.max.z = tg::max(bbox.max.z, vv.z);

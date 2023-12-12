@@ -52,3 +52,4 @@ imgui.ini
 *.png
 .polyscope.ini
 **/__pycache__/**/*
+**/*.lp

@@ -23,55 +23,55 @@
 static auto comparator = [](cc::pair<tg::angle, tg::pos3> p1, cc::pair<tg::angle, tg::pos3> p2) {
     return p1.first < p2.first;
 };
-static cc::array<cc::optional<tg::line3>, 6> get_lines(tg::aabb3 &box, linkml::Plane &plane){
+static cc::array<tg::segment3, 12> get_segemets(tg::aabb3 const & box) {
 
-        auto lines = cc::array<cc::optional<tg::line3>, 6>();
+        auto segemets = cc::array<tg::segment3, 12>();
 
-        auto p0 = tg::plane3(tg::dir3( 1,0,0), tg::abs(box.max.x));
-        auto p1 = tg::plane3(tg::dir3(-1,0,0), tg::abs(box.min.x));
-        auto p2 = tg::plane3(tg::dir3(0, 1,0), tg::abs(box.max.y));
-        auto p3 = tg::plane3(tg::dir3(0,-1,0), tg::abs(box.min.y));
-        auto p4 = tg::plane3(tg::dir3(0,0, 1), tg::abs(box.max.z));
-        auto p5 = tg::plane3(tg::dir3(0,0,-1), tg::abs(box.min.z));
+        auto p0 = tg::pos3(box.min.x,box.min.y, box.min.z); // 0
+        auto p1 = tg::pos3(box.max.x,box.min.y, box.min.z); // 1
+        auto p2 = tg::pos3(box.min.x,box.max.y, box.min.z); // 2
+        auto p3 = tg::pos3(box.max.x,box.max.y, box.min.z); // 3
+
+        auto p4 = tg::pos3(box.min.x,box.min.y, box.max.z); // 4
+        auto p5 = tg::pos3(box.max.x,box.min.y, box.max.z); // 5
+        auto p6 = tg::pos3(box.min.x,box.max.y, box.max.z); // 6
+        auto p7 = tg::pos3(box.max.x,box.max.y, box.max.z); // 7
 
 
-        lines[0] = (tg::abs(tg::dot(p0.normal, plane.normal)) < 0.9999)? tg::intersection(p0, (tg::plane3)plane): cc::optional<tg::line3>();
-        lines[1] = (tg::abs(tg::dot(p1.normal, plane.normal)) < 0.9999)? tg::intersection(p1, (tg::plane3)plane): cc::optional<tg::line3>();
-        lines[2] = (tg::abs(tg::dot(p2.normal, plane.normal)) < 0.9999)? tg::intersection(p2, (tg::plane3)plane): cc::optional<tg::line3>();
-        lines[3] = (tg::abs(tg::dot(p3.normal, plane.normal)) < 0.9999)? tg::intersection(p3, (tg::plane3)plane): cc::optional<tg::line3>();
-        lines[4] = (tg::abs(tg::dot(p4.normal, plane.normal)) < 0.9999)? tg::intersection(p4, (tg::plane3)plane): cc::optional<tg::line3>();
-        lines[5] = (tg::abs(tg::dot(p5.normal, plane.normal)) < 0.9999)? tg::intersection(p5, (tg::plane3)plane): cc::optional<tg::line3>();
 
-        return lines;
+        segemets[0] = tg::segment3(p0, p1); 
+        segemets[1] = tg::segment3(p1, p3); 
+        segemets[2] = tg::segment3(p3, p2); 
+        segemets[3] = tg::segment3(p2, p0); 
+        segemets[4] = tg::segment3(p4, p5); 
+        segemets[5] = tg::segment3(p5, p7); 
+        segemets[6] = tg::segment3(p7, p6);
+        segemets[7] = tg::segment3(p6, p4);
+        segemets[8] = tg::segment3(p0, p4);
+        segemets[9] = tg::segment3(p1, p5);
+        segemets[10]= tg::segment3(p3, p7);
+        segemets[11]= tg::segment3(p2, p6);
 
+        return segemets;
 }
-static cc::vector<tg::line3> get_valid_lines(cc::array<cc::optional<tg::line3>, 6>  &lines){
-    auto v_list = cc::vector<tg::line3>();
-    for (auto & l : lines)
-        if (l.has_value())
-            v_list.push_back(l.value());
+static std::vector<tg::pos3> get_points(cc::array<tg::segment3, 12> const & segments, tg::plane3 const & plane){
 
-    return v_list;
-}
-static cc::vector<tg::pos3> get_points(cc::vector<tg::line3> &lines, tg::aabb3 &box){
+    auto points = std::vector<tg::pos3>();
 
-    auto points = cc::vector<tg::pos3>();
+    for (auto & seg : segments){
 
-    for (auto & line : lines){
-        auto s = tg::intersection(line, box);
-        if (!s.has_value())  continue;
-        auto value = s.value();
-        if (tg::distance(value.pos0, value.pos1) < 0.0009) continue;
-        points.push_back(value.pos0);
-        points.push_back(value.pos1);
+        auto pt = tg::intersection(seg, plane);
+
+        if (!pt.has_value()) continue;
+        points.push_back(pt.value());
     }
 
 
     return points;
 
 }
-static cc::vector<tg::angle> get_angles_in_plane(tg::mat3 mat, cc::vector<tg::pos3> points, tg::pos3 center ){
-    auto angs = cc::vector<tg::angle>();
+static std::vector<tg::angle> get_angles_in_plane(tg::mat3 mat, std::vector<tg::pos3> points, tg::pos3 center ){
+    auto angs = std::vector<tg::angle>();
     for (auto& p : points){
         auto v = (tg::vec3)tg::normalize(p-center);
         v = tg::inverse(mat) *v;
@@ -80,9 +80,8 @@ static cc::vector<tg::angle> get_angles_in_plane(tg::mat3 mat, cc::vector<tg::po
     }
     return angs;
 }
-
-static void make_unique(cc::vector<tg::pos3> & collection){
-    auto set = std::set<tg::pos3>();
+static void make_unique(std::vector<tg::pos3> & collection){
+    auto set = std::unordered_set<tg::pos3>();
 
     for (auto & item : collection)
         set.insert(item);
@@ -96,14 +95,13 @@ static void make_unique(cc::vector<tg::pos3> & collection){
 
 namespace linkml {
 
-    static cc::optional<std::vector<pm::face_handle>> crop_plane_with_aabb(pm::Mesh& m, pm::vertex_attribute<tg::pos3>& pos, tg::aabb3 box, Plane plane ){
+    static cc::optional<std::vector<pm::face_handle>> crop_plane_with_aabb(pm::Mesh& m, pm::vertex_attribute<tg::pos3>& pos, tg::aabb3 const &box, Plane const &plane ){
 
 
         std::vector<pm::face_handle> faces;
 
-        auto lines = get_lines(box, plane);
-        auto valid_lines = get_valid_lines(lines);
-        auto points = get_points(valid_lines, box);
+        auto const segemets = get_segemets(box);
+        auto points = get_points(segemets, plane);
         
         make_unique(points);
 
@@ -158,7 +156,6 @@ namespace linkml {
     }
     
     static void crop_plane_with_aabb(linkml::CellComplex& cw, tg::aabb3& box, result_fit_planes& results ){
-
 
         // Intersect all planes wiht the bounding box to generate initila face candidates.
         for (int i = 0; i < (int)results.planes.size(); i++){

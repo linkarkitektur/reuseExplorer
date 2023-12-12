@@ -4,10 +4,10 @@
 #include <types/CellComplex.h>
 
 #include <vector>
+#include <map>
 #include <execution>
 
 #include <functions/progress_bar.h>
-#include <functions/get_aabb.h>
 #include <functions/color.h>
 #include <functions/polyscope_helpers.h>
 #include <functions/crop_plane_with_aabb.h>
@@ -19,9 +19,11 @@
 #include <functions/compute_coverage.h>
 #include <functions/linear_program.h>
 #include <functions/linear_program_solver.h>
+#include <functions/constuct_adjacency.h>
 
 
 #include <typed-geometry/tg.hh>
+#include <typed-geometry/types/objects/plane.hh>
 #include <typed-geometry/feature/std-interop.hh>
 
 
@@ -37,10 +39,11 @@
 #include <polymesh/ranges.hh>
 
 
-#include "polyscope/polyscope.h"
-#include "polyscope/surface_mesh.h"
-#include "polyscope/point_cloud.h"
-#include "polyscope/curve_network.h"
+// #include "polyscope/polyscope.h"
+// #include "polyscope/surface_mesh.h"
+// #include "polyscope/point_cloud.h"
+// #include "polyscope/curve_network.h"
+#include <functions/polyscope.h>
 
 // template <class T>
 auto surface_area(pm::minmax_t<tg::pos3> box){
@@ -54,14 +57,33 @@ auto surface_area(pm::minmax_t<tg::pos3> box){
 
 
 
+
 void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_planes& results){
+
+	polyscope::myinit();
 
     linkml::CellComplex cw;
 
-    auto box = get_aabb(cloud.pts);
+
+    auto box = cloud.get_bbox();
+
+	polyscope::display(box);
+	polyscope::display(cloud);
+	polyscope::show();
+
+
+	// FIXME: Remove hardcoded bounding box
+	// box.max.x = 6.66951;
+	// box.max.y = 3.48438;
+	// box.max.z = 1.38951;
+	// box.min.x = -4.31573;
+	// box.min.y = -7.60451;
+	// box.min.z = -1.86951;
+
 
     // Intersect CW with bounding box to generate bounded planes.
     linkml::crop_plane_with_aabb(cw, box, results);
+
 
     // Intersect CW with planes
     linkml::split_cellcomplex_with_planes(cw, results);
@@ -79,90 +101,61 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
     }
 
 
+	// Deduplicate edge vertecies
+	auto cloud2 = linkml::point_cloud();
+	for (int i = 0; i < results.planes.size(); i++){
+		for (int j = i+1; j < results.planes.size(); j++){
+			for ( int k = j+1; k < results.planes.size(); k++){
+
+				tg::plane3 p0 = results.planes[i];
+				tg::plane3 p1 = results.planes[j];
+				tg::plane3 p2 = results.planes[k];
+
+				if (tg::abs(tg::dot(p0.normal, p1.normal))-1 > 0.001) continue;
+				auto l = tg::intersection(p0,p1);
+					
+				if (!tg::intersects(l, p2)) continue;
+				auto pt = tg::intersection(l, p2).first();
+
+				if (!tg::contains(box, pt)) continue;
+				cloud2.pts.push_back(pt);
+
+			}
+		}
+	}
+	cloud2.buildIndex();
+	for (auto& pt : cw.pos){
+		auto r = cloud2.radiusSearch(pt, 0.005);
+		if (r.size() >=1)
+			pt = cloud2.pts[r[0]];
+	}
+	
+
     // Decimated
     linkml::decimate_cell_complex(cw);
 
+	// Remove edges that are very short
+	auto short_edges = cw.edges().where([&](pm::edge_handle h){ return tg::length(tg::segment3(cw.pos[h.vertexA()], cw.pos[h.vertexB()])) < 0.0001;});
+
+	std::cout << "short_edges.count(): " << short_edges.count() << std::endl;
+	for (auto h :short_edges)
+		cw.edges().remove(h);
+
+	cw.compactify();
 
     // Compute Coverage
     linkml::compute_coverage(cw, cloud);
 
-
     // Extract Adjacency
-	// Adjacency extract_adjacency(Map* mesh) {
-	// vertex_source_planes_.bind(mesh, "VertexSourcePlanes");
+	auto adjacency = linkml::constuct_adjacency(cw);
 
-	// FIXME: Index vs Handle
-	// an edge is denoted by its two end points
-	typedef typename std::set<tg::pos3>										PosCollection;
-	// PosCollection::iterator
-	typedef typename tg::pos3*												UniquePos;
-	//pm::halfedge_handle
-	typedef typename std::map< UniquePos, std::set<int>>					Edge_map;
-	typedef typename std::map< UniquePos, Edge_map >						Face_pool;
-	struct SuperEdge : public std::vector<int> {
-		UniquePos s;
-		UniquePos t;
-	};
-	typedef typename std::vector<SuperEdge>									Adjacency;
-	
-	Face_pool face_pool;
-	PosCollection unique_vertecies;
-	for (auto & p: cw.pos) unique_vertecies.insert(p);
+	std::cout << "adjacency size: " << adjacency.size() << std::endl;
 
-	for (auto h: cw.halfedges()){
-
-		// Check if half edge has face
-		if (h.face().is_invalid())
-			continue;
-
-		pm::vertex_handle sd = h.opposite().vertex_to();
-		pm::vertex_handle td = h.vertex_to();
-
-		// Obtain iterators to unique vertices
-		auto s_iter = unique_vertecies.find(cw.pos[sd]);
-		auto t_iter = unique_vertecies.find(cw.pos[td]);
-
-		// Ensure that an edge is unique
-		if (s_iter != unique_vertecies.end() && t_iter != unique_vertecies.end()) {
-			UniquePos s = const_cast<UniquePos>(&(*s_iter));
-			UniquePos t = const_cast<UniquePos>(&(*t_iter));
-
-			if (s > t)
-				std::swap(s, t);
-
-			face_pool[s][t].insert(int(h));
-		}
-	}
-
-	Adjacency fans;
-	Face_pool::const_iterator it = face_pool.begin();
-	for (; it != face_pool.end(); ++it) {
-		const auto s = it->first;
-		const Edge_map& tmp = it->second;
-		Edge_map::const_iterator cur = tmp.begin();
-		for (; cur != tmp.end(); ++cur) {
-			const auto t = cur->first;
-			const auto faces = cur->second;
-			SuperEdge fan;
-			fan.s = s;
-			fan.t = t;
-
-			fan.insert(fan.end(), faces.begin(), faces.end());
-			fans.push_back(fan);
-		}
-	}
-
-	// vertex_source_planes_.unbind();
-
-		// return fans;
-// }
-	auto adjacency = fans;
 
 
     ////////////////////////////////////
     // New Section [ set up program ] //
     ////////////////////////////////////
-
 
 
     // Get the vertecies, edges and faces
@@ -173,15 +166,25 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
 	//////////////////////////////////////////////////////////////////////////
 
 	double total_points = double(cloud.pts.size());
+	std::cout << " - " << "total_points: " << total_points << std::endl;
+
 
     // Indecies of faces
-	// std::size_t idx = 0;
-    // auto facet_indices = cw.faces().make_attribute<int>();
-    // auto facet_indices = cw.faces().to_map([&](pm::face_handle h){ 
-    //     // facet_indices[h] = idx;
-    //     // ++idx;
-	// 	return int(h);
-    //     });
+	auto facets_map = std::map<std::vector<int>, std::unordered_set<pm::face_handle>>();
+	for (auto f: cw.faces())
+		facets_map[cw.facets[f]].insert(f);
+
+	std::size_t idx = 0;
+    auto facet_indices = cw.faces().make_attribute<int>();
+	for (auto &pair : facets_map){
+		for (auto f : pair.second){
+			facet_indices[f] = idx;
+		}
+		idx++;
+	}
+
+	std::cout << " - " << "idx->facet_indices: " << idx << std::endl;
+
 
 
 	//-------------------------------------
@@ -199,7 +202,8 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
 	std::cout << "-" << "formulating binary program...." << std::endl;
 	// w.start();
 
-	std::size_t num_faces = cw.faces().size(); // model_->size_of_facets();
+	// FIXME: Change to the actual count of facets.
+	std::size_t num_faces = facets_map.size(); // model_->size_of_facets();
 	std::size_t num_edges = 0;
 
 	std::map<const SuperEdge*, std::size_t> edge_usage_status;	// keep or remove an intersecting edges
@@ -222,7 +226,13 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
 	double coeff_coverage = total_points * 0.27 / surface_area(cw.pos.aabb()); //0.27
 	double coeff_complexity = total_points * 0.3 / double(adjacency.size()); //0.3
 
+	
+	std::cout << " - " << "double(adjacency.size()): " << double(adjacency.size()) << std::endl;
+	std::cout << " - " << "surface_area(cw.pos.aabb()): " << surface_area(cw.pos.aabb()) << std::endl;
 
+	std::cout << " - " << "coeff_data_fitting: " << coeff_data_fitting << std::endl;
+	std::cout << " - " << "coeff_coverage: " << coeff_coverage << std::endl;
+	std::cout << " - " << "coeff_complexity: " << coeff_complexity << std::endl;
 
     // Make Program
     auto program_ = linkml::LinearProgram();
@@ -234,7 +244,7 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
 	for (std::size_t i = 0; i < adjacency.size(); ++i) {
 		const SuperEdge& fan = adjacency[i];
 		if (fan.size() == 4) {
-			std::size_t var_idx = num_faces + num_edges + num_sharp_edges;
+			std::size_t var_idx = num_faces + num_edges + num_sharp_edges; // Running index
 			edge_sharp_status[&fan] = var_idx;
 
 			// accumulate model complexity term
@@ -242,12 +252,16 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
 			++num_sharp_edges;
 		}
 	}
+
 	assert(num_edges == num_sharp_edges);
 
 
-	for (auto f : cw.faces()){
+	for (auto &pair: facets_map){
+		// Get handle to any face in the facet
+		// All faces in the facet shoul have identical information.
+		auto f = *pair.second.begin();
 
-		std::size_t var_idx = int(f); //facet_indices[f];
+		std::size_t var_idx = facet_indices[f];
 
 		// accumulate data fitting term
 		double num = cw.supporting_point_num[f];
@@ -281,8 +295,8 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
 		LinearConstraint* c = program_.create_constraint(LinearConstraint::FIXED, 0.0, 0.0);
 		const SuperEdge& fan = adjacency[i];
 		for (std::size_t j = 0; j < fan.size(); ++j) {
-			auto f = cw.halfedges()[fan[j]].face();
-			std::size_t var_idx = int(f);//facet_indices[f];
+			auto f = fan[j];
+			std::size_t var_idx = facet_indices[f];
 			c->add_coefficient(var_idx, 1.0);
 		}
 
@@ -314,17 +328,14 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
 		c->set_bound(LinearConstraint::LOWER, 0.0);
 
 		for (std::size_t j = 0; j < fan.size(); ++j) {
-			auto f1 = cw.halfedges()[fan[j]].face();
-
-			// FIXME: Suposedly this is invalid
-			// Apparenty all faces are invalid?
+			auto f1 = fan[j];
 
 			auto plane1 = cw.supporting_plans[f1];
-			std::size_t fid1 = int(f1);//facet_indices[f1];
+			std::size_t fid1 = facet_indices[f1];
 			for (std::size_t k = j + 1; k < fan.size(); ++k) {
-				auto f2 = cw.halfedges()[fan[k]].face();
+				auto f2 = fan[k];
 				auto plane2 = cw.supporting_plans[f2];
-				std::size_t fid2 = int(f2);//facet_indices[f2];
+				std::size_t fid2 = facet_indices[f2];
 
 				if (plane1 != plane2) {
 					// the constraint is:
@@ -347,8 +358,8 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
     for (std::size_t i = 0; i < adjacency.size(); ++i) {
         const SuperEdge &fan = adjacency[i];
         if (fan.size() == 1) { // boundary edge
-            auto f = cw.halfedges()[fan[0]].face();
-            std::size_t var_idx = int(f);//facet_indices[f];
+            auto f = fan[0];
+            std::size_t var_idx = facet_indices[f];
             LinearConstraint* c = program_.create_constraint(LinearConstraint::FIXED, 0.0, 0.0);
             c->add_coefficient(var_idx, 1.0);
         }
@@ -364,10 +375,10 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
 	std::cout << "-" << "solving the binary program. Please wait..." << std::endl;
 	// w.start();
 
-#if 0
+#if 1
     // Save the problem into a file (in lp format), allowing me to use other solvers to
     // solve it (easy to compare the performance of different solvers).
-    program_.save("D:/tmp/bunny.lp");
+    program_.save("/home/mephisto/repos/linkml_cpp/test.lp");
 #endif
 
 	LinearProgramSolver solver;
@@ -377,17 +388,22 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
 		// mark results
 		const std::vector<double>& X = solver.solution();
 		std::vector<pm::face_handle> to_delete;
-		for (auto f: cw.faces()){
-			std::size_t fid = int(f);//facet_indices[f];
+
+		for (auto &pair: facets_map){
+			auto f = *pair.second.begin();
+			std::size_t fid = facet_indices[f];
 			//if (static_cast<int>(X[fid]) == 0) { // Liangliang: be careful, floating point!!!
 			//if (static_cast<int>(X[fid]) != 1) { // Liangliang: be careful, floating point!!!
 			if (static_cast<int>(std::round(X[fid])) == 0) {
-				to_delete.push_back(f);
+				auto faces_of_facet = facets_map[cw.facets[f]];
+				for (auto h : faces_of_facet)
+					to_delete.push_back(h);
 			}
 		}
 
-		for (auto f : to_delete)
-			cw.faces().remove(f);
+
+		for (auto f : to_delete) cw.faces().remove(f);
+		
 
 		//////////////////////////////////////////////////////////////////////////
 
@@ -422,16 +438,6 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
         // std::cout << "-" << "solving the binary program failed. " << w.elapsed() << " sec." << std::endl;
 	}
 
-	// facet_attrib_supporting_vertex_group_.unbind();
-	// facet_attrib_supporting_point_num_.unbind();
-	// facet_attrib_facet_area_.unbind();
-	// facet_attrib_covered_area_.unbind();
-
-	// vertex_source_planes_.unbind();
-	// edge_source_planes_.unbind();
-	// facet_attrib_supporting_plane_.unbind();
-
-
 
 
 
@@ -441,33 +447,9 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
     cw.compactify();
     // pm::deduplicate(cw, cw.pos);
 
-    polyscope::init();
 
-    polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
-    polyscope::view::setUpDir(polyscope::UpDir::ZUp);
-
-    auto pcd = polyscope::registerPointCloud("Cloud", cloud.pts);
-    pcd->setPointRadius(0.001);
-    // auto pcd_color =  pcd->addColorQuantity("RGB", cloud.colors);
-    // pcd_color->setEnabled(true)
-    
-    auto ps_mesh = polyscope::registerSurfaceMesh("Mesh", ps_helpers::vertecies(cw, cw.pos), ps_helpers::faces(cw));
-    auto face_color = ps_mesh->addFaceColorQuantity("Face Color", cw.faces().map([&](pm::face_handle h){ 
-        auto c = cw.plane_colors[h]; 
-        return cc::array<float,3>{c.r,c.g,c.b};
-    }).to_vector());
-    auto facet_color = ps_mesh->addFaceColorQuantity("Facets Color", cw.faces().map([&](pm::face_handle h){ 
-        auto c = cw.facet_colors[h]; 
-        return cc::array<float,3>{c.r,c.g,c.b};
-    }).to_vector());
-    facet_color->setEnabled(true);
-    ps_mesh->addFaceScalarQuantity("Coverage", cw.faces().map([&](pm::face_handle h){
-        return cw.coverage[h];
-    }).to_vector());
-
-    
-    polyscope::show();
-
+	polyscope::display(cw);
+	polyscope::show();
 
 
 }

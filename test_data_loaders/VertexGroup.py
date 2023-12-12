@@ -46,6 +46,7 @@ def read_vg(path:str):
     return [points, colors, normals, results]
 
 points, colors, normals, results = read_vg("/home/mephisto/repos/PolyFit/data/PolyFit_data/Fig4f.vg")
+# points, colors, normals, results = read_vg("/home/mephisto/repos/PolyFit/data/PolyFit_data/Fig1.vg")
 
 cloud = linkml_py.PointCloud.from_numpy(points, normals)
 
