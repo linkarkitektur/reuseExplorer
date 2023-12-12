@@ -6,3 +6,4 @@
 #include <types/result_fit_plane.h>
 #include <types/result_fit_planes.h>
 #include <types/reg.h>
+#include <types/speckle.h>
