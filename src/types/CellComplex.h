@@ -18,7 +18,7 @@ typedef pm::face_attribute<linkml::Plane>           Planes;
 typedef pm::face_attribute<tg::color3>              Colors;
 typedef pm::face_attribute<int>                     Integer;
 typedef pm::face_attribute<float>                   Scalars;
-typedef pm::face_attribute<std::vector<int>>        Facets;
+typedef pm::face_attribute<std::size_t>             Facets;
 
 typedef std::vector<std::array<int, 3>>             Faces;
 typedef std::vector<std::array<float, 3>>           Verts;

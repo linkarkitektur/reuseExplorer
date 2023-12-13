@@ -4,10 +4,6 @@
 #include <assert.h>
 
 
-// #include <polyscope/polyscope.h>
-// #include <polyscope/point_cloud.h>
-// #include <polyscope/curve_network.h>
-
 
 // #define HASH_VAL(val) hasher(val) + 0x9e3779b9 + (hashValue << 6) + (hashValue >> 2)
 // #define ROUND_VAL(val)  (int)std::floor(val * 1000) 
@@ -76,8 +72,9 @@
 namespace linkml {
 
     struct SuperEdge : public std::vector<pm::face_handle> {
-        // const tg::pos3* s;
-        // const tg::pos3* t;
+        SuperEdge(tg::pos3 s, tg::pos3 t): s(s), t(t){}
+        const tg::pos3 s;
+        const tg::pos3 t;
     };
 
 
@@ -163,12 +160,7 @@ namespace linkml {
                 }
 
                 
-
-
-                SuperEdge fan;
-                // fan.s = s;
-                // fan.t = t;
-
+                auto fan = SuperEdge(*s, *t);
 
                 auto s_it = std::find(nodes.begin(), nodes.end(), *s);
                 int sid = s_it - nodes.begin();
@@ -185,11 +177,6 @@ namespace linkml {
                 fans.push_back(fan);
             }
         }
-
-
-        // auto cn = polyscope::registerCurveNetwork("Edges", nodes, edges );
-        // cn->addEdgeScalarQuantity("Length", lengt);
-
 
         return fans;
 

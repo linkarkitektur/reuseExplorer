@@ -58,18 +58,18 @@ auto surface_area(pm::minmax_t<tg::pos3> box){
 
 
 
+
+
 void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_planes& results){
 
 	polyscope::myinit();
 
     linkml::CellComplex cw;
 
-
     auto box = cloud.get_bbox();
 
 	polyscope::display(box);
 	polyscope::display(cloud);
-	polyscope::show();
 
 
 	// FIXME: Remove hardcoded bounding box
@@ -89,13 +89,15 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
     linkml::split_cellcomplex_with_planes(cw, results);
 
     // Group facets
-    // TODO: Simplify and rename
+    // TODO: Simplify and rename since this is not 
+	// colloring the facests but rather is assining them.
     // Make two class methods out of this.
-    const std::vector<int> default_id(results.planes.size()+1, 0);
-    cw.facets =  pm::face_attribute<std::vector<int>>(cw, default_id);
+    
     linkml::color_facets(cw, results);
+
+	// Color facets
     int i = 0;
-    auto cell_color_look_up = cw.facets.to_map([&](std::vector<int>){auto c = get_color_forom_angle(sample_circle(i)); i++; return c;});
+    auto cell_color_look_up = cw.facets.to_map([&](std::size_t){auto c = get_color_forom_angle(sample_circle(i)); i++; return c;});
     for (auto face : cw.faces()){
         cw.facet_colors[face] = cell_color_look_up[cw.facets[face]];
     }
@@ -125,11 +127,14 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
 	}
 	cloud2.buildIndex();
 	for (auto& pt : cw.pos){
-		auto r = cloud2.radiusSearch(pt, 0.005);
+		auto r = cloud2.radiusSearch(pt, 0.01);
 		if (r.size() >=1)
 			pt = cloud2.pts[r[0]];
 	}
 	
+
+	polyscope::display(cw);
+	polyscope::show();
 
     // Decimated
     linkml::decimate_cell_complex(cw);
@@ -152,6 +157,9 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
 	std::cout << "adjacency size: " << adjacency.size() << std::endl;
 
 
+	polyscope::display(adjacency);
+	polyscope::display(cw);
+	polyscope::show();
 
     ////////////////////////////////////
     // New Section [ set up program ] //
@@ -170,7 +178,7 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
 
 
     // Indecies of faces
-	auto facets_map = std::map<std::vector<int>, std::unordered_set<pm::face_handle>>();
+	auto facets_map = std::map<std::size_t, std::unordered_set<pm::face_handle>>();
 	for (auto f: cw.faces())
 		facets_map[cw.facets[f]].insert(f);
 

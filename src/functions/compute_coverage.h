@@ -10,7 +10,7 @@ namespace linkml {
 
         // Make a set vector of all facet ids.
         auto set = cw.faces().to_set([&](pm::face_handle h){return cw.facets[h]; });
-        std::vector<std::vector<int>> ids(set.begin(), set.end());
+        std::vector<std::size_t> ids(set.begin(), set.end());
 
 #pragma omp parallel
 #pragma omp for

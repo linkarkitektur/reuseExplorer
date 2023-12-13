@@ -8,7 +8,7 @@ namespace linkml {
 
         // Make a set vector of all facet ids.
         auto set = cw.faces().to_set([&](pm::face_handle h){return cw.facets[h]; });
-        std::vector<std::vector<int>> ids(set.begin(), set.end());
+        std::vector<std::size_t> ids(set.begin(), set.end());
 
 
         auto face_indecies = std::vector<std::vector<size_t>>(ids.size()); // Indecies of selected veticies
