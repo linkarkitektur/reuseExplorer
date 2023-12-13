@@ -25,9 +25,7 @@ namespace linkml{
 
         std::vector<int> radiusSearch(tg::pos3 &pt, float radius) const {
 
-            // Initialise the tree the first time it is being used if it is not already initilaised.
-            // Tree has to be initialised using buildIndex().");
-            if (tree_index == NULL) this->buildIndex();
+            assert(tree_index != NULL && "You need to call buildIndex() on the point cloud before you can the radius searches");
 
             //KDTree radius search
             std::vector<nanoflann::ResultItem<int, float>> ret_matches;

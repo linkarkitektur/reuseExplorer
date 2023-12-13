@@ -270,8 +270,6 @@ namespace linkml{
         std::vector<int> const  &processed,
         int initial_point_idx){
 
-        cloud.buildIndex();
-
         return fit_plane_(cloud, params, processed, initial_point_idx);
     }
 
@@ -282,7 +280,6 @@ namespace linkml{
         std::vector<int> const processed){
 
         int initial_point_idx = get_random_index_not_in_register(processed, cloud.pts.size() );
-        cloud.buildIndex();
 
         return fit_plane_(cloud, params, processed, initial_point_idx );
     }
@@ -295,8 +292,6 @@ namespace linkml{
 
         auto processed = std::vector<int>();
         int initial_point_idx = get_random_index_not_in_register(processed, cloud.pts.size() );
-        cloud.buildIndex();
-
 
         return fit_plane_(cloud, params, processed, initial_point_idx);
     }
@@ -308,7 +303,6 @@ namespace linkml{
         int const initial_point_idx){
 
         auto processed = std::vector<int>();
-        cloud.buildIndex();
 
         return fit_plane_(cloud, params, processed, initial_point_idx );
     }

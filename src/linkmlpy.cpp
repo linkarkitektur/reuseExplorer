@@ -98,6 +98,7 @@ PYBIND11_MODULE(linkml_py, m) {
             return ss.str();
             //std::format("Point cloud {}, {}",a.pts.size() ,a.norm.size());
         })
+        .def("buildIndex", &linkml::point_cloud::buildIndex)
         ;
     py::class_<tg::pos3>(m, "pos")
         .def(py::init<const float, const float, const float>())
