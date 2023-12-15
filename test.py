@@ -27,8 +27,8 @@ import test_data_loaders.VertexGroup as data
 
 
 # Rifinement Test
-params = linkml_py.Refinement_Parameters()
-params.distance_threshhold = 0.2
-res = linkml_py.refine_planes(data.cloud, data.plane_results, params)
+# params = linkml_py.Refinement_Parameters()
+# params.distance_threshhold = 0.2
+# res = linkml_py.refine_planes(data.cloud, data.plane_results, params)
 
-linkml_py.create_cell_complex(data.cloud, res)
+linkml_py.create_cell_complex(data.cloud, data.plane_results)

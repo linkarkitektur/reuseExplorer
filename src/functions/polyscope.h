@@ -5,6 +5,7 @@
 #include <typed-geometry/types/objects/aabb.hh>
 #include <typed-geometry/types/pos.hh>
 
+#include <functions/polyscope_helpers.h>
 #include <functions/constuct_adjacency.h>
 #include <functions/color.h>
 
@@ -29,8 +30,10 @@ namespace polyscope  {
         auto pcd = polyscope::registerPointCloud("Cloud", cloud.pts);
         pcd->setPointRadius(0.001);
 
-        // auto pcd_color =  pcd->addColorQuantity("RGB", cloud.colors);
-        // pcd_color->setEnabled(true)
+        if (cloud.colors.size() == cloud.pts.size()){
+            auto pcd_color =  pcd->addColorQuantity("RGB", cloud.colors);
+            pcd_color->setEnabled(true);
+        }
 
     }
     void display(linkml::CellComplex & cw){

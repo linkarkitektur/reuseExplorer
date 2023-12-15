@@ -92,6 +92,68 @@ PYBIND11_MODULE(linkml_py, m) {
 
             return linkml::point_cloud(pos_vec, norm_vec);
         })
+        .def("from_numpy", [](py::array_t<float> const & points, py::array_t<float> const & normals, py::array_t<float> const & colors ){
+
+            auto points_ = points.unchecked<2>();
+            auto normals_ = normals.unchecked<2>();
+            auto colors_ = colors.unchecked<2>();
+
+
+            if (points_.shape(1) != 3)
+                throw std::length_error("The point row size needs to be 3");
+            if (normals_.shape(1) != 3)
+                throw std::length_error("The normal row size needs to be 3");
+            if (points_.shape(0) != normals_.shape(0))
+                throw std::length_error("Points and Normals need to have the same length");
+            if (points_.shape(0) != colors_.shape(0))
+                throw std::length_error("Points and Colors need to have the same length");
+
+
+            py::buffer_info points_info = points.request();
+            tg::pos3 *points_ptr = static_cast<tg::pos3 *>(points_info.ptr);
+
+            py::buffer_info normals_info = normals.request();
+            tg::pos3 *normals_ptr = static_cast<tg::pos3 *>(normals_info.ptr);
+
+            py::buffer_info colors_info = normals.request();
+            tg::pos3 *colors_ptr = static_cast<tg::pos3 *>(colors_info.ptr);
+
+
+            auto pos_vec = std::vector<tg::pos3>();
+            auto norm_vec = std::vector<tg::vec3>();
+            auto color_vec = std::vector<tg::color3>();
+
+
+            pos_vec.reserve(points_.shape(0));
+            norm_vec.reserve(normals_.shape(0));
+            color_vec.reserve(normals_.shape(0));
+
+
+             for (long i = 0; i < points_.shape(0); i++)
+             {
+                 pos_vec.push_back(
+                     tg::pos3(
+                         *points_.data(i,0),
+                         *points_.data(i,1),
+                         *points_.data(i,2)
+                         ));
+                 norm_vec.push_back(
+                     tg::vec3(
+                         *normals_.data(i,0),
+                         *normals_.data(i,1),
+                         *normals_.data(i,2)
+                         ));
+                 color_vec.push_back(
+                     tg::color3(
+                         *colors_.data(i,0),
+                         *colors_.data(i,1),
+                         *colors_.data(i,2)
+                         ));
+
+             };
+
+            return linkml::point_cloud(pos_vec, norm_vec, color_vec);
+        })
         .def("__repr__", [](const linkml::point_cloud &a){
             std::stringstream ss;
             ss << "Point cloud (" << a.pts.size() << "," << a.norm.size() << ")";

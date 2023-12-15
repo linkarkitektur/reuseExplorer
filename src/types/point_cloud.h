@@ -63,6 +63,10 @@ namespace linkml{
         point_cloud(const std::vector<tg::pos3> & points, const std::vector<tg::vec3> & normals ): 
             pts(points), 
             norm(normals){};
+        point_cloud(const std::vector<tg::pos3> & points, const std::vector<tg::vec3> & normals, std::vector<tg::color3> const & colors): 
+            pts(points), 
+            norm(normals),
+            colors(colors){};
 
 
         tg::aabb3 get_bbox() const {

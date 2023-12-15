@@ -128,8 +128,9 @@ add_subdirectory(extern/pybind11)
 add_subdirectory(extern/polyscope)
 add_subdirectory(extern/glpk)
 add_subdirectory(extern/lpsolve)
-add_subdirectory(extern/scip)
+# add_subdirectory(extern/scip)
 add_subdirectory(extern/soplex)
+# add_subdirectory(extern/cgal)
 # add_subdirectory(extern/pcl)
 
 
@@ -142,6 +143,36 @@ add_subdirectory(extern/soplex)
 #add_subdirectory(extern/glow-extras)
 
 find_package( OpenCV REQUIRED )
+
+# CGAL and its components
+find_package(CGAL REQUIRED)
+
+# Boost and its components
+find_package(Boost REQUIRED)
+if(NOT Boost_FOUND)
+
+  message(
+    STATUS
+      "NOTICE: This project requires the Boost library, and will not be compiled."
+  )
+
+  return()
+
+endif()
+find_package(Eigen3 3.1.0) #(requires 3.1.0 or greater)
+include(CGAL_Eigen3_support)
+if(NOT TARGET CGAL::Eigen3_support)
+  message(
+    STATUS
+      "NOTICE: This project requires Eigen 3.1 (or greater) and will not be compiled."
+  )
+  return()
+endif()
+
+find_package(SCIP REQUIRED)
+include(CGAL_SCIP_support)
+
+
 
 # ===============================================
 # configure executable
@@ -182,8 +213,11 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     polyscope
     glpk
     lpsolve
-    scip
+    # scip
     soplex
+    CGAL::Eigen3_support
+    CGAL::SCIP_support
+    # CGAL::GLPK_support
     # pcl
 #    glfw
 #    glow
@@ -214,7 +248,7 @@ foreach(TARGET_NAME
     polyscope
     glpk
     lpsolve
-    scip
+    # scip
     soplex
 #    glfw
 #    glow
