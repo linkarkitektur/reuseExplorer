@@ -53,6 +53,7 @@
 #include <CGAL/property_map.h>
 #include <CGAL/Surface_mesh.h>
 #include <CGAL/Polygonal_surface_reconstruction.h>
+#include <types/Polyhonal_surface_reconstruction_custom.h>
 
 // #ifdef CGAL_USE_SCIP  // defined (or not) by CMake scripts, do not define by hand
 #include <CGAL/SCIP_mixed_integer_program_traits.h>
@@ -70,6 +71,8 @@ typedef CGAL::Exact_predicates_inexact_constructions_kernel					Kernel;
 typedef Kernel::Point_3														Point;
 typedef Kernel::Vector_3													Vector;
 typedef        CGAL::Polygonal_surface_reconstruction<Kernel>				Polygonal_surface_reconstruction;
+typedef        CGAL::Polygonal_surface_reconstruction_custom<Kernel>		Polygonal_surface_reconstruction_custom;
+
 typedef CGAL::Surface_mesh<Point>											Surface_mesh;
 
 // Point with normal, and plane index
@@ -141,6 +144,7 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
 
 
 	// Load point, normal and plan idx in to points
+	// apparently -1 is a vailied value if a point does not belong to any plane.
 	Point_vector points{};
 	for (int i = 0; i< results.indecies.size(); i++){
 		for (int j = 0; j<results.indecies[i].size(); j++){
@@ -205,7 +209,7 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
 	std::cout << "Generating candidate faces...";
 	// t.reset();
 	t.start();
-	Polygonal_surface_reconstruction algo(
+	Polygonal_surface_reconstruction_custom algo(
 		points,
 		Point_map(),
 		Normal_map(),
@@ -261,13 +265,13 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
 
 
 
-	// Saves the mesh model
-	const std::string& output_file("user_provided_planes_result.off");
-	if (CGAL::IO::write_OFF(output_file, model))
-		std::cout << " Done. Saved to " << output_file << ". Time: " << t.time() << " sec." << std::endl;
-	else {
-		std::cerr << " Failed saving file." << std::endl;
-	}
+	// // Saves the mesh model
+	// const std::string& output_file("user_provided_planes_result.off");
+	// if (CGAL::IO::write_OFF(output_file, model))
+	// 	std::cout << " Done. Saved to " << output_file << ". Time: " << t.time() << " sec." << std::endl;
+	// else {
+	// 	std::cerr << " Failed saving file." << std::endl;
+	// }
 	
 
 }
