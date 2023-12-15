@@ -7,10 +7,11 @@
 
 #include <CGAL/bounding_box.h>
 #include <CGAL/property_map.h>
+#include <CGAL/Polygonal_surface_reconstruction/internal/hypothesis.h>
 #include <CGAL/Polygonal_surface_reconstruction/internal/compute_confidences.h>
 #include <CGAL/Polygonal_surface_reconstruction/internal/point_set_with_planes.h>
 
-#include <types/hypothesis.h>
+#include <types/compute_visibility.h>
 
 #include <unordered_map>
 
@@ -129,7 +130,7 @@ namespace CGAL {
 
                 // Data members.
         private:
-                internal_custom::Hypothesis<GeomTraits> hypothesis_;
+                internal::Hypothesis<GeomTraits> hypothesis_;
 
                 // The generated candidate faces stored as a polygon mesh
                 Polygon_mesh        candidate_faces_;
@@ -180,7 +181,13 @@ namespace CGAL {
 
                 hypothesis_.generate(point_set, candidate_faces_);
 
-                typedef internal::Candidate_confidences<GeomTraits>                Candidate_confidences;
+
+                typedef internal::Candidate_visibility<GeomTraits>              Candidate_visibility;
+                Candidate_visibility vis;
+                vis.compute(point_set, candidate_faces_);
+
+                
+                typedef internal::Candidate_confidences<GeomTraits>             Candidate_confidences;
                 Candidate_confidences conf;
                 conf.compute(point_set, candidate_faces_);
         }
@@ -212,7 +219,7 @@ namespace CGAL {
                         return false;
                 }
 
-                typedef typename internal_custom::Hypothesis<GeomTraits>::Adjacency Adjacency;
+                typedef typename internal::Hypothesis<GeomTraits>::Adjacency Adjacency;
                 const Adjacency& adjacency = hypothesis_.extract_adjacency(candidate_faces_);
 
                 // Internal data structure
@@ -264,7 +271,7 @@ namespace CGAL {
                 std::size_t num_faces = target_mesh.number_of_faces();
                 std::size_t num_edges(0);
 
-                typedef typename internal_custom::Hypothesis<GeomTraits>::Intersection        Intersection;
+                typedef typename internal::Hypothesis<GeomTraits>::Intersection        Intersection;
 
                 std::unordered_map<const Intersection*, std::size_t> edge_usage_status;        // keep or remove an intersecting edges
                 for (std::size_t i = 0; i < adjacency.size(); ++i) {
