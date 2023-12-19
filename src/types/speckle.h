@@ -1,5 +1,10 @@
 #pragma once
 #include <string>
+#include <pybind11/embed.h>
+
+#include <types/point_cloud.h>
+
+namespace py = pybind11;
 
 namespace linkml
 {
@@ -12,6 +17,9 @@ namespace linkml
         ~speckle();
 
         std::string get_status(){ return status;}
+
+        py::object ToSpeckle(linkml::point_cloud const & cloud);
+
     };
     
     
