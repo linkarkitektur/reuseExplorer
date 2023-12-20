@@ -55,13 +55,16 @@
 #include <CGAL/Polygonal_surface_reconstruction.h>
 #include <types/Polyhonal_surface_reconstruction_custom.h>
 
-// #ifdef CGAL_USE_SCIP  // defined (or not) by CMake scripts, do not define by hand
+#ifdef CGAL_USE_GUROBI  // defined (or not) by CMake scripts, do not define by hand/
+#include <types/GUROBI_mixed_integer_program_traits.h>
+typedef CGAL::GUROBI_mixed_integer_program_traits<double>					MIP_Solver;
+#else
 #include <CGAL/SCIP_mixed_integer_program_traits.h>
 typedef CGAL::SCIP_mixed_integer_program_traits<double>						MIP_Solver;
 // #elif defined(CGAL_USE_GLPK)  // defined (or not) by CMake scripts, do not define by hand
 // #include <CGAL/GLPK_mixed_integer_program_traits.h>
 // typedef CGAL::GLPK_mixed_integer_program_traits<double>                        MIP_Solver;
-// #endif
+#endif
 
 // #if defined(CGAL_USE_GLPK) || defined(CGAL_USE_SCIP)
 
@@ -139,8 +142,7 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
 	// 	ball.pts.push_back(tg::pos3(p.x(), p.y(),p.z()));
 	// 	ball.colors.push_back(get_color_forom_angle(sample_circle(i)));
 	// }
-
-
+	
 
 
 	// Load point, normal and plan idx in to points

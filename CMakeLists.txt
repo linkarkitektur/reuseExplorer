@@ -12,6 +12,14 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
+option(CXX "enable C++ compilation" ON)
+
+if(CXX)
+  enable_language(CXX)
+endif()
+
+list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
+
 # ===============================================
 # options
 
@@ -173,6 +181,14 @@ find_package(SCIP REQUIRED)
 include(CGAL_SCIP_support)
 
 
+find_package(GUROBI REQUIRED)
+if (GUROBI_FOUND)
+    message("Using Gurobi Solver")
+    add_compile_definitions(CGAL_USE_GUROBI=1)
+    include_directories(${GUROBI_INCLUDE_DIRS})
+    message("GUROBI_CXX_DEBUG_LIBRARY ${GUROBI_CXX_DEBUG_LIBRARY}")
+endif()
+
 
 # ===============================================
 # configure executable
@@ -200,7 +216,10 @@ include_directories( ${OpenCV_INCLUDE_DIRS} )
 
 add_library(${LIB_PROJECT_NAME} STATIC ${LIB_SOURCES} ${LIB_HEADERS})
 set_target_properties(${LIB_PROJECT_NAME} PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
-target_link_libraries(${LIB_PROJECT_NAME} PRIVATE pybind11::embed)
+target_link_libraries(${LIB_PROJECT_NAME} 
+    PRIVATE pybind11::embed 
+    optimized ${GUROBI_CXX_LIBRARY}
+    debug ${GUROBI_CXX_DEBUG_LIBRARY})
 target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     clean-core
     typed-geometry
@@ -217,6 +236,7 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     soplex
     CGAL::Eigen3_support
     CGAL::SCIP_support
+    ${GUROBI_LIBRARY}
     # CGAL::GLPK_support
     # pcl
 #    glfw
@@ -228,7 +248,6 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
 
     ${COMMON_LINKER_FLAGS}
 )
-
 
 
 target_include_directories(${LIB_PROJECT_NAME} PUBLIC "src")
@@ -264,4 +283,3 @@ endforeach()
 # pyind11
 pybind11_add_module("${PYBIND_PROJECT_NAME}" src/linkmlpy.cpp)
 target_link_libraries("${PYBIND_PROJECT_NAME}" PRIVATE ${LIB_PROJECT_NAME})
-
