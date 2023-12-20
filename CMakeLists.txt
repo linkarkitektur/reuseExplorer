@@ -7,6 +7,10 @@ set(PYBIND_PROJECT_NAME "${PROJECT_NAME}_py")
 # ===============================================
 # global settings
 
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE "Release")
+endif()
+message("CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
