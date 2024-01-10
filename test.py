@@ -17,9 +17,10 @@ except Exception as e:
     exit()
 
 # Load data
-import test_data_loaders.VertexGroup as data
+# import test_data_loaders.VertexGroup as data
 # import test_data_loaders.LoadPolyFitRefinedPlanes as data2
 # import test_data_loaders.Amtssygehus as data
+import test_data_loaders.Office as data
 
 
 # print(data.cloud)

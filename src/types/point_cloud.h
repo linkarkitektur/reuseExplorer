@@ -23,7 +23,7 @@ namespace linkml{
         std::vector<tg::color3> colors = std::vector<tg::color3>();
 
 
-        std::vector<int> radiusSearch(tg::pos3 &pt, float radius) const {
+        std::vector<int> radiusSearch(const tg::pos3  &pt, const float radius) const {
 
             assert(tree_index != NULL && "You need to call buildIndex() on the point cloud before you can the radius searches");
 
@@ -44,7 +44,7 @@ namespace linkml{
 
 
         };
-        std::vector<int> radiusSearch(int index, float radius) const {
+        std::vector<int> radiusSearch(const int index,     const float radius) const {
 
             //KDTree radius search
             std::vector<nanoflann::ResultItem<int, float>> ret_matches;

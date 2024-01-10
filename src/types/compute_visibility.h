@@ -283,6 +283,11 @@ void Candidate_visibility<Kernel>::compute(const Point_set& point_set, Polygon_m
 
         std::cout << "\nHere we are supposed to do computation to find a matrix of faces that can view eachother" << std::endl;
 
+        // print out the value for the Concurrency_tag to see if it is correct
+        // compare two types Concurrency_tag == CGAL::Parallel_tag
+        std::cout << "Concurrency_tag: " << typeid(Concurrency_tag).name() << std::endl;
+        
+
 
         // Static list of Face_descriptors used to optimized loop with OpenMP
         std::vector<Face_descriptor> const faces_descriptors = std::vector<Face_descriptor>(mesh.faces().begin(), mesh.faces().end());
@@ -333,9 +338,9 @@ void Candidate_visibility<Kernel>::compute(const Point_set& point_set, Polygon_m
         
         std::cout << "GPU" << std::endl;
         // Ray caster
-        // #pragma omp target map(to: centers, normals, planes, polygons) map(tofrom: distance, hit) //device(/*your device id here*/)
+        #pragma omp target map(to: centers, normals, planes, polygons) map(tofrom: distance, hit) //device(/*your device id here*/)
         {
-                // #pragma omp parallel for collapse(3) // private(i) private(j) 
+                #pragma omp parallel for collapse(3) // private(i) private(j) 
                 for (int i = 0; i < n_faces; i++){
 
                         for (int j = 0; j < n_faces; j++){
@@ -384,8 +389,6 @@ void Candidate_visibility<Kernel>::compute(const Point_set& point_set, Polygon_m
                 std::cout << std::endl;
                 std::cout << std::endl;
         }
-
-        std::abort();
 
 
 }

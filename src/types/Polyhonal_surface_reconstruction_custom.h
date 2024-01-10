@@ -182,9 +182,9 @@ namespace CGAL {
                 hypothesis_.generate(point_set, candidate_faces_);
 
 
-                typedef internal::Candidate_visibility<GeomTraits>              Candidate_visibility;
-                Candidate_visibility vis;
-                vis.compute(point_set, candidate_faces_);
+                // typedef internal::Candidate_visibility<GeomTraits>              Candidate_visibility;
+                // Candidate_visibility vis;
+                // vis.compute(point_set, candidate_faces_);
 
                 
                 typedef internal::Candidate_confidences<GeomTraits>             Candidate_confidences;

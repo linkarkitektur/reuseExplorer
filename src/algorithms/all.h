@@ -4,3 +4,4 @@
 #include <algorithms/fit_plane.h>
 #include <algorithms/fit_planes.h>
 #include <algorithms/refine.h>
+#include <algorithms/clustering.h>

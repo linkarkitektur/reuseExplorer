@@ -3,13 +3,10 @@
 #include <typed-geometry/tg.hh>
 
 namespace linkml {
-    static linkml::Plane fit_plane_thorugh_points(const linkml::point_cloud &cloud, const std::vector<int> &indecies){
 
-        std::vector<tg::pos3> points = std::vector<tg::pos3>();
+    static linkml::Plane fit_plane_thorugh_points(std::vector<tg::pos3> const& points){
+
         std::vector<tg::pos3> centered = std::vector<tg::pos3>();
-
-        for (size_t i = 0; i < indecies.size(); i++ )
-            points.push_back(cloud.pts.at(indecies[i]));
 
         tg::pos3 com = tg::mean(points);
         for (size_t i = 0; i < points.size(); i++)
@@ -24,5 +21,14 @@ namespace linkml {
 
         return linkml::Plane(normal.x,normal.y,normal.z,distance, com.x, com.y, com.z);
 
+    }
+
+    static linkml::Plane fit_plane_thorugh_points(linkml::point_cloud const& cloud, std::vector<int> const& indecies){
+
+        std::vector<tg::pos3> points = std::vector<tg::pos3>();
+        for (size_t i = 0; i < indecies.size(); i++ )
+            points.push_back(cloud.pts.at(indecies[i]));
+
+        return fit_plane_thorugh_points(points);
     }
 }

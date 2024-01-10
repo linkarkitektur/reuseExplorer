@@ -181,6 +181,9 @@ if(NOT TARGET CGAL::Eigen3_support)
   return()
 endif()
 
+find_package( TBB REQUIRED )
+include(CGAL_TBB_support)
+
 find_package(SCIP REQUIRED)
 include(CGAL_SCIP_support)
 
@@ -240,6 +243,7 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     soplex
     CGAL::Eigen3_support
     CGAL::SCIP_support
+    CGAL::TBB_support
     ${GUROBI_LIBRARY}
     # CGAL::GLPK_support
     # pcl

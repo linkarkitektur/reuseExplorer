@@ -1,14 +1,16 @@
 #pragma once
+#include <omp.h>
 
-// #include <types/CellComplex.h>
-// #include <types/result_fit_planes.h>
-// #include <functions/progress_bar.h>
+#include <types/point_cloud.h>
+#include <types/CellComplex.h>
+#include <types/result_fit_planes.h>
+#include <functions/progress_bar.h>
 
-// #include <typed-geometry/tg.hh>
-// #include <typed-geometry/detail/optional.hh>
+#include <typed-geometry/tg.hh>
+#include <typed-geometry/detail/optional.hh>
 
-// #include <polymesh/pm.hh>
-// #include <polymesh/algorithms/edge_split.hh>
+#include <polymesh/pm.hh>
+#include <polymesh/algorithms/edge_split.hh>
 
 template <typename T>
 std::size_t hashVector(const std::vector<T>& vec) {
@@ -54,4 +56,49 @@ namespace linkml{
             cw.facets[h] = hashVector(facets_vec[h]); 
         }
     }
+
+    /**
+     * @brief A map that associates a size_t key with a vector of integers.
+     * 
+     * This map is used to store cell complex information, where each key represents a cell ID
+     * and the associated vector contains the indices of points belonging to that cell.
+     */
+    std::map<size_t, std::vector<int>> make_cw(point_cloud const& cloud, result_fit_planes const& results ) {
+
+        auto cell_map = std::map<size_t, std::vector<int>>();
+        const std::vector<int> default_id(results.planes.size()+1, 0);
+        auto bar_create_cw = util::progress_bar(cloud.pts.size(), "Create Cell Complex");
+
+        #pragma omp parallel for
+        for (int i = 0; i < cloud.pts.size(); i++){
+            auto point = cloud.pts[i];
+
+            auto point_location_map = std::vector<int>(default_id);
+
+
+            for (int j = 0; j < results.planes.size(); j++){
+
+                auto point_indecies = results.indecies[j];
+                if (std::find(point_indecies.begin(), point_indecies.end(), i) != point_indecies.end()) {
+                    point_location_map[results.planes.size()] = j;
+                    continue;
+                }
+
+                auto plane = results.planes[j];
+                auto distance = tg::signed_distance(point, plane);
+
+                point_location_map[j] = (distance > 0)? 1 :0;
+
+            }
+
+            auto id = hashVector(point_location_map);
+            cell_map[id].push_back(i);
+            bar_create_cw.update();
+        }
+
+
+        return cell_map;
+
+    }
+
 }

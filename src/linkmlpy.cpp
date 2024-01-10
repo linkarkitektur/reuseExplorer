@@ -161,6 +161,8 @@ PYBIND11_MODULE(linkml_py, m) {
             //std::format("Point cloud {}, {}",a.pts.size() ,a.norm.size());
         })
         .def("buildIndex", &linkml::point_cloud::buildIndex)
+        .def("radiusSearch", py::overload_cast<const int, const float>(&linkml::point_cloud::radiusSearch, py::const_), "Radius search")
+        .def("radiusSearch", py::overload_cast<const tg::pos3  &, const float>(&linkml::point_cloud::radiusSearch, py::const_), "Radius search")
         ;
     py::class_<tg::pos3>(m, "pos")
         .def(py::init<const float, const float, const float>())
@@ -315,7 +317,7 @@ PYBIND11_MODULE(linkml_py, m) {
             static_cast<
               linkml::result_fit_plane(*)(
                   linkml::point_cloud const  &,
-                  linkml::plane_fitting_parameters const &)>(&linkml::fit_plane),
+                  linkml::plane_fitting_parameters const &)> (&linkml::fit_plane),
           "point_cloud"_a,
           "params"_a);
 
@@ -333,8 +335,27 @@ PYBIND11_MODULE(linkml_py, m) {
         );
 
     m.def("create_cell_complex", &linkml::create_cell_complex, "point_cloud"_a, "plane_fit_results"_a );
-    m.def("refine_planes", &linkml::refine, "cloud_a", "fit_plane_results_a", "params_a");
-    m.def("fit_plane_thorugh_points", &linkml::fit_plane_thorugh_points, "cloud"_a, "indecies"_a);
+    m.def("refine_planes", &linkml::refine, "cloud_a"_a, "fit_plane_results_a"_a, "params_a"_a);
+    m.def("fit_plane_thorugh_points", 
+        static_cast<
+            linkml::Plane(*)(
+                linkml::point_cloud const&, 
+                std::vector<int> const&)> (&linkml::fit_plane_thorugh_points),
+        "cloud"_a, 
+        "indecies"_a);
+    m.def("fit_plane_thorugh_points", 
+        static_cast<
+            linkml::Plane(*)(
+                std::vector<tg::pos3> const&)> (&linkml::fit_plane_thorugh_points),
+        "points"_a);
+
+    // Alternative
+    // m.def("fit_plane_thorugh_points", [](const linkml::point_cloud& cloud, const std::vector<int>& indices) {
+    //     return linkml::fit_plane_thorugh_points(cloud, indices);
+    // }, "cloud"_a, "indices"_a);
+    // m.def("fit_plane_thorugh_points", [](const std::vector<tg::pos3>& points) {
+    //     return linkml::fit_plane_thorugh_points(points);
+    // }, "points"_a);
 
 
 //    m.def("fit_planes", &linkml::fit_planes,
