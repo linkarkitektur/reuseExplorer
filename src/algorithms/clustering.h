@@ -13,6 +13,7 @@
 #include <typed-geometry/types/objects/ray.hh>
 #include <typed-geometry/types/comp.hh>
 
+#include <embree3/rtcore.h>
 
 
 namespace py = pybind11;
@@ -20,6 +21,7 @@ namespace py = pybind11;
 
 namespace linkml{
 
+    // https://www.youtube.com/watch?v=FDyenWWlPdU
     tg::vec3 static toCartesian(tg::comp3 spherical){
 
             auto rho = spherical.comp0;
@@ -76,75 +78,104 @@ namespace linkml{
             // x => rho, y => theta, z => phi
             return tg::comp3(rho, theta, phi);
     }
-    std::function<tg::ray3(int, tg::pos3, tg::vec3)> get_ray_caster(int max) {
+    std::vector<tg::ray3> filter_vectors(std::vector<tg::dir3> vectors, tg::pos3 pt, tg::dir3 dir) {
 
-            float a = 1.0f;         // Constant term in radial distance
-            float b = 0.1f;         // Linear increase term in radial distance
-            // float theta0 = 0.5f;    // Constant polar angle
-            // float phi0 = 0.0f;      // Constant azimuthal angle
 
-            auto spiral_rho = std::vector<float>();
+        auto sub_list = std::vector<tg::ray3>();
 
-            for (int t = 0; t < max; ++t)
-                    spiral_rho.push_back(float(a+b*t));
+        for (int i = 0; i < vectors.size() ; i++){
+            auto v = vectors[i];
+            if (tg::dot(v, dir) < 0) continue;
+            sub_list.push_back(tg::ray3(pt, v));
+        }
 
-            auto func = [&](int idx, tg::pos3 pt, tg::vec3 dir){ 
+        return sub_list;
 
-                    auto spherical = toSpherical(dir);
-                    spherical.comp0 = spiral_rho[idx];
-                    auto cartesian = toCartesian(spherical);
+    }
+    std::vector<tg::dir3> get_sphere_vectors(int n_slices = 10, int n_stacks = 10 ) {
 
-                    auto ray = tg::ray3(pt, tg::normalize(cartesian) );
+        // Create sphere with all possible vectors
+        auto vectors = std::vector<tg::dir3>();
 
-                    return ray;
-            
-            };
+        // add north vetcor
+        vectors.push_back(tg::dir3(0, 1, 0));
 
-            return func;
+        // generate vertices per stack / slice
+        for (int i = 0; i < n_stacks - 1; i++)
+        {
+            auto phi = M_PI * double(i + 1) / double(n_stacks);
+            for (int j = 0; j < n_slices; j++)
+            {
+            auto theta = 2.0 * M_PI * double(j) / double(n_slices);
+            auto x = std::sin(phi) * std::cos(theta);
+            auto y = std::cos(phi);
+            auto z = std::sin(phi) * std::sin(theta);
+            vectors.push_back(tg::dir3(x, y, z));
+            }
+        }
+
+        // add south vetcor
+        vectors.push_back(tg::dir3(0, -1, 0));
+
+        return vectors;
 
     }
 
 
 
-
-    pybind11::module_ clustering(linkml::point_cloud const& cloud, result_fit_planes const& results ) {
+    pybind11::list clustering(linkml::point_cloud const& cloud, result_fit_planes const& results ) {
 
         if ( Py_IsInitialized() == 0 ) {
             py::scoped_interpreter guard{};
         }
 
-        // created cell complex by evaluating each point for wich side it lies on for each plane
-
-        // for each cell create an alligned bounding box
-
-        // create a sparce matrix from python
         auto sparse = py::module_::import("scipy.sparse");
         auto np = py::module_::import("numpy");
 
 
 
-        auto cell_map = make_cw(cloud, results);
-        auto cell_map_id = std::map<int, size_t>();
+        // TEST SPARSE MATRIX
+        py::kwargs kwargs;
+        kwargs["shape"] = py::make_tuple(10000, 10000);
+        kwargs["dtype"] = np.attr("int8");
+        py::function lil_matrix = sparse.attr("lil_matrix");
+        pybind11::object matrix = lil_matrix(kwargs);
 
-        int i = 0;
+        auto selector = py::make_tuple(0, 0);
+        matrix[selector] = matrix[selector].cast<int>() + 1;
+
+        selector = py::make_tuple(10, 10);
+        matrix[selector] = matrix[selector].cast<int>() + 1;
+        // END TEST SPARSE MATRIX
+
+
+        // created cell complex by evaluating each point for wich side it lies on for each plane
+        auto cell_map = make_cw(cloud, results);
+        auto cell_map_int_to_id = std::map<int, size_t>();
+        auto cell_map_id_to_int = std::map<int, size_t>();
+
+
+        int counter = 0;
         for (auto const& [id, _ ]: cell_map){
-            cell_map_id[i] = id;
-            i++;
+            cell_map_int_to_id[counter] = id;
+            cell_map_id_to_int[id] = counter;
+            counter++;
         }
 
         auto cell_map_plane = std::map<size_t, linkml::Plane>();
-        auto cell_map_polyline = std::map<size_t, tg::pgon2>();
+        auto cell_map_boundary_point_indecies = std::map<size_t, std::vector<size_t>>();
 
+        #pragma omp parallel for shared(cell_map_plane, cell_map_boundary_point_indecies, cloud, cell_map)
+        for (size_t i = 0; i< cell_map.size(); i++){
 
-        #pragma omp parallel for
-        for (int i = 0; i< cell_map.size(); i++){
-
-            auto id = cell_map_id[i];
+            auto id = cell_map_int_to_id[i];
 
             auto points = std::vector<tg::pos3>();
             std::transform(cell_map[id].begin(), cell_map[id].end(), std::back_insert_iterator(points), [&](int j){
                 return cloud.pts[j];
             });
+
+            if (points.size() < 3) continue;
 
             // get the plane that the cell is on
             auto plane = fit_plane_thorugh_points(points);
@@ -165,70 +196,130 @@ namespace linkml{
             // project point in to 2d space
             auto points2d = plane.to2d(points);
             auto indecies = alpha_shape(points2d);
-
-            // create a polyline from the indecies
-            std::vector<tg::pos2> polyline;
-            std::transform(indecies.begin(), indecies.end(), std::back_insert_iterator(polyline), [&](int j){
-                return points2d[j];
-            });
-            cell_map_polyline[id] = tg::pgon2(polyline);
+            cell_map_boundary_point_indecies[id] = indecies;
 
         }
 
 
+ 
+        // create a sparce matrix from python
         auto n_cells = cell_map.size();
-        pybind11::object matrix = sparse.attr("lil_matrix")((n_cells,n_cells), np.attr("int8"));
-
-        auto n_rays = 5;
-        auto ray_caster = get_ray_caster(n_rays);
-
-        #pragma omp parallel for collapse(2)
-        for (int i = 0; i < cell_map.size(); i++){
-            auto s_id = cell_map_id[i]; // soruce id
-            auto s_plane = cell_map_plane[s_id];
-
-            for ( int j =0; j< n_rays; j++){
-
-                auto plane = cell_map_plane[s_id];
-  
-                tg::ray3 ray = ray_caster(j, plane.origin, plane.normal);
-
-                float closest_intersection_dist = std::numeric_limits<float>::max();
-                size_t closest_intersection_index = -1;
+        // py::kwargs kwargs;
+        // kwargs["dtype"] = np.attr("int8");
+        // py::tuple shape = py::make_tuple(n_cells, n_cells);
+        // pybind11::object matrix = sparse.attr("lil_matrix")(shape, kwargs);
 
 
-                #pragma omp parallel for reduction(min:closest_intersection_dist) reduction(min:closest_intersection_index)
-                for (int k = 0; k < cell_map.size(); k++){
-                    if (i == j) continue;
+        // Create Embree context and Scene
+        RTCDevice device = rtcNewDevice(NULL);
+        RTCScene scene   = rtcNewScene(device);
 
-                    auto t_id = cell_map_id[k]; // target id
+        auto genomID_map = std::map<unsigned int, size_t>();
 
-                    auto t_plane = cell_map_plane[t_id];
-                    auto param = tg::intersection_parameter(ray, t_plane);
-                    auto hit_pt = ray.origin + ray.dir * param[0];
-                    float dist = tg::distance(s_plane.origin, hit_pt);
+        for (int i = 0; i < cell_map_int_to_id.size(); i++){
 
-                    // check if hit point is inside the polygon
-                    auto pgon = cell_map_polyline[t_id];
-                    auto point2d = t_plane.to2d(hit_pt);
-                    if (!tg::contains(pgon, point2d)) continue;
-                    
-                    if (dist < closest_intersection_dist){
-                        closest_intersection_dist = dist;
-                        closest_intersection_index = k;
-                    }
-                }
+            auto id = cell_map_int_to_id[i];
+            auto indecies = cell_map_boundary_point_indecies[id];
+
+            if (indecies.size() < 3) continue;
+            auto n_trinages = indecies.size() - 2;
 
 
-                if (closest_intersection_index == -1) continue;
+            RTCGeometry geom = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_TRIANGLE);
 
-                // Increment the matrix
-                auto selector = py::make_tuple(i, closest_intersection_index);
-                auto value = matrix.attr("__getitem__")(selector);
-                matrix.attr("__setitem__")(selector,  value.cast<int>() + 1);
+            float* vb = (float*) rtcSetNewGeometryBuffer(geom,
+                RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, 3*sizeof(float), indecies.size());
+            unsigned* ib = (unsigned*) rtcSetNewGeometryBuffer(geom,
+                RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, 3*sizeof(unsigned), n_trinages);
+
+
+            // Add the points to the vertex buffer
+            for (int j = 0; j < indecies.size(); j++){
+                auto point = cloud.pts[indecies[j]];
+                vb[3*j+0] = point.x;
+                vb[3*j+1] = point.y;
+                vb[3*j+2] = point.z;
+            }
+
+            // Add the faces to the face buffer
+            for (int j = 0; j < n_trinages; j++){
+                ib[3*j+0] = 0;
+                ib[3*j+1] = j+1;
+                ib[3*j+2] = j+2;
+            }
+
+            rtcCommitGeometry(geom);
+            auto genomID = rtcAttachGeometry(scene, geom);
+            rtcReleaseGeometry(geom);
+
+            // Save the mapping between the genomID and the cell id
+            genomID_map[genomID] = id;
+        }
+
+        // Commit the scene
+        rtcCommitScene(scene);
+
+        // Create all rays
+
+        auto all_vectors = get_sphere_vectors();
+
+        auto all_rays = std::vector<std::tuple<size_t, RTCRayHit>>(); 
+
+
+        for (int i = 0; i < cell_map_int_to_id.size(); i++){
+            auto id = cell_map_int_to_id[i];
+            auto plane = cell_map_plane[id];
+
+            auto rays = filter_vectors(all_vectors, plane.origin, plane.normal);
+
+            for (auto ray : rays){
+                RTCRayHit rayhit; 
+                rayhit.ray.org_x = ray.origin.x; 
+                rayhit.ray.org_y = ray.origin.y;
+                rayhit.ray.org_z = ray.origin.z;
+
+                rayhit.ray.dir_x = ray.dir.x;
+                rayhit.ray.dir_y = ray.dir.y;
+                rayhit.ray.dir_z = ray.dir.z;
+
+                rayhit.ray.tnear  = 0.f;
+                rayhit.ray.tfar   = std::numeric_limits<float>::infinity();
+                rayhit.hit.geomID = RTC_INVALID_GEOMETRY_ID;
+
+
+                all_rays.push_back(std::make_tuple(id, rayhit));
             }
         }
 
+        RTCIntersectContext context;
+        rtcInitIntersectContext(&context);
+
+
+        // Intersect all rays
+        // rtcIntersect1M(scene, &context, &all_rays[0], all_rays.size(), sizeof(std::tuple<sitz_t, RTCRayHit>) );
+        for (auto [id, rayhit] : all_rays){
+            rtcIntersect1(scene, &context, &rayhit);
+            if (rayhit.hit.geomID != RTC_INVALID_GEOMETRY_ID) {
+
+                auto source_id = id;
+                auto target_id = genomID_map[rayhit.hit.geomID];
+
+
+                auto source_int = cell_map_id_to_int[source_id];
+                auto target_int = cell_map_id_to_int[target_id];
+
+                // Increment the matrix
+                auto selector = py::make_tuple(source_int, target_int);
+                matrix.operator[](selector) = matrix.operator[](selector).cast<int>() + 1;
+                // auto value = matrix.attr("__getitem__")(selector);
+                // matrix.attr("__setitem__")(selector,  value.cast<int>() + 1);
+
+            }
+        }
+
+        // Release the scene and device
+        rtcReleaseScene(scene);
+        rtcReleaseDevice(device);
 
         pybind11::object mc = py::module_::import("markov_clustering");
         pybind11::object result = mc.attr("run_mcl")(matrix);           // run MCL with default parameters

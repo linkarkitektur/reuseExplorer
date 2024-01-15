@@ -17,10 +17,10 @@ except Exception as e:
     exit()
 
 # Load data
-# import test_data_loaders.VertexGroup as data
+import test_data_loaders.VertexGroup as data
 # import test_data_loaders.LoadPolyFitRefinedPlanes as data2
 # import test_data_loaders.Amtssygehus as data
-import test_data_loaders.Office as data
+# import test_data_loaders.Office as data
 
 
 # print(data.cloud)
@@ -32,4 +32,5 @@ import test_data_loaders.Office as data
 # params.distance_threshhold = 0.2
 # res = linkml_py.refine_planes(data.cloud, data.plane_results, params)
 
-linkml_py.create_cell_complex(data.cloud, data.plane_results)
+linkml_py.clustering(data.cloud, data.plane_results)
+# linkml_py.create_cell_complex(data.cloud, data.plane_results)

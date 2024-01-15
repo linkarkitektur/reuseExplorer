@@ -29,7 +29,7 @@ typedef tg::pos3 PosTest;
 
 PYBIND11_MODULE(linkml_py, m) {
 
-           // Headder
+    // Headder
     m.doc() = R"pbdoc(
         LINK Python Plugin
         -----------------------
@@ -348,6 +348,7 @@ PYBIND11_MODULE(linkml_py, m) {
             linkml::Plane(*)(
                 std::vector<tg::pos3> const&)> (&linkml::fit_plane_thorugh_points),
         "points"_a);
+    m.def("clustering", &linkml::clustering, "point_cloud"_a, "fit_plane_results"_a);
 
     // Alternative
     // m.def("fit_plane_thorugh_points", [](const linkml::point_cloud& cloud, const std::vector<int>& indices) {

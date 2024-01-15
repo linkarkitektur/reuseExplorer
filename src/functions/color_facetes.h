@@ -48,7 +48,7 @@ namespace linkml{
                 // if (tg::abs(distance)< EPSILON) continue;
                 facets_vec[face][i] = (distance > 0)? 1 :0;
             }
-            bar_color_facets.update();
+            bar_color_facets.update(i);
         }
 
 
@@ -69,8 +69,8 @@ namespace linkml{
         const std::vector<int> default_id(results.planes.size()+1, 0);
         auto bar_create_cw = util::progress_bar(cloud.pts.size(), "Create Cell Complex");
 
-        #pragma omp parallel for
-        for (int i = 0; i < cloud.pts.size(); i++){
+        #pragma omp parallel for shared(cell_map)
+        for (size_t i = 0; i < cloud.pts.size(); i++){
             auto point = cloud.pts[i];
 
             auto point_location_map = std::vector<int>(default_id);
@@ -92,8 +92,13 @@ namespace linkml{
             }
 
             auto id = hashVector(point_location_map);
+
+            if (cell_map.find(id) == cell_map.end()){
+                cell_map[id] = std::vector<int>();
+            }
+
             cell_map[id].push_back(i);
-            bar_create_cw.update();
+            bar_create_cw.update(i);
         }
 
 

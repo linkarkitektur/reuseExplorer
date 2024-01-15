@@ -144,11 +144,6 @@ add_subdirectory(extern/lpsolve)
 add_subdirectory(extern/soplex)
 # add_subdirectory(extern/cgal)
 # add_subdirectory(extern/pcl)
-
-
-
-
-
 #add_subdirectory(extern/glfw)
 #add_subdirectory(extern/glow)
 #add_subdirectory(extern/imgui)
@@ -186,6 +181,25 @@ include(CGAL_TBB_support)
 
 find_package(SCIP REQUIRED)
 include(CGAL_SCIP_support)
+
+find_package(embree 3.12.2 REQUIRED)
+
+IF (EMBREE_ISPC_SUPPORT)
+
+  OPTION(ENABLE_ISPC_SUPPORT "Build ISPC version of find_embree tutorial." OFF)
+
+  # this configures the ADD_EMBREE_ISPC_EXECUTABLE from Embree
+  IF (ENABLE_ISPC_SUPPORT)
+    SET(ISPC_TARGETS "sse2;sse4;avx;avx2")
+    SET(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../common/cmake" ${CMAKE_MODULE_PATH})
+    INCLUDE(ispc)
+
+    get_target_property(embree_include_dir embree INTERFACE_INCLUDE_DIRECTORIES)
+    INCLUDE_DIRECTORIES_ISPC(${embree_include_dir})
+    ADD_EMBREE_ISPC_EXECUTABLE(find_embree_ispc find_embree_ispc.cpp find_embree_ispc.ispc)
+    TARGET_LINK_LIBRARIES(find_embree_ispc embree)
+  ENDIF()
+ENDIF()
 
 
 find_package(GUROBI REQUIRED)
@@ -240,6 +254,7 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     glpk
     lpsolve
     # scip
+    embree
     soplex
     CGAL::Eigen3_support
     CGAL::SCIP_support
