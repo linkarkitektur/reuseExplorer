@@ -7,6 +7,7 @@
 #include <functions/color_facetes.h>
 #include <functions/project_2d.h>
 #include <functions/fit_plane_thorugh_points.h>
+#include <functions/convex_hull_2d.h>
 
 #include <typed-geometry/types/objects/polygon.hh>
 #include <typed-geometry/functions/objects/contains.hh>
@@ -15,8 +16,25 @@
 
 #include <embree3/rtcore.h>
 
+#include <Eigen/Sparse>
+
+typedef Eigen::SparseMatrix<int> SpMat; // declares a column-major sparse matrix type of double
+typedef Eigen::Triplet<int> Triplet;
+
+# define Visualize 0
+
+#if 1
+#include "polyscope/polyscope.h"
+#include "polyscope/point_cloud.h"
+#include "polyscope/surface_mesh.h"
+#include "polyscope/curve_network.h"
+
+#include <functions/color.h>
+#endif
+
 
 namespace py = pybind11;
+
 
 
 namespace linkml{
@@ -85,7 +103,7 @@ namespace linkml{
 
         for (int i = 0; i < vectors.size() ; i++){
             auto v = vectors[i];
-            if (tg::dot(v, dir) < 0) continue;
+            if (tg::dot(v, dir) > 0.1) continue;
             sub_list.push_back(tg::ray3(pt, v));
         }
 
@@ -123,30 +141,39 @@ namespace linkml{
 
 
 
-    pybind11::list clustering(linkml::point_cloud const& cloud, result_fit_planes const& results ) {
+    pybind11::object clustering(linkml::point_cloud const& cloud, result_fit_planes const& results ) {
 
         if ( Py_IsInitialized() == 0 ) {
             py::scoped_interpreter guard{};
         }
 
+#if Visualize
+        polyscope::init();
+        polyscope::view::setUpDir(polyscope::view::UpDir::ZUp);
+        polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
+#endif
+
         auto sparse = py::module_::import("scipy.sparse");
         auto np = py::module_::import("numpy");
 
 
+#if Visualize
+        // Visualize the point cloud
+        auto ps_cloud = polyscope::registerPointCloud("point cloud", cloud.pts);
 
-        // TEST SPARSE MATRIX
-        py::kwargs kwargs;
-        kwargs["shape"] = py::make_tuple(10000, 10000);
-        kwargs["dtype"] = np.attr("int8");
-        py::function lil_matrix = sparse.attr("lil_matrix");
-        pybind11::object matrix = lil_matrix(kwargs);
+        // Visualize the planes
+        auto plane_colors = std::vector<tg::color3>(cloud.pts.size(), tg::color3(0,0,0));
+        for (int i = 0; i < results.indecies.size(); i++){
+            auto indcies = results.indecies[i];
+            auto color = linkml::get_color_forom_angle(linkml::sample_circle(i));
+            for (auto const& index : indcies){
+                plane_colors[index] = color;
+            }
+        }
+        ps_cloud->addColorQuantity("plames", plane_colors);
+#endif
 
-        auto selector = py::make_tuple(0, 0);
-        matrix[selector] = matrix[selector].cast<int>() + 1;
 
-        selector = py::make_tuple(10, 10);
-        matrix[selector] = matrix[selector].cast<int>() + 1;
-        // END TEST SPARSE MATRIX
 
 
         // created cell complex by evaluating each point for wich side it lies on for each plane
@@ -154,6 +181,18 @@ namespace linkml{
         auto cell_map_int_to_id = std::map<int, size_t>();
         auto cell_map_id_to_int = std::map<int, size_t>();
 
+
+// Visualize the cells
+#if 0
+        auto cell_colors = std::vector<tg::color3>(cloud.pts.size(), tg::color3(0,0,0));
+        for (auto const& [i, indcies ]: cell_map){
+            auto color = linkml::get_color_forom_angle(linkml::sample_circle(i));
+            for (auto const& idx : indcies){
+                cell_colors[idx] = color;
+            }
+        }
+        ps_cloud->addColorQuantity("cells", cell_colors);
+#endif
 
         int counter = 0;
         for (auto const& [id, _ ]: cell_map){
@@ -165,13 +204,15 @@ namespace linkml{
         auto cell_map_plane = std::map<size_t, linkml::Plane>();
         auto cell_map_boundary_point_indecies = std::map<size_t, std::vector<size_t>>();
 
-        #pragma omp parallel for shared(cell_map_plane, cell_map_boundary_point_indecies, cloud, cell_map)
+        // Find alpha shape for each cell
+        #pragma omp parallel for shared(cell_map_plane, cell_map_boundary_point_indecies, cloud)
         for (size_t i = 0; i< cell_map.size(); i++){
 
             auto id = cell_map_int_to_id[i];
 
             auto points = std::vector<tg::pos3>();
             std::transform(cell_map[id].begin(), cell_map[id].end(), std::back_insert_iterator(points), [&](int j){
+                #pragma omp critical
                 return cloud.pts[j];
             });
 
@@ -179,6 +220,8 @@ namespace linkml{
 
             // get the plane that the cell is on
             auto plane = fit_plane_thorugh_points(points);
+            // plane.origin = tg::project(tg::average(points), plane);
+            plane.origin =  plane.to3d(plane.to2d(tg::average(points)));
 
             // Ensure normal is allighned with point normals
             auto normals = std::vector<tg::vec3>();
@@ -191,23 +234,57 @@ namespace linkml{
             if (tg::dot(average_normal, plane.normal) < 0)
                 plane.normal = -plane.normal;
 
+            #pragma omp critical
             cell_map_plane[id] = plane;
 
             // project point in to 2d space
             auto points2d = plane.to2d(points);
-            auto indecies = alpha_shape(points2d);
+            auto local_indecies = alpha_shape(points2d);
+
+            auto endge_points = std::vector<tg::pos2>();
+            std::transform(local_indecies.begin(), local_indecies.end(), std::back_insert_iterator(endge_points), [&](int j){
+                return points2d[j];
+            });
+            auto sorted_endge_indecies  = convex_hull(endge_points);
+
+
+
+            auto indecies = std::vector<size_t>();
+            std::transform(sorted_endge_indecies.begin(), sorted_endge_indecies.end(), std::back_insert_iterator(indecies), [&](int j){
+                auto index = local_indecies[j];
+                return cell_map[id][index];
+            });
+
+            #pragma omp critical
             cell_map_boundary_point_indecies[id] = indecies;
 
         }
+
+#if 0
+        auto alpha_shape_color = std::vector<tg::color3>(cloud.pts.size(), tg::color3(0,0,0));
+        for (auto const& [i, indcies ]: cell_map_boundary_point_indecies){
+            auto color = linkml::get_color_forom_angle(linkml::sample_circle(i));
+            for (auto const& index : indcies){
+                alpha_shape_color[index] = color;
+            }
+        }
+        auto ps_alpha_shape_color = ps_cloud->addColorQuantity("alpha shape", alpha_shape_color);
+        ps_alpha_shape_color->setEnabled(true);
+#endif
 
 
  
         // create a sparce matrix from python
         auto n_cells = cell_map.size();
-        // py::kwargs kwargs;
-        // kwargs["dtype"] = np.attr("int8");
-        // py::tuple shape = py::make_tuple(n_cells, n_cells);
-        // pybind11::object matrix = sparse.attr("lil_matrix")(shape, kwargs);
+        py::function lil_matrix = sparse.attr("lil_matrix");
+        pybind11::object matrix = lil_matrix(py::make_tuple(n_cells, n_cells)).attr("astype")(np.attr("int8"));
+
+
+        // set the diagonal to 1
+        for (int i = 0; i < n_cells; i++){
+            auto selector = py::make_tuple(i, i);
+            matrix[selector] = 1;
+        }
 
 
         // Create Embree context and Scene
@@ -254,14 +331,40 @@ namespace linkml{
 
             // Save the mapping between the genomID and the cell id
             genomID_map[genomID] = id;
+
+
+#if 0
+            // Visualize the mesh
+            auto meshVerts = std::vector<tg::pos3>();
+
+            for (int j = 0; j < indecies.size() ; j++){
+                auto point = cloud.pts[indecies[j]];
+                meshVerts.push_back(point);
+            }
+
+            auto meshFaces = std::vector<std::array<size_t, 3>>();
+
+            // Add the faces to the face buffer
+            for (int j = 0; j < n_trinages; j++){
+                size_t p1 = j+1;
+                size_t p2 = j+2;
+                meshFaces.push_back({0, p1, p2});
+            }
+            auto name = "Mesh " + std::to_string(id);
+
+            polyscope::registerSurfaceMesh(name, meshVerts, meshFaces);
+#endif
+
         }
+
+        
 
         // Commit the scene
         rtcCommitScene(scene);
 
         // Create all rays
 
-        auto all_vectors = get_sphere_vectors();
+        auto all_vectors = get_sphere_vectors(50,50);
 
         auto all_rays = std::vector<std::tuple<size_t, RTCRayHit>>(); 
 
@@ -270,7 +373,9 @@ namespace linkml{
             auto id = cell_map_int_to_id[i];
             auto plane = cell_map_plane[id];
 
-            auto rays = filter_vectors(all_vectors, plane.origin, plane.normal);
+            auto new_origin = plane.origin + plane.normal * 0.01f;
+
+            auto rays = filter_vectors(all_vectors, new_origin, plane.normal);
 
             for (auto ray : rays){
                 RTCRayHit rayhit; 
@@ -295,8 +400,11 @@ namespace linkml{
         rtcInitIntersectContext(&context);
 
 
+        auto tripletList = std::vector<Triplet>();
+
         // Intersect all rays
         // rtcIntersect1M(scene, &context, &all_rays[0], all_rays.size(), sizeof(std::tuple<sitz_t, RTCRayHit>) );
+        bool any_hit = false;
         for (auto [id, rayhit] : all_rays){
             rtcIntersect1(scene, &context, &rayhit);
             if (rayhit.hit.geomID != RTC_INVALID_GEOMETRY_ID) {
@@ -310,23 +418,84 @@ namespace linkml{
 
                 // Increment the matrix
                 auto selector = py::make_tuple(source_int, target_int);
-                matrix.operator[](selector) = matrix.operator[](selector).cast<int>() + 1;
-                // auto value = matrix.attr("__getitem__")(selector);
-                // matrix.attr("__setitem__")(selector,  value.cast<int>() + 1);
+                matrix[selector] = 1; //matrix[selector].cast<int>() + 1;
+                tripletList.push_back(Triplet(source_int, target_int, 1));
 
+                selector = py::make_tuple(target_int,source_int);
+                matrix[selector] = 1; // matrix[selector].cast<int>() + 1;
+                tripletList.push_back(Triplet(target_int, source_int, 1));
+
+
+                std::cout << "hit: " << source_int << ", " << target_int << std::endl;
+                any_hit = true;
             }
         }
+
+        std::cout << std::endl;
+        std::printf("any_hit: %d\n", any_hit);
+
+        // Convert the triplet list to a sparse matrix
+        SpMat sp_matrix(n_cells, n_cells);
+        sp_matrix.setFromTriplets(tripletList.begin(), tripletList.end());
+
 
         // Release the scene and device
         rtcReleaseScene(scene);
         rtcReleaseDevice(device);
 
-        pybind11::object mc = py::module_::import("markov_clustering");
-        pybind11::object result = mc.attr("run_mcl")(matrix);           // run MCL with default parameters
-        pybind11::object clusters = mc.attr("get_clusters")(result);    // get clusters
+        // py::object normalize = py::module_::import("sklearn.preprocessing").attr("normalize");
+        // matrix = normalize(matrix, "l2");
+
+        py::object mc = py::module_::import("markov_clustering");
+        // py::kwargs mc_kwargs;
+        // mc_kwargs["inflation"] = py::cast(2.5);
+        // 2.5 < infaltion < 2.8
+        py::object result = mc.attr("run_mcl")(matrix, 2, 2.6);           // run MCL with default parameters
+        py::object clusters = mc.attr("get_clusters")(result);    // get clusters
 
 
-        return clusters;
+        auto c_clusters = clusters.cast<std::vector<py::object>>();
+        std::printf("n_clusters: %d\n", c_clusters.size());
+
+
+#if 1
+        polyscope::init();
+        polyscope::view::setUpDir(polyscope::view::UpDir::ZUp);
+        polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
+#endif
+#if 1
+
+        auto ps_cloud = polyscope::registerPointCloud("point cloud", cloud.pts);
+        auto cluster_colors = std::vector<tg::color3>(cloud.pts.size(), tg::color3(0,0,0));
+        
+
+        // Loop over all clusters
+        for (int i = 0; i < c_clusters.size(); i++){
+            auto color = linkml::get_color_forom_angle(linkml::sample_circle(i));
+            auto cell_indecies = c_clusters[i].cast<std::vector<int>>();
+
+            // Loop over all cells in a cluster
+            for (auto const& cell_index : cell_indecies){
+
+                auto cell_id = cell_map_int_to_id[cell_index];
+                auto cell_indecies = cell_map[cell_id];
+
+                // Loop over all points in a cell
+                for (auto const& index : cell_indecies){
+                    cluster_colors[index] = color;
+                }
+            }
+        }
+        auto ps_cluster_color = ps_cloud->addColorQuantity("clusters", cluster_colors);
+        ps_cluster_color->setEnabled(true);
+#endif
+
+
+#if 1
+        polyscope::show();
+#endif
+
+        return matrix.attr("tocsr")();
 
     }
 }

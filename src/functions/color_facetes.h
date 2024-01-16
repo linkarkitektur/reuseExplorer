@@ -94,9 +94,11 @@ namespace linkml{
             auto id = hashVector(point_location_map);
 
             if (cell_map.find(id) == cell_map.end()){
+                #pragma omp critical
                 cell_map[id] = std::vector<int>();
             }
 
+            #pragma omp critical
             cell_map[id].push_back(i);
             bar_create_cw.update(i);
         }
