@@ -148,13 +148,18 @@ Eigen::SparseMatrix<ScalarT> add_self_loops(Eigen::SparseMatrix<ScalarT> matrix,
 
     assert( matrix.cols() == matrix.rows() && "Error, matrix is not square");
 
-    auto tripletList = std::vector<Eigen::Triplet<ScalarT>>();
+    // auto tripletList = std::vector<Eigen::Triplet<ScalarT>>();
 
-    for (size_t i = 0; i < matrix.cols(); i++)
-        tripletList.push_back(Eigen::Triplet<ScalarT>(i, i, loop_value));
-        // new_matrix[i, i] = loop_value
+    for (size_t i = 0; i < matrix.cols(); i++){
+        matrix.coeffRef(i, i) = loop_value;
+    }
 
-    matrix.setFromTriplets(tripletList.begin(), tripletList.end());
+    //     matrix.coeffRef(i, i) = loop_value;
+    //     matrix.insert(i, i) = loop_value;
+    //     // tripletList.push_back(Eigen::Triplet<ScalarT>(i, i, loop_value));
+    //     // new_matrix[i, i] = loop_value
+
+    // matrix.setFromTriplets(tripletList.begin(), tripletList.end());
 
 
     return matrix;
