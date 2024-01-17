@@ -3,6 +3,8 @@ project(linkml)
 
 set(LIB_PROJECT_NAME "${PROJECT_NAME}_lib")
 set(PYBIND_PROJECT_NAME "${PROJECT_NAME}_py")
+set(TEST_PROJECT_NAME "${PROJECT_NAME}_test")
+
 
 # ===============================================
 # global settings
@@ -41,6 +43,11 @@ if (LIN_ENABLE_ASAN AND LIN_ENABLE_MSAN)
 endif()
 
 option(LIN_ENABLE_WERROR "if true, enables -Werror, /WX" OFF)
+
+# enable tests
+option(LINKML_SAMPLES_TESTS "if true, builds linkml tests" ON)
+
+
 
 
 # ===============================================
@@ -113,6 +120,8 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${BIN_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${BIN_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${BIN_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${BIN_DIR})
+# Set CMAKE_POSITION_INDEPENDENT_CODE to ON
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 #set(GLOW_BIN_DIR ${CMAKE_SOURCE_DIR}/bin)
 
 ## ===============================================
@@ -125,6 +134,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${BIN_DIR})
 
 
 # set(ENV{CUDACXX} "/usr/local/cuda/bin/nvcc")
+
 
 # ===============================================s
 # add submodules
@@ -148,6 +158,9 @@ add_subdirectory(extern/soplex)
 #add_subdirectory(extern/glow)
 #add_subdirectory(extern/imgui)
 #add_subdirectory(extern/glow-extras)
+add_subdirectory(extern/fmt)
+add_subdirectory(extern/nexus)
+
 
 find_package( OpenCV REQUIRED )
 
@@ -240,7 +253,8 @@ set_target_properties(${LIB_PROJECT_NAME} PROPERTIES POSITION_INDEPENDENT_CODE T
 target_link_libraries(${LIB_PROJECT_NAME} 
     PRIVATE pybind11::embed 
     optimized ${GUROBI_CXX_LIBRARY}
-    debug ${GUROBI_CXX_DEBUG_LIBRARY})
+    debug ${GUROBI_CXX_DEBUG_LIBRARY}
+    )
 target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     clean-core
     typed-geometry
@@ -266,6 +280,8 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
 #    glow
 #    imgui
 #    glow-extras
+    fmt
+    nexus
 
     ${OpenCV_LIBS}
 
@@ -306,3 +322,33 @@ endforeach()
 # pyind11
 pybind11_add_module("${PYBIND_PROJECT_NAME}" src/linkmlpy.cpp)
 target_link_libraries("${PYBIND_PROJECT_NAME}" PRIVATE ${LIB_PROJECT_NAME})
+
+
+# ===============================================
+# tests
+if (LINKML_SAMPLES_TESTS)
+
+    file(GLOB_RECURSE TEST_SOURCES
+        "tests/*.cc"
+        "tests/*.hh"
+    )
+
+    source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${TEST_SOURCES})
+
+    add_executable("${TEST_PROJECT_NAME}" ${TEST_SOURCES})
+
+    target_link_libraries("${TEST_PROJECT_NAME}" PUBLIC
+        ${LIB_PROJECT_NAME}
+        nexus
+    )
+
+    target_include_directories("${TEST_PROJECT_NAME}" PUBLIC "tests")
+
+    if(MSVC)
+        target_compile_options("${TEST_PROJECT_NAME}" PUBLIC /MP /FC)
+    else()
+        target_compile_options("${TEST_PROJECT_NAME}" PUBLIC -Wall)
+    endif()
+
+endif()
+

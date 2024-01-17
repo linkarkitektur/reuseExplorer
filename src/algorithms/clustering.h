@@ -8,6 +8,7 @@
 #include <functions/project_2d.h>
 #include <functions/fit_plane_thorugh_points.h>
 #include <functions/convex_hull_2d.h>
+#include <algorithms/markov_clustering.h>
 
 #include <typed-geometry/types/objects/polygon.hh>
 #include <typed-geometry/functions/objects/contains.hh>
@@ -18,8 +19,8 @@
 
 #include <Eigen/Sparse>
 
-typedef Eigen::SparseMatrix<int> SpMat; // declares a column-major sparse matrix type of double
-typedef Eigen::Triplet<int> Triplet;
+typedef Eigen::SparseMatrix<float> SpMat; // declares a column-major sparse matrix type of double
+typedef Eigen::Triplet<float> Triplet;
 
 # define Visualize 0
 
@@ -277,7 +278,7 @@ namespace linkml{
         // create a sparce matrix from python
         auto n_cells = cell_map.size();
         py::function lil_matrix = sparse.attr("lil_matrix");
-        pybind11::object matrix = lil_matrix(py::make_tuple(n_cells, n_cells)).attr("astype")(np.attr("int8"));
+        pybind11::object matrix = lil_matrix(py::make_tuple(n_cells, n_cells)).attr("astype")(np.attr("float32"));
 
 
         // set the diagonal to 1
@@ -402,8 +403,53 @@ namespace linkml{
 
         auto tripletList = std::vector<Triplet>();
 
+#if 1
+        rtcIntersect1M(scene, &context, (RTCRayHit*)&all_rays[0], (unsigned int)all_rays.size(), sizeof(std::tuple<size_t, RTCRayHit>));
+        bool any_hit = false;
+
+        // #pragma omp parallel 
+        // #pragma omp single nowait
+        for (auto [id, rayhit] : all_rays){
+            if (rayhit.hit.geomID != RTC_INVALID_GEOMETRY_ID) {
+
+                auto source_id = id;
+                auto ray = rayhit;
+
+                // #pragma omp task shared(source_id, ray) //shared(tripletList, matrix, any_hit )
+                // {
+
+                    auto target_id = genomID_map[ray.hit.geomID];
+
+                    auto source_int = cell_map_id_to_int[source_id];
+                    auto target_int = cell_map_id_to_int[target_id];
+                    auto selector = py::make_tuple(source_int, target_int);
+
+
+                    auto inverse = 5 / ray.ray.tfar;
+                    auto vaule = (matrix[selector].cast<float>() + inverse ) / 2;
+
+                    // #pragma omp critical
+                    // {
+                        // Increment the matrix
+                        matrix[selector] = vaule;
+                        tripletList.push_back(Triplet(source_int, target_int, vaule));
+
+                        selector = py::make_tuple(target_int,source_int);
+                        matrix[selector] = vaule;
+                        tripletList.push_back(Triplet(target_int, source_int, vaule));
+                        
+                        any_hit = true;
+                    // }
+
+                // }
+
+            }
+        }
+
+#endif
+
+#if 0
         // Intersect all rays
-        // rtcIntersect1M(scene, &context, &all_rays[0], all_rays.size(), sizeof(std::tuple<sitz_t, RTCRayHit>) );
         bool any_hit = false;
         for (auto [id, rayhit] : all_rays){
             rtcIntersect1(scene, &context, &rayhit);
@@ -412,25 +458,28 @@ namespace linkml{
                 auto source_id = id;
                 auto target_id = genomID_map[rayhit.hit.geomID];
 
-
                 auto source_int = cell_map_id_to_int[source_id];
                 auto target_int = cell_map_id_to_int[target_id];
+                auto selector = py::make_tuple(source_int, target_int);
+
+
+                auto inverse = 5 / rayhit.ray.tfar;
+                auto vaule = (matrix[selector].cast<float>() + inverse ) / 2;
 
                 // Increment the matrix
-                auto selector = py::make_tuple(source_int, target_int);
-                matrix[selector] = 1; //matrix[selector].cast<int>() + 1;
-                tripletList.push_back(Triplet(source_int, target_int, 1));
+                matrix[selector] = vaule;
+                tripletList.push_back(Triplet(source_int, target_int, vaule));
 
                 selector = py::make_tuple(target_int,source_int);
-                matrix[selector] = 1; // matrix[selector].cast<int>() + 1;
-                tripletList.push_back(Triplet(target_int, source_int, 1));
+                matrix[selector] = vaule;
+                tripletList.push_back(Triplet(target_int, source_int, vaule));
 
 
                 std::cout << "hit: " << source_int << ", " << target_int << std::endl;
                 any_hit = true;
             }
         }
-
+#endif
         std::cout << std::endl;
         std::printf("any_hit: %d\n", any_hit);
 
@@ -449,13 +498,20 @@ namespace linkml{
         py::object mc = py::module_::import("markov_clustering");
         // py::kwargs mc_kwargs;
         // mc_kwargs["inflation"] = py::cast(2.5);
-        // 2.5 < infaltion < 2.8
-        py::object result = mc.attr("run_mcl")(matrix, 2, 2.6);           // run MCL with default parameters
+        // 2.5 < infaltion < 2.8  => 2.6
+        py::object result = mc.attr("run_mcl")(matrix, 2, 3);           // run MCL with default parameters
         py::object clusters = mc.attr("get_clusters")(result);    // get clusters
 
 
         auto c_clusters = clusters.cast<std::vector<py::object>>();
         std::printf("n_clusters: %d\n", c_clusters.size());
+
+
+        // C++ Markov Clustering
+        sp_matrix = markov_clustering::run_mcl(sp_matrix, 2, 3);
+        auto c_clusters2 = markov_clustering::get_clusters(sp_matrix);
+        std::printf("n_clusters sp_matrix: %d\n", c_clusters2.size());
+
 
 
 #if 1
@@ -467,6 +523,27 @@ namespace linkml{
 
         auto ps_cloud = polyscope::registerPointCloud("point cloud", cloud.pts);
         auto cluster_colors = std::vector<tg::color3>(cloud.pts.size(), tg::color3(0,0,0));
+        auto cluster2_colors = std::vector<tg::color3>(cloud.pts.size(), tg::color3(0,0,0));
+
+        // Loop over all c_clusters2
+        int couter = 0;
+        for (auto cluster : c_clusters2){
+            auto color = linkml::get_color_forom_angle(linkml::sample_circle(couter));
+            couter++;
+
+            // Loop over all cells in a cluster
+            for (auto const& cell_index : cluster){
+
+                auto cell_id = cell_map_int_to_id[cell_index];
+                auto cell_indecies = cell_map[cell_id];
+
+                // Loop over all points in a cell
+                for (auto const& index : cell_indecies){
+                    cluster_colors[index] = color;
+                }
+            }
+        }
+
         
 
         // Loop over all clusters
@@ -486,7 +563,11 @@ namespace linkml{
                 }
             }
         }
+
+
         auto ps_cluster_color = ps_cloud->addColorQuantity("clusters", cluster_colors);
+        ps_cloud->addColorQuantity("clusters2", cluster2_colors);
+
         ps_cluster_color->setEnabled(true);
 #endif
 
