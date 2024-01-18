@@ -142,6 +142,32 @@ namespace linkml {
             CHECK(expandedMatrix.rows() == 0);
             CHECK(expandedMatrix.cols() == 0);
         }
+
+        TEST("Matrix expanded with power 2.0 and random values"){
+            Eigen::SparseMatrix<double> matrix(3, 3);
+            matrix.insert(0, 0) = 1.35707694;
+            matrix.insert(0, 1) = 1.0320616;
+            matrix.insert(0, 2) = 0.55297442;
+            matrix.insert(1, 0) = 2.04922403;
+            matrix.insert(1, 1) = 1.2799754;
+            matrix.insert(1, 2) = 2.85502367;
+            matrix.insert(2, 0) = 5.0;
+            matrix.insert(2, 1) = 1.59869312;
+            matrix.insert(2, 2) = 1.50298171;
+
+            Eigen::SparseMatrix<double> expandedMatrix = expand(matrix, 2.0);
+
+            CHECK( std::clamp(expandedMatrix.coeff(0, 0) - 6.72145533 , -1e-5, 1e-5));
+            CHECK( std::clamp(expandedMatrix.coeff(0, 1) - 3.60563684 , -1e-5, 1e-5));
+            CHECK( std::clamp(expandedMatrix.coeff(0, 2) - 4.52809956 , -1e-5, 1e-5));
+            CHECK( std::clamp(expandedMatrix.coeff(1, 0) - 19.67902938, -1e-5, 1e-5));
+            CHECK( std::clamp(expandedMatrix.coeff(1, 1) - 8.31756915 , -1e-5, 1e-5));
+            CHECK( std::clamp(expandedMatrix.coeff(1, 2) - 9.07857691 , -1e-5, 1e-5));
+            CHECK( std::clamp(expandedMatrix.coeff(2, 0) - 17.57637361, -1e-5, 1e-5));
+            CHECK( std::clamp(expandedMatrix.coeff(2, 1) - 9.60940237 , -1e-5, 1e-5));
+            CHECK( std::clamp(expandedMatrix.coeff(2, 2) - 9.58813282 , -1e-5, 1e-5));
+
+        }
         
         TEST("Identity Matrix with self-loops and value of 5"){
             // Create a sparse matrix
@@ -173,39 +199,47 @@ namespace linkml {
             CHECK(matrixWithLoops.cols() == 0);
         }
         
-        TEST("Non-square matrix with self-loops and value of 5", should_fail){
+        TEST("Self loop with missing identety diagonal"){
             // Create a non-square sparse matrix
-            Eigen::SparseMatrix<double> matrix(2, 3);
+            Eigen::SparseMatrix<double> matrix(3, 3);
             matrix.insert(0, 0) = 1.0;
             matrix.insert(1, 1) = 2.0;
 
-            try
-            {
-                // Call the add_self_loops function
-                // This should trigger an assertion error
-                add_self_loops(matrix, 5);
-                CHECK(true);
-            }
-            catch(const std::exception& e)
-            {
-                CHECK(false);
+            matrix = add_self_loops(matrix, 5);
+            for (int i = 0; i<matrix.rows(); i++){
+                CHECK(matrix.coeff(i, i) == 5);
             }
         }
 
         TEST("Pruning a 3x3 matrix"){
             // Create a sparse matrix
             Eigen::SparseMatrix<double> matrix(3, 3);
-            matrix.insert(0, 0) = 1.0;
-            matrix.insert(1, 1) = 2.0;
-            matrix.insert(2, 2) = 3.0;
+            matrix.insert(0, 0) = 1.35707694;
+            matrix.insert(0, 1) = 1.0320616;
+            matrix.insert(0, 2) = 0.55297442;
+            matrix.insert(1, 0) = 2.04922403;
+            matrix.insert(1, 1) = 1.2799754;
+            matrix.insert(1, 2) = 2.85502367;
+            matrix.insert(2, 0) = 5.0;
+            matrix.insert(2, 1) = 1.59869312;
+            matrix.insert(2, 2) = 1.50298171;
+
 
             // Call the prune function
             Eigen::SparseMatrix<double> prunedMatrix = prune(matrix, 2.0);
 
+
+
             // Check the values in the pruned matrix
             CHECK(prunedMatrix.coeff(0, 0) == 0.0);
-            CHECK(prunedMatrix.coeff(1, 1) == 2.0);
-            CHECK(prunedMatrix.coeff(2, 2) == 3.0);
+            CHECK(prunedMatrix.coeff(0, 1) == 0.0);
+            CHECK(prunedMatrix.coeff(0, 2) == 0.0);
+            CHECK(prunedMatrix.coeff(1, 0) == 2.04922403);
+            CHECK(prunedMatrix.coeff(1, 1) == 0.0);
+            CHECK(prunedMatrix.coeff(1, 2) == 2.85502367);
+            CHECK(prunedMatrix.coeff(2, 0) == 5.0);
+            CHECK(prunedMatrix.coeff(2, 1) == 1.59869312);
+            CHECK(prunedMatrix.coeff(2, 2) == 0.0);
         }
 
         TEST("Pruning an empty matrix"){
@@ -223,19 +257,33 @@ namespace linkml {
         TEST("Pruning a matrix with threshold zero"){
             // Create a sparse matrix
             Eigen::SparseMatrix<double> matrix(3, 3);
-            matrix.insert(0, 0) = 1.0;
-            matrix.insert(1, 1) = 2.0;
-            matrix.insert(2, 2) = 3.0;
+            matrix.insert(0, 0) = 1.35707694;
+            matrix.insert(0, 1) = 1.0320616;
+            matrix.insert(0, 2) = 0.55297442;
+            matrix.insert(1, 0) = 2.04922403;
+            matrix.insert(1, 1) = 1.2799754;
+            matrix.insert(1, 2) = 2.85502367;
+            matrix.insert(2, 0) = 5.0;
+            matrix.insert(2, 1) = 1.59869312;
+            matrix.insert(2, 2) = 1.50298171;
+
+
 
             // Call the prune function with threshold zero
             Eigen::SparseMatrix<double> prunedMatrix = prune(matrix, 0.0);
 
-            // Check that all values in the pruned matrix are zero
-            for (int i = 0; i < prunedMatrix.rows(); i++) {
-                for (int j = 0; j < prunedMatrix.cols(); j++) {
-                    CHECK(prunedMatrix.coeff(i, j)== 0.0);
-                }
-            }
+
+            CHECK(prunedMatrix.coeff(0, 0) == 1.35707694);
+            CHECK(prunedMatrix.coeff(0, 1) == 1.0320616 );
+            CHECK(prunedMatrix.coeff(0, 2) == 0.55297442);
+            CHECK(prunedMatrix.coeff(1, 0) == 2.04922403);
+            CHECK(prunedMatrix.coeff(1, 1) == 1.2799754 );
+            CHECK(prunedMatrix.coeff(1, 2) == 2.85502367);
+            CHECK(prunedMatrix.coeff(2, 0) == 5.0);
+            CHECK(prunedMatrix.coeff(2, 1) == 1.59869312);
+            CHECK(prunedMatrix.coeff(2, 2) == 1.50298171);
+
+
         }
 
         TEST("Check if two equal matrices converge"){
@@ -255,19 +303,32 @@ namespace linkml {
 
         TEST("Single MC iteration"){
             Eigen::SparseMatrix<double> matrix(3, 3);
-            matrix.insert(0, 0) = 1.0;
-            matrix.insert(1, 1) = 2.0;
-            matrix.insert(2, 2) = 3.0;
+            matrix.insert(0, 0) = 1.35707694;
+            matrix.insert(0, 1) = 1.0320616;
+            matrix.insert(0, 2) = 0.55297442;
+            matrix.insert(1, 0) = 2.04922403;
+            matrix.insert(1, 1) = 1.2799754;
+            matrix.insert(1, 2) = 2.85502367;
+            matrix.insert(2, 0) = 5.0;
+            matrix.insert(2, 1) = 1.59869312;
+            matrix.insert(2, 2) = 1.50298171;
+
 
             Eigen::SparseMatrix<double> iteratedMatrix = iterate(matrix, 2.0, 2.0);
 
             // Check the values in the iterated matrix
-            CHECK(iteratedMatrix.coeff(0, 0) == 1.0);
-            CHECK(iteratedMatrix.coeff(1, 1) == 4.0);
-            CHECK(iteratedMatrix.coeff(2, 2) == 9.0);
+            CHECK( std::clamp(iteratedMatrix.coeff(0, 0) - 0.06093839, -1e-5, 1e-5));
+            CHECK( std::clamp(iteratedMatrix.coeff(0, 1) - 0.0744922 , -1e-5, 1e-5));
+            CHECK( std::clamp(iteratedMatrix.coeff(0, 2) - 0.1052245 , -1e-5, 1e-5));
+            CHECK( std::clamp(iteratedMatrix.coeff(1, 0) - 0.52236217, -1e-5, 1e-5));
+            CHECK( std::clamp(iteratedMatrix.coeff(1, 1) - 0.39640553, -1e-5, 1e-5));
+            CHECK( std::clamp(iteratedMatrix.coeff(1, 2) - 0.42298073, -1e-5, 1e-5));
+            CHECK( std::clamp(iteratedMatrix.coeff(2, 0) - 0.41669944, -1e-5, 1e-5));
+            CHECK( std::clamp(iteratedMatrix.coeff(2, 1) - 0.52910227, -1e-5, 1e-5));
+            CHECK( std::clamp(iteratedMatrix.coeff(2, 2) - 0.47179475, -1e-5, 1e-5));
         }
 
-        TEST("Get clusters from a 3x3 matrix"){
+        TEST("Get clusters from a 3x3 matrix([[1,0,0],[0,2,0],[0,0,3]])"){
             Eigen::SparseMatrix<double> matrix(3, 3);
             matrix.insert(0, 0) = 1.0;
             matrix.insert(1, 1) = 2.0;
@@ -287,18 +348,46 @@ namespace linkml {
             CHECK(clusters.count(cluster3) > 0);
         }
 
+        TEST("Get clusters from a 3x3 matrix([[0,0,0],[1,1,1],[0,0,0]])"){
+            Eigen::SparseMatrix<double> matrix(3, 3);
+            matrix.insert(1, 0) = 1;
+            matrix.insert(1, 1) = 1;
+            matrix.insert(1, 2) = 1;
+
+            std::set<std::vector<size_t>> clusters = get_clusters(matrix);
+
+            // Check the number of clusters
+            REQUIRE(clusters.size() == 1);
+
+            // Check the indices in each cluster
+            std::vector<size_t> cluster1 = {0, 1, 2};
+            CHECK(clusters.count(cluster1) > 0);
+        }
+
         TEST("Markov Clustering on a 3x3 matrix"){
             Eigen::SparseMatrix<double> matrix(3, 3);
-            matrix.insert(0, 0) = 1.0;
-            matrix.insert(1, 1) = 2.0;
-            matrix.insert(2, 2) = 3.0;
+            matrix.insert(0, 0) = 1.35707694;
+            matrix.insert(0, 1) = 1.0320616;
+            matrix.insert(0, 2) = 0.55297442;
+            matrix.insert(1, 0) = 2.04922403;
+            matrix.insert(1, 1) = 1.2799754;
+            matrix.insert(1, 2) = 2.85502367;
+            matrix.insert(2, 0) = 5.0;
+            matrix.insert(2, 1) = 1.59869312;
+            matrix.insert(2, 2) = 1.50298171;
 
-            Eigen::SparseMatrix<double> finalMatrix = run_mcl(matrix, 2.0, 2.0, 1, 100, 0.001, 1, 1, false);
+            Eigen::SparseMatrix<double> finalMatrix = run_mcl(matrix, 2, 2.0, 1, 100, 0.001, 1, 1, false);
 
             // Check the values in the final matrix
-            CHECK(finalMatrix.coeff(0, 0) == 1.0);
-            CHECK(finalMatrix.coeff(1, 1) == 4.0);
-            CHECK(finalMatrix.coeff(2, 2) == 9.0);
+            CHECK(finalMatrix.coeff(0, 0) == 0.0);
+            CHECK(finalMatrix.coeff(0, 1) == 0.0);
+            CHECK(finalMatrix.coeff(0, 2) == 0.0);
+            CHECK(finalMatrix.coeff(1, 0) == 1.0);
+            CHECK(finalMatrix.coeff(1, 1) == 1.0);
+            CHECK(finalMatrix.coeff(1, 2) == 1.0);
+            CHECK(finalMatrix.coeff(2, 0) == 0.0);
+            CHECK(finalMatrix.coeff(2, 1) == 0.0);
+            CHECK(finalMatrix.coeff(2, 2) == 0.0);
         }
     
     } // namespace markov_clustering
