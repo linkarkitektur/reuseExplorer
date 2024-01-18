@@ -18,8 +18,8 @@
 namespace py = pybind11;
 using namespace pybind11::literals;
 
-typedef Eigen::MatrixXf Matrix;
-typedef Matrix::Scalar Scalar;
+// typedef Eigen::MatrixXf Matrix;
+// typedef Matrix::Scalar Scalar;
 
 
 

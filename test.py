@@ -34,8 +34,8 @@ import test_data_loaders.VertexGroup as data
 # res = linkml_py.refine_planes(data.cloud, data.plane_results, params)
 
 
-clusters = linkml_py.clustering(data.cloud, data.plane_results)
-scipy.sparse.save_npz("matrix", clusters)
+matrix = linkml_py.clustering(data.cloud, data.plane_results)
+scipy.sparse.save_npz("matrix_after", matrix)
 print("Done")
 # print(clusters)
 # linkml_py.create_cell_complex(data.cloud, data.plane_results)

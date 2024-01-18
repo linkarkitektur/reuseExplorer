@@ -1,5 +1,9 @@
 #pragma once
 
+
+#include <iostream>
+#include <fstream>
+
 #include <pybind11/embed.h>
 #include <types/point_cloud.h>
 #include <types/result_fit_planes.h>
@@ -19,8 +23,7 @@
 
 #include <Eigen/Sparse>
 
-typedef Eigen::SparseMatrix<float> SpMat; // declares a column-major sparse matrix type of double
-typedef Eigen::Triplet<float> Triplet;
+
 
 # define Visualize 0
 
@@ -34,7 +37,62 @@ typedef Eigen::Triplet<float> Triplet;
 #endif
 
 
+typedef Eigen::SparseMatrix<float> SpMat; // declares a column-major sparse matrix type of double
+typedef Eigen::Triplet<float> Triplet;
+
 namespace py = pybind11;
+
+
+
+
+
+
+// Write a sparse matrix to a file
+void writeSparseMatrixToFile(const SpMat& matrix, const std::string& filename) {
+    std::ofstream file(filename);
+
+    if (file.is_open()) {
+        file << matrix.rows() << " " << matrix.cols() << "\n";
+        for (int k = 0; k < matrix.outerSize(); ++k) {
+            for (SpMat::InnerIterator it(matrix, k); it; ++it) {
+                file << it.row() << " " << it.col() << " " << it.value() << "\n";
+            }
+        }
+
+        file.close();
+    } else {
+        std::cerr << "Unable to open file: " << filename << std::endl;
+    }
+}
+
+// // Read a sparse matrix from a file
+// SparseMatrix<double> readSparseMatrixFromFile(const std::string& filename) {
+//     std::ifstream file(filename);
+//     int rows, cols;
+
+//     if (file.is_open()) {
+//         // Read the number of rows and columns
+//         file >> rows >> cols;
+
+//         // Initialize the sparse matrix
+//         SparseMatrix<double> matrix(rows, cols);
+
+//         // Read non-zero entries
+//         int row, col;
+//         double value;
+//         while (file >> row >> col >> value) {
+//             matrix.coeffRef(row, col) = value;
+//         }
+
+//         file.close();
+//         return matrix;
+//     } else {
+//         std::cerr << "Unable to open file: " << filename << std::endl;
+//         return SparseMatrix<double>(0, 0);
+//     }
+// }
+
+
 
 
 
@@ -288,6 +346,11 @@ namespace linkml{
         }
 
 
+        // Convert the triplet list to a sparse matrix
+        SpMat sp_matrix(n_cells, n_cells);
+        sp_matrix += Eigen::VectorXd::Ones(sp_matrix.cols()).template cast<float>().asDiagonal();
+
+
         // Create Embree context and Scene
         RTCDevice device = rtcNewDevice(NULL);
         RTCScene scene   = rtcNewScene(device);
@@ -422,21 +485,26 @@ namespace linkml{
 
                     auto source_int = cell_map_id_to_int[source_id];
                     auto target_int = cell_map_id_to_int[target_id];
-                    auto selector = py::make_tuple(source_int, target_int);
+
+                    auto selector1 = py::make_tuple(source_int, target_int);
+                    auto selector2 = py::make_tuple(target_int, source_int);
 
 
                     auto inverse = 5 / ray.ray.tfar;
-                    auto vaule = (matrix[selector].cast<float>() + inverse ) / 2;
+                    auto vaule1 = (matrix[selector1].cast<float>() + inverse ) / 2;
+                    auto vaule2 = (sp_matrix.coeff(source_int, target_int) + inverse ) / 2;
 
                     // #pragma omp critical
                     // {
                         // Increment the matrix
-                        matrix[selector] = vaule;
-                        tripletList.push_back(Triplet(source_int, target_int, vaule));
+                        matrix[selector1] = vaule1;
+                        matrix[selector2] = vaule1;
 
-                        selector = py::make_tuple(target_int,source_int);
-                        matrix[selector] = vaule;
-                        tripletList.push_back(Triplet(target_int, source_int, vaule));
+                        sp_matrix.coeffRef(source_int, target_int) = vaule2;
+                        sp_matrix.coeffRef(target_int, source_int) = vaule2;
+
+                        // tripletList.push_back(Triplet(source_int, target_int, vaule));
+                        // tripletList.push_back(Triplet(target_int, source_int, vaule));
                         
                         any_hit = true;
                     // }
@@ -483,9 +551,10 @@ namespace linkml{
         std::cout << std::endl;
         std::printf("any_hit: %d\n", any_hit);
 
-        // Convert the triplet list to a sparse matrix
-        SpMat sp_matrix(n_cells, n_cells);
-        sp_matrix.setFromTriplets(tripletList.begin(), tripletList.end());
+
+        writeSparseMatrixToFile(sp_matrix, "sparse_matrix_pre.txt");
+        auto csr_matrix =  matrix.attr("tocsr")();
+        sparse.attr("save_npz")("matrix_pre",csr_matrix);
 
 
         // Release the scene and device
@@ -513,6 +582,19 @@ namespace linkml{
         std::printf("n_clusters sp_matrix: %d\n", c_clusters2.size());
 
 
+        // Write the matrix to a file
+        writeSparseMatrixToFile(sp_matrix, "sparse_matrix_after.txt");
+
+        // for (int i = 0; i < c_clusters.size(); i++){
+        //     auto cluster = c_clusters[i].cast<std::vector<int>>();
+        //     std::cout << "cluster " << i << ": " << cluster.size() <<": ";
+        //     for (auto const& cell_index : cluster){
+        //         auto cell_id = cell_map_int_to_id[cell_index];
+        //         std::cout << cell_id << ", ";
+        //     }
+        //     std::cout << std::endl;
+        //     // std::printf("cluster %d: %d\n", i, cluster.size());
+        // }
 
 #if 1
         polyscope::init();
@@ -531,16 +613,25 @@ namespace linkml{
             auto color = linkml::get_color_forom_angle(linkml::sample_circle(couter));
             couter++;
 
+            // std::cout << "color: " << color << std::endl;
+
             // Loop over all cells in a cluster
             for (auto const& cell_index : cluster){
+
+                // std::cout << "cell_index: " << cell_index << std::endl;
 
                 auto cell_id = cell_map_int_to_id[cell_index];
                 auto cell_indecies = cell_map[cell_id];
 
+                // std::cout << "index: ";
+
                 // Loop over all points in a cell
                 for (auto const& index : cell_indecies){
-                    cluster_colors[index] = color;
+                    // std::cout << index << ", ";
+                    cluster2_colors[index] = color;
                 }
+
+                // std::cout << std::endl;
             }
         }
 
