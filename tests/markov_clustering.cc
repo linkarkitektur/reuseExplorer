@@ -168,6 +168,32 @@ namespace linkml {
             CHECK( std::clamp(expandedMatrix.coeff(2, 2) - 9.58813282 , -1e-5, 1e-5));
 
         }
+
+        TEST("Matrix expanded with power 5 and random values"){
+            Eigen::SparseMatrix<double> matrix(3, 3);
+            matrix.insert(0, 0) = 1.35707694;
+            matrix.insert(0, 1) = 1.0320616;
+            matrix.insert(0, 2) = 0.55297442;
+            matrix.insert(1, 0) = 2.04922403;
+            matrix.insert(1, 1) = 1.2799754;
+            matrix.insert(1, 2) = 2.85502367;
+            matrix.insert(2, 0) = 5.0;
+            matrix.insert(2, 1) = 1.59869312;
+            matrix.insert(2, 2) = 1.50298171;
+
+            Eigen::SparseMatrix<double> expandedMatrix = expand(matrix, 5);
+
+            CHECK( std::clamp(expandedMatrix.coeff(0, 0) - 998.82208405 , -1e-5, 1e-5));
+            CHECK( std::clamp(expandedMatrix.coeff(0, 1) - 497.49529662 , -1e-5, 1e-5));
+            CHECK( std::clamp(expandedMatrix.coeff(0, 2) - 547.46786862 , -1e-5, 1e-5));
+            CHECK( std::clamp(expandedMatrix.coeff(1, 0) - 2342.45929475, -1e-5, 1e-5));
+            CHECK( std::clamp(expandedMatrix.coeff(1, 1) - 1163.50184029, -1e-5, 1e-5));
+            CHECK( std::clamp(expandedMatrix.coeff(1, 2) - 1279.30965158, -1e-5, 1e-5));
+            CHECK( std::clamp(expandedMatrix.coeff(2, 0) - 2421.91378773, -1e-5, 1e-5));
+            CHECK( std::clamp(expandedMatrix.coeff(2, 1) - 1206.05182561, -1e-5, 1e-5));
+            CHECK( std::clamp(expandedMatrix.coeff(2, 2) - 1324.17647407, -1e-5, 1e-5));
+
+        }
         
         TEST("Identity Matrix with self-loops and value of 5"){
             // Create a sparse matrix

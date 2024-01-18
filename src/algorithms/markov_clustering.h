@@ -109,15 +109,12 @@ Eigen::SparseMatrix<ScalarT> inflate(Eigen::SparseMatrix<ScalarT> matrix, double
 /// @param power Cluster expansion parameter
 /// @return The expanded matrix
 template <class ScalarT>
-Eigen::SparseMatrix<ScalarT> expand(Eigen::SparseMatrix<ScalarT> matrix, double power){
+Eigen::SparseMatrix<ScalarT> expand(Eigen::SparseMatrix<ScalarT> matrix, int power){
 
-    for (int k = 0; k < matrix.outerSize(); ++k){
-        for (typename Eigen::SparseMatrix<ScalarT>::InnerIterator it(matrix, k); it; ++it){
-            it.valueRef() = std::pow(it.value(), power);
-        }
-    }
+    for (int i=0; i < power - 1; i++)
+        matrix = matrix * matrix;
+
     return matrix;
-
 }
 
 /// @brief Add self-loops to the matrix by setting the diagonal to loop_value
@@ -130,14 +127,11 @@ Eigen::SparseMatrix<ScalarT> add_self_loops(Eigen::SparseMatrix<ScalarT> matrix,
 
     assert( matrix.cols() == matrix.rows() && "Error, matrix is not square");
 
-    auto tripletList = std::vector<Eigen::Triplet<ScalarT>>();
+    // Enusring that the diagonal exists
+    matrix += Eigen::VectorXd::Ones(matrix.cols()).template cast<ScalarT>().asDiagonal();
 
-    for (size_t i = 0; i < matrix.cols(); i++)
-        tripletList.push_back(Eigen::Triplet<ScalarT>(i, i, loop_value));
-        // new_matrix[i, i] = loop_value
-
-    matrix.setFromTriplets(tripletList.begin(), tripletList.end());
-
+    // Setting the diagonal to loop_value
+    matrix.diagonal() = Eigen::VectorXd::Constant(matrix.cols(), static_cast<ScalarT>(loop_value)).template cast<ScalarT>();
 
     return matrix;
 }
@@ -148,34 +142,40 @@ Eigen::SparseMatrix<ScalarT> add_self_loops(Eigen::SparseMatrix<ScalarT> matrix,
 /// @param threshold The value below which edges will be removed
 /// @return  The pruned matrix
 template <class ScalarT>
-Eigen::SparseMatrix<ScalarT> prune(Eigen::SparseMatrix<ScalarT> matrix, double threshold){
+Eigen::SparseMatrix<ScalarT> prune(Eigen::SparseMatrix<ScalarT> matrix, ScalarT threshold){
 
-    Eigen::SparseMatrix<ScalarT> pruned = Eigen::SparseMatrix<ScalarT>(matrix).pruned(threshold);
+    Eigen::SparseMatrix<ScalarT> pruned = Eigen::SparseMatrix<ScalarT>(matrix);
 
-    auto num_cols = matrix.cols();
-
-    std::vector<int> row_indices(num_cols);
-    for (int i = 0; i < num_cols; i++) {
-        int max_row_index = 0;
-        ScalarT max_value = matrix.coeff(0, i);
-        for (int j = 1; j < matrix.rows(); j++) {
-            if (matrix.coeff(j, i) > max_value) {
-                max_row_index = j;
-                max_value = matrix.coeff(j, i);
-            }
+    for (int k = 0; k < pruned.outerSize(); ++k){
+        for (typename Eigen::SparseMatrix<ScalarT>::InnerIterator it(pruned, k); it; ++it){
+            if (it.value() < threshold )
+                it.valueRef() = 0;
         }
-        row_indices[i] = max_row_index;
     }
 
+    // std::cout << pruned << std::endl;
 
-    auto tripletList = std::vector<Eigen::Triplet<ScalarT>>();
+    // Ensure that the maximum value in each column is not pruned
+    for (int k = 0; k < matrix.outerSize(); ++k){
 
-    for (size_t i = 0; i < num_cols; i++)
-        tripletList.push_back(Eigen::Triplet<ScalarT>(row_indices[i], i, matrix.coeff(row_indices[i], i)));
+        ScalarT max = std::numeric_limits<ScalarT>::min();
+        int max_index = -1;
 
-    pruned.setFromTriplets(tripletList.begin(), tripletList.end());
+        for (typename Eigen::SparseMatrix<ScalarT>::InnerIterator it(matrix, k); it; ++it){
+            if (it.value() > max){
+                max = it.value();
+                max_index = it.row();
+            }
+        }
+
+        if (max_index != -1)
+            pruned.coeffRef(max_index, k) = max;
+    }
+
+    // std::cout << pruned << std::endl;
 
 
+    pruned.prune(threshold);
     return pruned;
 }
 
@@ -198,7 +198,7 @@ bool converged(Eigen::SparseMatrix<ScalarT> matrix1, Eigen::SparseMatrix<ScalarT
 /// @param inflation Cluster inflation factor
 /// @return 
 template <class ScalarT>
-Eigen::SparseMatrix<ScalarT> iterate(Eigen::SparseMatrix<ScalarT> matrix, double expansion, double inflation){
+Eigen::SparseMatrix<ScalarT> iterate(Eigen::SparseMatrix<ScalarT> matrix, int expansion, double inflation){
 
     // Expansion
     matrix = expand(matrix, expansion);
@@ -251,8 +251,8 @@ std::set<std::vector<size_t>> get_clusters(Eigen::SparseMatrix<ScalarT> matrix){
 /// @param verbose Print extra information to the console
 /// @return The final matrix
 template <class ScalarT>
-Eigen::SparseMatrix<ScalarT> run_mcl(Eigen::SparseMatrix<ScalarT> matrix, double expansion=2, double inflation=2, int loop_value=1,
-            int iterations=100, double pruning_threshold=0.001, int pruning_frequency=1,
+Eigen::SparseMatrix<ScalarT> run_mcl(Eigen::SparseMatrix<ScalarT> matrix, int expansion=2, double inflation=2, int loop_value=1,
+            int iterations=100, ScalarT pruning_threshold=0.001, int pruning_frequency=1,
             int convergence_check_frequency=1, bool verbose=false){
 
     assert(expansion > 1 && "Invalid expansion parameter");
