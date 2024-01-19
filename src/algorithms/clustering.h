@@ -25,9 +25,9 @@
 
 
 
-# define Visualize 0
+# define Visualize 1
 
-#if 1
+#if Visualize
 #include "polyscope/polyscope.h"
 #include "polyscope/point_cloud.h"
 #include "polyscope/surface_mesh.h"
@@ -37,14 +37,10 @@
 #endif
 
 
-typedef Eigen::SparseMatrix<float> SpMat; // declares a column-major sparse matrix type of double
-typedef Eigen::Triplet<float> Triplet;
+typedef Eigen::SparseMatrix<float>  SpMat;      // declares a column-major sparse matrix type of double
+typedef Eigen::Triplet<float>       Triplet;
 
 namespace py = pybind11;
-
-
-
-
 
 
 // Write a sparse matrix to a file
@@ -97,6 +93,8 @@ void writeSparseMatrixToFile(const SpMat& matrix, const std::string& filename) {
 
 
 namespace linkml{
+
+
 
     // https://www.youtube.com/watch?v=FDyenWWlPdU
     tg::vec3 static toCartesian(tg::comp3 spherical){
@@ -202,9 +200,14 @@ namespace linkml{
 
     pybind11::object clustering(linkml::point_cloud const& cloud, result_fit_planes const& results ) {
 
+
+
         if ( Py_IsInitialized() == 0 ) {
             py::scoped_interpreter guard{};
         }
+
+
+
 
 #if Visualize
         polyscope::init();
@@ -212,8 +215,8 @@ namespace linkml{
         polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
 #endif
 
-        auto sparse = py::module_::import("scipy.sparse");
-        auto np = py::module_::import("numpy");
+
+
 
 
 #if Visualize
@@ -241,8 +244,10 @@ namespace linkml{
         auto cell_map_id_to_int = std::map<int, size_t>();
 
 
+
+
 // Visualize the cells
-#if 0
+#if Visualize
         auto cell_colors = std::vector<tg::color3>(cloud.pts.size(), tg::color3(0,0,0));
         for (auto const& [i, indcies ]: cell_map){
             auto color = linkml::get_color_forom_angle(linkml::sample_circle(i));
@@ -252,6 +257,8 @@ namespace linkml{
         }
         ps_cloud->addColorQuantity("cells", cell_colors);
 #endif
+
+
 
         int counter = 0;
         for (auto const& [id, _ ]: cell_map){
@@ -279,8 +286,8 @@ namespace linkml{
 
             // get the plane that the cell is on
             auto plane = fit_plane_thorugh_points(points);
-            // plane.origin = tg::project(tg::average(points), plane);
-            plane.origin =  plane.to3d(plane.to2d(tg::average(points)));
+            plane.origin = tg::project(tg::average(points), plane);
+            // plane.origin =  plane.to3d(tg::average(plane.to2d(points)));
 
             // Ensure normal is allighned with point normals
             auto normals = std::vector<tg::vec3>();
@@ -319,7 +326,9 @@ namespace linkml{
 
         }
 
-#if 0
+
+
+#if Visualize
         auto alpha_shape_color = std::vector<tg::color3>(cloud.pts.size(), tg::color3(0,0,0));
         for (auto const& [i, indcies ]: cell_map_boundary_point_indecies){
             auto color = linkml::get_color_forom_angle(linkml::sample_circle(i));
@@ -332,6 +341,8 @@ namespace linkml{
 #endif
 
 
+        auto sparse = py::module_::import("scipy.sparse");
+        auto np = py::module_::import("numpy");
  
         // create a sparce matrix from python
         auto n_cells = cell_map.size();
@@ -357,6 +368,13 @@ namespace linkml{
 
         auto genomID_map = std::map<unsigned int, size_t>();
 
+        // Visualize the mesh
+        auto meshVerts = std::vector<tg::pos3>();
+        auto meshFaces = std::vector<std::array<size_t, 3>>();
+        auto meshColors = std::vector<tg::color3>();
+
+
+        size_t offset = 0;
         for (int i = 0; i < cell_map_int_to_id.size(); i++){
 
             auto id = cell_map_int_to_id[i];
@@ -397,31 +415,33 @@ namespace linkml{
             genomID_map[genomID] = id;
 
 
-#if 0
-            // Visualize the mesh
-            auto meshVerts = std::vector<tg::pos3>();
-
             for (int j = 0; j < indecies.size() ; j++){
                 auto point = cloud.pts[indecies[j]];
                 meshVerts.push_back(point);
             }
 
-            auto meshFaces = std::vector<std::array<size_t, 3>>();
 
             // Add the faces to the face buffer
             for (int j = 0; j < n_trinages; j++){
-                size_t p1 = j+1;
-                size_t p2 = j+2;
-                meshFaces.push_back({0, p1, p2});
+                size_t p1 = j+1+offset;
+                size_t p2 = j+2+offset;
+                meshFaces.push_back({offset, p1, p2});
             }
-            auto name = "Mesh " + std::to_string(id);
 
-            polyscope::registerSurfaceMesh(name, meshVerts, meshFaces);
-#endif
+            auto color = linkml::get_color_forom_angle(linkml::sample_circle(i));
+            for (int j = 0; j < n_trinages; j++)
+                meshColors.push_back(color);
+
+            offset += indecies.size();
 
         }
 
-        
+
+        auto ps_mesh = polyscope::registerSurfaceMesh("Mesh Faces", meshVerts, meshFaces);
+        auto ps_mesh_colors = ps_mesh->addFaceColorQuantity("mesh", meshColors);
+        ps_mesh_colors->setEnabled(true);
+
+
 
         // Commit the scene
         rtcCommitScene(scene);
@@ -429,10 +449,16 @@ namespace linkml{
         // Create all rays
 
         auto all_vectors = get_sphere_vectors(50,50);
+        auto all_rays = std::vector<std::tuple<size_t, RTCRayHit>>();
+        all_rays.reserve(int(all_vectors.size()/2) * cell_map_int_to_id.size());
 
-        auto all_rays = std::vector<std::tuple<size_t, RTCRayHit>>(); 
+
+        auto ray_nodes = std::vector<tg::pos3>();
+        auto ray_edges = std::vector<std::array<size_t, 2>>();
+        auto ray_node_colors = std::vector<tg::color3>();
 
 
+        size_t offset_rays = 0;
         for (int i = 0; i < cell_map_int_to_id.size(); i++){
             auto id = cell_map_int_to_id[i];
             auto plane = cell_map_plane[id];
@@ -440,7 +466,11 @@ namespace linkml{
             auto new_origin = plane.origin + plane.normal * 0.01f;
 
             auto rays = filter_vectors(all_vectors, new_origin, plane.normal);
+            auto color = linkml::get_color_forom_angle(linkml::sample_circle(i));
 
+
+
+            size_t couter = 0;
             for (auto ray : rays){
                 RTCRayHit rayhit; 
                 rayhit.ray.org_x = ray.origin.x; 
@@ -457,16 +487,35 @@ namespace linkml{
 
 
                 all_rays.push_back(std::make_tuple(id, rayhit));
+
+
+                // Visualize the rays
+                ray_nodes.push_back(ray.origin);
+                ray_nodes.push_back(ray.origin + ray.dir * 0.5f);
+                ray_edges.push_back({ offset_rays + couter*2, offset_rays + couter*2 + 1});
+
+                ray_node_colors.push_back(color);
+                ray_node_colors.push_back(color);
+
+
+                couter++;
             }
+
+            offset_rays += rays.size() * 2;
         }
 
         RTCIntersectContext context;
         rtcInitIntersectContext(&context);
 
+        auto ps_rays = polyscope::registerCurveNetwork("rays", ray_nodes, ray_edges);
+        ps_rays->setRadius(0.00010);
+        auto ps_ray_color = ps_rays->addNodeColorQuantity("rays", ray_node_colors);
+        ps_ray_color->setEnabled(true);
 
-        auto tripletList = std::vector<Triplet>();
 
-#if 1
+        // auto tripletList = std::vector<Triplet>();
+
+
         rtcIntersect1M(scene, &context, (RTCRayHit*)&all_rays[0], (unsigned int)all_rays.size(), sizeof(std::tuple<size_t, RTCRayHit>));
         bool any_hit = false;
 
@@ -474,6 +523,7 @@ namespace linkml{
         // #pragma omp single nowait
         for (auto [id, rayhit] : all_rays){
             if (rayhit.hit.geomID != RTC_INVALID_GEOMETRY_ID) {
+
 
                 auto source_id = id;
                 auto ray = rayhit;
@@ -514,40 +564,11 @@ namespace linkml{
             }
         }
 
-#endif
+        // Release the scene and device
+        rtcReleaseScene(scene);
+        rtcReleaseDevice(device);
+        
 
-#if 0
-        // Intersect all rays
-        bool any_hit = false;
-        for (auto [id, rayhit] : all_rays){
-            rtcIntersect1(scene, &context, &rayhit);
-            if (rayhit.hit.geomID != RTC_INVALID_GEOMETRY_ID) {
-
-                auto source_id = id;
-                auto target_id = genomID_map[rayhit.hit.geomID];
-
-                auto source_int = cell_map_id_to_int[source_id];
-                auto target_int = cell_map_id_to_int[target_id];
-                auto selector = py::make_tuple(source_int, target_int);
-
-
-                auto inverse = 5 / rayhit.ray.tfar;
-                auto vaule = (matrix[selector].cast<float>() + inverse ) / 2;
-
-                // Increment the matrix
-                matrix[selector] = vaule;
-                tripletList.push_back(Triplet(source_int, target_int, vaule));
-
-                selector = py::make_tuple(target_int,source_int);
-                matrix[selector] = vaule;
-                tripletList.push_back(Triplet(target_int, source_int, vaule));
-
-
-                std::cout << "hit: " << source_int << ", " << target_int << std::endl;
-                any_hit = true;
-            }
-        }
-#endif
         std::cout << std::endl;
         std::printf("any_hit: %d\n", any_hit);
 
@@ -557,9 +578,6 @@ namespace linkml{
         sparse.attr("save_npz")("matrix_pre",csr_matrix);
 
 
-        // Release the scene and device
-        rtcReleaseScene(scene);
-        rtcReleaseDevice(device);
 
         // py::object normalize = py::module_::import("sklearn.preprocessing").attr("normalize");
         // matrix = normalize(matrix, "l2");
@@ -585,25 +603,10 @@ namespace linkml{
         // Write the matrix to a file
         writeSparseMatrixToFile(sp_matrix, "sparse_matrix_after.txt");
 
-        // for (int i = 0; i < c_clusters.size(); i++){
-        //     auto cluster = c_clusters[i].cast<std::vector<int>>();
-        //     std::cout << "cluster " << i << ": " << cluster.size() <<": ";
-        //     for (auto const& cell_index : cluster){
-        //         auto cell_id = cell_map_int_to_id[cell_index];
-        //         std::cout << cell_id << ", ";
-        //     }
-        //     std::cout << std::endl;
-        //     // std::printf("cluster %d: %d\n", i, cluster.size());
-        // }
 
-#if 1
-        polyscope::init();
-        polyscope::view::setUpDir(polyscope::view::UpDir::ZUp);
-        polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
-#endif
-#if 1
 
-        auto ps_cloud = polyscope::registerPointCloud("point cloud", cloud.pts);
+#if Visualize
+
         auto cluster_colors = std::vector<tg::color3>(cloud.pts.size(), tg::color3(0,0,0));
         auto cluster2_colors = std::vector<tg::color3>(cloud.pts.size(), tg::color3(0,0,0));
 
@@ -663,7 +666,7 @@ namespace linkml{
 #endif
 
 
-#if 1
+#if Visualize
         polyscope::show();
 #endif
 
