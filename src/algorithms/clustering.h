@@ -160,7 +160,7 @@ namespace linkml{
 
         for (int i = 0; i < vectors.size() ; i++){
             auto v = vectors[i];
-            if (tg::dot(v, dir) > 0.1) continue;
+            if (tg::dot(v, dir) > -0.3) continue;
             sub_list.push_back(tg::ray3(pt, v));
         }
 
@@ -200,6 +200,19 @@ namespace linkml{
 
     std::vector<std::vector<size_t>> clustering(linkml::point_cloud const& cloud, result_fit_planes const& results ) {
 
+        auto clampted_points = std::vector<tg::pos3>(cloud.pts);
+        for (size_t i = 0; i < results.indecies.size(); i++){
+            auto indecies = results.indecies[i];
+            auto plane = results.planes[i];
+
+            for (auto const& index : indecies){
+                auto point = clampted_points[index];
+                auto new_point = tg::project(point, plane);
+                clampted_points[index] = new_point;
+            }
+        }
+
+
 // Initialize and visualize the point cloud
 #if Visualize
         // Initialize polyscope
@@ -208,7 +221,9 @@ namespace linkml{
         polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
 
         // Visualize the point cloud
-        auto ps_cloud = polyscope::registerPointCloud("point cloud", cloud.pts);
+        // auto ps_cloud = polyscope::registerPointCloud("point cloud", cloud.pts);
+        auto ps_cloud = polyscope::registerPointCloud("point cloud", clampted_points);
+
 
         // Visualize the planes
         auto plane_colors = std::vector<tg::color3>(cloud.pts.size(), tg::color3(0,0,0));
@@ -310,22 +325,6 @@ namespace linkml{
         }
 
 
-
-#if Visualize
-        auto alpha_shape_color = std::vector<tg::color3>(cloud.pts.size(), tg::color3(0,0,0));
-        for (auto const& [i, indcies ]: cell_map_boundary_point_indecies){
-            auto color = linkml::get_color_forom_angle(linkml::sample_circle(i));
-            for (auto const& index : indcies){
-                alpha_shape_color[index] = color;
-            }
-        }
-        auto ps_alpha_shape_color = ps_cloud->addColorQuantity("alpha shape", alpha_shape_color);
-        ps_alpha_shape_color->setEnabled(true);
-#endif
-
-
-
-
         // Convert the triplet list to a sparse matrix
         auto n_cells = cell_map.size();
         SpMat matrix(n_cells, n_cells);
@@ -365,7 +364,8 @@ namespace linkml{
 
             // Add the points to the vertex buffer
             for (int j = 0; j < indecies.size(); j++){
-                auto point = cloud.pts[indecies[j]];
+                // auto point = cloud.pts[indecies[j]];
+                auto point = clampted_points[indecies[j]];
                 vb[3*j+0] = point.x;
                 vb[3*j+1] = point.y;
                 vb[3*j+2] = point.z;
@@ -387,7 +387,8 @@ namespace linkml{
 
 #if Visualize
             for (int j = 0; j < indecies.size() ; j++){
-                auto point = cloud.pts[indecies[j]];
+                // auto point = cloud.pts[indecies[j]];
+                auto point = clampted_points[indecies[j]];
                 meshVerts.push_back(point);
             }
 
@@ -435,7 +436,7 @@ namespace linkml{
             auto id = cell_map_int_to_id[i];
             auto plane = cell_map_plane[id];
 
-            auto new_origin = plane.origin + plane.normal * 0.01f;
+            auto new_origin = plane.origin + (plane.normal * -0.1f);
 
             auto rays = filter_vectors(all_vectors, new_origin, plane.normal);
             auto color = linkml::get_color_forom_angle(linkml::sample_circle(i));
@@ -471,7 +472,6 @@ namespace linkml{
                 ray_node_colors.push_back(color);
                 couter++;
 #endif
-
             }
 #if Visualize
             offset_rays += rays.size() * 2;
@@ -493,18 +493,16 @@ namespace linkml{
         rtcIntersect1M(scene, &context, (RTCRayHit*)&all_rays[0], (unsigned int)all_rays.size(), sizeof(std::tuple<size_t, RTCRayHit>));
         bool any_hit = false;
 
-        // #pragma omp parallel 
-        // #pragma omp single nowait
+        #pragma omp parallel 
+        #pragma omp single nowait
         for (auto [id, rayhit] : all_rays){
             if (rayhit.hit.geomID != RTC_INVALID_GEOMETRY_ID) {
 
-
                 auto source_id = id;
                 auto ray = rayhit;
-
-                // #pragma omp task shared(source_id, ray) //shared(tripletList, matrix, any_hit )
-                // {
-
+                
+                #pragma omp task shared( matrix, any_hit) firstprivate(source_id, ray)
+                {
                     auto target_id = genomID_map[ray.hit.geomID];
 
                     auto source_int = cell_map_id_to_int[source_id];
@@ -512,21 +510,24 @@ namespace linkml{
 
    
                     auto inverse = 5 / ray.ray.tfar;
-                    auto vaule2 = (matrix.coeff(source_int, target_int) + inverse ) / 2;
 
-                    // #pragma omp critical
-                    // {
+                    #pragma omp critical
+                    {
+                        // auto vaule = (matrix.coeff(source_int, target_int) + inverse ) / 2;
+                        // auto vaule = 1;
+                        auto vaule = matrix.coeff(source_int, target_int) + 1;
+
                         // Increment the matrix
-                        matrix.coeffRef(source_int, target_int) = vaule2;
-                        matrix.coeffRef(target_int, source_int) = vaule2;
-                        
+                        matrix.coeffRef(source_int, target_int) = vaule;
+                        matrix.coeffRef(target_int, source_int) = vaule;
                         any_hit = true;
-                    // }
+                    }
 
-                // }
+                }
 
             }
         }
+
 
         // Release the scene and device
         rtcReleaseScene(scene);
@@ -540,10 +541,9 @@ namespace linkml{
         // writeSparseMatrixToFile(matrix, "sparse_matrix_pre.txt");
 
 
-
         // C++ Markov Clustering
-        // 2.5 < infaltion < 2.8  => 2.6
-        matrix = markov_clustering::run_mcl(matrix, 2, 3);
+        // 2.5 < infaltion < 2.8  => 3.5
+        matrix = markov_clustering::run_mcl(matrix, 2, 1.3);
         std::set<std::vector<size_t>> clusters = markov_clustering::get_clusters(matrix);
         std::printf("n_clusters sp_matrix: %d\n", clusters.size());
 
