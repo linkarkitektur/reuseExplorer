@@ -1,6 +1,7 @@
 #pragma once
+#include <string>
 
 
 namespace linkml{
-    void parse_input_files(srting& input_file, string& output_file);
+    void parse_input_files(std::string const&  input_file, std::string const&  output_file);
 }

@@ -283,7 +283,7 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     # scip
     embree
     soplex
-    Eigen3
+    Eigen3::Eigen3
     CGAL::Eigen3_support
     CGAL::SCIP_support
     CGAL::TBB_support
