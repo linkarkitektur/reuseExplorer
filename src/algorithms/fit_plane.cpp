@@ -1,11 +1,11 @@
-#include <algorithms/fit_plane.h>
-#include <functions/fit_plane_thorugh_points.h>
+#include <algorithms/fit_plane.hh>
+#include <functions/fit_plane_thorugh_points.hh>
 
-#include <types/plane.h>
-#include <types/plane_fit_parameters.h>
-#include <types/point_cloud.h>
-#include <types/result_fit_plane.h>
-#include <types/reg.h>
+#include <types/plane.hh>
+#include <types/plane_fit_parameters.hh>
+#include <types/point_cloud.hh>
+#include <types/result_fit_plane.hh>
+#include <types/reg.hh>
 
 #include <cstdlib>
 #include <ctime>

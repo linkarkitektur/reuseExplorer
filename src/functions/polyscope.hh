@@ -1,13 +1,13 @@
 #pragma onece
 
-#include <types/point_cloud.h>
-#include <types/CellComplex.h>
+#include <types/point_cloud.hh>
+#include <types/CellComplex.hh>
 #include <typed-geometry/types/objects/aabb.hh>
 #include <typed-geometry/types/pos.hh>
 
-#include <functions/polyscope_helpers.h>
-#include <functions/constuct_adjacency.h>
-#include <functions/color.h>
+#include <functions/polyscope_helpers.hh>
+#include <functions/constuct_adjacency.hh>
+#include <functions/color.hh>
 
 
 #include <polyscope/polyscope.h>

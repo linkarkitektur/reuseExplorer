@@ -6,14 +6,14 @@
 #include <vector>
 #include <set>
 
-#include <types/point_cloud.h>
-#include <types/result_fit_planes.h>
-#include <functions/alpha_shape.h>
-#include <functions/color_facetes.h>
-#include <functions/project_2d.h>
-#include <functions/fit_plane_thorugh_points.h>
-#include <functions/convex_hull_2d.h>
-#include <algorithms/markov_clustering.h>
+#include <types/point_cloud.hh>
+#include <types/result_fit_planes.hh>
+#include <functions/alpha_shape.hh>
+#include <functions/color_facetes.hh>
+#include <functions/project_2d.hh>
+#include <functions/fit_plane_thorugh_points.hh>
+#include <functions/convex_hull_2d.hh>
+#include <algorithms/markov_clustering.hh>
 
 #include <typed-geometry/types/objects/polygon.hh>
 #include <typed-geometry/functions/objects/contains.hh>
@@ -34,7 +34,7 @@
 #include "polyscope/surface_mesh.h"
 #include "polyscope/curve_network.h"
 
-#include <functions/color.h>
+#include <functions/color.hh>
 #endif
 
 

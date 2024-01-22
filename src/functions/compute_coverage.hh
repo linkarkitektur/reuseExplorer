@@ -1,6 +1,6 @@
 #pragma once
-#include <types/CellComplex.h>
-#include <types/point_cloud.h>
+#include <types/CellComplex.hh>
+#include <types/point_cloud.hh>
 
 
 namespace linkml {

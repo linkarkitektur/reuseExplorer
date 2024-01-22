@@ -1,5 +1,5 @@
 #pragma once
 
-#include "algorithms/all.h"
-#include "types/all.h"
-#include "functions/all.h"
+#include "algorithms/all.hh"
+#include "types/all.hh"
+#include "functions/all.hh"

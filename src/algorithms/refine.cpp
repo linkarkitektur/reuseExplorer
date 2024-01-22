@@ -1,11 +1,11 @@
-#include <algorithms/refine.h>
+#include <algorithms/refine.hh>
 #include <typed-geometry/tg.hh>
-#include <types/result_fit_planes.h>
-#include <types/point_cloud.h>
+#include <types/result_fit_planes.hh>
+#include <types/point_cloud.hh>
 #include <clean-core/vector.hh>
 
-#include <functions/fit_plane_thorugh_points.h>
-#include <functions/progress_bar.h>
+#include <functions/fit_plane_thorugh_points.hh>
+#include <functions/progress_bar.hh>
 
 // #include <polyscope/polyscope.h>
 // #include <polyscope/surface_mesh.h>
@@ -13,7 +13,7 @@
 
 #include <polymesh/pm.hh>
 #include <polymesh/algorithms/triangulate.hh>
-#include <functions/crop_plane_with_aabb.h>
+#include <functions/crop_plane_with_aabb.hh>
 #include <clean-core/format.hh>
 
 

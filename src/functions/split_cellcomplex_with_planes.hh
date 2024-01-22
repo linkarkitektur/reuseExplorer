@@ -1,8 +1,8 @@
 #pragma once
 
-#include <types/CellComplex.h>
-#include <types/result_fit_planes.h>
-#include <functions/progress_bar.h>
+#include <types/CellComplex.hh>
+#include <types/result_fit_planes.hh>
+#include <functions/progress_bar.hh>
 
 #include <typed-geometry/tg.hh>
 #include <typed-geometry/detail/optional.hh>

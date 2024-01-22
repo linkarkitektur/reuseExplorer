@@ -1,11 +1,11 @@
 
 #pragma once
-#include <types/plane.h>
-#include <types/CellComplex.h>
-#include <types/result_fit_planes.h>
+#include <types/plane.hh>
+#include <types/CellComplex.hh>
+#include <types/result_fit_planes.hh>
 
-#include <functions/color.h>
-#include <functions/get_csystem.h>
+#include <functions/color.hh>
+#include <functions/get_csystem.hh>
 
 #include <typed-geometry/tg.hh>
 #include <typed-geometry/feature/std-interop.hh>

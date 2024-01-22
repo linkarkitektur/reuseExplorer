@@ -3,9 +3,9 @@
 
 #include <typed-geometry/tg-lean.hh>
 
-#include <types/plane.h>
-#include <types/point_cloud.h>
-#include <types/result_fit_planes.h>
+#include <types/plane.hh>
+#include <types/point_cloud.hh>
+#include <types/result_fit_planes.hh>
 
 
 namespace linkml {

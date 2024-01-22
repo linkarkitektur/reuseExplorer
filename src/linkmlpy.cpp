@@ -7,7 +7,7 @@
 #include <pybind11/stl.h>
 #include <pybind11/iostream.h>
 
-#include <linkml.h>
+#include <linkml.hh>
 
 #include <eigen3/Eigen/Core>
 #include <sstream>

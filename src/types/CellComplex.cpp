@@ -1,5 +1,5 @@
 
-#include <types/CellComplex.h>
+#include <types/CellComplex.hh>
 #include <typed-geometry/feature/vector.hh>
 #include <typed-geometry/types/objects/aabb.hh>
 #include <typed-geometry/feature/std-interop.hh>

@@ -2,7 +2,7 @@
 #include <string>
 #include <pybind11/embed.h>
 
-#include <types/point_cloud.h>
+#include <types/point_cloud.hh>
 
 namespace py = pybind11;
 

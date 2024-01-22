@@ -3,8 +3,8 @@
 #include <typed-geometry/types/pos.hh>
 #include <typed-geometry/types/objects/plane.hh>
 
-#include <functions/get_csystem.h>
-#include <functions/get_matrix_from_plane.h>
+#include <functions/get_csystem.hh>
+#include <functions/get_matrix_from_plane.hh>
 
 
 namespace linkml

@@ -1,4 +1,4 @@
-#include <types/speckle.h>
+#include <types/speckle.hh>
 #include <pybind11/embed.h>
 #include <iostream>
 

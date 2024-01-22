@@ -1,8 +1,8 @@
 #pragma once
 #include <vector>
-#include <types/point_cloud.h>
-#include <types/plane_fit_parameters.h>
-#include <types/result_fit_plane.h>
+#include <types/point_cloud.hh>
+#include <types/plane_fit_parameters.hh>
+#include <types/result_fit_plane.hh>
 
 
 namespace linkml {

@@ -1,7 +1,7 @@
 #include <nexus/test.hh>
 #include <nexus/config.hh>
 #include <Eigen/Sparse>
-#include <algorithms/markov_clustering.h>
+#include <algorithms/markov_clustering.hh>
 
 namespace linkml {
     namespace markov_clustering

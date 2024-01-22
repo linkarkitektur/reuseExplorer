@@ -1,6 +1,6 @@
 #pragma once
 
-#include <types/plane.h>
+#include <types/plane.hh>
 #include <typed-geometry/tg.hh>
 #include <typed-geometry/types/objects/plane.hh>
 #include <typed-geometry/types/mat.hh>

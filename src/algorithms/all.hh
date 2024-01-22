@@ -1,7 +1,7 @@
 #pragma once
 
-#include <algorithms/create_cell_complex.h>
-#include <algorithms/fit_plane.h>
-#include <algorithms/fit_planes.h>
-#include <algorithms/refine.h>
-#include <algorithms/clustering.h>
+#include <algorithms/create_cell_complex.hh>
+#include <algorithms/fit_plane.hh>
+#include <algorithms/fit_planes.hh>
+#include <algorithms/refine.hh>
+#include <algorithms/clustering.hh>

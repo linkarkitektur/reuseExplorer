@@ -1,4 +1,4 @@
-#include "progress_bar.h"
+#include "progress_bar.hh"
 
 #include <cstdio>
 

@@ -1,26 +1,26 @@
-#include <algorithms/create_cell_complex.h>
+#include <algorithms/create_cell_complex.hh>
 
-#include <types/CellComplex.h>
-#include <types/result_fit_planes.h>
-#include <types/point_cloud.h>
+#include <types/CellComplex.hh>
+#include <types/result_fit_planes.hh>
+#include <types/point_cloud.hh>
 
 // #include <vector>
 // #include <map>
 // #include <execution>
 
-// #include <functions/progress_bar.h>
-#include <functions/color.h>
-// #include <functions/polyscope_helpers.h>
-// #include <functions/crop_plane_with_aabb.h>
-// #include <functions/convex_hull_2d.h>
-// #include <functions/project_2d.h>
-// #include <functions/split_cellcomplex_with_planes.h>
-// #include <functions/color_facetes.h>
-// #include <functions/decimate_cell_complex.h>
-// #include <functions/compute_coverage.h>
-// #include <functions/linear_program.h>
-// #include <functions/linear_program_solver.h>
-// #include <functions/constuct_adjacency.h>
+// #include <functions/progress_bar.hh>
+#include <functions/color.hh>
+// #include <functions/polyscope_helpers.hh>
+// #include <functions/crop_plane_with_aabb.hh>
+// #include <functions/convex_hull_2d.hh>
+// #include <functions/project_2d.hh>
+// #include <functions/split_cellcomplex_with_planes.hh>
+// #include <functions/color_facetes.hh>
+// #include <functions/decimate_cell_complex.hh>
+// #include <functions/compute_coverage.hh>
+// #include <functions/linear_program.hh>
+// #include <functions/linear_program_solver.hh>
+// #include <functions/constuct_adjacency.hh>
 
 
 // #include <typed-geometry/tg.hh>
@@ -45,7 +45,7 @@
 // // #include "polyscope/curve_network.h"
 
 #include "polyscope/polyscope.h"
-#include <functions/polyscope.h>
+#include <functions/polyscope.hh>
 
 
 
@@ -53,10 +53,10 @@
 #include <CGAL/property_map.h>
 #include <CGAL/Surface_mesh.h>
 #include <CGAL/Polygonal_surface_reconstruction.h>
-#include <types/Polyhonal_surface_reconstruction_custom.h>
+#include <types/Polyhonal_surface_reconstruction_custom.hh>
 
 #ifdef CGAL_USE_GUROBI  // defined (or not) by CMake scripts, do not define by hand/
-#include <types/GUROBI_mixed_integer_program_traits.h>
+#include <types/GUROBI_mixed_integer_program_traits.hh>
 typedef CGAL::GUROBI_mixed_integer_program_traits<double>					MIP_Solver;
 #else
 #include <CGAL/SCIP_mixed_integer_program_traits.h>

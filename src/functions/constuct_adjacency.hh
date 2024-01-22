@@ -1,5 +1,5 @@
 #pragma once
-#include <types/CellComplex.h>
+#include <types/CellComplex.hh>
 #include <polymesh/pm-std.hh>
 #include <assert.h>
 

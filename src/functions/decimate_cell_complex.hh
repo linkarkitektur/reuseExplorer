@@ -1,6 +1,6 @@
 #pragma once
-#include <functions/alpha_shape.h>
-#include <types/CellComplex.h>
+#include <functions/alpha_shape.hh>
+#include <types/CellComplex.hh>
 
 namespace linkml {
 

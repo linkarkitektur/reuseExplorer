@@ -11,7 +11,7 @@
 #include <CGAL/Polygonal_surface_reconstruction/internal/compute_confidences.h>
 #include <CGAL/Polygonal_surface_reconstruction/internal/point_set_with_planes.h>
 
-#include <types/compute_visibility.h>
+#include <types/compute_visibility.hh>
 
 #include <unordered_map>
 

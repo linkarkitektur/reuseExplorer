@@ -1,10 +1,10 @@
 #pragma once
 #include <omp.h>
 
-#include <types/point_cloud.h>
-#include <types/CellComplex.h>
-#include <types/result_fit_planes.h>
-#include <functions/progress_bar.h>
+#include <types/point_cloud.hh>
+#include <types/CellComplex.hh>
+#include <types/result_fit_planes.hh>
+#include <functions/progress_bar.hh>
 
 #include <typed-geometry/tg.hh>
 #include <typed-geometry/detail/optional.hh>

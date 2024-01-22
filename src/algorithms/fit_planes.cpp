@@ -1,5 +1,5 @@
-#include <algorithms/fit_planes.h>
-#include <algorithms/fit_plane.h>
+#include <algorithms/fit_planes.hh>
+#include <algorithms/fit_plane.hh>
 
 #include <cstdlib>
 #include <ctime>

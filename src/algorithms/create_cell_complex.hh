@@ -1,7 +1,7 @@
 #pragma once
 #include <vector>
-#include <types/point_cloud.h>
-#include <types/result_fit_planes.h>
+#include <types/point_cloud.hh>
+#include <types/result_fit_planes.hh>
 
 
 namespace linkml{
