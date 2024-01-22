@@ -14,7 +14,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 message("CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
@@ -180,7 +180,7 @@ if(NOT Boost_FOUND)
 
 endif()
 
-find_package(Eigen3 3.1.0) #(requires 3.1.0 or greater)
+find_package(Eigen3 3.3 REQUIRED) #(requires 3.1.0 or greater)
 include(CGAL_Eigen3_support)
 if(NOT TARGET CGAL::Eigen3_support)
   message(
@@ -218,23 +218,23 @@ ENDIF()
 
 find_package(GUROBI REQUIRED)
 if (GUROBI_FOUND)
-    message("Using Gurobi Solver")
+    message(STATUS "Using Gurobi Solver")
     add_compile_definitions(CGAL_USE_GUROBI=1)
     include_directories(${GUROBI_INCLUDE_DIRS})
-    message("GUROBI_CXX_DEBUG_LIBRARY ${GUROBI_CXX_DEBUG_LIBRARY}")
+    message(STATUS "GUROBI_CXX_DEBUG_LIBRARY ${GUROBI_CXX_DEBUG_LIBRARY}")
 endif()
 
 find_package(PCL REQUIRED PATHS /usr NO_DEFAULT_PATH)
 if(PCL_FOUND)
+    message(STATUS "Using PCL - ${PCL_VERSION}")
     include_directories(${PCL_INCLUDE_DIRS})
     link_directories(${PCL_LIBRARY_DIRS})
     add_definitions(${PCL_DEFINITIONS})
-    message("Using PCL - ${PCL_VERSION}")
-    message("PCL_INCLUDE_DIRS ${PCL_INCLUDE_DIRS}")
-    message("PCL_LIBRARY_DIRS ${PCL_LIBRARY_DIRS}")
-    message("PCL_DEFINITIONS ${PCL_DEFINITIONS}")
 endif()
 
+
+list(APPEND CMAKE_MODULE_PATH "./cmake/FindHDF5.cmake") # Replaces the bundled FindHDF5.cmake module
+find_package(HDF5 1.10 COMPONENTS C HL REQUIRED)
 
 
 # ===============================================
@@ -266,6 +266,7 @@ target_link_libraries(${LIB_PROJECT_NAME}
     PRIVATE pybind11::embed 
     optimized ${GUROBI_CXX_LIBRARY}
     debug ${GUROBI_CXX_DEBUG_LIBRARY}
+    HDF5::HDF5
     )
 target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     clean-core
@@ -282,6 +283,7 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     # scip
     embree
     soplex
+    Eigen3
     CGAL::Eigen3_support
     CGAL::SCIP_support
     CGAL::TBB_support

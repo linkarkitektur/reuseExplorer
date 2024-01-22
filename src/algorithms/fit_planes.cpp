@@ -370,155 +370,155 @@ void PlaneFit_Solver::update_results(thread_result r){
        //////////////////////////////
 
 
-void PlaneFit_Solver::producer(std::stop_token st, int thread_num, point_cloud const &cloud, plane_fitting_parameters const &params ){
-    std::vector<int> proccesed_local = copy_thread_safe(processed);
-    thread_result result_local = thread_result();
-    int counter =0;
+// void PlaneFit_Solver::producer(std::stop_token st, int thread_num, point_cloud const &cloud, plane_fitting_parameters const &params ){
+//     std::vector<int> proccesed_local = copy_thread_safe(processed);
+//     thread_result result_local = thread_result();
+//     int counter =0;
 
 
-    while(!st.stop_requested()){
-        if (update[thread_num]){
-            proccesed_local = copy_thread_safe(processed);
-            counter =0;
-            update[thread_num] = false;
-        }
-        auto r = linkml::fit_plane(cloud, params, proccesed_local);
-        if (r.valid){
-            result_local.plan = r.plane;
-            result_local.indecies = r.indecies;
-            result_local.vaild = true;
+//     while(!st.stop_requested()){
+//         if (update[thread_num]){
+//             proccesed_local = copy_thread_safe(processed);
+//             counter =0;
+//             update[thread_num] = false;
+//         }
+//         auto r = linkml::fit_plane(cloud, params, proccesed_local);
+//         if (r.valid){
+//             result_local.plan = r.plane;
+//             result_local.indecies = r.indecies;
+//             result_local.vaild = true;
 
 
-                   // Push data
-            push_result(result_local);
-            //                std::unique_lock<std::mutex> lock(bufferMutex);
-            //                notFull.wait(lock, []{ return buffer.size() < BUFFER_SIZE; });
-            //                buffer.push(result_local);
-            //                lock.unlock();
+//                    // Push data
+//             push_result(result_local);
+//             //                std::unique_lock<std::mutex> lock(bufferMutex);
+//             //                notFull.wait(lock, []{ return buffer.size() < BUFFER_SIZE; });
+//             //                buffer.push(result_local);
+//             //                lock.unlock();
 
-                   // Update and reset local data
-            proccesed_local = copy_thread_safe(processed);
-            counter =0;
-            result_local = thread_result();
+//                    // Update and reset local data
+//             proccesed_local = copy_thread_safe(processed);
+//             counter =0;
+//             result_local = thread_result();
 
-        } else{
-            result_local.proccesed.insert(r.index);
-            proccesed_local.push_back(r.index);
-        }
+//         } else{
+//             result_local.proccesed.insert(r.index);
+//             proccesed_local.push_back(r.index);
+//         }
 
-               // If we have done more then 1000 iterrations updated the main thread anyway.
-        if (counter > 1000){
-            // Push data
-            push_result(result_local);
-            //                std::unique_lock<std::mutex> lock(bufferMutex);
-            //                notFull.wait(lock, []{ return buffer.size() < BUFFER_SIZE; });
-            //                buffer.push(result_local);
-            //                lock.unlock();
+//                // If we have done more then 1000 iterrations updated the main thread anyway.
+//         if (counter > 1000){
+//             // Push data
+//             push_result(result_local);
+//             //                std::unique_lock<std::mutex> lock(bufferMutex);
+//             //                notFull.wait(lock, []{ return buffer.size() < BUFFER_SIZE; });
+//             //                buffer.push(result_local);
+//             //                lock.unlock();
 
-                   // Update and reset local data
-            proccesed_local = copy_thread_safe(processed);
-            counter =0;
-            result_local = thread_result();
-        }
-        counter++;
-    };
-}
-void PlaneFit_Solver::consumer(std::stop_token st, std::stop_source &ss, point_cloud const  &cloud){
+//                    // Update and reset local data
+//             proccesed_local = copy_thread_safe(processed);
+//             counter =0;
+//             result_local = thread_result();
+//         }
+//         counter++;
+//     };
+// }
+// void PlaneFit_Solver::consumer(std::stop_token st, std::stop_source &ss, point_cloud const  &cloud){
 
-    while(!st.stop_requested()){
+//     while(!st.stop_requested()){
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(300)); // Simulate some work
+//         std::this_thread::sleep_for(std::chrono::milliseconds(300)); // Simulate some work
 
-        //            std::unique_lock<std::mutex> lock(bufferMutex);
-        //            notEmpty.wait(lock, []{ return !buffer.empty(); });
+//         //            std::unique_lock<std::mutex> lock(bufferMutex);
+//         //            notEmpty.wait(lock, []{ return !buffer.empty(); });
 
-        //            thread_result data = buffer.front();
-        //            buffer.pop();
-        auto data = pop_result();
+//         //            thread_result data = buffer.front();
+//         //            buffer.pop();
+//         auto data = pop_result();
 
-        update_results(data);
-
-
-        //            lock.unlock();
-        notFull.notify_all();
+//         update_results(data);
 
 
-        if (break_checker(cloud.pts.size()))
-            ss.request_stop();
-
-    }
-}
-
-void PlaneFit_Solver::plane_finder(
-    std::stop_token st,
-    PlaneFit_Solver *instatce,
-    std::barrier<> &b1,
-    std::barrier<> &b2,
-    int thread_num,
-    point_cloud const &cloud,
-    plane_fitting_parameters const &params){
-
-    while (!st.stop_requested()){
-        std::vector<int> proccesed_local = instatce->copy_thread_safe(instatce->processed);
-        thread_result result_local = thread_result();
-
-        int counter =0;
-        int halt_counter =0;
+//         //            lock.unlock();
+//         notFull.notify_all();
 
 
-        while(!st.stop_requested()){
+//         if (break_checker(cloud.pts.size()))
+//             ss.request_stop();
 
-            if (instatce->halt){
-                if (halt_counter > 200)
-                    break;
-                halt_counter++;
-            }
+//     }
+// }
 
-            if (counter > 1000){
-                instatce->halt = true;
-                break;
-            }
-            counter++;
+// void PlaneFit_Solver::plane_finder(
+//     std::stop_token st,
+//     PlaneFit_Solver *instatce,
+//     std::barrier<> &b1,
+//     std::barrier<> &b2,
+//     int thread_num,
+//     point_cloud const &cloud,
+//     plane_fitting_parameters const &params){
 
-            auto r = fit_plane(cloud, params, proccesed_local);
-            if (!r.valid){
-                result_local.proccesed.insert(r.index);
-                proccesed_local.push_back(r.index);
-                continue;
-            }
+//     while (!st.stop_requested()){
+//         std::vector<int> proccesed_local = instatce->copy_thread_safe(instatce->processed);
+//         thread_result result_local = thread_result();
 
-            result_local.plan = r.plane;
-            result_local.indecies = r.indecies;
-            result_local.vaild = true;
-            instatce->halt = true;
-            break;
-        }
-
-        instatce->thread_results.at(thread_num) = result_local;
-        b1.arrive_and_wait();
-        // The data from the indevidual threads is being colected and compared and updated.
-        b2.arrive_and_wait();
-    }
-}
+//         int counter =0;
+//         int halt_counter =0;
 
 
-void PlaneFit_Solver::results_processes(
-    std::stop_token st,
-    PlaneFit_Solver *instatce,
-    std::stop_source &ss,
-    std::barrier<> &b1,
-    std::barrier<> &b2,
-    point_cloud const &cloud)
-{
-    while (!st.stop_requested()){
-        b1.arrive_and_wait();
-        instatce->update_results();
-        instatce->halt = false;
-        if (instatce->break_checker(cloud.pts.size()))
-            ss.request_stop();
-        b2.arrive_and_wait();
-    }
-};
+//         while(!st.stop_requested()){
+
+//             if (instatce->halt){
+//                 if (halt_counter > 200)
+//                     break;
+//                 halt_counter++;
+//             }
+
+//             if (counter > 1000){
+//                 instatce->halt = true;
+//                 break;
+//             }
+//             counter++;
+
+//             auto r = fit_plane(cloud, params, proccesed_local);
+//             if (!r.valid){
+//                 result_local.proccesed.insert(r.index);
+//                 proccesed_local.push_back(r.index);
+//                 continue;
+//             }
+
+//             result_local.plan = r.plane;
+//             result_local.indecies = r.indecies;
+//             result_local.vaild = true;
+//             instatce->halt = true;
+//             break;
+//         }
+
+//         instatce->thread_results.at(thread_num) = result_local;
+//         b1.arrive_and_wait();
+//         // The data from the indevidual threads is being colected and compared and updated.
+//         b2.arrive_and_wait();
+//     }
+// }
+
+
+// void PlaneFit_Solver::results_processes(
+//     std::stop_token st,
+//     PlaneFit_Solver *instatce,
+//     std::stop_source &ss,
+//     std::barrier<> &b1,
+//     std::barrier<> &b2,
+//     point_cloud const &cloud)
+// {
+//     while (!st.stop_requested()){
+//         b1.arrive_and_wait();
+//         instatce->update_results();
+//         instatce->halt = false;
+//         if (instatce->break_checker(cloud.pts.size()))
+//             ss.request_stop();
+//         b2.arrive_and_wait();
+//     }
+// };
 
 
 
@@ -529,7 +529,7 @@ void PlaneFit_Solver::results_processes(
 
     void PlaneFit_Solver::interupt_solver(int s ){
         std::cout << "Stoping search early as per user request" << std::endl;
-        stop_source.request_stop();
+        // stop_source.request_stop();
     }
 
     std::vector<PlaneFit_Solver *> PlaneFit_Solver::instances = std::vector<PlaneFit_Solver *>();
@@ -542,10 +542,10 @@ void PlaneFit_Solver::results_processes(
     {
 
         int num_threads(16);
-        auto token = stop_source.get_token();
+        // auto token = stop_source.get_token();
 
-        std::barrier b1(num_threads);
-        std::barrier b2(num_threads);
+        // std::barrier b1(num_threads);
+        // std::barrier b2(num_threads);
 
 
         // Handel user interuption
@@ -560,7 +560,7 @@ void PlaneFit_Solver::results_processes(
 
         // Single thread
         if (true){
-            while (!token.stop_requested() and !break_checker(cloud.pts.size())){
+            while (!break_checker(cloud.pts.size())){ //!token.stop_requested() and !break_checker(cloud.pts.size()
                 std::vector<int> proccesed_local = copy_thread_safe(processed);
                 result_fit_plane result = fit_plane(cloud, params, proccesed_local);
 
@@ -577,6 +577,7 @@ void PlaneFit_Solver::results_processes(
         }
 
 
+#if 0
         // Multithreading
         if (false){
             std::vector<std::jthread> threads = std::vector<std::jthread>();
@@ -632,7 +633,7 @@ void PlaneFit_Solver::results_processes(
             consumer_thread.join();
 
         }
-
+#endif
         auto result = result_fit_planes();
         result.planes = planes;
         result.indecies = indecies;

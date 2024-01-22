@@ -120,7 +120,7 @@ namespace linkml {
         std::vector<std::atomic_bool> update;
         int counter = 0;
 
-        std::stop_source stop_source = std::stop_source();
+        // std::stop_source stop_source = std::stop_source();
 
     //////////////////////////////
     // Non thread safe function //
@@ -170,25 +170,25 @@ namespace linkml {
     // Thread Workers           //
     //////////////////////////////
 
-        void producer(std::stop_token st, int thread_num, point_cloud const &cloud, linkml::plane_fitting_parameters const &params );
-        void consumer(std::stop_token st, std::stop_source &ss, point_cloud const  &cloud);
+    //     void producer(std::stop_token st, int thread_num, point_cloud const &cloud, linkml::plane_fitting_parameters const &params );
+    //     void consumer(std::stop_token st, std::stop_source &ss, point_cloud const  &cloud);
 
-        static void plane_finder(
-            std::stop_token st,
-            PlaneFit_Solver *instatce,
-            std::barrier<> &b1,
-            std::barrier<> &b2,
-            int thread_num,
-            point_cloud const &cloud,
-            plane_fitting_parameters const &params);
+    //     static void plane_finder(
+    //         std::stop_token st,
+    //         PlaneFit_Solver *instatce,
+    //         std::barrier<> &b1,
+    //         std::barrier<> &b2,
+    //         int thread_num,
+    //         point_cloud const &cloud,
+    //         plane_fitting_parameters const &params);
 
-        static void results_processes(
-            std::stop_token st,
-            PlaneFit_Solver *instatce,
-            std::stop_source &ss,
-            std::barrier<> &b1,
-            std::barrier<> &b2,
-            point_cloud const &cloud);
+    //     static void results_processes(
+    //         std::stop_token st,
+    //         PlaneFit_Solver *instatce,
+    //         std::stop_source &ss,
+    //         std::barrier<> &b1,
+    //         std::barrier<> &b2,
+    //         point_cloud const &cloud);
 
     };
 
