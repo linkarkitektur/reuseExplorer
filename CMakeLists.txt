@@ -150,14 +150,14 @@ add_subdirectory(extern/pybind11)
 add_subdirectory(extern/polyscope)
 add_subdirectory(extern/glpk)
 add_subdirectory(extern/lpsolve)
-# add_subdirectory(extern/scip)
 add_subdirectory(extern/soplex)
+# add_subdirectory(extern/scip)
 # add_subdirectory(extern/cgal)
 # add_subdirectory(extern/pcl)
-#add_subdirectory(extern/glfw)
-#add_subdirectory(extern/glow)
-#add_subdirectory(extern/imgui)
-#add_subdirectory(extern/glow-extras)
+# add_subdirectory(extern/glfw)
+# add_subdirectory(extern/glow)
+# add_subdirectory(extern/imgui)
+# add_subdirectory(extern/glow-extras)
 add_subdirectory(extern/fmt)
 add_subdirectory(extern/nexus)
 
@@ -179,6 +179,7 @@ if(NOT Boost_FOUND)
   return()
 
 endif()
+
 find_package(Eigen3 3.1.0) #(requires 3.1.0 or greater)
 include(CGAL_Eigen3_support)
 if(NOT TARGET CGAL::Eigen3_support)
@@ -223,6 +224,18 @@ if (GUROBI_FOUND)
     message("GUROBI_CXX_DEBUG_LIBRARY ${GUROBI_CXX_DEBUG_LIBRARY}")
 endif()
 
+find_package(PCL REQUIRED PATHS /usr NO_DEFAULT_PATH)
+if(PCL_FOUND)
+    include_directories(${PCL_INCLUDE_DIRS})
+    link_directories(${PCL_LIBRARY_DIRS})
+    add_definitions(${PCL_DEFINITIONS})
+    message("Using PCL - ${PCL_VERSION}")
+    message("PCL_INCLUDE_DIRS ${PCL_INCLUDE_DIRS}")
+    message("PCL_LIBRARY_DIRS ${PCL_LIBRARY_DIRS}")
+    message("PCL_DEFINITIONS ${PCL_DEFINITIONS}")
+endif()
+
+
 
 # ===============================================
 # configure executable
@@ -233,7 +246,6 @@ file(GLOB_RECURSE LIB_SOURCES
 
 file(GLOB_RECURSE LIB_HEADERS
     "src/*.hh"
-    "src/*.h"
 )
 
 list(FILTER LIB_SOURCES EXCLUDE REGEX ".*py.cpp")
@@ -289,10 +301,6 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
 )
 
 
-target_include_directories(${LIB_PROJECT_NAME} PUBLIC "src")
-target_compile_options(${LIB_PROJECT_NAME} PUBLIC ${COMMON_COMPILER_FLAGS})
-
-
 # dependency grouping in the IDE
 foreach(TARGET_NAME
     clean-core
@@ -307,15 +315,21 @@ foreach(TARGET_NAME
     glpk
     lpsolve
     # scip
+    # glfw
+    # glow
+    # imgui
+    # glow-extras
     soplex
-#    glfw
-#    glow
-#    imgui
-#    glow-extras
 
 )
 set_property(TARGET ${TARGET_NAME} PROPERTY FOLDER "Extern")
 endforeach()
+
+
+# ===============================================
+# main libary
+target_include_directories(${LIB_PROJECT_NAME} PUBLIC "src")
+target_compile_options(${LIB_PROJECT_NAME} PUBLIC ${COMMON_COMPILER_FLAGS})
 
 
 # ===============================================
