@@ -1,36 +1,44 @@
 #include "parse_input_files.hh"
-
-#include <pcl/point_types.h>
-#include <h5pp/h5pp.h>
-#include <omp.h>
-#include <string>
-#include <fstream>
-#include <filesystem>
-#include <fmt/printf.h>
-#include <optional>
-
-#include <Eigen/Dense>
-#include <vector>
-
-#include <opencv4/opencv2/opencv.hpp>
-#include <functions/progress_bar.hh>
-
-#include <functions/lodepng.hh>
-
 #include <types/dataset.hh>
 
-namespace linkml{
+#include <Eigen/Dense>
 
-std::ostream& operator<<(std::ostream& lhs, Field e) {
-    switch(e) {
-        case COLOR: lhs << "COLOR"; break;
-        case DEPTH: lhs << "DEPTH"; break;
-        case CONFIDENCE: lhs << "CONFIDENCE"; break;
-        case ODOMETRY: lhs << "ODOMETRY"; break;
-        case IMU: lhs << "IMU"; break;
-    }
-    return lhs;
-}
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
+// #include <pcl/console/parse.h>
+// #include <pcl/io/openni_grabber.h>
+// #include <pcl/sample_consensus/sac_model_plane.h>
+// #include <pcl/people/ground_based_people_detection_app.h>
+// #include <pcl/common/time.h>
+
+#include <mutex>
+#include <thread>
+
+
+// #include <h5pp/h5pp.h>
+// #include <omp.h>
+// #include <string>
+// #include <fstream>
+// #include <filesystem>
+// #include <fmt/printf.h>
+// #include <optional>
+
+// #include <vector>
+// #include <any>
+
+// #include <opencv4/opencv2/opencv.hpp>
+// #include <functions/progress_bar.hh>
+
+// #include <functions/lodepng.hh>
+
+#include <typed-geometry/tg-std.hh>
+#include <typed-geometry/tg.hh>
+
+
+#include <polyscope/polyscope.h>
+#include <polyscope/point_cloud.h>
+
+namespace linkml{
 
 std::string print_matrix(Eigen::MatrixXd const& matrix, int n_rows = 10, int n_cols = 10, int precision = 3){
 
@@ -143,6 +151,7 @@ std::string print_matrix(Eigen::MatrixXd const& matrix, int n_rows = 10, int n_c
                 continue;
             }
             // FIXME: Cell width is not correct 
+
             ss << std::setw(precision+2) << std::setprecision(precision) << matrix(row_index, col_index) << " ";
         }
         
@@ -156,13 +165,96 @@ std::string print_matrix(Eigen::MatrixXd const& matrix, int n_rows = 10, int n_c
 
     void parse_input_files(std::string const& path){
 
-        auto dataset = Dataset(path, {Field::COLOR, Field::DEPTH, Field::CONFIDENCE});
+        auto dataset = Dataset(path, {Field::COLOR, Field::DEPTH, Field::CONFIDENCE, Field::ODOMETRY, Field::IMU, Field::POSES});
 
-        auto data = dataset[1];
+        // PCL viewer //
+        // typedef pcl::PointXYZRGBA PointT;
+        // typedef pcl::PointCloud<PointT> PointCloudT;
+        typedef pcl::PointCloud<tg::dpos3> PointCloudT;
 
-        for (auto&& [key, matrix] : data){
-            std::cout << key << "\n";
-            std::cout << print_matrix(matrix);
+        polyscope::init();
+        polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
+        polyscope::view::setUpDir(polyscope::UpDir::ZUp);
+
+
+        auto camera_intrisic_matrix = dataset.intrinsic_matrix();
+
+        for (size_t i=0; i< 2; i+=5){
+            auto data = dataset[i];
+
+            auto depth = data.get<Field::DEPTH>();
+            auto confidence = data.get<Field::CONFIDENCE>();
+            auto image = data.get<Field::COLOR>();
+            auto pose = data.get<Field::POSES>();
+            
+            cv::Mat color;
+            cv::resize(image, color, cv::Size(depth.cols(), depth.rows())); // cv::INTER_LINEAR
+
+
+            // auto point_cloud = PointCloudT::Ptr(new PointCloudT);
+            std::vector<tg::dpos3> points;
+            std::vector<tg::color3> colors;
+
+            
+            for (int row = 0; row < depth.rows(); row++){
+                for (int col = 0; col < depth.cols(); col++){
+
+                    auto depth_value = depth(row, col);
+                    auto confidence_value = confidence(row, col);
+
+                    if (depth_value == 0 || confidence_value == 0) continue;
+
+                    auto pos2 = tg::dpos2(col, row);
+                    pos2 =  camera_intrisic_matrix * pos2;
+                    auto point = tg::dpos3(pos2, 1);
+                    point = point * depth_value; // / point.z;
+
+
+                    // tg::dpos3 point;
+                    // point.x = (col - camera_intrisic_matrix(0,2)) * depth_value / camera_intrisic_matrix(0,0);
+                    // point.y = (row - camera_intrisic_matrix(1,2)) * depth_value / camera_intrisic_matrix(1,1);
+                    // point.z = depth_value;
+
+                    point = tg::inverse(pose) * point;
+
+                    // point_cloud->push_back(point);
+
+
+                    points.push_back(point);
+                    auto color_value = color.at<cv::Vec3b>(row, col);
+                    colors.push_back(tg::color3(static_cast<double>(color_value[0])/256, 
+                                                static_cast<double>(color_value[1])/256, 
+                                                static_cast<double>(color_value[2])/256));
+                }
+            }
+
+            auto ps_cloud = polyscope::registerPointCloud("point cloud", points);
+            auto ps_color = ps_cloud->addColorQuantity("color", colors);
+            ps_color->setEnabled(true);
+            polyscope::show();
+
         }
+
+
+        // auto data = dataset[1];
+
+
+        // for (auto&& [key, data] : data){
+
+        //     switch (key)
+        //     {
+        //     case Field::COLOR:
+        //         std::cout << key << "\n";
+        //         // std::cout << std::any_cast<cv::Mat>(data) << "\n";
+        //         break;
+            
+        //     default:
+        //         std::cout << key << "\n";
+        //         std::cout << print_matrix(std::any_cast<Eigen::MatrixXd>(data));
+        //         break;
+        //     }
+
+        //     std::cout << "\n";
+        // }
     }
 }
