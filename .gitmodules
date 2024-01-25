@@ -61,3 +61,6 @@
 [submodule "extern/nexus"]
 	path = extern/nexus
 	url = git@github.com:project-arcana/nexus.git
+[submodule "extern/Open3D"]
+	path = extern/Open3D
+	url = git@github.com:isl-org/Open3D.git

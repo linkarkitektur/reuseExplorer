@@ -160,6 +160,7 @@ add_subdirectory(extern/soplex)
 # add_subdirectory(extern/glow-extras)
 add_subdirectory(extern/fmt)
 add_subdirectory(extern/nexus)
+# add_subdirectory(extern/Open3D)
 
 
 find_package( OpenCV REQUIRED )
@@ -296,6 +297,7 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
 #    glow-extras
     fmt
     nexus
+    # Open3D
 
     ${OpenCV_LIBS}
 
