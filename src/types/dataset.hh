@@ -1,4 +1,6 @@
 #pragma once
+#include "./data.hh"
+
 #include <filesystem>
 #include <initializer_list>
 #include <vector>
@@ -6,22 +8,10 @@
 #include <map>
 #include <any>
 #include <Eigen/Dense>
+#include <typed-geometry/tg-std.hh>
 
 
 namespace linkml {
-
-    enum Field {
-        COLOR,
-        DEPTH,
-        CONFIDENCE,
-        ODOMETRY,
-        IMU
-    };
-
-
-    class Data : public std::map<Field, Eigen::MatrixXd>
-    {};
-
 
     class Dataset
     {
@@ -30,13 +20,23 @@ namespace linkml {
         std::set<Field>                     _fields            = {};
         std::vector<std::filesystem::path>  _depth_paths       = {};
         std::vector<std::filesystem::path>  _confidence_paths  = {};
+        Eigen::MatrixXd                     _odometry_data     = {};
+        Eigen::MatrixXd                     _imu_data          = {};
+        int                                 _n_frames          = 0;
+        int                                 _rgb_width         = 1920;
+        int                                 _rgb_hight         = 1440;
+
+
+    
+
+
 
     public:
         Dataset(std::filesystem::path path, std::initializer_list<Field> fields);
 
         // Getters
-        std::set<Field>                    fields()            const {return _fields;};
-        Eigen::MatrixXd                    intrinsic_matrix()  const;
+        std::set<Field>                     fields()            const {return _fields;};
+        tg::dmat3                           intrinsic_matrix()  const;
     
 
 

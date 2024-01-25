@@ -1,29 +1,38 @@
 #include "./dataset.hh"
-#include <functions/progress_bar.hh>
 #include <functions/lodepng.hh>
-
-#include <filesystem>
-#include <initializer_list>
 #include <fstream>
 #include <iostream>
 #include <string>
-#include <vector>
 #include <optional>
-#include <cassert>
-
 #include <fmt/printf.h>
-#include <fmt/format.h>
-#include <h5pp/h5pp.h>
-#include <omp.h>
+#include <typed-geometry/tg-std.hh>
+#include <typed-geometry/tg.hh>
+// #include <typed-geometry/types/quat.hh>
+// #include <typed-geometry/feature/quat.hh>
+// #include <typed-geometry/types/mat.hh>
 
-#include <pcl/point_types.h>
-#include <Eigen/Dense>
-#include <opencv4/opencv2/opencv.hpp>
+
+
+
+// #include <functions/progress_bar.hh>
+
+// #include <filesystem>
+// #include <initializer_list>
+// #include <vector>
+// #include <cassert>
+
+// #include <fmt/format.h>
+// #include <h5pp/h5pp.h>
+// #include <omp.h>
+
+// #include <pcl/point_types.h>
+// #include <Eigen/Dense>
+// #include <opencv4/opencv2/opencv.hpp>
+// #include <typed-geometry/tg.hh>
+// #include <typed-geometry/tg-std.hh>
 
 
 #define CHECK_EXSISTANCE(path, file) if (!std::filesystem::exists(path / file)){ fmt::printf("{} does not exist\n", file); break; }
-
-
 
 
 template <typename T>
@@ -74,24 +83,28 @@ Eigen::MatrixXd read_csv(std::ifstream & stream, char delimiter = ',', bool head
     return matrix;
 }
 
-Eigen::MatrixXd fram_to_matrix(cv::Mat const& frame){
+// Eigen::Matrix<tg::color3, Eigen::Dynamic, Eigen::Dynamic> fram_to_matrix(cv::Mat const& frame){
 
-    auto rows = frame.rows;
-    auto cols = frame.cols;
-    auto dims = frame.channels();
+//     auto rows = frame.rows;
+//     auto cols = frame.cols;
+//     auto dims = frame.channels();
 
-    auto matrix = Eigen::MatrixXd(rows, cols * dims);
+//     auto matrix = Eigen::Matrix<tg::color3, Eigen::Dynamic, Eigen::Dynamic>(rows, cols);
 
-    for (int i = 0; i < rows; i++){
-        for (int j = 0; j < cols * dims; j++){
-            matrix(i, j) = frame.at<uchar>(i, j);
-        }
-    }
+//     for (int i = 0; i < rows; i++){
+//         for (int j = 0; j < cols * dims; j++){
+//             float red   = frame.at<uchar>(i, j, 0);
+//             float green = frame.at<uchar>(i, j, 1);
+//             float blue  = frame.at<uchar>(i, j, 2);
+//             matrix(i, j) = tg::color3(red,green,blue );
+//         }
+//     }
 
-    return matrix;
-}
+//     return matrix;
+// }
 
-std::optional<Eigen::MatrixXd> read_frame_at_index(std::filesystem::path const& path, int idx){
+
+std::optional<cv::Mat> read_frame_at_index(std::filesystem::path const& path, int idx){
 
     cv::VideoCapture cap(path);
     cap.set(cv::CAP_PROP_POS_FRAMES,idx);
@@ -104,11 +117,13 @@ std::optional<Eigen::MatrixXd> read_frame_at_index(std::filesystem::path const& 
         return {};
     }
 
-    return fram_to_matrix(frame);
+    // return fram_to_matrix(frame);
+
+    return frame;
 
 }
 
-std::optional<Eigen::MatrixXd> read_camera_matrix(std::filesystem::path const& path){
+std::optional<tg::dmat3> read_camera_matrix(std::filesystem::path const& path){
 
     if (!std::filesystem::exists(path)){
         fmt::print("Camera matrix file does not exist\n");
@@ -119,10 +134,38 @@ std::optional<Eigen::MatrixXd> read_camera_matrix(std::filesystem::path const& p
     std::ifstream camera_matrix_stream;
     camera_matrix_stream.open(path);
 
-    return read_csv(camera_matrix_stream, ',', false);
+
+    auto matrix = read_csv(camera_matrix_stream, ',', false);
+
+    auto  mat = tg::dmat3::diag(1);
+
+    // (int col, int row)  <-- Tyepd geometry
+    // (int row, int col)  <-- Eigen
+
+    mat(0,0) = matrix(0,0);
+
+    mat(0,1) = matrix(1,0);
+    mat(1,0) = matrix(0,1);
+    mat(1,1) = matrix(1,1);
+
+    mat(0,2) = matrix(2,0);
+    mat(1,2) = matrix(2,1);
+    mat(2,0) = matrix(0,2);
+    mat(2,1) = matrix(1,2);
+    mat(2,2) = matrix(2,2);
+
+    // mat(0,3) = matrix(3,0);
+    // mat(1,3) = matrix(3,1);
+    // mat(2,3) = matrix(3,2);
+    // mat(3,0) = matrix(0,3);
+    // mat(3,1) = matrix(1,3);
+    // mat(3,2) = matrix(2,3);
+    // mat(3,3) = matrix(3,3);
+
+    return mat;
 }
 
-std::optional<Eigen::MatrixXd> read_odometry(std::filesystem::path const& path){
+std::optional<Eigen::Matrix<double,     Eigen::Dynamic, Eigen::Dynamic>> read_odometry(std::filesystem::path const& path){
 
     if (!std::filesystem::exists(path)){
         fmt::print("Odometry file does not exist\n");
@@ -138,7 +181,7 @@ std::optional<Eigen::MatrixXd> read_odometry(std::filesystem::path const& path){
 
 }
 
-std::optional<Eigen::MatrixXd> read_imu(std::filesystem::path const& path){
+std::optional<Eigen::Matrix<double,     Eigen::Dynamic, Eigen::Dynamic>> read_imu(std::filesystem::path const& path){
 
     if (!std::filesystem::exists(path)){
         fmt::print("IMU file does not exist\n");
@@ -154,7 +197,7 @@ std::optional<Eigen::MatrixXd> read_imu(std::filesystem::path const& path){
 
 }
 
-std::optional<Eigen::MatrixXd> read_depth_image(std::filesystem::path const& path){
+std::optional<Eigen::Matrix<double,     Eigen::Dynamic, Eigen::Dynamic>> read_depth_image(std::filesystem::path const& path){
 
 
     std::vector<unsigned char> buffer1;
@@ -177,7 +220,7 @@ std::optional<Eigen::MatrixXd> read_depth_image(std::filesystem::path const& pat
     return image_to_matrix(buffer2, height, width, 0, 1)  / 1000; // Convert to meters
 }
 
-std::optional<Eigen::MatrixXd> read_confidence_image(std::filesystem::path const& path){
+std::optional<Eigen::Matrix<double,     Eigen::Dynamic, Eigen::Dynamic>> read_confidence_image(std::filesystem::path const& path){
 
     std::vector<unsigned char> buffer;
     unsigned width, height;
@@ -193,7 +236,14 @@ std::optional<Eigen::MatrixXd> read_confidence_image(std::filesystem::path const
 }
 
 
+auto create_pose(Eigen::Vector3d const& p, Eigen::Vector4d const& q){
+    tg::pos3 pos(p(0), p(1), p(2));
+    tg::dquat quat(q(0), q(1), q(2), q(3));
 
+    auto mat = static_cast<tg::dmat4x4>(quat);
+    mat.set_col(3, tg::dvec4(pos, 1));
+    return mat;
+}
 
 
 namespace linkml {
@@ -205,6 +255,9 @@ Dataset::Dataset(std::filesystem::path path, std::initializer_list<Field> fields
     // Check if directories and files exists
     assert(std::filesystem::exists(path) && fmt::format("Directory does not exist: {}", path.string()).c_str());
     _path = path;
+
+
+
 
 
     // Load data
@@ -236,13 +289,20 @@ Dataset::Dataset(std::filesystem::path path, std::initializer_list<Field> fields
                     [](const auto& entry){return entry.path();});
                 _fields.insert(field);
                 break;
-            
+            case Field::POSES:
+                _fields.insert(field);
+                // Chontious fall thorugh, since poses are dependent on Odemetry
             case Field::ODOMETRY:
                 CHECK_EXSISTANCE(path , "odometry.csv" );
+
+                _odometry_data = read_odometry(_path /"odometry.csv").value();
                 _fields.insert(field);
                 break;
+
             case Field::IMU:
                 CHECK_EXSISTANCE(path , "imu.csv" );
+
+                _imu_data = read_imu(_path /"imu.csv").value();
                 _fields.insert(field);
                 break;
 
@@ -252,31 +312,54 @@ Dataset::Dataset(std::filesystem::path path, std::initializer_list<Field> fields
     }
 };
 
-Eigen::MatrixXd Dataset::intrinsic_matrix() const {
-    return read_camera_matrix( _path / "camera_matrix.csv").value();
+tg::dmat3 Dataset::intrinsic_matrix() const {
+    auto matrix = read_camera_matrix( _path / "camera_matrix.csv").value();
+
+    // Scale intrinsic matrix to match depth image size
+    auto scale_x = _rgb_width;
+    auto scale_y = _rgb_hight;
+
+    // matrix(0,0) = matrix(0,0) * scale_x;
+    // matrix(1,1) = matrix(1,1) * scale_y;
+    // matrix(0,2) = matrix(0,2) * scale_x;
+    // matrix(1,2) = matrix(1,2) * scale_y;
+
+    // auto  mat = tg::dmat4::diag(1);
+    // mat(0,0) = scale_x;
+
+    matrix(0,0) = matrix(0,0) * scale_x;
+    matrix(1,1) = matrix(1,1) * scale_y;
+    matrix(2,0) = matrix(2,0) * scale_x;
+    matrix(2,1) = matrix(2,1) * scale_y;
+
+    return matrix;
 }
 
 Data Dataset::operator[] (int idx){
 
     // TODO: Check if idx is in range
 
+
     Data data;
     for (auto field : _fields) {
         switch (field) {
             case Field::COLOR:
-                data[Field::COLOR] = read_frame_at_index(_path / "rgb.mp4", idx).value();
+                data.set<Field::COLOR>(read_frame_at_index(_path / "rgb.mp4", idx).value());
                 break;
             case Field::DEPTH:
-                data[Field::DEPTH] = read_depth_image(_depth_paths[idx]).value();
+                data.set<Field::DEPTH>(read_depth_image(_depth_paths[idx]).value());
                 break;
             case Field::CONFIDENCE:
-                data[Field::CONFIDENCE] = read_confidence_image(_confidence_paths[idx]).value();
+                data.set<Field::CONFIDENCE>(read_confidence_image(_confidence_paths[idx]).value());
                 break;
             case Field::ODOMETRY:
-                data[Field::ODOMETRY] = read_odometry("odometry.csv").value();
+                data.set<Field::ODOMETRY>(_odometry_data.row(idx));
+                break;
+            case Field::POSES:
+                data.set<Field::POSES>(create_pose(_odometry_data.block<1,3>(idx,2),_odometry_data.block<1,4>(idx,5) ));
                 break;
             case Field::IMU:
-                data[Field::IMU] = read_imu("imu.csv").value();
+                data.set<Field::IMU>(_imu_data.row(idx));
                 break;
             default:
                 throw std::runtime_error("Unknown field");
