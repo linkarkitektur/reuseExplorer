@@ -37,6 +37,7 @@
 
 #include <polyscope/polyscope.h>
 #include <polyscope/point_cloud.h>
+#include <polyscope/curve_network.h>
 
 namespace linkml{
 
@@ -174,7 +175,7 @@ std::string print_matrix(Eigen::MatrixXd const& matrix, int n_rows = 10, int n_c
 
         polyscope::init();
         polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
-        // polyscope::view::setUpDir(polyscope::UpDir::ZUp);
+        polyscope::view::setUpDir(polyscope::UpDir::NegYUp);
 
 
         auto camera_intrisic_matrix = dataset.intrinsic_matrix();
@@ -196,28 +197,35 @@ std::string print_matrix(Eigen::MatrixXd const& matrix, int n_rows = 10, int n_c
             // auto point_cloud = PointCloudT::Ptr(new PointCloudT);
             std::vector<tg::dpos3> points;
             std::vector<tg::color3> colors;
+            std::vector<tg::dvec3> normals;
 
             
             for (int row = 0; row < depths.rows(); row++){
                 for (int col = 0; col < depths.cols(); col++){
 
-                    auto depth = depths(row, col);
+
+
+                    auto depth = depths(row,col);
                     auto confidence = confidences(row, col);
 
-                    // if (depth == 0 || confidence == 0) continue;
+                    if (depth == 0 || confidence == 0) continue;
 
-                    auto pos = tg::dvec3(col, row, 1);
+                    auto pos = tg::dvec3(col,row, 1);
                     pos = tg::inverse(camera_intrisic_matrix) * pos;
                     pos = pos * depth;
-
-                    
-
                     auto point = tg::inverse(pose) * (tg::dpos3)pos;
+
+
+                    auto normal =  (tg::dvec3)pos*-1;
+                    normal = tg::normalize(normal);
+                    normal = tg::inverse(pose) * normal;
 
                     // point_cloud->push_back(pos);
 
 
                     points.push_back(point);
+                    normals.push_back(normal);
+
                     auto color_value = color.at<cv::Vec3b>(row, col);
                     colors.push_back(tg::color3(static_cast<double>(color_value[0])/256, 
                                                 static_cast<double>(color_value[1])/256, 
@@ -228,6 +236,21 @@ std::string print_matrix(Eigen::MatrixXd const& matrix, int n_rows = 10, int n_c
             auto ps_cloud = polyscope::registerPointCloud("point cloud", points);
             auto ps_color = ps_cloud->addColorQuantity("color", colors);
             ps_color->setEnabled(true);
+
+
+            // consturct line along normal vectors
+            std::vector<tg::dpos3> nodes;
+            std::vector<std::array<size_t, 2>> edges;
+            for (size_t i = 0; i < points.size(); i++){
+                nodes.push_back(points[i]);
+                nodes.push_back(points[i] + normals[i] * 0.5);
+
+                edges.push_back({i*2, i*2+1});
+            }
+
+            polyscope::registerCurveNetwork("normals", nodes, edges);
+
+
             polyscope::show();
 
         }
