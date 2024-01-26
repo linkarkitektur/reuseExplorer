@@ -316,16 +316,8 @@ tg::dmat3 Dataset::intrinsic_matrix() const {
     auto matrix = read_camera_matrix( _path / "camera_matrix.csv").value();
 
     // Scale intrinsic matrix to match depth image size
-    auto scale_x = _rgb_width;
-    auto scale_y = _rgb_hight;
-
-    // matrix(0,0) = matrix(0,0) * scale_x;
-    // matrix(1,1) = matrix(1,1) * scale_y;
-    // matrix(0,2) = matrix(0,2) * scale_x;
-    // matrix(1,2) = matrix(1,2) * scale_y;
-
-    // auto  mat = tg::dmat4::diag(1);
-    // mat(0,0) = scale_x;
+    auto scale_x = (double)_depth_width / (double)_rgb_width;
+    auto scale_y = (double)_depth_hight / (double)_rgb_hight;
 
     matrix(0,0) = matrix(0,0) * scale_x;
     matrix(1,1) = matrix(1,1) * scale_y;

@@ -25,6 +25,8 @@ namespace linkml {
         int                                 _n_frames          = 0;
         int                                 _rgb_width         = 1920;
         int                                 _rgb_hight         = 1440;
+        int                                 _depth_width       = 256;
+        int                                 _depth_hight       = 192;
 
 
     

@@ -174,21 +174,23 @@ std::string print_matrix(Eigen::MatrixXd const& matrix, int n_rows = 10, int n_c
 
         polyscope::init();
         polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
-        polyscope::view::setUpDir(polyscope::UpDir::ZUp);
+        // polyscope::view::setUpDir(polyscope::UpDir::ZUp);
 
 
         auto camera_intrisic_matrix = dataset.intrinsic_matrix();
 
+
         for (size_t i=0; i< 2; i+=5){
             auto data = dataset[i];
 
-            auto depth = data.get<Field::DEPTH>();
-            auto confidence = data.get<Field::CONFIDENCE>();
+            auto depths = data.get<Field::DEPTH>();
+            auto confidences = data.get<Field::CONFIDENCE>();
             auto image = data.get<Field::COLOR>();
             auto pose = data.get<Field::POSES>();
+
             
             cv::Mat color;
-            cv::resize(image, color, cv::Size(depth.cols(), depth.rows())); // cv::INTER_LINEAR
+            cv::resize(image, color, cv::Size(depths.cols(), depths.rows())); // cv::INTER_LINEAR
 
 
             // auto point_cloud = PointCloudT::Ptr(new PointCloudT);
@@ -196,28 +198,23 @@ std::string print_matrix(Eigen::MatrixXd const& matrix, int n_rows = 10, int n_c
             std::vector<tg::color3> colors;
 
             
-            for (int row = 0; row < depth.rows(); row++){
-                for (int col = 0; col < depth.cols(); col++){
+            for (int row = 0; row < depths.rows(); row++){
+                for (int col = 0; col < depths.cols(); col++){
 
-                    auto depth_value = depth(row, col);
-                    auto confidence_value = confidence(row, col);
+                    auto depth = depths(row, col);
+                    auto confidence = confidences(row, col);
 
-                    if (depth_value == 0 || confidence_value == 0) continue;
+                    // if (depth == 0 || confidence == 0) continue;
 
-                    auto pos2 = tg::dpos2(col, row);
-                    pos2 =  camera_intrisic_matrix * pos2;
-                    auto point = tg::dpos3(pos2, 1);
-                    point = point * depth_value; // / point.z;
+                    auto pos = tg::dvec3(col, row, 1);
+                    pos = tg::inverse(camera_intrisic_matrix) * pos;
+                    pos = pos * depth;
 
+                    
 
-                    // tg::dpos3 point;
-                    // point.x = (col - camera_intrisic_matrix(0,2)) * depth_value / camera_intrisic_matrix(0,0);
-                    // point.y = (row - camera_intrisic_matrix(1,2)) * depth_value / camera_intrisic_matrix(1,1);
-                    // point.z = depth_value;
+                    auto point = tg::inverse(pose) * (tg::dpos3)pos;
 
-                    point = tg::inverse(pose) * point;
-
-                    // point_cloud->push_back(point);
+                    // point_cloud->push_back(pos);
 
 
                     points.push_back(point);
