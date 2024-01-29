@@ -1,9 +1,8 @@
-#pragma onece
-
-#include <types/point_cloud.hh>
+#pragma once
+// #include <types/point_cloud.hh>
 #include <types/CellComplex.hh>
-#include <typed-geometry/types/objects/aabb.hh>
-#include <typed-geometry/types/pos.hh>
+// #include <typed-geometry/types/objects/aabb.hh>
+// #include <typed-geometry/types/pos.hh>
 
 #include <functions/polyscope_helpers.hh>
 #include <functions/constuct_adjacency.hh>
@@ -26,8 +25,8 @@ namespace polyscope  {
 
     }
 
-    void display(linkml::point_cloud const & cloud){
-        auto pcd = polyscope::registerPointCloud("Cloud", cloud.pts);
+    void display(linkml::point_cloud const & cloud, std::string name = "Cloud"){
+        auto pcd = polyscope::registerPointCloud(name, cloud.pts);
         pcd->setPointRadius(0.001);
 
         if (cloud.colors.size() == cloud.pts.size()){

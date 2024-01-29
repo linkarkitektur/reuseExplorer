@@ -74,6 +74,7 @@ namespace linkml{
     public:
         Data() = default;
 
+        
         template <Field F>
         typename FieldType<F>::type get() const {
             using ValueType = typename FieldType<F>::type;
@@ -87,6 +88,14 @@ namespace linkml{
 
         auto begin() const { return _data.begin(); }
         auto end() const { return _data.end(); }
+
+        auto fields() const {
+            std::vector<Field> fields;
+            for (auto const& [key, value] : _data) {
+                fields.push_back(key);
+            }
+            return fields;
+        }
 
     };
 
