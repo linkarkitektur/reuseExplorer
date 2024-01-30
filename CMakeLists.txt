@@ -124,6 +124,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${BIN_DIR})
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 #set(GLOW_BIN_DIR ${CMAKE_SOURCE_DIR}/bin)
 
+# REMOVED: this is not needed anymore
+set(CGAL_DO_NOT_WARN_ABOUT_CMAKE_BUILD_TYPE On)
+
 ## ===============================================
 ## disable glfw additionals
 #option(GLFW_BUILD_EXAMPLES  OFF)
@@ -136,32 +139,8 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # set(ENV{CUDACXX} "/usr/local/cuda/bin/nvcc")
 
 
-# ===============================================s
-# add submodules
-add_subdirectory(extern/clean-core)
-add_subdirectory(extern/typed-geometry)
-add_subdirectory(extern/ctracer)
-add_subdirectory(extern/reflector)
-add_subdirectory(extern/task-dispatcher)
-add_subdirectory(extern/rich-log)
-add_subdirectory(extern/polymesh)
-add_subdirectory(extern/nanoflann)
-add_subdirectory(extern/pybind11)
-add_subdirectory(extern/polyscope)
-add_subdirectory(extern/glpk)
-add_subdirectory(extern/lpsolve)
-add_subdirectory(extern/soplex)
-# add_subdirectory(extern/scip)
-# add_subdirectory(extern/cgal)
-# add_subdirectory(extern/pcl)
-# add_subdirectory(extern/glfw)
-# add_subdirectory(extern/glow)
-# add_subdirectory(extern/imgui)
-# add_subdirectory(extern/glow-extras)
-add_subdirectory(extern/fmt)
-add_subdirectory(extern/nexus)
-# add_subdirectory(extern/Open3D)
-
+# ===============================================
+# find packages
 
 find_package( OpenCV REQUIRED )
 
@@ -238,6 +217,33 @@ list(APPEND CMAKE_MODULE_PATH "./cmake/FindHDF5.cmake") # Replaces the bundled F
 find_package(HDF5 1.10 COMPONENTS C HL REQUIRED)
 
 
+
+# ===============================================
+# add submodules
+add_subdirectory(extern/clean-core)
+add_subdirectory(extern/typed-geometry)
+add_subdirectory(extern/ctracer)
+add_subdirectory(extern/reflector)
+add_subdirectory(extern/task-dispatcher)
+add_subdirectory(extern/rich-log)
+add_subdirectory(extern/polymesh)
+add_subdirectory(extern/nanoflann)
+add_subdirectory(extern/pybind11)
+add_subdirectory(extern/polyscope)
+add_subdirectory(extern/glpk)
+add_subdirectory(extern/lpsolve)
+add_subdirectory(extern/soplex)
+# add_subdirectory(extern/scip)
+# add_subdirectory(extern/cgal)
+# add_subdirectory(extern/pcl)
+# add_subdirectory(extern/glfw)
+# add_subdirectory(extern/glow)
+# add_subdirectory(extern/imgui)
+# add_subdirectory(extern/glow-extras)
+add_subdirectory(extern/fmt)
+add_subdirectory(extern/nexus)
+# add_subdirectory(extern/Open3D)
+
 # ===============================================
 # configure executable
 file(GLOB_RECURSE LIB_SOURCES
@@ -264,7 +270,8 @@ include_directories( ${OpenCV_INCLUDE_DIRS} )
 add_library(${LIB_PROJECT_NAME} STATIC ${LIB_SOURCES} ${LIB_HEADERS})
 set_target_properties(${LIB_PROJECT_NAME} PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
 target_link_libraries(${LIB_PROJECT_NAME} 
-    PRIVATE pybind11::embed 
+    PRIVATE 
+    pybind11::embed 
     optimized ${GUROBI_CXX_LIBRARY}
     debug ${GUROBI_CXX_DEBUG_LIBRARY}
     HDF5::HDF5
@@ -277,10 +284,10 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     task-dispatcher
     rich-log
     polymesh
-    nanoflann
     polyscope
     glpk
     lpsolve
+    nanoflann
     # scip
     embree
     soplex
@@ -291,6 +298,9 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     ${GUROBI_LIBRARY}
     # CGAL::GLPK_support
     # pcl
+    ${PCL_LIBRARIES}
+    ${PCL_COMMON_LIBRARIES}
+    # ${PCL_IO_LIBRARIES}
 #    glfw
 #    glow
 #    imgui
