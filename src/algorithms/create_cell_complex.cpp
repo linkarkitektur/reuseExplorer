@@ -45,7 +45,7 @@
 // // #include "polyscope/curve_network.h"
 
 #include <polyscope/polyscope.h>
-// #include <functions/polyscope.hh>
+#include <functions/polyscope.hh>
 
 
 
@@ -260,10 +260,10 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
 		auto h = cw.faces().add(v0, v1, v2 );
 	}
 
-	// polyscope::myinit();
-	// polyscope::display(cw);
-	// polyscope::display(cloud);
-	// polyscope::show();
+	polyscope::myinit();
+	polyscope::display(cw);
+	polyscope::display(cloud);
+	polyscope::show();
 
 
 

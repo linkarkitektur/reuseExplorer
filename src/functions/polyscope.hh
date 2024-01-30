@@ -17,7 +17,7 @@
 
 namespace polyscope  {
 
-    void myinit(){
+    static void myinit(){
         polyscope::init();
 
         polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
@@ -25,7 +25,7 @@ namespace polyscope  {
 
     }
 
-    void display(linkml::point_cloud const & cloud, std::string name = "Cloud"){
+    static void display(linkml::point_cloud const & cloud, std::string name = "Cloud"){
         auto pcd = polyscope::registerPointCloud(name, cloud.pts);
         pcd->setPointRadius(0.001);
 
@@ -35,7 +35,7 @@ namespace polyscope  {
         }
 
     }
-    void display(linkml::CellComplex & cw){
+    static void display(linkml::CellComplex & cw){
 
 
         auto ps_mesh = polyscope::registerSurfaceMesh("Mesh", ps_helpers::vertecies(cw, cw.pos), ps_helpers::faces(cw));
@@ -52,7 +52,7 @@ namespace polyscope  {
             return cw.coverage[h];
         }).to_vector());
     }
-    void display(tg::aabb3 const & box ){
+    static void display(tg::aabb3 const & box ){
 
         //  Drawing of cube with numbered vertecies.
         // 
@@ -88,7 +88,7 @@ namespace polyscope  {
         cn->setRadius(0.00070);
 
     }
-    void display(linkml::Adjacency adj){
+    static void display(linkml::Adjacency adj){
 
         // auto points = std::vector<tg::pos3>();
         // auto edges = std::vector<std::array<int, 2>>();

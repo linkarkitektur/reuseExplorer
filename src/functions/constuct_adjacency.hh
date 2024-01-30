@@ -84,7 +84,7 @@ namespace linkml {
     typedef typename std::vector<SuperEdge>						                    Adjacency;
 
 
-    Adjacency constuct_adjacency(CellComplex & cw){
+    static Adjacency constuct_adjacency(CellComplex & cw){
 
         assert(cw.is_compact());
 
