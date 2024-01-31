@@ -1,5 +1,5 @@
 #pragma once
-// #include <types/point_cloud.hh>
+#include <types/point_cloud.hh>
 #include <types/CellComplex.hh>
 // #include <typed-geometry/types/objects/aabb.hh>
 // #include <typed-geometry/types/pos.hh>
@@ -8,6 +8,7 @@
 #include <functions/constuct_adjacency.hh>
 #include <functions/color.hh>
 
+#include <valarray>
 
 #include <polyscope/polyscope.h>
 #include <polyscope/point_cloud.h>
@@ -16,6 +17,7 @@
 
 
 namespace polyscope  {
+
 
     static void myinit(){
         polyscope::init();
@@ -114,5 +116,27 @@ namespace polyscope  {
         cn->setRadius(0.00050);
         cn->addEdgeColorQuantity("Identity", colors)->setEnabled(true);
 
+    }
+    static void display(linkml::PointCloud & cloud, std::string const name = "Cloud"){
+
+        auto  points = std::vector<std::array<float, 3>>();
+        points.reserve(cloud.points.size());
+        for (auto &p : cloud.points){
+            points.push_back({p.x,p.y,p.z});
+        }
+
+        auto colors = std::vector<std::array<float, 3>>();
+        colors.reserve(cloud.points.size());
+        for (auto &p : cloud.points){
+            colors.push_back({
+                static_cast<float>(p.r)/256,
+                static_cast<float>(p.g)/256,
+                static_cast<float>(p.b)/256});
+        }
+
+        auto pcd = polyscope::registerPointCloud(name, points);
+        pcd->setPointRadius(0.001);
+        auto pcd_color =  pcd->addColorQuantity("RGB", colors);
+        pcd_color->setEnabled(true);
     }
 }

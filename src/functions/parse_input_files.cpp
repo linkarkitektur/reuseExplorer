@@ -1,13 +1,3 @@
-#include "parse_input_files.hh"
-#include <types/dataset.hh>
-
-#include <Eigen/Dense>
-
-
-
-#include <mutex>
-#include <thread>
-
 
 // #include <h5pp/h5pp.h>
 // #include <omp.h>
@@ -25,6 +15,24 @@
 
 // #include <functions/lodepng.hh>
 
+#define PCL_NO_PRECOMPILE
+#include <pcl/memory.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
+#include <pcl/point_representation.h>
+
+#include <pcl/filters/filter.h>
+
+#include <pcl/features/normal_3d.h>
+
+#include <pcl/registration/icp.h>
+#include <pcl/registration/icp_nl.h>
+#include <pcl/common/transforms.h>
+#include <pcl/io/pcd_io.h>
+
+#include <pcl/filters/conditional_removal.h>
+
 #include <typed-geometry/tg-std.hh>
 #include <typed-geometry/tg.hh>
 #include <functions/depth_to_3d.hh>
@@ -34,35 +42,28 @@
 #include <polyscope/point_cloud.h>
 #include <polyscope/curve_network.h>
 
-#include <pcl/memory.h>  // for pcl::make_shared
-#include <pcl/filters/voxel_grid.h>
-#include <pcl/point_types.h>
-#include <pcl/point_cloud.h>
-#include <pcl/point_representation.h>
+#include "parse_input_files.hh"
+#include <types/dataset.hh>
 
-#include <pcl/filters/voxel_grid.h>
-#include <pcl/filters/filter.h>
+#include <Eigen/Dense>
 
-#include <pcl/features/normal_3d.h>
-
-#include <pcl/registration/icp.h>
-#include <pcl/registration/icp_nl.h>
-#include <pcl/common/transforms.h>
+#include <mutex>
+#include <thread>
 
 
 namespace linkml{
 
-    //convenient typedefs
-    typedef pcl::PointXYZ                           PointT;
-    typedef pcl::PointCloud<PointT>                 PointCloud;
-    typedef pcl::PointNormal                        PointNormalT;
-    typedef pcl::PointCloud<PointNormalT>           PointCloudWithNormals;
+    // //convenient typedefs
+    // typedef pcl::PointXYZ                           PointT;
+    // typedef pcl::PointCloud<PointT>                 PointCloud;
+    // typedef pcl::PointNormal                        PointNormalT;
+    // typedef pcl::PointCloud<PointNormalT>           PointCloudWithNormals;
 
 
     // using PointT = tg::pos3;
     // using PointCloud = pcl::PointCloud<PointT>;
-    // using PointNormalT = std::tuple<tg::pos3,tg::vec3>;
-    // using PointCloudWithNormals = pcl::PointCloud<PointNormalT>;
+    typedef pcl::PointNormal PointNormalT;
+    typedef pcl::PointCloud<PointNormalT> PointCloudWithNormals;
 
 
     //convenient structure to handle our pointclouds
@@ -80,28 +81,27 @@ namespace linkml{
 
     };
 
+
     // Define a new point representation for < x, y, z, curvature >
-    class MyPointRepresentation : public pcl::PointRepresentation <PointNormalT>{
-
-        using pcl::PointRepresentation<PointNormalT>::nr_dimensions_;
-
+    class MyPointRepresentation : public pcl::PointRepresentation<PointT>
+    {
+        using pcl::PointRepresentation<PointT>::nr_dimensions_;
         public:
+        MyPointRepresentation ()
+        {
+            // Define the number of dimensions
+            nr_dimensions_ = 3;
+        }
 
-            MyPointRepresentation (){
-                // Define the number of dimensions
-                nr_dimensions_ = 4;
-            }
-
-
-            // Override the copyToFloatArray method to define our feature vector
-            virtual void copyToFloatArray (const PointNormalT &p, float * out) const{
-                // < x, y, z, curvature >
-                out[0] = p.x;
-                out[1] = p.y;
-                out[2] = p.z;
-                out[3] = p.curvature;
-            }
-
+        // Override the copyToFloatArray method to define our feature vector
+        virtual void copyToFloatArray (const PointT &p, float * out) const
+        {
+            // < x, y, z, curvature >
+            out[0] = p.x;
+            out[1] = p.y;
+            out[2] = p.z;
+            // out[3] = p.curvature;
+        }
     };
 
 
@@ -129,7 +129,9 @@ namespace linkml{
 
         if (downsample){
 
-            grid.setLeafSize (0.05, 0.05, 0.05);
+
+            auto grid_size = 0.1;
+            grid.setLeafSize (grid_size, grid_size, grid_size);
             grid.setInputCloud (cloud_src);
             grid.filter (*src);
 
@@ -145,23 +147,25 @@ namespace linkml{
 
 
 
-        // Compute surface normals and curvature
+        // // Compute surface normals and curvature
 
-        PointCloudWithNormals::Ptr points_with_normals_src(new PointCloudWithNormals);
-        PointCloudWithNormals::Ptr points_with_normals_tgt(new PointCloudWithNormals);
+        // PointCloudWithNormals::Ptr points_with_normals_src(new PointCloudWithNormals);
+        // PointCloudWithNormals::Ptr points_with_normals_tgt(new PointCloudWithNormals);
 
-        pcl::NormalEstimation<PointT, PointNormalT> norm_est;
-        pcl::search::KdTree<pcl::PointXYZ>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZ> ());
-        norm_est.setSearchMethod (tree);
-        norm_est.setKSearch (30);
+        
 
-        norm_est.setInputCloud (src);
-        norm_est.compute (*points_with_normals_src);
-        pcl::copyPointCloud (*src, *points_with_normals_src);
+        // pcl::NormalEstimation<PointT, PointNormalT> norm_est;
+        // pcl::search::KdTree<PointT>::Ptr tree (new pcl::search::KdTree<PointT> ());
+        // norm_est.setSearchMethod(tree);
+        // norm_est.setKSearch(30);
 
-        norm_est.setInputCloud (tgt);
-        norm_est.compute (*points_with_normals_tgt);
-        pcl::copyPointCloud (*tgt, *points_with_normals_tgt);
+        // norm_est.setInputCloud (src);
+        // norm_est.compute(*points_with_normals_src);
+        // pcl::copyPointCloud (*src, *points_with_normals_src);
+
+        // norm_est.setInputCloud (tgt);
+        // norm_est.compute(*points_with_normals_tgt);
+        // pcl::copyPointCloud(*tgt, *points_with_normals_tgt);
 
 
         //
@@ -175,7 +179,7 @@ namespace linkml{
 
         //
         // Align
-        pcl::IterativeClosestPointNonLinear<PointNormalT, PointNormalT> reg;
+        pcl::IterativeClosestPointNonLinear<PointT,PointT> reg;
         reg.setTransformationEpsilon (1e-6);
 
         // Set the maximum distance between two correspondences (src<->tgt) to 10cm
@@ -183,26 +187,26 @@ namespace linkml{
         reg.setMaxCorrespondenceDistance (0.1);  
 
         // Set the point representation
-        reg.setPointRepresentation (pcl::make_shared<const MyPointRepresentation> (point_representation));
+        reg.setPointRepresentation (pcl::make_shared<const MyPointRepresentation>(point_representation));
 
-        reg.setInputSource (points_with_normals_src);
-        reg.setInputTarget (points_with_normals_tgt);
+        reg.setInputSource (src);
+        reg.setInputTarget (tgt);
 
 
         //
         // Run the same optimization in a loop and visualize the results
         Eigen::Matrix4f Ti = Eigen::Matrix4f::Identity (), prev, targetToSource;
-        PointCloudWithNormals::Ptr reg_result = points_with_normals_src;
-        reg.setMaximumIterations (2);
+        PointCloud::Ptr reg_result = src;
+        reg.setMaximumIterations(2);
         for (int i = 0; i < 30; ++i){
 
             PCL_INFO ("Iteration Nr. %d.\n", i);
 
             // save cloud for visualization purpose
-            points_with_normals_src = reg_result;
+            src = reg_result;
 
             // Estimate
-            reg.setInputSource (points_with_normals_src);
+            reg.setInputSource (src);
             reg.align (*reg_result);
 
                 //accumulate transformation between each Iteration
@@ -220,7 +224,6 @@ namespace linkml{
 
         }
 
-            //
         // Get the transformation from target to source
         targetToSource = Ti.inverse();
 
@@ -228,29 +231,62 @@ namespace linkml{
         // Transform target back in source frame
         pcl::transformPointCloud (*cloud_tgt, *output, targetToSource);
 
-        // p->removePointCloud ("source");
-        // p->removePointCloud ("target");
-
-        // pcl::PointCloudColorHandlerCustom<PointT> cloud_tgt_h (output, 0, 255, 0);
-        // pcl::PointCloudColorHandlerCustom<PointT> cloud_src_h (cloud_src, 255, 0, 0);
-
-        // p->addPointCloud (output, cloud_tgt_h, "target", vp_2);
-        // p->addPointCloud (cloud_src, cloud_src_h, "source", vp_2);
-
-        //     PCL_INFO ("Press q to continue the registration.\n");
-
-        // p->spin ();
-
-        // p->removePointCloud ("source"); 
-        // p->removePointCloud ("target");
-
-        //add the source to the transformed target
         *output += *cloud_src;
 
         final_transform = targetToSource;
     }
 
+    void setConficence(PointCloud & cloud, Eigen::MatrixXd const confidences){
 
+        if (confidences.size() != cloud.size())
+            std::cout << "Confidences size is not equal to cloud size" << std::endl;
+
+        for (std::size_t i = 0; i < cloud.size (); ++i)
+        {
+            cloud.points[i].confidence = confidences.data()[i];
+        }
+    }
+
+    void filterConfidences(PointCloud::ConstPtr cloud, int threshold = 2){
+
+            pcl::ConditionAnd<PointT>::Ptr range_cond (new
+                            pcl::ConditionAnd<PointT> ());
+            range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new
+                pcl::FieldComparison<PointT>("confidence", pcl::ComparisonOps::GE, threshold)));
+
+
+            // build the filter
+            pcl::ConditionalRemoval<PointT> condrem;
+            condrem.setCondition(range_cond);
+            condrem.setInputCloud(cloud);
+            condrem.setKeepOrganized(true);
+
+    }
+
+    void setHeader(PointCloud & cloud, std::string const& frame_id,  Eigen::MatrixXd const & odometry){
+
+        auto pos = odometry.block<1,3>(0,2);  // x,y,z
+        auto quat = odometry.block<1,4>(0,5); // x,y,z,w
+
+        Eigen::Vector4f origin = Eigen::Vector4f(0, 0, 0, 0);
+        origin.x() = pos(0);
+        origin.y() = pos(1);
+        origin.z() = pos(2);
+
+        Eigen::Quaternionf orientation = Eigen::Quaternionf::Identity();
+        orientation.x() = quat(0);
+        orientation.y() = quat(1);
+        orientation.z() = quat(2);
+        orientation.w() = quat(3);
+
+        cloud.sensor_origin_ = origin;
+        cloud.sensor_orientation_ = orientation;
+
+        cloud.header.frame_id = frame_id;
+        cloud.sensor_origin_ = origin;
+        cloud.sensor_orientation_ = orientation;
+
+    }
 
     std::string print_matrix(Eigen::MatrixXd const& matrix, int n_rows = 10, int n_cols = 10, int precision = 3){
 
@@ -386,85 +422,75 @@ namespace linkml{
 
         auto camera_intrisic_matrix = dataset.intrinsic_matrix();
 
-        std::vector<point_cloud, Eigen::aligned_allocator<point_cloud>> point_clouds;
+        // Load data
+        ///////////////////////////////////////////////////////////////////////////////
+        std::vector<PCD, Eigen::aligned_allocator<PCD>> point_clouds;
 
-
-        for (size_t i=0; i< 11; i+=5){
+        for (size_t i=0; i< 25; i+=5){
             auto data = dataset[i];
-            auto point_cloud = depth_to_3d(
-                data.get<Field::DEPTH>(),
-                camera_intrisic_matrix, 
-                data.get<Field::POSES>(), 
-                data.get<Field::COLOR>());
+            
+            PCD pcd;
+            auto name = std::to_string(i);
+            pcd.f_name = name;
+            setHeader(*pcd.cloud, name , data.get<Field::ODOMETRY>());
 
-            point_clouds.push_back(point_cloud);
+            depth_to_3d(
+                        *pcd.cloud,
+                        data.get<Field::DEPTH>(),
+                        camera_intrisic_matrix, 
+                        data.get<Field::POSES>(), 
+                        data.get<Field::COLOR>());
+            
+            setConficence(*pcd.cloud, data.get<Field::CONFIDENCE>());
+            filterConfidences(pcd.cloud, 2);
 
-            // std::string name = "Cloud " + std::to_string(i);
-            // polyscope::display(point_cloud, name);
+            point_clouds.push_back(pcd);
+        }
 
+        // Display
+        ///////////////////////////////////////////////////////////////////////////////
+
+        for (size_t i = 0; i < point_clouds.size(); i++){
+            std::string name = "Cloud Pre " + point_clouds[i].f_name;
+            polyscope::display(*point_clouds[i].cloud, name);
         }
 
 
-
-
-        // Convert point clouds
+        // Registartion
         ///////////////////////////////////////////////////////////////////////////////
-
-        std::vector<PCD, Eigen::aligned_allocator<PCD>> data;
-
-        for (auto & point_cloud : point_clouds){
-            PCD temp;
-            for (auto const& point : point_cloud.pts){
-                temp.cloud->push_back(pcl::PointXYZ(point.x, point.y, point.z));
-            }
-            data.push_back(temp);
-        }
-
-
-        ///////////////////////////////////////////////////////////////////////////////
-
 
         PointCloud::Ptr result(new PointCloud), source, target;
-
         Eigen::Matrix4f GlobalTransform = Eigen::Matrix4f::Identity (), pairTransform;
 
     
-        for (std::size_t i = 0; i < data.size()-1 ; ++i){
+        for (std::size_t i = 1; i < point_clouds.size() ; ++i){
 
-            target = data[i].cloud;
-            source = data[i+1].cloud;
+            source = point_clouds[i-1].cloud;
+            target = point_clouds[i].cloud;
 
-
+            // ICP
             PointCloud::Ptr temp (new PointCloud);
             pairAlign (source, target, temp, pairTransform, true);
 
             //transform current pair into the global transform
-            pcl::transformPointCloud (*temp, *result, GlobalTransform);
-
+            pcl::transformPointCloud(*temp, *result, GlobalTransform);
 
             //update the global transform
             GlobalTransform *= pairTransform;
-
-            data[i+1].cloud = result;
-
+            point_clouds[i].cloud = result;
         }
 
-        // #pragma omp parallel for
-        for (int i = 0; i < data.size(); i++){
-            for (int j = 0; j < data[i].cloud->points.size(); j++){
-                auto & point = data[i].cloud->at(j);
-                point_clouds[i].pts[j].x = point.x;
-                point_clouds[i].pts[j].y = point.y;
-                point_clouds[i].pts[j].z = point.z;
-            }
-        }
+        // Display
+        ///////////////////////////////////////////////////////////////////////////////
 
-        for (int i = 0; i < point_clouds.size(); i++){
-            std::string name = "Cloud " + std::to_string(i);
-            polyscope::display(point_clouds[i], name);
+        for (size_t i = 0; i < point_clouds.size(); i++){
+            std::string name = "Cloud " + point_clouds[i].f_name;
+            polyscope::display(*point_clouds[i].cloud, name);
         }
 
         polyscope::show();
+
+        // pcl::io::savePCDFileBinaryCompressed("TEST", *point_clouds[0].cloud);
 
     }
 

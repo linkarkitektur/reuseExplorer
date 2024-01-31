@@ -1,25 +1,27 @@
 #pragma once
 #include <optional>
+
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
+
 #include <typed-geometry/tg-lean.hh>
 #include "../types/point_cloud.hh"
 #include "../types/data.hh"
 
 namespace linkml {
 
-    point_cloud depth_to_3d( 
+    void depth_to_3d( 
+        PointCloud & point_cloud,
         Eigen::MatrixXd const& depths,
         tg::dmat3 const& intrinsic_matrix,
         tg::dmat4 const& pose,
         std::optional<cv::Mat> const& image = std::nullopt
     ){
 
-        auto point_cloud = linkml::point_cloud();
-        cv::Mat colors;
+        point_cloud.resize(depths.rows() * depths.cols());
 
-        point_cloud.pts.resize(depths.rows() * depths.cols());
-        point_cloud.norm.resize(depths.rows() * depths.cols());
+        cv::Mat colors;
         if (image.has_value()) {
-            point_cloud.colors.resize(depths.rows() * depths.cols());
             cv::resize(image.value(), colors, cv::Size(depths.cols(), depths.rows())); // cv::INTER_LINEAR
             };
 
@@ -41,23 +43,26 @@ namespace linkml {
                 normal = tg::normalize(normal);
                 normal = tg::inverse(pose) * normal;
 
-                point_cloud.pts[index] = (tg::pos3)pos;
-                point_cloud.norm[index]= (tg::vec3)normal;
+                point_cloud[index].x  = pos.x;
+                point_cloud[index].y  = pos.y;
+                point_cloud[index].z  = pos.z;
+
+                point_cloud[index].normal_x = normal.x;
+                point_cloud[index].normal_y = normal.y;
+                point_cloud[index].normal_z = normal.z;
 
 
                 if (image.has_value()) {
                     cv::Vec3b vec = colors.at<cv::Vec3b>(row, col);
-                    double r = static_cast<double>(vec[0])/256;
-                    double g = static_cast<double>(vec[1])/256;
-                    double b = static_cast<double>(vec[2])/256;
-                    point_cloud.colors[index] = tg::color3(r,g,b);
+
+                    point_cloud[index].r = vec[0];
+                    point_cloud[index].g = vec[1];
+                    point_cloud[index].b = vec[2];
+
                 }
 
             }
         }
-
-        return point_cloud;
-
     }
 
 } // namespace linkml
