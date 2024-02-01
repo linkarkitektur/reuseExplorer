@@ -24,7 +24,7 @@
 
 #include <pcl/filters/filter.h>
 
-#include <pcl/features/normal_3d.h>
+#include <pcl/features/normal_3d_omp.h>
 
 #include <pcl/registration/icp.h>
 #include <pcl/registration/icp_nl.h>
@@ -41,6 +41,7 @@
 #include <polyscope/polyscope.h>
 #include <polyscope/point_cloud.h>
 #include <polyscope/curve_network.h>
+#include <fmt/printf.h>
 
 #include "parse_input_files.hh"
 #include <types/dataset.hh>
@@ -113,10 +114,9 @@ namespace linkml{
     * \param final_transform the resultant transform between source and target
     */
     void pairAlign (
-        const PointCloud::Ptr cloud_src, 
+        PointCloud::Ptr cloud_src, 
         const PointCloud::Ptr cloud_tgt, 
-        PointCloud::Ptr output, 
-        Eigen::Matrix4f &final_transform, 
+        Eigen::Matrix4f &pairTransform, 
         bool downsample = false
         ){
         //
@@ -128,44 +128,18 @@ namespace linkml{
         pcl::VoxelGrid<PointT> grid;
 
         if (downsample){
-
-
             auto grid_size = 0.1;
-            grid.setLeafSize (grid_size, grid_size, grid_size);
+            grid.setLeafSize(grid_size, grid_size, grid_size);
             grid.setInputCloud (cloud_src);
             grid.filter (*src);
 
-
-            grid.setInputCloud (cloud_tgt);
+            grid.setInputCloud(cloud_tgt);
             grid.filter (*tgt);
         }
-
         else{
             src = cloud_src;
             tgt = cloud_tgt;
         }
-
-
-
-        // // Compute surface normals and curvature
-
-        // PointCloudWithNormals::Ptr points_with_normals_src(new PointCloudWithNormals);
-        // PointCloudWithNormals::Ptr points_with_normals_tgt(new PointCloudWithNormals);
-
-        
-
-        // pcl::NormalEstimation<PointT, PointNormalT> norm_est;
-        // pcl::search::KdTree<PointT>::Ptr tree (new pcl::search::KdTree<PointT> ());
-        // norm_est.setSearchMethod(tree);
-        // norm_est.setKSearch(30);
-
-        // norm_est.setInputCloud (src);
-        // norm_est.compute(*points_with_normals_src);
-        // pcl::copyPointCloud (*src, *points_with_normals_src);
-
-        // norm_est.setInputCloud (tgt);
-        // norm_est.compute(*points_with_normals_tgt);
-        // pcl::copyPointCloud(*tgt, *points_with_normals_tgt);
 
 
         //
@@ -176,7 +150,6 @@ namespace linkml{
         float alpha[4] = {1.0, 1.0, 1.0, 1.0};
         point_representation.setRescaleValues (alpha);
 
-
         //
         // Align
         pcl::IterativeClosestPointNonLinear<PointT,PointT> reg;
@@ -184,56 +157,63 @@ namespace linkml{
 
         // Set the maximum distance between two correspondences (src<->tgt) to 10cm
         // Note: adjust this based on the size of your datasets
-        reg.setMaxCorrespondenceDistance (0.1);  
+        reg.setMaxCorrespondenceDistance(0.1);  
 
         // Set the point representation
-        reg.setPointRepresentation (pcl::make_shared<const MyPointRepresentation>(point_representation));
+        reg.setPointRepresentation(pcl::make_shared<const MyPointRepresentation>(point_representation));
 
-        reg.setInputSource (src);
-        reg.setInputTarget (tgt);
-
+        reg.setInputSource(src);
+        reg.setInputTarget(tgt);
 
         //
         // Run the same optimization in a loop and visualize the results
-        Eigen::Matrix4f Ti = Eigen::Matrix4f::Identity (), prev, targetToSource;
+        // Eigen::Matrix4f Ti = Eigen::Matrix4f::Identity(), prev, targetToSource;
         PointCloud::Ptr reg_result = src;
-        reg.setMaximumIterations(2);
-        for (int i = 0; i < 30; ++i){
+        reg.setMaximumIterations(10);
+        reg.align(*reg_result);
+        std::cout << "ICP has converged: " << reg.hasConverged() << std::endl;
 
-            PCL_INFO ("Iteration Nr. %d.\n", i);
-
-            // save cloud for visualization purpose
-            src = reg_result;
-
-            // Estimate
-            reg.setInputSource (src);
-            reg.align (*reg_result);
-
-                //accumulate transformation between each Iteration
-            Ti = reg.getFinalTransformation () * Ti;
-
-                //if the difference between this transformation and the previous one
-                //is smaller than the threshold, refine the process by reducing
-                //the maximal correspondence distance
-
-            if (std::abs ((reg.getLastIncrementalTransformation () - prev).sum ()) < reg.getTransformationEpsilon ())
-            reg.setMaxCorrespondenceDistance (reg.getMaxCorrespondenceDistance () - 0.001);
-
-            prev = reg.getLastIncrementalTransformation ();
-
-
+        if (reg.hasConverged())
+        {
+            pairTransform = reg.getFinalTransformation();
+            pcl::transformPointCloudWithNormals(*cloud_src,*cloud_src, pairTransform);
         }
 
-        // Get the transformation from target to source
-        targetToSource = Ti.inverse();
+        // for (int i = 0; i < 30; ++i){
 
-        //
-        // Transform target back in source frame
-        pcl::transformPointCloud (*cloud_tgt, *output, targetToSource);
+        //     PCL_INFO ("Iteration Nr. %d.\n", i);
 
-        *output += *cloud_src;
+        //     // // save cloud for visualization purpose
+        //     // src = reg_result;
 
-        final_transform = targetToSource;
+        //     // Estimate
+        //     reg.setInputSource (src);
+        //     reg.align (*src);
+
+        //         //accumulate transformation between each Iteration
+        //     Ti = reg.getFinalTransformation () * Ti;
+
+        //         //if the difference between this transformation and the previous one
+        //         //is smaller than the threshold, refine the process by reducing
+        //         //the maximal correspondence distance
+
+        //     if (std::abs ((reg.getLastIncrementalTransformation () - prev).sum ()) < reg.getTransformationEpsilon ())
+        //     reg.setMaxCorrespondenceDistance (reg.getMaxCorrespondenceDistance () - 0.001);
+
+        //     prev = reg.getLastIncrementalTransformation ();
+
+        // }
+
+        // // Get the transformation from target to source
+        // targetToSource = Ti.inverse();
+
+        // //
+        // // Transform target back in source frame
+        // pcl::transformPointCloud (*cloud_tgt, *output, targetToSource);
+
+        // *output += *cloud_src;
+
+        // final_transform = targetToSource;
     }
 
     void setConficence(PointCloud & cloud, Eigen::MatrixXd const confidences){
@@ -411,6 +391,16 @@ namespace linkml{
 
     }
 
+    template<typename T>
+    void print_matrix(Eigen::Matrix<T,4,4> const & matrix){
+        fmt::printf ("Rotation matrix :\n");
+        fmt::printf ("    | %6.3f %6.3f %6.3f | \n", matrix (0, 0), matrix (0, 1), matrix (0, 2));
+        fmt::printf ("R = | %6.3f %6.3f %6.3f | \n", matrix (1, 0), matrix (1, 1), matrix (1, 2));
+        fmt::printf ("    | %6.3f %6.3f %6.3f | \n", matrix (2, 0), matrix (2, 1), matrix (2, 2));
+        fmt::printf ("Translation vector :\n");
+        fmt::printf ("t = < %6.3f, %6.3f, %6.3f >\n\n", matrix (0, 3), matrix (1, 3), matrix (2, 3));
+    }
+
     void parse_input_files(std::string const& path){
 
         auto dataset = Dataset(path, {Field::COLOR, Field::DEPTH, Field::CONFIDENCE, Field::ODOMETRY, Field::IMU, Field::POSES});
@@ -425,8 +415,7 @@ namespace linkml{
         // Load data
         ///////////////////////////////////////////////////////////////////////////////
         std::vector<PCD, Eigen::aligned_allocator<PCD>> point_clouds;
-
-        for (size_t i=0; i< 25; i+=5){
+        for (size_t i=0; i< 11; i+=5){
             auto data = dataset[i];
             
             PCD pcd;
@@ -449,45 +438,60 @@ namespace linkml{
 
         // Display
         ///////////////////////////////////////////////////////////////////////////////
+        auto temp = PointCloud();
+        for (size_t i = 0; i < point_clouds.size(); i++)
+            temp += *point_clouds[i].cloud;
+        polyscope::display(temp, "Cloud Pre ICP");
 
-        for (size_t i = 0; i < point_clouds.size(); i++){
-            std::string name = "Cloud Pre " + point_clouds[i].f_name;
-            polyscope::display(*point_clouds[i].cloud, name);
+        // Compute Normals
+        ///////////////////////////////////////////////////////////////////////////////
+        for (size_t i=0; i < point_clouds.size(); ++i){
+            // Compute surface normals and curvature
+            pcl::NormalEstimationOMP<PointT, PointT> ne;
+            pcl::search::KdTree<PointT>::Ptr tree (new pcl::search::KdTree<PointT> ());
+            ne.setSearchMethod(tree);
+            // ne.setRadiusSearch (0.05);
+            ne.setKSearch(15);
+
+            ne.setInputCloud(point_clouds[i].cloud);
+            ne.compute(*point_clouds[i].cloud);
         }
 
+        // // Remove NaN Normals
+        // ///////////////////////////////////////////////////////////////////////////////
+        // for (size_t i=0; i < point_clouds.size(); ++i){
+        //     std::vector<int> indices;
+        //     pcl::removeNaNNormalsFromPointCloud(*point_clouds[i].cloud, *point_clouds[i].cloud, indices);
+        // }
 
         // Registartion
         ///////////////////////////////////////////////////////////////////////////////
-
         PointCloud::Ptr result(new PointCloud), source, target;
-        Eigen::Matrix4f GlobalTransform = Eigen::Matrix4f::Identity (), pairTransform;
-
-    
+        Eigen::Matrix4f global_transform = Eigen::Matrix4f::Identity (), pairTransform;
         for (std::size_t i = 1; i < point_clouds.size() ; ++i){
 
-            source = point_clouds[i-1].cloud;
-            target = point_clouds[i].cloud;
+            target = point_clouds[i-1].cloud;
+            source = point_clouds[i].cloud;
+
+            pcl::transformPointCloudWithNormals(*source, *source, global_transform);
 
             // ICP
             PointCloud::Ptr temp (new PointCloud);
-            pairAlign (source, target, temp, pairTransform, true);
-
-            //transform current pair into the global transform
-            pcl::transformPointCloud(*temp, *result, GlobalTransform);
+            pairAlign(source, target, pairTransform, true);
 
             //update the global transform
-            GlobalTransform *= pairTransform;
-            point_clouds[i].cloud = result;
+            global_transform *= pairTransform;
+
         }
+
 
         // Display
         ///////////////////////////////////////////////////////////////////////////////
-
-        for (size_t i = 0; i < point_clouds.size(); i++){
-            std::string name = "Cloud " + point_clouds[i].f_name;
-            polyscope::display(*point_clouds[i].cloud, name);
-        }
-
+        auto temp2 = PointCloud();
+        for (size_t i = 0; i < point_clouds.size(); i++)
+            temp2 += *point_clouds[i].cloud;
+        polyscope::display(temp2, "Cloud");
+    
         polyscope::show();
 
         // pcl::io::savePCDFileBinaryCompressed("TEST", *point_clouds[0].cloud);
