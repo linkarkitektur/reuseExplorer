@@ -83,7 +83,7 @@ private:
     uint32_t      _finished_work  = 0;    ///< Amount of work done
     // uint32_t      _next_update    = 0;    ///< Next point to update the visible progress bar
 
-    uint32_t      _bar_width      = 70;   ///< Width of the progress bar
+    uint32_t      _bar_width      = 60;   ///< Width of the progress bar
     // uint32_t      _call_diff      = 1;    ///< Interval between updates in work units
 
     Timer         _timer;                 ///< Used for generating ETA

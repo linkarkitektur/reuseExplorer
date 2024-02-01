@@ -23,6 +23,7 @@
 #endif
 
 
+using namespace fmt::literals;
 
 
 void util::progress_bar::do_work(int work){
@@ -54,6 +55,10 @@ void util::progress_bar::print()
     // //Update the next time at which we'll do the expensive update stuff
     // _next_update += _call_diff;
 
+    // Handle overflow
+    if (_finished_work > _total_work)
+        _finished_work = _total_work;
+
 
     reset_line();
 
@@ -72,8 +77,11 @@ void util::progress_bar::print()
         else
             std::printf(" ");
     }
-    fmt::print("] ({:>5d}/{:<5d}) {: >3.0f}%", _finished_work, _total_work, ratio * 100);
-    fmt::print(" - {: ^ 5.0f}s - {} threads", _timer.lap() / ratio*(1-ratio), omp_get_num_threads());
+
+
+    int n = std::to_string(_total_work).length();
+    fmt::print("] ({f_work:>{w}d}/{t_work:<{w}d}) {r: >3.0f}%", "f_work"_a = _finished_work, "t_work"_a = _total_work, "r"_a = ratio * 100, "w"_a = n);
+    fmt::print(" - {: > 5.0f}s - {: > 3d} threads", _timer.lap() / ratio*(1-ratio), omp_get_num_threads());
 
     if (!_task_name.empty())
         std::printf(" - (%s)", _task_name.c_str());
