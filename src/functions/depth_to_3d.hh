@@ -36,12 +36,12 @@ namespace linkml {
                 auto pos_h = tg::dvec3(col,row, 1);
                 auto pos_n = tg::inverse(intrinsic_matrix) * pos_h;
                 auto pos_3d = pos_n * depth;
-                auto pos = tg::inverse(pose) * (tg::dpos3)pos_3d;
+                auto pos = pose * (tg::dpos3)pos_3d;
 
 
                 auto normal =  (tg::dvec3)pos*-1;
                 normal = tg::normalize(normal);
-                normal = tg::inverse(pose) * normal;
+                normal = pose * normal;
 
                 point_cloud[index].x  = pos.x;
                 point_cloud[index].y  = pos.y;
