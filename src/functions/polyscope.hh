@@ -126,17 +126,61 @@ namespace polyscope  {
         }
 
         auto colors = std::vector<std::array<float, 3>>();
-        colors.reserve(cloud.points.size());
-        for (auto &p : cloud.points){
-            colors.push_back({
-                static_cast<float>(p.r)/256,
-                static_cast<float>(p.g)/256,
-                static_cast<float>(p.b)/256});
+        colors.resize(cloud.points.size());
+
+        auto confideces = std::vector<int>();
+        confideces.resize(cloud.points.size());
+
+        auto lables = std::vector<int>();
+        lables.resize(cloud.points.size());
+
+        auto sematic_lables = std::vector<int>();
+        sematic_lables.resize(cloud.points.size());
+
+        auto instance_lables = std::vector<int>();
+        instance_lables.resize(cloud.points.size());
+        
+        auto normals = std::vector<std::array<float, 3>>();
+        normals.resize(cloud.points.size());
+
+        auto normal_colors = std::vector<std::array<float, 3>>();
+        normal_colors.resize(cloud.points.size());
+
+
+        #pragma omp parallel for
+        for (size_t i = 0; i < cloud.points.size(); i++){
+            colors[i] = {
+                static_cast<float>(cloud.points[i].r)/256,
+                static_cast<float>(cloud.points[i].g)/256,
+                static_cast<float>(cloud.points[i].b)/256};
+
+            normals[i] = {
+                cloud.points[i].normal_x,
+                cloud.points[i].normal_y,
+                cloud.points[i].normal_z};
+
+            // remap normals to 0-1
+            normal_colors[i] = {
+                (cloud.points[i].normal_x + 1.0f)/2.0f,
+                (cloud.points[i].normal_y + 1.0f)/2.0f,
+                (cloud.points[i].normal_z + 1.0f)/2.0f};
+
+            confideces[i] = cloud.points[i].confidence;
+            lables[i] = cloud.points[i].label;
+            sematic_lables[i] = cloud.points[i].semantic;
+            instance_lables[i] = cloud.points[i].instance;
         }
 
         auto pcd = polyscope::registerPointCloud(name, points);
         pcd->setPointRadius(0.001);
         auto pcd_color =  pcd->addColorQuantity("RGB", colors);
         pcd_color->setEnabled(true);
+
+        pcd->addColorQuantity("Normal Colors", normal_colors);
+        pcd->addVectorQuantity("Normals", normals);
+        pcd->addScalarQuantity("Confidence", confideces);
+        pcd->addScalarQuantity("Lables", lables);
+        pcd->addScalarQuantity("Sematic Lables", sematic_lables);
+        pcd->addScalarQuantity("Instance Lables", instance_lables);
     }
 }
