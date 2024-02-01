@@ -53,3 +53,8 @@ imgui.ini
 .polyscope.ini
 **/__pycache__/**/*
 **/*.lp
+
+
+# Ignore machine learning data
+*.onnx
+*.pt
