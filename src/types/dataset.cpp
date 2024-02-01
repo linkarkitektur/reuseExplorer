@@ -123,6 +123,11 @@ std::optional<cv::Mat> read_frame_at_index(std::filesystem::path const& path, in
 
 }
 
+size_t get_number_of_frames(std::filesystem::path const& path){
+    cv::VideoCapture cap(path);
+    return cap.get(cv::CAP_PROP_FRAME_COUNT);
+}
+
 std::optional<tg::dmat3> read_camera_matrix(std::filesystem::path const& path){
 
     if (!std::filesystem::exists(path)){
@@ -256,8 +261,7 @@ Dataset::Dataset(std::filesystem::path path, std::initializer_list<Field> fields
     assert(std::filesystem::exists(path) && fmt::format("Directory does not exist: {}", path.string()).c_str());
     _path = path;
 
-
-
+    _n_frames = get_number_of_frames(_path / "rgb.mp4");
 
 
     // Load data

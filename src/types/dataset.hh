@@ -22,7 +22,7 @@ namespace linkml {
         std::vector<std::filesystem::path>  _confidence_paths  = {};
         Eigen::MatrixXd                     _odometry_data     = {};
         Eigen::MatrixXd                     _imu_data          = {};
-        int                                 _n_frames          = 0;
+        size_t                              _n_frames          = 0;
         int                                 _rgb_width         = 1920;
         int                                 _rgb_hight         = 1440;
         int                                 _depth_width       = 256;
@@ -45,6 +45,8 @@ namespace linkml {
         // Operators
         operator bool() const {return !_fields.empty();};
         Data operator[] (int idx);
+
+        inline size_t size() const {return _n_frames;};
     };
 
 } // namespace linkml
