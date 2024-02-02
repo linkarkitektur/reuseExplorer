@@ -36,7 +36,7 @@ except Exception as e:
 
 # clusters = linkml_py.clustering(data.cloud, data.plane_results)
 
-linkml_py.read("/home/mephisto/server_data/stray_scans/0ba33d855b")
+linkml_py.read("/home/mephisto/server_data/stray_scans/0ba33d855b", start=0, n_frames=100, step=5)
 print("Done")
 # print(clusters)
 # linkml_py.create_cell_complex(data.cloud, data.plane_results)

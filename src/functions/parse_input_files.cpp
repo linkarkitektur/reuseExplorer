@@ -43,6 +43,7 @@
 #include <polyscope/curve_network.h>
 
 #include <fmt/printf.h>
+#include <fmt/color.h>
 
 #include "parse_input_files.hh"
 #include <types/dataset.hh>
@@ -348,25 +349,42 @@ namespace linkml{
         fmt::printf ("t = < %6.3f, %6.3f, %6.3f >\n\n", matrix (0, 3), matrix (1, 3), matrix (2, 3));
     }
 
-    void parse_input_files(std::string const& path){
+    void parse_input_files(std::string const& path, size_t start, size_t step, size_t n_frames){
   
+        // Load dataset
         auto dataset = Dataset(path, {Field::COLOR, Field::DEPTH, Field::CONFIDENCE, Field::ODOMETRY, /*Field::IMU,*/ Field::POSES});
+        auto camera_intrisic_matrix = dataset.intrinsic_matrix();
 
+        // Check config
+        // TODO: This function needs to been cleaned up
+        if (start > dataset.size()) start = dataset.size()-1;
+        if (n_frames == 0) n_frames = dataset.size();
+        if (start + ((n_frames -1) * step > dataset.size())) n_frames = (dataset.size() - start) / step;
+
+        double ratio = (double)n_frames / (double)dataset.size() * 100;
+        size_t end;
+        if (n_frames != 0) end = start + ((n_frames -1) * step);
+        else  end = start;
+
+        // Print info
+        fmt::print("Number of frames: ");
+        fmt::print(fg(fmt::color::red), "{}", n_frames);
+        fmt::print(fmt::emphasis::italic,  " -> ( start: {}; step: {}; end: {} ) {:3.2f}% \n", start, step, end, ratio);
+
+        // Because of custom print functions
+        if (n_frames == 0) return;
+        
+        // Init Polyscope
         polyscope::init();
         polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
         polyscope::view::setUpDir(polyscope::UpDir::YUp);
 
+
+        // Setup voxel grid
         pcl::VoxelGrid<PointT> grid;
-        auto grid_size = 0.1;
+        auto grid_size = 0.02;
         grid.setLeafSize(grid_size, grid_size, grid_size);
 
-
-        auto camera_intrisic_matrix = dataset.intrinsic_matrix();
-
-        size_t start = 0;
-        size_t step = 5;
-        size_t n_frames = 1; //dataset.size() * 0.05;
-        fmt::printf("Number of frames: %d\n", n_frames);
 
 
         // Load data
@@ -399,46 +417,40 @@ namespace linkml{
         // Filter
         ///////////////////////////////////////////////////////////////////////////////
         auto filter_bar = util::progress_bar(n_frames,"Filtering data");
-        // #pragma omp parallel for shared(point_clouds)
+        #pragma omp parallel for shared(point_clouds)
         for (size_t i = 0; i < point_clouds.size(); i++){
+            
+            size_t j = 0;
+            for (size_t k = 0; k < point_clouds[i]->size(); k++){
+                if (point_clouds[i]->at(k).confidence >= 2){
+                    point_clouds[i]->at(j) = point_clouds[i]->at(k);
+                    j++;
+                }
+            }
 
-            // build rules
-            pcl::ConditionAnd<PointT>::Ptr range_cond (new pcl::ConditionAnd<PointT> ());
-            range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new
-                pcl::FieldComparison<PointT>("confidence", pcl::ComparisonOps::EQ, 2)));
+            point_clouds[i]->resize(j);
+            point_clouds[i]->width = j;
+            point_clouds[i]->height = 1;
+            point_clouds[i]->is_dense = false;
+
+            // // build rules
+            // pcl::ConditionAnd<PointT>::Ptr range_cond (new pcl::ConditionAnd<PointT> ());
+            // range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new
+            //     pcl::FieldComparison<PointT>("confidence", pcl::ComparisonOps::EQ, 2)));
 
 
+            // // build the filter
+            // pcl::ConditionalRemoval<PointT> condrem;
+            // condrem.setCondition(range_cond);
+            // condrem.setInputCloud(point_clouds[i]);
+            // condrem.setKeepOrganized(false);
+            // condrem.filter(*point_clouds[i]);
 
-            // build the filter
-            pcl::ConditionalRemoval<PointT> condrem;
-            condrem.setCondition(range_cond);
-            condrem.setInputCloud(point_clouds[i]);
-            condrem.setKeepOrganized(false);
-            condrem.filter(*point_clouds[i]);
-
-            // filterConfidences(point_clouds[i], 2);
+            // // filterConfidences(point_clouds[i], 2);
             filter_bar.update();
         }
 
-        polyscope::display(*point_clouds[0], "Cloud Post Filter");
-        polyscope::show();
 
-        return;
-
-
-        // // Display
-        // ///////////////////////////////////////////////////////////////////////////////
-        // PointCloud::Ptr temp (new PointCloud);
-        // auto pdp_bar = util::progress_bar(n_frames,"Displaying data");
-        // for (size_t i = 0; i < point_clouds.size(); i++){
-        //     *temp += *point_clouds[i];
-        //     pdp_bar.update();
-        // }
-
-        // grid.setInputCloud(temp);
-        // grid.filter(*temp);
-
-        // polyscope::display(*temp, "Cloud Pre ICP");
 
         // Compute Normals
         ///////////////////////////////////////////////////////////////////////////////
@@ -468,6 +480,7 @@ namespace linkml{
         ///////////////////////////////////////////////////////////////////////////////
         auto transforms = std::vector<Eigen::Matrix4f>(point_clouds.size(), Eigen::Matrix4f::Identity());
         auto reg_bar = util::progress_bar(n_frames,"Registration");
+        reg_bar.update();
         #pragma omp parallel for shared(point_clouds, transforms)
         for (std::size_t i = 1; i < point_clouds.size() ; ++i){
 
@@ -480,14 +493,21 @@ namespace linkml{
             transforms[i] = pairTransform;
             reg_bar.update();
         }
+        
+        std::cout << "Transforms: " << std::endl;
+
         // Update the position of all point clouds
         Eigen::Matrix4f global_transform = Eigen::Matrix4f::Identity();
         auto move_bar = util::progress_bar(n_frames,"Moving clouds");
+        move_bar.update();
         for (std::size_t i = 1; i < point_clouds.size() ; ++i){
             global_transform *= transforms[i];
             pcl::transformPointCloudWithNormals(*point_clouds[i], *point_clouds[i], global_transform);
             move_bar.update();
         }
+
+        std::cout << "\nDone Transforms: " << std::endl;
+
 
         polyscope::display(*point_clouds[0], "Cloud Post ICP");
 
@@ -495,7 +515,7 @@ namespace linkml{
         ///////////////////////////////////////////////////////////////////////////////
         PointCloud::Ptr temp2 (new PointCloud);
         auto pdp_bar2 = util::progress_bar(n_frames,"Displaying data");
-        #pragma omp parallel for shared(point_clouds)
+        // #pragma omp parallel for shared(point_clouds)
         for (size_t i = 0; i < point_clouds.size(); i++){
             PointCloud::Ptr temp3(new PointCloud);
             grid.setInputCloud(point_clouds[i]);
@@ -504,6 +524,7 @@ namespace linkml{
             *temp2 += *temp3;
             pdp_bar2.update();
         }
+
 
         grid.setInputCloud(temp2);
         grid.filter(*temp2);

@@ -349,7 +349,12 @@ PYBIND11_MODULE(linkml_py, m) {
                 std::vector<tg::pos3> const&)> (&linkml::fit_plane_thorugh_points),
         "points"_a);
     m.def("clustering", &linkml::clustering, "point_cloud"_a, "fit_plane_results"_a);
-    m.def("read", &linkml::parse_input_files, "path"_a);
+    m.def("read", &linkml::parse_input_files, "Parse a StrayScanner scan in to a point cloud"
+        "path"_a,
+        "start"_a = size_t(0),
+        "step"_a = size_t(5),
+        "n_frames"_a = size_t(0)
+    );
 
     // Alternative
     // m.def("fit_plane_thorugh_points", [](const linkml::point_cloud& cloud, const std::vector<int>& indices) {
