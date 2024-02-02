@@ -9,6 +9,7 @@
 #include <any>
 #include <Eigen/Dense>
 #include <typed-geometry/tg-std.hh>
+#include <opencv4/opencv2/opencv.hpp>
 
 
 namespace linkml {
@@ -47,6 +48,8 @@ namespace linkml {
         Data operator[] (int idx);
 
         inline size_t size() const {return _n_frames;};
+        inline cv::Size color_size() const {return cv::Size(_rgb_width, _rgb_hight);};
+        inline cv::Size depth_size() const {return cv::Size(_depth_width, _depth_hight);};
     };
 
 } // namespace linkml

@@ -50,6 +50,8 @@
 #include <functions/progress_bar.hh>
 
 #include <Eigen/Dense>
+#include <opencv4/opencv2/opencv.hpp>
+#include <opencv4/opencv2/ml.hpp>
 
 #include <mutex>
 #include <thread>
@@ -215,6 +217,7 @@ namespace linkml{
         cloud.sensor_orientation_ = orientation;
 
     }
+
 
     std::string print_matrix(Eigen::MatrixXd const& matrix, int n_rows = 10, int n_cols = 10, int precision = 3){
 
@@ -409,8 +412,73 @@ namespace linkml{
                         data.get<Field::COLOR>());
             
             setConficence(*point_clouds[i], data.get<Field::CONFIDENCE>());
+
             ld_bar.update();
         }
+
+
+        // Run Inference
+        ///////////////////////////////////////////////////////////////////////////////
+        cv::dnn::Net model = cv::dnn::readNetFromONNX("./yolov8x-seg.onnx");
+        auto inference_bar = util::progress_bar(n_frames,"Running Inference");
+        for (size_t i = 0; i < point_clouds.size(); i++){
+            size_t index = start + (i * step);
+            auto color = dataset[index].get<Field::COLOR>();
+
+            cv::rotate(color, color, cv::ROTATE_90_CLOCKWISE); // <- Image in video is sideways
+            // BCHW -> Batch, Channel, Height, Width
+            // (1, 3, 640, 640)
+            // output shape(s) ((1, 116, 8400), (1, 32, 160, 160)) // Two outputs
+
+            // https://github.com/UNeedCryDear/yolov5-seg-opencv-onnxruntime-cpp/blob/cc89fe3c48b2c8f34bedb1e8b92eb6a44e841caf/yolov5.cpp#L32-L83
+            // https://github.com/UNeedCryDear/yolov5-seg-opencv-onnxruntime-cpp/blob/cc89fe3c48b2c8f34bedb1e8b92eb6a44e841caf/yolov5_utils.cpp#L22-L82
+            model.setInput(
+                cv::dnn::blobFromImage(color, 1.0 / 255, cv::Size(640, 640), cv::Scalar(0, 0, 0), false, false)
+                );
+
+            std::vector<cv::Mat> netOutputImg;
+            model.forward(netOutputImg, model.getUnconnectedOutLayersNames());
+            cv::Mat output = model.forward("output0"); // 1x116x8400
+
+
+            // https://stackoverflow.com/questions/74605946/numpy-argmax-in-c-opencv
+            cv::Mat reshaped  = output.reshape(1,80); // <- 80 classes
+            cv::Mat argmax_row_matrix;
+            cv::reduceArgMax(reshaped, argmax_row_matrix, 0);
+            // std::cout << "Argmax size: " << argmax_row_matrix.size << std::endl; // =>  1 x 12180
+            cv::Mat argmax_image_shape = argmax_row_matrix.reshape(1,105); // <- 640 is wrong
+
+            cv::rotate(argmax_image_shape, argmax_image_shape, cv::ROTATE_90_COUNTERCLOCKWISE);
+            cv::Mat sematic;
+            std::cout << "Dataset Depth Size: " << dataset.depth_size() << std::endl;
+            std::cout << "argmax_image_shape Size: " << argmax_image_shape.size << std::endl;
+
+
+            auto size = cv::Size(dataset.depth_size().width, dataset.depth_size().height);
+            // cv::resize(argmax_image_shape, sematic,size, cv::INTER_LINEAR);
+
+
+            // std::cout << "argmax_row_matrix dim:  " << argmax_row_matrix.dims << std::endl; // => 4
+            // std::cout << "argmax_row_matrix cols: " << argmax_row_matrix.cols << std::endl; // => -1
+            // std::cout << "argmax_row_matrix rows: " << argmax_row_matrix.rows << std::endl; // => -1
+
+
+            // cv::Mat detectionMat(output.size[2], output.size[3], CV_32F, output.ptr<float>());
+
+            // #pragma omp parallel for collapse(2) shared(cloud, color)
+            // for (int row = 0; row < output.rows; row++){
+            //     for (int col = 0; col < output.cols; col++){
+            //         size_t index = row * output.cols + col;
+            //         cloud[index].r = color.at<cv::Vec3b>(row, col)[2];
+            //         cloud[index].g = color.at<cv::Vec3b>(row, col)[1];
+            //         cloud[index].b = color.at<cv::Vec3b>(row, col)[0];
+            //     }
+            // }
+
+            // Run Inference
+            inference_bar.update();
+        }
+
 
         polyscope::display(*point_clouds[0], "Cloud Pre ICP");
 
