@@ -63,6 +63,9 @@ namespace linkml {
 
             }
         }
+        point_cloud.width = depths.cols();
+        point_cloud.height = depths.rows();
+        point_cloud.is_dense = true;
     }
 
 } // namespace linkml
