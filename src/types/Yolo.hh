@@ -11,7 +11,7 @@ namespace linkml{
         train                   = 6,
         truck                   = 7,
         boat                    = 8,
-        traffic light           = 9,
+        traffic_light           = 9,
         fire_hydrant            = 10, 
         stop_sign               = 11,
         parking_meter           = 12,
