@@ -137,6 +137,9 @@ namespace polyscope  {
         auto sematic_lables = std::vector<int>();
         sematic_lables.resize(cloud.points.size());
 
+        auto sematic_colors = std::vector<tg::color3>();
+        sematic_colors.resize(cloud.points.size());
+
         auto instance_lables = std::vector<int>();
         instance_lables.resize(cloud.points.size());
         
@@ -168,19 +171,23 @@ namespace polyscope  {
             confideces[i] = cloud.points[i].confidence;
             lables[i] = cloud.points[i].label;
             sematic_lables[i] = cloud.points[i].semantic;
+            sematic_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle(cloud.points[i].semantic));
             instance_lables[i] = cloud.points[i].instance;
         }
 
         auto pcd = polyscope::registerPointCloud(name, points);
         pcd->setPointRadius(0.001);
         auto pcd_color =  pcd->addColorQuantity("RGB", colors);
-        pcd_color->setEnabled(true);
+        // pcd_color->setEnabled(true);
 
         pcd->addColorQuantity("Normal Colors", normal_colors);
         pcd->addVectorQuantity("Normals", normals);
         pcd->addScalarQuantity("Confidence", confideces);
         pcd->addScalarQuantity("Lables", lables);
         pcd->addScalarQuantity("Sematic Lables", sematic_lables);
+        auto pcd_sematic = pcd->addColorQuantity("Sematic Colors", sematic_colors);
+        pcd_sematic->setEnabled(true);
+
         pcd->addScalarQuantity("Instance Lables", instance_lables);
     }
 }

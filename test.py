@@ -1,7 +1,6 @@
 import os
 import sys
-import importlib
-import scipy
+# import scipy
 
 
 print(os.getpid())
@@ -12,7 +11,7 @@ sys.path.insert(
 
 try:
     import linkml_py
-    import numpy as np
+    # import numpy as np
 except Exception as e:
     print(e)
     exit()
@@ -36,7 +35,7 @@ except Exception as e:
 
 # clusters = linkml_py.clustering(data.cloud, data.plane_results)
 
-linkml_py.read("/home/mephisto/server_data/stray_scans/0ba33d855b", start=0, n_frames=2, step=5)
+linkml_py.read("/home/mephisto/server_data/stray_scans/0ba33d855b", start=1850, n_frames=2, step=5)
 print("Done")
 # print(clusters)
 # linkml_py.create_cell_complex(data.cloud, data.plane_results)

@@ -267,10 +267,12 @@ Dataset::Dataset(std::filesystem::path path, std::initializer_list<Field> fields
     // Load data
     for (auto field : fields) {
         switch (field) {
+
             case Field::COLOR:
                 CHECK_EXSISTANCE(path , "rgb.mp4");
                 _fields.insert(field);
                 break;
+
             case Field::DEPTH:
                 CHECK_EXSISTANCE(path , "depth")
 
@@ -285,7 +287,6 @@ Dataset::Dataset(std::filesystem::path path, std::initializer_list<Field> fields
             case Field::CONFIDENCE:
                 CHECK_EXSISTANCE(path , "confidence" );
 
-
                 // Get depth image paths
                 std::transform(
                     std::filesystem::directory_iterator(path / "confidence"), 
@@ -293,15 +294,19 @@ Dataset::Dataset(std::filesystem::path path, std::initializer_list<Field> fields
                     [](const auto& entry){return entry.path();});
                 _fields.insert(field);
                 break;
+
             case Field::POSES:
                 _fields.insert(field);
                 // Chontious fall thorugh, since poses are dependent on Odemetry
+
             case Field::ODOMETRY:
                 CHECK_EXSISTANCE(path , "odometry.csv" );
 
                 _odometry_data = read_odometry(_path /"odometry.csv").value();
                 _fields.insert(field);
                 break;
+                
+
 
             case Field::IMU:
                 CHECK_EXSISTANCE(path , "imu.csv" );
@@ -309,7 +314,6 @@ Dataset::Dataset(std::filesystem::path path, std::initializer_list<Field> fields
                 _imu_data = read_imu(_path /"imu.csv").value();
                 _fields.insert(field);
                 break;
-
             default:
                 throw std::runtime_error("Unknown field");
         }

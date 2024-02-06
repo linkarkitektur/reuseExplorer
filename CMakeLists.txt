@@ -143,7 +143,13 @@ set(CGAL_DO_NOT_WARN_ABOUT_CMAKE_BUILD_TYPE On)
 # find packages
 
 find_package( OpenCV REQUIRED )
-
+if (OpenCV_FOUND)
+    message(STATUS "Using OpenCV - ${OpenCV_VERSION} - ${OpenCV_INCLUDE_DIRS}")
+    set("OPENCV_LOG_LEVEL" "WARNING")
+    include_directories(${OpenCV_INCLUDE_DIRS})
+    link_directories(${OpenCV_LIBRARY_DIRS})
+    add_definitions(${OpenCV_DEFINITIONS})
+endif()
 # CGAL and its components
 find_package(CGAL REQUIRED)
 
@@ -307,7 +313,6 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
 #    glow-extras
     fmt
     nexus
-    # Open3D
 
     ${OpenCV_LIBS}
 

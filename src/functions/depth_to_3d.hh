@@ -47,20 +47,29 @@ namespace linkml {
                 point_cloud[index].y  = pos.y;
                 point_cloud[index].z  = pos.z;
 
+                //FIXME: There is something wrong with the normal calculation
+                // All normals are identical
                 point_cloud[index].normal_x = normal.x;
                 point_cloud[index].normal_y = normal.y;
                 point_cloud[index].normal_z = normal.z;
 
+                point_cloud[index].confidence = 0;
+                point_cloud[index].semantic = 0;
+                point_cloud[index].instance = 0;
+                point_cloud[index].label = 0;
+                
 
                 if (image.has_value()) {
                     cv::Vec3b vec = colors.at<cv::Vec3b>(row, col);
-
                     point_cloud[index].r = vec[0];
                     point_cloud[index].g = vec[1];
                     point_cloud[index].b = vec[2];
-
                 }
-
+                else {
+                    point_cloud[index].r = 0;
+                    point_cloud[index].g = 0;
+                    point_cloud[index].b = 0;
+                }
             }
         }
         point_cloud.width = depths.cols();
