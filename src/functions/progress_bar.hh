@@ -51,10 +51,10 @@ public:
 
     ///Stop the progress bar. Throws an exception if it wasn't started.
     ///@return The number of seconds the progress bar was running.
-    double stop();
+    std::chrono::nanoseconds stop();
 
     ///@return Return the time the progress bar ran for.
-    double time_it_took(){ return _timer.accumulated(); }
+    std::chrono::nanoseconds time_it_took(){ return _timer.accumulated(); }
 
 
     // Setiing functions

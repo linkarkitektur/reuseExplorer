@@ -29,6 +29,7 @@
 #include <pcl/registration/icp.h>
 #include <pcl/registration/icp_nl.h>
 #include <pcl/common/transforms.h>
+#include <pcl/visualization/cloud_viewer.h>
 #include <pcl/io/pcd_io.h>
 
 #include <pcl/filters/conditional_removal.h>
@@ -56,6 +57,7 @@
 
 #include <mutex>
 #include <thread>
+
 
 
 namespace linkml{
@@ -219,6 +221,28 @@ namespace linkml{
 
     }
 
+    template<typename T>
+    static T max_ocurance(std::vector<T> const& vec){
+        std::map<T,int> m;
+        int max = 0;
+        int most_common = 0;
+        for (auto const& vi : vec) {
+            m[vi]++;
+            if (m[vi] > max) {
+                max = m[vi]; 
+                most_common = vi;
+            }
+        }
+        return most_common;
+    }
+
+    static size_t get_total_size(std::vector<PointCloud::Ptr, Eigen::aligned_allocator<PointCloud::Ptr>> const& clouds){
+        size_t total_size = 0;
+        for (auto const& cloud : clouds){
+            total_size += cloud->size();
+        }
+        return total_size;
+    }
 
     std::string print_matrix(Eigen::MatrixXd const& matrix, int n_rows = 10, int n_cols = 10, int precision = 3){
 
@@ -353,9 +377,70 @@ namespace linkml{
         fmt::printf ("t = < %6.3f, %6.3f, %6.3f >\n\n", matrix (0, 3), matrix (1, 3), matrix (2, 3));
     }
 
+
+    // unsigned int text_id = 0;
+    // void keyboardEventOccurred (const pcl::visualization::KeyboardEvent &event, void* viewer_void)
+    // {
+    // boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer = *static_cast<boost::shared_ptr<pcl::visualization::PCLVisualizer> *> (viewer_void);
+    //     if (event.getKeySym () == "r" && event.keyDown ())
+    //     {
+    //         std::cout << "r was pressed => removing all text" << std::endl;
+
+    //         char str[512];
+    //         for (unsigned int i = 0; i < text_id; ++i)
+    //         {
+    //         sprintf (str, "text#%03d", i);
+    //         viewer->removeShape (str);
+    //         }
+    //         text_id = 0;
+    //     }
+    // }
+
+    // void mouseEventOccurred (const pcl::visualization::MouseEvent &event, void* viewer_void)
+    // {
+    // boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer = *static_cast<boost::shared_ptr<pcl::visualization::PCLVisualizer> *> (viewer_void);
+    //     if (event.getButton () == pcl::visualization::MouseEvent::LeftButton && event.getType () == pcl::visualization::MouseEvent::MouseButtonRelease)
+    //     {
+    //         std::cout << "Left mouse button released at position (" << event.getX () << ", " << event.getY () << ")" << std::endl;
+    //         char str[512];
+
+    //         sprintf (str, "text#%03d", text_id ++);
+    //         viewer->addText ("clicked here", event.getX (), event.getY (), str);
+    //     }
+    // }
+
+    boost::shared_ptr<pcl::visualization::PCLVisualizer> customViewer (PointCloud::ConstPtr cloud)
+    {
+        // --------------------------------------------
+        // -----Open 3D viewer and add point cloud-----
+        // --------------------------------------------
+        boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer (new pcl::visualization::PCLVisualizer ("3D Viewer"));
+        viewer->setBackgroundColor (1, 1, 1);
+        // pcl::visualization::PointCloudColorHandlerCustom<PointT>single_color(cloud, 0, 255, 0);
+
+        pcl::visualization::PointCloudGeometryHandlerXYZ<PointCloud::PointType> xyz(cloud);
+        pcl::visualization::PointCloudColorHandlerRGBField<PointCloud::PointType> rgb(cloud);
+        pcl::visualization::PointCloudGeometryHandlerSurfaceNormal<PointCloud::PointType> normals(cloud);
+        pcl::visualization::PointCloudGeometryHandlerCustom<PointCloud::PointType> point(cloud, "x", "y", "z");
+
+        
+
+        viewer->addPointCloud<PointCloud::PointType>(cloud, rgb, "cloud");
+        // viewer->addPointCloudNormals<PointT>(point, normals, 10, 0.05, "normals");
+
+
+        viewer->setPointCloudRenderingProperties (pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3, "cloud");
+        viewer->addCoordinateSystem (1.0);
+        viewer->initCameraParameters ();
+        // viewer->registerKeyboardCallback (keyboardEventOccurred, (void*)&viewer);
+        // viewer->registerMouseCallback (mouseEventOccurred, (void*)&viewer);
+        return (viewer);
+    }
+
     void parse_input_files(std::string const& path, size_t start, size_t step, size_t n_frames){
   
         // Load dataset
+        auto yolo_async =std::async([](){ return Yolov8Seg("./yolov8x-seg.onnx", false);});
         auto dataset = Dataset(path, {Field::COLOR, Field::DEPTH, Field::CONFIDENCE, Field::ODOMETRY, /*Field::IMU,*/ Field::POSES});
         auto camera_intrisic_matrix = dataset.intrinsic_matrix();
 
@@ -390,6 +475,12 @@ namespace linkml{
         grid.setLeafSize(grid_size, grid_size, grid_size);
 
 
+        // Track runtimes
+        ///////////////////////////////////////////////////////////////////////////////
+        auto start_time = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::nanoseconds(0);
+
+
 
         // Load data
         ///////////////////////////////////////////////////////////////////////////////
@@ -416,54 +507,59 @@ namespace linkml{
 
             ld_bar.update();
         }
+        duration += ld_bar.stop();
 
 
         // Run Inference
         ///////////////////////////////////////////////////////////////////////////////
-        auto model = Yolov8Seg("./yolov8x-seg.onnx", false);
-        auto inference_bar = util::progress_bar(n_frames,"Running Inference");
-        for (size_t i = 0; i < point_clouds.size(); i++){
-            size_t index = start + (i * step);
-            auto color = dataset[index].get<Field::COLOR>();
+        // auto model = Yolov8Seg("./yolov8x-seg.onnx", false);
+        if (false){
+            auto model = yolo_async.get();
+            auto inference_bar = util::progress_bar(n_frames,"Running Inference");
+            for (size_t i = 0; i < point_clouds.size(); i++){
+                size_t index = start + (i * step);
+                auto color = dataset[index].get<Field::COLOR>();
 
-            cv::rotate(color, color, cv::ROTATE_90_CLOCKWISE); // <- Image in video is sideways
+                cv::rotate(color, color, cv::ROTATE_90_CLOCKWISE); // <- Image in video is sideways
 
-            auto output = model.Detect(color);
+                auto output = model.Detect(color);
 
-            if (!output.has_value()) { inference_bar.update(); continue;}
+                if (!output.has_value()) { inference_bar.update(); continue;}
 
-            auto results = output.value();
+                auto results = output.value();
 
-            cv::Mat sideways;
-            cv::rotate(color, sideways, cv::ROTATE_90_COUNTERCLOCKWISE);
-            cv::resize(sideways, sideways, dataset.depth_size());
+                cv::Mat sideways;
+                cv::rotate(color, sideways, cv::ROTATE_90_COUNTERCLOCKWISE);
+                cv::resize(sideways, sideways, dataset.depth_size());
 
-            for (OutputParams const& param: results){
+                for (OutputParams const& param: results){
 
-                auto param_rotated = param.Rotate<cv::ROTATE_90_COUNTERCLOCKWISE>(color.size()).Scale(dataset.color_size(), dataset.depth_size());
+                    auto param_rotated = param.Rotate<cv::ROTATE_90_COUNTERCLOCKWISE>(color.size()).Scale(dataset.color_size(), dataset.depth_size());
 
-                auto row_start = param_rotated.box.y;
-                auto row_end = param_rotated.box.y + param_rotated.box.height;
+                    auto row_start = param_rotated.box.y;
+                    auto row_end = param_rotated.box.y + param_rotated.box.height;
 
-                auto col_start = param_rotated.box.x;
-                auto col_end = param_rotated.box.x + param_rotated.box.width;
+                    auto col_start = param_rotated.box.x;
+                    auto col_end = param_rotated.box.x + param_rotated.box.width;
 
-                #pragma omp parallel for collapse(2) shared(point_clouds, param_rotated)
-                for (int row = row_start; row < row_end; row++){
-                    for (int col = col_start; col < col_end; col++){
-                        size_t index = row * dataset.depth_size().width + col;
+                    #pragma omp parallel for collapse(2) shared(point_clouds, param_rotated)
+                    for (int row = row_start; row < row_end; row++){
+                        for (int col = col_start; col < col_end; col++){
+                            size_t index = row * dataset.depth_size().width + col;
 
-                        if (param_rotated.boxMask.at<uchar>(row - row_start, col - col_start) > 0.1)
-                            point_clouds[i]->points[index].semantic = param_rotated.id;
+                            if (param_rotated.boxMask.at<uchar>(row - row_start, col - col_start) > 0.1)
+                                point_clouds[i]->points[index].semantic = param_rotated.id;
+                        }
                     }
+
                 }
+                
 
+                // Run Inference
+
+                inference_bar.update();
             }
-            
-
-            // Run Inference
-
-              inference_bar.update();
+            duration +=  inference_bar.stop();
         }
 
 
@@ -475,35 +571,36 @@ namespace linkml{
         #pragma omp parallel for shared(point_clouds)
         for (size_t i = 0; i < point_clouds.size(); i++){
             
-            size_t j = 0;
-            for (size_t k = 0; k < point_clouds[i]->size(); k++){
-                if (point_clouds[i]->at(k).confidence >= 2){
-                    point_clouds[i]->at(j) = point_clouds[i]->at(k);
-                    j++;
-                }
-            }
+            // size_t j = 0;
+            // for (size_t k = 0; k < point_clouds[i]->size(); k++){
+            //     if (point_clouds[i]->at(k).confidence >= 2){
+            //         point_clouds[i]->at(j) = point_clouds[i]->at(k);
+            //         j++;
+            //     }
+            // }
 
-            point_clouds[i]->resize(j);
-            point_clouds[i]->width = j;
-            point_clouds[i]->height = 1;
-            point_clouds[i]->is_dense = false;
-
-            // // build rules
-            // pcl::ConditionAnd<PointT>::Ptr range_cond (new pcl::ConditionAnd<PointT> ());
-            // range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new
-            //     pcl::FieldComparison<PointT>("confidence", pcl::ComparisonOps::EQ, 2)));
+            // point_clouds[i]->resize(j);
+            // point_clouds[i]->width = j;
+            // point_clouds[i]->height = 1;
+            // point_clouds[i]->is_dense = false;
 
 
-            // // build the filter
-            // pcl::ConditionalRemoval<PointT> condrem;
-            // condrem.setCondition(range_cond);
-            // condrem.setInputCloud(point_clouds[i]);
-            // condrem.setKeepOrganized(false);
-            // condrem.filter(*point_clouds[i]);
+            // build rules
+            pcl::ConditionAnd<PointT>::Ptr range_cond (new pcl::ConditionAnd<PointT> ());
+            range_cond->addComparison (pcl::FieldComparison<PointT>::ConstPtr (new
+                pcl::FieldComparison<PointT>("confidence", pcl::ComparisonOps::EQ, uint8_t(2))));
 
-            // // filterConfidences(point_clouds[i], 2);
+            // build the filter
+            pcl::ConditionalRemoval<PointT> condrem;
+            condrem.setCondition(range_cond);
+            condrem.setInputCloud(point_clouds[i]);
+            condrem.setKeepOrganized(false);
+            condrem.filter(*point_clouds[i]);
+
+            // filterConfidences(point_clouds[i], 2);
             filter_bar.update();
         }
+        duration += filter_bar.stop();
 
 
 
@@ -524,6 +621,7 @@ namespace linkml{
             ne.compute(*point_clouds[i]);
             n_bar.update();
         }
+        duration += n_bar.stop();
 
         // // Remove NaN Normals
         // ///////////////////////////////////////////////////////////////////////////////
@@ -549,9 +647,8 @@ namespace linkml{
             transforms[i] = pairTransform;
             reg_bar.update();
         }
+        duration += reg_bar.stop();
         
-        std::cout << "Transforms: " << std::endl;
-
         // Update the position of all point clouds
         Eigen::Matrix4f global_transform = Eigen::Matrix4f::Identity();
         auto move_bar = util::progress_bar(n_frames,"Moving clouds");
@@ -561,36 +658,107 @@ namespace linkml{
             pcl::transformPointCloudWithNormals(*point_clouds[i], *point_clouds[i], global_transform);
             move_bar.update();
         }
-
-        std::cout << "\nDone Transforms: " << std::endl;
-
+        duration += move_bar.stop();
 
         polyscope::display(*point_clouds[0], "Cloud Post ICP");
 
-        // Display
+        // Downsample
         ///////////////////////////////////////////////////////////////////////////////
-        PointCloud::Ptr temp2 (new PointCloud);
-        auto pdp_bar2 = util::progress_bar(n_frames,"Displaying data");
+        PointCloud::Ptr merged_cloud (new PointCloud);
+        merged_cloud->reserve(get_total_size(point_clouds));
+        PointCloud::Ptr filtered_cloud (new PointCloud);
+        auto merging_bar = util::progress_bar(n_frames,"Merging data");
         // #pragma omp parallel for shared(point_clouds)
         for (size_t i = 0; i < point_clouds.size(); i++){
-            PointCloud::Ptr temp3(new PointCloud);
-            grid.setInputCloud(point_clouds[i]);
-            grid.filter(*temp3);
-            #pragma omp critical
-            *temp2 += *temp3;
-            pdp_bar2.update();
+            // PointCloud::Ptr temp3(new PointCloud);
+            // grid.setInputCloud(point_clouds[i]);
+            // grid.filter(*temp3);
+            // #pragma omp critical
+            *merged_cloud += *point_clouds[i];
+            merging_bar.update();
+        }
+        duration += merging_bar.stop();
+
+        auto grid_bar = util::progress_bar(1,"Downsampling");
+        grid.setInputCloud(merged_cloud);
+        grid.filter(*filtered_cloud);
+        duration += grid_bar.stop();
+
+
+
+        // Refine values
+        ///////////////////////////////////////////////////////////////////////////////
+        if (false) {
+            pcl::search::KdTree<PointT> kdtree;
+            kdtree.setInputCloud(merged_cloud);
+            auto refining_bar = util::progress_bar(filtered_cloud->size(),"Refining points data");
+            #pragma omp parallel for shared(merged_cloud, filtered_cloud, kdtree)
+            for (size_t i = 0; i < filtered_cloud->size(); i++){
+                
+                std::vector<int> indecies;
+                std::vector<float> squared_distances;
+
+                kdtree.radiusSearch(merged_cloud->at(i),0.1 , indecies, squared_distances);
+
+                std::vector<uint8_t> confidence;
+                std::vector<uint8_t> semantic;
+                std::vector<uint8_t> instance;
+                std::vector<uint8_t> label;
+
+
+                for (size_t j = 0; j < indecies.size(); j++){
+                    confidence.push_back(merged_cloud->at(indecies[j]).confidence);
+                    if (merged_cloud->at(indecies[j]).semantic != 0)
+                        semantic.push_back(merged_cloud->at(indecies[j]).semantic);
+                    instance.push_back(merged_cloud->at(indecies[j]).instance);
+                    label.push_back(merged_cloud->at(indecies[j]).label);
+                }
+
+                filtered_cloud->points[i].confidence = max_ocurance(confidence);
+                filtered_cloud->points[i].semantic = max_ocurance(semantic);
+                filtered_cloud->points[i].instance = max_ocurance(instance);
+                filtered_cloud->points[i].label = max_ocurance(label);
+
+                refining_bar.update();
+            }
+            duration += refining_bar.stop();
         }
 
 
-        grid.setInputCloud(temp2);
-        grid.filter(*temp2);
 
-        polyscope::display(*temp2, "Cloud");
-    
+        // Display
+        ///////////////////////////////////////////////////////////////////////////////
+        polyscope::display(*filtered_cloud, "Cloud");
+
+        auto end_time = std::chrono::high_resolution_clock::now();
+        fmt::print(fg(fmt::color::green), "Total time: ");
+        fmt::print(fmt::emphasis::italic,  "{:3.2f}ms\n", std::chrono::duration<double, std::milli>(end_time - start_time).count());
+        fmt::print(fg(fmt::color::green), "Total duration: ");
+        fmt::print(fmt::emphasis::italic,  "{:3.2f}ms\n", std::chrono::duration<double, std::milli>(duration).count());
+        
+
         polyscope::show();
         cv::destroyAllWindows();
 
-        // pcl::io::savePCDFileBinaryCompressed("TEST", *point_clouds[0].cloud);
+        // pcl::PointCloud<pcl::PointXYZRGB>::Ptr color_cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+        // // Assuming that filtered_cloud is of type pcl::PointCloud<pcl::PointXYZRGB>::Ptr
+        // // Copy the data from filtered_cloud to color_cloud
+        // pcl::copyPointCloud(*filtered_cloud, *color_cloud);
+
+        // //... populate cloud
+        // pcl::visualization::PCLVisualizer viewer;
+        // viewer.spin();
+        // while (!viewer.wasStopped ())
+        // {
+        //     // viewer.spinOnce();
+        // }
+        // viewer.close();
+
+
+
+        // Save to disk
+        ///////////////////////////////////////////////////////////////////////////////
+        pcl::io::savePCDFileBinaryCompressed("filtered cloud", *filtered_cloud);
 
     }
 

@@ -90,6 +90,8 @@ namespace linkml{
         };
 
         std::optional<std::vector<OutputParams>> Detect(cv::Mat srcImg);
+        std::optional<std::vector<OutputParams>> Detect(std::vector<cv::Mat> srcImgs);
+
 
         static std::string GetClassName(int id) { return _className[id];}
     

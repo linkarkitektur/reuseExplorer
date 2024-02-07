@@ -337,4 +337,9 @@ void GetMask2(const cv::Mat& maskProposals, const cv::Mat& maskProtos, OutputPar
 
             return output;
         }
+
+        // std::optional<std::vector<OutputParams>> Yolov8Seg::Detect(std::vector<cv::Mat> srcImgs){
+
+        // }
+
 }

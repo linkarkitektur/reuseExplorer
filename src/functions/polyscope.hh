@@ -120,10 +120,7 @@ namespace polyscope  {
     static void display(linkml::PointCloud & cloud, std::string const name = "Cloud"){
 
         auto  points = std::vector<std::array<float, 3>>();
-        points.reserve(cloud.points.size());
-        for (auto &p : cloud.points){
-            points.push_back({p.x,p.y,p.z});
-        }
+        points.resize(cloud.points.size());
 
         auto colors = std::vector<std::array<float, 3>>();
         colors.resize(cloud.points.size());
@@ -149,9 +146,11 @@ namespace polyscope  {
         auto normal_colors = std::vector<std::array<float, 3>>();
         normal_colors.resize(cloud.points.size());
 
-
         #pragma omp parallel for
         for (size_t i = 0; i < cloud.points.size(); i++){
+
+            points[i] = {cloud.points[i].x, cloud.points[i].y, cloud.points[i].z};
+
             colors[i] = {
                 static_cast<float>(cloud.points[i].r)/256,
                 static_cast<float>(cloud.points[i].g)/256,

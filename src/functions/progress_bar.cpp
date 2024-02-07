@@ -10,6 +10,7 @@
 
 #include <fmt/format.h>
 #include <fmt/printf.h>
+#include <fmt/chrono.h>
 
 
 
@@ -80,8 +81,10 @@ void util::progress_bar::print()
 
 
     int n = std::to_string(_total_work).length();
+    double seconds = std::chrono::duration_cast<std::chrono::seconds>(_timer.lap()).count();
+
     fmt::print("] ({f_work:>{w}d}/{t_work:<{w}d}) {r: >3.0f}%", "f_work"_a = _finished_work, "t_work"_a = _total_work, "r"_a = ratio * 100, "w"_a = n);
-    fmt::print(" - {: > 5.0f}s - {: > 3d} threads", _timer.lap() / ratio*(1-ratio), omp_get_num_threads());
+    fmt::print(" - {: > 5.0f}s - {: > 3d} threads", seconds / ratio*(1-ratio), omp_get_num_threads());
 
     if (!_task_name.empty())
         std::printf(" - (%s)", _task_name.c_str());
@@ -98,9 +101,22 @@ void util::progress_bar::reset_line()
     //    std::printf("\r\033[2K[");
 }
 
-double util::progress_bar::stop(){
+std::chrono::nanoseconds util::progress_bar::stop(){
     reset_line();
-
     _timer.stop();
+
+    #ifdef NOPROGRESS
+      return _timer.accumulated();
+    #endif
+
+    // use fmt to print duration with hours minutes and seconds
+    fmt::print("Total time: {:%H:%M:%S}s\n", std::chrono::duration_cast<std::chrono::seconds>(_timer.accumulated()));
+
+
+    // std::cout << "Total time: " << _timer.accumulated() << "s" << std::endl;
+    std::fflush(stdout);
+
+
     return _timer.accumulated();
+
 }
