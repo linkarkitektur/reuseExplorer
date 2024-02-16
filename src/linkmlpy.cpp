@@ -4,7 +4,6 @@
 #include <pybind11/complex.h>
 #include <pybind11/functional.h>
 #include <pybind11/chrono.h>
-#include <pybind11/stl.h>
 #include <pybind11/iostream.h>
 
 #include <linkml.hh>
@@ -308,6 +307,89 @@ PYBIND11_MODULE(linkml_py, m) {
         .def_readwrite("angle_threashhold", &linkml::refinement_parameters::angle_threashhold)
         .def_readwrite("distance_threshhold", &linkml::refinement_parameters::distance_threshhold)
         ;
+    py::class_<linkml::Dataset>(m, "Dataset")
+        .def(py::init<const std::string &>())
+        .def("fields", &linkml::Dataset::fields)
+        .def("intrinsic_matrix", &linkml::Dataset::intrinsic_matrix)
+        .def("__bool__", &linkml::Dataset::operator bool)
+        .def("__getitem__", &linkml::Dataset::operator[])
+        .def_property_readonly("size", &linkml::Dataset::size)
+        .def_property_readonly("color_size", &linkml::Dataset::color_size)
+        .def_property_readonly("depth_size", &linkml::Dataset::depth_size)
+        ;
+    py::class_<linkml::Data>(m, "Data")
+        .def_property_readonly("color", [](const linkml::Data & d){return d.get<linkml::Field::COLOR>();})
+        .def_property_readonly("depth", [](const linkml::Data & d){return d.get<linkml::Field::DEPTH>();})
+        .def_property_readonly("confidence", [](const linkml::Data & d){return d.get<linkml::Field::CONFIDENCE>();})
+        .def_property_readonly("odometry", [](const linkml::Data & d){return d.get<linkml::Field::ODOMETRY>();})
+        .def_property_readonly("imu", [](const linkml::Data & d){return d.get<linkml::Field::IMU>();})
+        .def_property_readonly("pose", [](const linkml::Data & d){return d.get<linkml::Field::POSES>();})
+        ;
+    py::class_<cv::Mat>(m, "Mat", py::buffer_protocol())
+        .def_buffer([](cv::Mat &m) -> py::buffer_info {
+            auto buffer = py::buffer_info();
+            buffer.ptr = m.data;           /* Pointer to buffer */
+            buffer.itemsize = sizeof(unsigned char); /* Size of one scalar */
+            buffer.format = pybind11::format_descriptor<unsigned char>::format();  /* Python struct-style format descriptor */
+            buffer.ndim = 3;          /* Number of dimensions */
+            buffer.shape = {  m.rows, m.cols, m.channels() }; /* Buffer dimensions */
+            buffer.strides = {
+                    (long)sizeof(unsigned char) * m.channels() * m.cols,
+                    (long)sizeof(unsigned char) * m.channels(),
+                    (long)sizeof(unsigned char)
+                }; /* Strides (in bytes) for each index */
+            buffer.readonly = true;           /* Buffer is read-write */
+            return buffer; 
+        })
+        ;
+
+    typedef Eigen::MatrixXd Matrix;
+    typedef Matrix::Scalar Scalar;
+    constexpr bool rowMajor = Matrix::Flags & Eigen::RowMajorBit;
+    py::class_<Matrix>(m, "Matrix", py::buffer_protocol())
+        .def_buffer([](Matrix &m) -> py::buffer_info {
+            auto buffer = py::buffer_info();
+            buffer.ptr = m.data();           /* Pointer to buffer */
+            buffer.itemsize = sizeof(Scalar);/* Size of one scalar */
+            buffer.format = py::format_descriptor<Scalar>::format(); /* Python struct-style format descriptor */
+            buffer.ndim = 2;          /* Number of dimensions */
+            buffer.shape = { m.rows(), m.cols() }; /* Buffer dimensions */
+            buffer.strides = {
+                    sizeof(Scalar) * (rowMajor ? m.cols() : 1),
+                    (long)sizeof(Scalar) * (rowMajor ? 1 : m.rows())
+                }; /* Strides (in bytes) for each index */
+            buffer.readonly = true;           /* Buffer is read-write */
+            return buffer; 
+        })
+        ;
+    py::class_<tg::mat<4,4,double>>(m, "Pos")
+        .def("__str__", [](const tg::mat<4,4,double> &m){
+            std::stringstream ss;
+            ss << m;
+            return ss.str();
+        })
+        .def("__repr__", [](const tg::mat<4,4,double> &m){
+            std::stringstream ss;
+            ss << m;
+            return ss.str();
+        })
+        ;
+
+    // Enums
+    py::enum_<linkml::Field>(m, "Field")
+        .value("COLOR", linkml::Field::COLOR)
+        // .value("Color", linkml::Field::COLOR)
+        .value("DEPTH", linkml::Field::DEPTH)
+        // .value("Depth", linkml::Field::DEPTH)
+        .value("CONFIDENCE", linkml::Field::CONFIDENCE)
+        // .value("Confidence", linkml::Field::CONFIDENCE)
+        .value("ODOMETRY", linkml::Field::ODOMETRY)
+        // .value("Odometry", linkml::Field::ODOMETRY)
+        .value("IMU", linkml::Field::IMU)
+        // .value("Imu", linkml::Field::IMU)
+        .value("POSES", linkml::Field::POSES)
+        // .value("Poses", linkml::Field::POSES)
+        .export_values();
 
 
 
@@ -353,7 +435,8 @@ PYBIND11_MODULE(linkml_py, m) {
         "path"_a,
         "start"_a = size_t(0),
         "step"_a = size_t(5),
-        "n_frames"_a = size_t(0)
+        "n_frames"_a = size_t(0),
+        "inference"_a = true
     );
 
     // Alternative

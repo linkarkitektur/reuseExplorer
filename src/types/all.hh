@@ -7,3 +7,4 @@
 #include <types/result_fit_planes.hh>
 #include <types/reg.hh>
 #include <types/speckle.hh>
+#include <types/dataset.hh>

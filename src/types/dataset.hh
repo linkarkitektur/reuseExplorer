@@ -35,7 +35,11 @@ namespace linkml {
 
 
     public:
-        Dataset(std::filesystem::path path, std::initializer_list<Field> fields);
+        Dataset(const std::filesystem::path & path, const std::initializer_list<Field> & fields);
+        Dataset(const std::string & path){
+            new (this) Dataset(path, {Field::COLOR, Field::DEPTH, Field::CONFIDENCE, Field::ODOMETRY, Field::IMU, Field::POSES});
+        };
+
 
         // Getters
         std::set<Field>                     fields()            const {return _fields;};

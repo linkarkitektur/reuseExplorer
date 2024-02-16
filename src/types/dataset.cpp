@@ -255,7 +255,7 @@ namespace linkml {
 
 
 
-Dataset::Dataset(std::filesystem::path path, std::initializer_list<Field> fields) {
+Dataset::Dataset(const std::filesystem::path & path, const std::initializer_list<Field> & fields) {
 
     // Check if directories and files exists
     assert(std::filesystem::exists(path) && fmt::format("Directory does not exist: {}", path.string()).c_str());
