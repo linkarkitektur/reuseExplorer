@@ -58,3 +58,4 @@ imgui.ini
 # Ignore machine learning data
 *.onnx
 *.pt
+*.pcd
