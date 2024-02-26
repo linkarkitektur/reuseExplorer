@@ -17,5 +17,7 @@ namespace linkml {
     };
     
 
-    result_fit_planes refine(point_cloud &cloud, result_fit_planes & rs,  refinement_parameters const & param);
+    result_fit_planes refine(point_cloud const & cloud, result_fit_planes const & rs,  refinement_parameters const & param);
+
+    std::vector<pcl::PointIndices> refine(PointCloud::Ptr const cloud, std::vector<pcl::PointIndices> const & clusters, refinement_parameters const & param);
 }
