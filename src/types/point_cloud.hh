@@ -92,6 +92,7 @@ struct EIGEN_ALIGN16 PointT
         os << " (" << p.confidence << ", " << p.semantic << ", " << p.instance << ", " << p.label << ")";
         return os;
     }
+    
 };
 
 
@@ -119,7 +120,31 @@ namespace linkml{
 
 
     // using PointT = pcl::PointXYZRGBNormal;
+
+
     using PointCloud = pcl::PointCloud<PointT>;
+
+    static tg::aabb3 get_bbox(const PointCloud & cloud){
+        float x_min = std::numeric_limits<float>::max();
+        float y_min = std::numeric_limits<float>::max();
+        float z_min = std::numeric_limits<float>::max();
+        float x_max = std::numeric_limits<float>::min();
+        float y_max = std::numeric_limits<float>::min();
+        float z_max = std::numeric_limits<float>::min();
+
+        #pragma omp parallel for reduction(min:x_min, y_min, z_min) reduction(max:x_max, y_max, z_max)
+        for (size_t i = 0; i < cloud.size(); i++){
+            auto p = cloud.at(i);
+            if (p.x < x_min) x_min = p.x;
+            if (p.y < y_min) y_min = p.y;
+            if (p.z < z_min) z_min = p.z;
+            if (p.x > x_max) x_max = p.x;
+            if (p.y > y_max) y_max = p.y;
+            if (p.z > z_max) z_max = p.z;
+        }
+
+        return tg::aabb3(tg::pos3(x_min, y_min, z_min), tg::pos3(x_max, y_max, z_max));
+    }
 
     struct point_cloud
     {

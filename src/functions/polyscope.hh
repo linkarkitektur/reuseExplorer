@@ -1,12 +1,16 @@
 #pragma once
 #include <types/point_cloud.hh>
 #include <types/CellComplex.hh>
+#include <types/Surface_Mesh.hh>
+#include <typed-geometry/types/objects/aabb.hh>
+#include <functions/crop_plane_with_aabb.hh>
 // #include <typed-geometry/types/objects/aabb.hh>
 // #include <typed-geometry/types/pos.hh>
 
 #include <functions/polyscope_helpers.hh>
 #include <functions/constuct_adjacency.hh>
 #include <functions/color.hh>
+#include <algorithms/surface_reconstruction.hh>
 
 #include <valarray>
 
@@ -16,6 +20,7 @@
 #include <polyscope/surface_mesh.h>
 
 
+
 namespace polyscope  {
 
 
@@ -23,8 +28,13 @@ namespace polyscope  {
         polyscope::init();
 
         polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
-        polyscope::view::setUpDir(polyscope::UpDir::ZUp);
+        // polyscope::view::setUpDir(polyscope::UpDir::ZUp);
+        polyscope::view::setUpDir(polyscope::UpDir::YUp);
 
+
+    }
+    static void myshow(){
+        polyscope::show();
     }
 
     static void display(linkml::point_cloud const & cloud, std::string name = "Cloud"){
@@ -128,8 +138,14 @@ namespace polyscope  {
         auto confideces = std::vector<int>();
         confideces.resize(cloud.points.size());
 
+        auto confideces_colors = std::vector<tg::color3>();
+        confideces_colors.resize(cloud.points.size());
+
         auto lables = std::vector<int>();
         lables.resize(cloud.points.size());
+
+        auto lables_colors = std::vector<tg::color3>();
+        lables_colors.resize(cloud.points.size());
 
         auto sematic_lables = std::vector<int>();
         sematic_lables.resize(cloud.points.size());
@@ -145,6 +161,10 @@ namespace polyscope  {
 
         auto normal_colors = std::vector<std::array<float, 3>>();
         normal_colors.resize(cloud.points.size());
+
+        auto importance = std::vector<float>();
+        importance.resize(cloud.points.size());
+        
 
         #pragma omp parallel for
         for (size_t i = 0; i < cloud.points.size(); i++){
@@ -167,26 +187,84 @@ namespace polyscope  {
                 (cloud.points[i].normal_y + 1.0f)/2.0f,
                 (cloud.points[i].normal_z + 1.0f)/2.0f};
 
+            switch (cloud.points[i].confidence)
+            {
+            case 0:
+                confideces_colors[i] = tg::color3(1.0, 0.0, 0.0);
+                break;
+            case 1:
+                confideces_colors[i] = tg::color3(1.0, 1.0, 0.0);
+                break;
+            case 2:
+                confideces_colors[i] = tg::color3(0.0, 1.0, 0.0);
+                break;
+            
+            default:
+                break;
+            }
+
             confideces[i] = cloud.points[i].confidence;
             lables[i] = cloud.points[i].label;
+            lables_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle(cloud.points[i].label));
             sematic_lables[i] = cloud.points[i].semantic;
             sematic_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle(cloud.points[i].semantic));
             instance_lables[i] = cloud.points[i].instance;
+
+            importance[i] = (cloud.points[i].confidence+0.01f)
+                                *
+                                ( (cloud.points[i].label == 0 ? 0.1f : 1.0f)
+                                + (cloud.points[i].semantic == 0 ? 0.1f : 2.0f)
+                                + (cloud.points[i].instance == 0 ? 0.1f : 3.0f));
         }
 
         auto pcd = polyscope::registerPointCloud(name, points);
         pcd->setPointRadius(0.001);
-        auto pcd_color =  pcd->addColorQuantity("RGB", colors);
-        // pcd_color->setEnabled(true);
 
+        auto normal_vectors = pcd->addVectorQuantity("Normals", normals);
+        normal_vectors->setVectorRadius(0.00050);
+        normal_vectors->setVectorLengthScale(0.0050);
+
+        pcd->addColorQuantity("RGB", colors);
         pcd->addColorQuantity("Normal Colors", normal_colors);
-        pcd->addVectorQuantity("Normals", normals);
         pcd->addScalarQuantity("Confidence", confideces);
         pcd->addScalarQuantity("Lables", lables);
         pcd->addScalarQuantity("Sematic Lables", sematic_lables);
-        auto pcd_sematic = pcd->addColorQuantity("Sematic Colors", sematic_colors);
-        pcd_sematic->setEnabled(true);
-
         pcd->addScalarQuantity("Instance Lables", instance_lables);
+        pcd->addScalarQuantity("Importance", importance );
+
+        pcd->addColorQuantity("Confidence Colors", confideces_colors);
+        pcd->addColorQuantity("Lables Colors", lables_colors);
+        pcd->addColorQuantity("Sematic Colors", sematic_colors);
+
+        pcd->setPointRadiusQuantity("Importance", true);
+
+        pcd->quantities["Lables Colors"]->setEnabled(true);
+    }
+    static void display(const Surface_mesh & mesh, std::string name = "Mesh"){
+
+        std::vector<std::array<uint32_t,3>> faces;
+        std::vector<std::array<double,  3>> vertecies;
+
+        for (auto & idx: mesh.vertices()){
+            auto p = mesh.point(idx);
+            vertecies.push_back({p.x(), p.y(), p.z()});
+        }
+        for (auto & face_index: mesh.faces()){
+
+            CGAL::Vertex_around_face_circulator<Surface_mesh> vcirc(mesh.halfedge(face_index), mesh), done(vcirc);
+            std::vector<uint32_t> indices;
+            do {
+                indices.push_back(*vcirc++);
+            } while (vcirc != done);
+
+            faces.push_back({indices[0], indices[1], indices[2]});
+        }
+
+        polyscope::registerSurfaceMesh(name, vertecies, faces);
+    }
+    static void display(const tg::plane3 & plane, const tg::aabb3 & bbox, std::string name = "Plane"){
+        Surface_mesh m;
+        linkml::crop_plane_with_aabb(m, bbox, plane);
+        display(m, name);
     }
 }
