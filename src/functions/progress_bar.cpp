@@ -11,6 +11,7 @@
 #include <fmt/format.h>
 #include <fmt/printf.h>
 #include <fmt/chrono.h>
+#include <fmt/color.h>
 
 
 
@@ -110,7 +111,13 @@ std::chrono::nanoseconds util::progress_bar::stop(){
     #endif
 
     // use fmt to print duration with hours minutes and seconds
-    fmt::print("Total time: {:%H:%M:%S}s\n", std::chrono::duration_cast<std::chrono::seconds>(_timer.accumulated()));
+    fmt::print(fg(fmt::color::gray), "Total time: ");
+    fmt::print(fmt::emphasis::italic,  "{:%H:%M:%S}s", std::chrono::duration_cast<std::chrono::seconds>(_timer.accumulated()));
+    if (!_task_name.empty())
+        fmt::print(fg(fmt::color::gray), " ({})\n",  _task_name.c_str());
+    else
+        fmt::printf("\n");
+        
 
 
     // std::cout << "Total time: " << _timer.accumulated() << "s" << std::endl;
