@@ -1,9 +1,11 @@
 import os
 import sys
+import datetime
 # import scipy
 
 
 print(os.getpid())
+print(datetime.datetime.now())
 
 
 sys.path.insert(
@@ -11,7 +13,7 @@ sys.path.insert(
 
 try:
     import linkml_py
-    # import numpy as np
+    import numpy as np
 except Exception as e:
     print(e)
     exit()
@@ -35,10 +37,35 @@ except Exception as e:
 
 # clusters = linkml_py.clustering(data.cloud, data.plane_results)
 
-# linkml_py.read("/home/mephisto/server_data/stray_scans/0ba33d855b", start=0, n_frames=2, step=5)
-linkml_py.read("/home/mephisto/server_data/stray_scans/0ba33d855b", start=1850, n_frames=200, step=5)
+# linkml_py.read("/home/mephisto/server_data/stray_scans/0ba33d855b", start=0, n_frames=0, step=5, inference=True)
+# linkml_py.read("/home/mephisto/server_data/stray_scans/0ba33d855b", start=1850, n_frames=500, step=5, inference=True)
 # linkml_py.read("/home/mephisto/server_data/stray_scans/7092626a22", start=0, n_frames=0, step=5)
 
+# pcd = linkml_py.merge("/home/mephisto/repos/linkml_cpp/clouds", "/home/mephisto/repos/linkml_cpp/merged_cloud.pcd", 1000)
+# linkml_py.display("/home/mephisto/repos/linkml_cpp/merged_cloud.pcd")
+
+
+# pcd = linkml_py.load("/home/mephisto/repos/linkml_cpp/merged_cloud.pcd")
+# pcd = linkml_py.filter(pcd)
+# linkml_py.save(pcd, "/home/mephisto/repos/linkml_cpp/filtered_cloud.pcd")
+# linkml_py.display(pcd)
+# linkml_py.display("/home/mephisto/repos/linkml_cpp/filtered_cloud.pcd")
+
+
+pcd = linkml_py.load("/home/mephisto/repos/linkml_cpp/filtered_cloud.pcd")
+# pcd = linkml_py.load("/home/mephisto/repos/linkml_cpp/clouds/cloud_000000.pcd")
+pcd = linkml_py.region_growing(pcd,
+                         minClusterSize= 100, #int(2*(1/0.02)*(1/0.02)),
+                         numberOfNeighbours= 15,
+                         smoothnessThreshold = float(3.0 * np.pi / 180.0),
+                         curvatureThreshold = 0.001)
+linkml_py.display(pcd)
+
+# minClusterSize: 100
+# numberOfNeighbours: 15
+# smoothnessThreshold: 0.052360
+# curvatureThreshold: 0.001000
+# Total time: 00:04:40s (Region growing)
 
 
 
