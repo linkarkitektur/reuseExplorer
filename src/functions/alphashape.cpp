@@ -1,4 +1,4 @@
-#include "linkml.h"
+#include "linkml.hh"
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/Alpha_shape_2.h>
 #include <CGAL/Alpha_shape_vertex_base_2.h>

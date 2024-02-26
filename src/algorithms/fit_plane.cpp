@@ -1,11 +1,11 @@
-#include <algorithms/fit_plane.h>
-#include <functions/fit_plane_thorugh_points.h>
+#include <algorithms/fit_plane.hh>
+#include <functions/fit_plane_thorugh_points.hh>
 
-#include <types/plane.h>
-#include <types/plane_fit_parameters.h>
-#include <types/point_cloud.h>
-#include <types/result_fit_plane.h>
-#include <types/reg.h>
+#include <types/plane.hh>
+#include <types/plane_fit_parameters.hh>
+#include <types/point_cloud.hh>
+#include <types/result_fit_plane.hh>
+#include <types/reg.hh>
 
 #include <cstdlib>
 #include <ctime>
@@ -20,6 +20,8 @@
 #include <barrier>
 #include <algorithm>
 #include <set>
+#include <iterator>
+#include <vector>
 //#include <omp.h>
 
 
@@ -70,7 +72,13 @@ int get_random_index_not_in_register(std::vector<int> const &ps, int size)
            //        ps.begin(), ps.end(),
            //        std::inserter(options, options.begin()));
 
-    std::ranges::set_difference(all, ps, std::back_inserter(options) );
+
+    // Find the difference between all an ps and store it in options
+    std::set_difference(
+        all.begin(), all.end(),
+        ps.begin(), ps.end(),
+        std::back_inserter(options));
+
 
 
            //    std::vector<int> options_mask = std::vector<int>();

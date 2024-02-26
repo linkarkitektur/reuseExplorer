@@ -55,3 +55,9 @@
 [submodule "extern/pcl"]
 	path = extern/pcl
 	url = git@github.com:PointCloudLibrary/pcl.git
+[submodule "extern/fmt"]
+	path = extern/fmt
+	url = git@github.com:fmtlib/fmt.git
+[submodule "extern/nexus"]
+	path = extern/nexus
+	url = git@github.com:project-arcana/nexus.git
