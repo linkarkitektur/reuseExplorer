@@ -3,12 +3,15 @@
 #include <types/plane.hh>
 #include <types/CellComplex.hh>
 #include <types/result_fit_planes.hh>
+#include <types/Surface_Mesh.hh>
 
 #include <functions/color.hh>
 #include <functions/get_csystem.hh>
 
 #include <typed-geometry/tg.hh>
 #include <typed-geometry/feature/std-interop.hh>
+
+#include <CGAL/boost/graph/Euler_operations.h>
 
 #include <polymesh/pm.hh>
 #include <polymesh/Mesh.hh>
@@ -168,4 +171,39 @@ namespace linkml {
             }
         }
     }
+
+    static void crop_plane_with_aabb(Surface_mesh & mesh, const tg::aabb3& box, const tg::plane3 plane ){
+    
+            auto const segemets = get_segemets(box);
+            auto points = get_points(segemets, plane);
+
+            
+            make_unique(points);
+    
+            if (points.size() < 3) return;
+    
+            auto [mat, center] = get_csystem(points, plane);
+            auto agles = get_angles_in_plane(mat, points, center);
+    
+            cc::vector<cc::pair<tg::angle, tg::pos3>> pairs;
+            for (size_t i = 0; i < agles.size(); ++i) {
+                pairs.emplace_back(agles[i], points[i]);
+            }
+    
+            std::sort(pairs.begin(), pairs.end(), comparator);
+    
+            std::vector<Surface_mesh::vertex_index> vertecies;
+            vertecies.reserve(pairs.size());
+            for (auto & p : pairs)
+                vertecies.push_back(mesh.add_vertex(Point_3(p.second.x, p.second.y, p.second.z)));
+
+
+            int t = vertecies.size()-1;
+            for (int i = 0; i < t-1; ++i)
+                mesh.add_face(vertecies[i], vertecies[i+1], vertecies[t]);
+            
+            
+
+    }
+
 }
