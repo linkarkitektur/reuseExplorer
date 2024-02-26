@@ -44,7 +44,9 @@ PYBIND11_MODULE(linkml_py, m) {
     PYBIND11_NUMPY_DTYPE(tg::vec3, x, y, z);
 
     // Classes
-    py::class_<linkml::point_cloud>(m, "PointCloud")
+    py::class_<linkml::PointCloud, std::shared_ptr<linkml::PointCloud>>(m, "PointCloud")
+        ;
+    py::class_<linkml::point_cloud>(m, "PointCloud old")
         .def(py::init<const std::vector<tg::pos3> &, const std::vector<tg::vec3> &>(), py::return_value_policy::automatic_reference)
         .def("from_numpy", [](py::array_t<float> const & points, py::array_t<float> const & normals ){
 
@@ -417,7 +419,14 @@ PYBIND11_MODULE(linkml_py, m) {
         );
 
     m.def("create_cell_complex", &linkml::create_cell_complex, "point_cloud"_a, "plane_fit_results"_a );
-    m.def("refine_planes", &linkml::refine, "cloud_a"_a, "fit_plane_results_a"_a, "params_a"_a);
+    m.def("refine_planes", 
+        static_cast<linkml::result_fit_planes(*)(
+            linkml::point_cloud const &,
+            linkml::result_fit_planes const &,
+            linkml::refinement_parameters const &)> (&linkml::refine), 
+        "cloud_a"_a, "fit_plane_results_a"_a, "params_a"_a);
+
+    // result_fit_planes refine(point_cloud &cloud, result_fit_planes & rs,  refinement_parameters const & param)
     m.def("fit_plane_thorugh_points", 
         static_cast<
             linkml::Plane(*)(
@@ -438,6 +447,46 @@ PYBIND11_MODULE(linkml_py, m) {
         "n_frames"_a = size_t(0),
         "inference"_a = true
     );
+    m.def("load", &linkml::load, "Load a point cloud from disk"
+        "path"_a
+    );
+    m.def("merge", &linkml::merge_files, "Merge a directory of pcd files in to a single file"
+        "input_path"_a,
+        "output_file"_a,
+        "chunk_size"_a = 500
+    );
+    m.def("filter", &linkml::filter, "Filter a point cloud"
+        "Point cloud"_a
+    );
+    m.def("save", &linkml::save, "Save a point cloud to disk"
+        "Point cloud"_a,
+        "output_file"_a,
+        "binary"_a = true
+    );
+    m.def("display", [](std::string path){
+        linkml::PointCloud::Ptr cloud = linkml::load(path);
+        polyscope::myinit();
+        polyscope::display(*cloud);
+        polyscope::myshow();
+    },
+    "path"_a
+    );
+    m.def("display", [](linkml::PointCloud::Ptr cloud){
+        polyscope::myinit();
+        polyscope::display(*cloud);
+        polyscope::myshow();
+    },
+    "cloud"_a
+    );
+
+    m.def("region_growing", &linkml::region_growing, "Region growing"
+        "Point cloud"_a,
+        "minClusterSize"_a = 2*(1/0.02)*(1/0.02),
+        "numberOfNeighbours"_a = 30,
+        "smoothnessThreshold"_a =  3.0 / 180.0 * M_PI,
+        "curvatureThreshold"_a = 0.1
+    );
+
 
     // Alternative
     // m.def("fit_plane_thorugh_points", [](const linkml::point_cloud& cloud, const std::vector<int>& indices) {
