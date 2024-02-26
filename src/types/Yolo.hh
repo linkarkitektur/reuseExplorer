@@ -9,6 +9,7 @@ namespace linkml{
 
     //https://github.com/UNeedCryDear/yolov8-opencv-onnxruntime-cpp
 
+
     struct OutputParams {
         int id;                     //Result category id
         float confidence;           //Result confidence
@@ -57,23 +58,96 @@ namespace linkml{
     {
     private:
         inline static const std::vector<std::string> _className = {
-            "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light", "fire hydrant",
-            "stop sign","parking meter","bench", "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe",
-            "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball","kite", "baseball bat",
-            "baseball glove","skateboard", "surfboard", "tennis racket","bottle", "wine glass","cup", "fork", "knife", "spoon", "bowl",
-            "banana", "apple", "sandwich", "orange", "broccoli", "carrot", "hot dog","pizza", "donut", "cake", "chair", "couch",
-            "potted plant","bed", "dining table","toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone","microwave",
-            "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase","scissors", "teddy bear","hair drier","toothbrush"
+            "person",          // 0
+            "bicycle",         // 1
+            "car",             // 2
+            "motorcycle",      // 3
+            "airplane",        // 4
+            "bus",             // 5
+            "train",           // 6
+            "truck",           // 7
+            "boat",            // 8
+            "traffic light",   // 9
+            "fire hydrant",    // 10
+            "stop sign",       // 11
+            "parking meter",   // 12
+            "bench",           // 13
+            "bird",            // 14
+            "cat",             // 15
+            "dog",             // 16
+            "horse",           // 17
+            "sheep",           // 18
+            "cow",             // 19
+            "elephant",        // 20
+            "bear",            // 21
+            "zebra",           // 22
+            "giraffe",         // 23
+            "backpack",        // 24
+            "umbrella",        // 25
+            "handbag",         // 26
+            "tie",             // 27
+            "suitcase",        // 28
+            "frisbee",         // 29
+            "skis",            // 30
+            "snowboard",       // 31
+            "sports ball",     // 32
+            "kite",            // 33
+            "baseball bat",    // 34
+            "baseball glove",  // 35
+            "skateboard",      // 36
+            "surfboard",       // 37
+            "tennis racket",   // 38
+            "bottle",          // 39
+            "wine glass",      // 40
+            "cup",             // 41
+            "fork",            // 42
+            "knife",           // 43
+            "spoon",           // 44
+            "bowl",            // 45
+            "banana",          // 46
+            "apple",           // 47
+            "sandwich",        // 48
+            "orange",          // 49
+            "broccoli",        // 50
+            "carrot",          // 51
+            "hot dog",         // 52
+            "pizza",           // 53
+            "donut",           // 54
+            "cake",            // 55
+            "chair",           // 56
+            "couch",           // 57
+            "potted plant",    // 58
+            "bed",             // 59
+            "dining table",    // 60
+            "toilet",          // 61
+            "tv",              // 62
+            "laptop",          // 63
+            "mouse",           // 64
+            "remote",          // 65
+            "keyboard",        // 66
+            "cell phone",      // 67
+            "microwave",       // 68
+            "oven",            // 69
+            "toaster",         // 70
+            "sink",            // 71
+            "refrigerator",    // 72
+            "book",            // 73
+            "clock",           // 74
+            "vase",            // 75
+            "scissors",        // 76
+            "teddy bear",      // 77
+            "hair drier",      // 78
+            "toothbrush"       // 79
         };
 
         cv::dnn::Net model;
 
-        int _netWidth = 640;
-        int _netHeight = 640;
+        static int _netWidth;
+        static int _netHeight;
 
-        float _classThreshold   = 0.25;
-        float _nmsThreshold     = 0.45;
-        float _maskThreshold    = 0.5;
+        static float _classThreshold;
+        static float _nmsThreshold;
+        static float _maskThreshold;
 
     public:
         Yolov8Seg(std::string netPath, bool isCuda = false) {
@@ -89,8 +163,10 @@ namespace linkml{
             }
         };
 
-        std::optional<std::vector<OutputParams>> Detect(cv::Mat srcImg);
-        std::optional<std::vector<OutputParams>> Detect(std::vector<cv::Mat> srcImgs);
+        std::vector<cv::Mat> Detect(cv::Mat srcImg);
+
+        static void Preprocess(cv::Mat & srcImg, cv::Mat & blob, cv::Vec4d & params);
+        static std::vector<OutputParams> Postprocess(const std::vector<cv::Mat> & blob, const cv::Vec4d & params, const cv::Mat & srcImg);
 
 
         static std::string GetClassName(int id) { return _className[id];}
