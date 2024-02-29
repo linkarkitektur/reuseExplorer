@@ -16,10 +16,9 @@ Scanning app:
 
 
 ## Description
-
 This is a tool for processing scan data captured with an iPhone / iPad in the context of mapping buildings. The goal is to segment and label objects in the point cloud and reconstruct a simplified 3D model on a room-by-room detail scale.
 
-Project sturcture:
+Project structure:
 
 ```mermaid
 graph TD;
@@ -250,7 +249,6 @@ cmake -DCMAKE_BUILD_TYPE=Release ..
 #### Export Yolo v8.1 model
 ```python
 from ultralytics import YOLO
-import cv2 as cv
 
 model = YOLO('yolov8x-seg.pt') 
 model.export(format="onnx", simplify=True)
