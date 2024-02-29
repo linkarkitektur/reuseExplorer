@@ -97,7 +97,7 @@ py::object ToSpeckle(tg::aabb3 const & box){
         );
 }
 
-py::object ToSpeckle(linkml::point_cloud const & cloud){
+py::object ToSpeckle(linkml::PointCloud const & cloud){
 
     if ( Py_IsInitialized() == 0 ) {
         py::scoped_interpreter guard{};
@@ -117,10 +117,27 @@ py::object ToSpeckle(linkml::point_cloud const & cloud){
     // #colors = np.asarray(np.asarray(point_cloud.colors).flatten()*256, dtype=int).tolist()
         
 
-    auto points = cloud.pts; // Needs to be flattened
-    auto colors = cloud.colors; // Needs to be flattened
-    auto sizes = std::vector<int>(cloud.pts.size(), 3); // Nuber of values per point
-    auto bbox = ToSpeckle(cloud.get_bbox());
+    auto points = std::vector<float>(); // Flattened
+    points.resize(cloud.size() *3);
+
+    #pragma omp parallel for
+    for (size_t i = 0; i < cloud.size(); i++){
+        points[i*3] = cloud.points[i].x;
+        points[i*3+1] = cloud.points[i].y;
+        points[i*3+2] = cloud.points[i].z;
+    }
+
+    auto colors = std::vector<int>(); // Flattened
+    colors.resize(cloud.size());
+
+    #pragma omp parallel for
+    for (size_t i = 0; i < cloud.size(); i++){
+        // It might be possible to access the value with shifing based on how it is stored in the point cloud
+        colors[i] = (int(cloud.points[i].r) << 16) + (int(cloud.points[i].g) << 8) + int(cloud.points[i].b);
+    }
+    
+    auto sizes = std::vector<int>(cloud.size(), 3); // Nuber of values per point
+    auto bbox = ToSpeckle(linkml::get_bbox(cloud));
 
     auto sp_cloud = Pointcloud();
     sp_cloud.attr("points") = points;

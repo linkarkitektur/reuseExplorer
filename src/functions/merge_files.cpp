@@ -1,6 +1,6 @@
 #include <functions/merge_files.hh>
 
-#include <types/point_cloud.hh>
+#include <types/PointCloud.hh>
 #include <types/accumulators.hh>
 
 #include <functions/progress_bar.hh>

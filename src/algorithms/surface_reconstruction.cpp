@@ -1,6 +1,6 @@
 #include <algorithms/surface_reconstruction.hh>
 
-#include <types/point_cloud.hh>
+#include <types/PointCloud.hh>
 
 
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>

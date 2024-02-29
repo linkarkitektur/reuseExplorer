@@ -1,6 +1,6 @@
 #pragma once
 #include <vector>
-#include <types/point_cloud.hh>
+#include <types/PointCloud.hh>
 #include <functions/progress_bar.hh>
 
 namespace linkml

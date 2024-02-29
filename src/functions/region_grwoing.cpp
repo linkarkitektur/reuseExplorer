@@ -7,8 +7,8 @@
 #include <pcl/segmentation/planar_region.h>
 #include <pcl/common/centroid.h>
 
-#include <types/plane.hh>
-#include <types/point_cloud.hh>
+#include <types/Plane.hh>
+#include <types/PointCloud.hh>
 
 #include <algorithms/refine.hh>
 

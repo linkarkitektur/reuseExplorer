@@ -6,7 +6,7 @@
 #include <vector>
 #include <set>
 
-#include <types/point_cloud.hh>
+#include <types/PointCloud.hh>
 #include <types/result_fit_planes.hh>
 #include <functions/alpha_shape.hh>
 #include <functions/color_facetes.hh>
@@ -197,10 +197,13 @@ namespace linkml{
     }
 
 
+    std::vector<std::vector<size_t>> clustering(linkml::PointCloud const& cloud, result_fit_planes const& results ) {
 
-    std::vector<std::vector<size_t>> clustering(linkml::point_cloud const& cloud, result_fit_planes const& results ) {
+        auto clampted_points = std::vector<tg::pos3>();
+        clampted_points.resize(cloud.size());
+        for (size_t i = 0; i < cloud.size(); i++)
+            clampted_points[i] = cloud.points[i].getPos();
 
-        auto clampted_points = std::vector<tg::pos3>(cloud.pts);
         for (size_t i = 0; i < results.indecies.size(); i++){
             auto indecies = results.indecies[i];
             auto plane = results.planes[i];
@@ -226,7 +229,7 @@ namespace linkml{
 
 
         // Visualize the planes
-        auto plane_colors = std::vector<tg::color3>(cloud.pts.size(), tg::color3(0,0,0));
+        auto plane_colors = std::vector<tg::color3>(cloud.size(), tg::color3(0,0,0));
         for (int i = 0; i < results.indecies.size(); i++){
             auto indcies = results.indecies[i];
             auto color = linkml::get_color_forom_angle(linkml::sample_circle(i));
@@ -246,7 +249,7 @@ namespace linkml{
 
 // Visualize the cells
 #if Visualize
-        auto cell_colors = std::vector<tg::color3>(cloud.pts.size(), tg::color3(0,0,0));
+        auto cell_colors = std::vector<tg::color3>(cloud.size(), tg::color3(0,0,0));
         for (auto const& [i, indcies ]: cell_map){
             auto color = linkml::get_color_forom_angle(linkml::sample_circle(i));
             for (auto const& idx : indcies){
@@ -277,7 +280,7 @@ namespace linkml{
             auto points = std::vector<tg::pos3>();
             std::transform(cell_map[id].begin(), cell_map[id].end(), std::back_insert_iterator(points), [&](int j){
                 #pragma omp critical
-                return cloud.pts[j];
+                return cloud.points[j].getPos();
             });
 
             if (points.size() < 3) continue;
@@ -290,7 +293,7 @@ namespace linkml{
             // Ensure normal is allighned with point normals
             auto normals = std::vector<tg::vec3>();
             std::transform(cell_map[id].begin(), cell_map[id].end(), std::back_insert_iterator(normals), [&](int j){
-                return cloud.norm[j];
+                return cloud.points[j].getNormal();
             });
             auto average_normal = tg::average(normals);
 
@@ -555,7 +558,7 @@ namespace linkml{
 
 #if Visualize
 
-        auto cluster_colors = std::vector<tg::color3>(cloud.pts.size(), tg::color3(0,0,0));
+        auto cluster_colors = std::vector<tg::color3>(cloud.size(), tg::color3(0,0,0));
 
         // Loop over all clusters
         int couter = 0;

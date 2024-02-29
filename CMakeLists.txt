@@ -127,16 +127,6 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # REMOVED: this is not needed anymore
 set(CGAL_DO_NOT_WARN_ABOUT_CMAKE_BUILD_TYPE On)
 
-## ===============================================
-## disable glfw additionals
-#option(GLFW_BUILD_EXAMPLES  OFF)
-#option(GLFW_BUILD_TESTS  OFF)
-#option(GLFW_BUILD_DOCS  OFF)
-#option(GLFW_INSTALL  OFF)
-
-
-
-# set(ENV{CUDACXX} "/usr/local/cuda/bin/nvcc")
 
 
 # ===============================================
@@ -219,33 +209,21 @@ endif()
 
 
 list(APPEND CMAKE_MODULE_PATH "./cmake/FindHDF5.cmake") # Replaces the bundled FindHDF5.cmake module
-find_package(HDF5 1.10 COMPONENTS C HL REQUIRED)
-
+find_package(HDF5 1.10 COMPONENTS C HL)
 
 
 # ===============================================
 # add submodules
 add_subdirectory(extern/clean-core)
-add_subdirectory(extern/typed-geometry)
 add_subdirectory(extern/ctracer)
-add_subdirectory(extern/reflector)
-add_subdirectory(extern/task-dispatcher)
-add_subdirectory(extern/rich-log)
-add_subdirectory(extern/polymesh)
-add_subdirectory(extern/nanoflann)
-add_subdirectory(extern/pybind11)
-add_subdirectory(extern/polyscope)
-add_subdirectory(extern/glpk)
-add_subdirectory(extern/lpsolve)
-add_subdirectory(extern/soplex)
-# add_subdirectory(extern/scip)
-# add_subdirectory(extern/cgal)
-# add_subdirectory(extern/glfw)
-# add_subdirectory(extern/glow)
-# add_subdirectory(extern/imgui)
-# add_subdirectory(extern/glow-extras)
 add_subdirectory(extern/fmt)
 add_subdirectory(extern/nexus)
+add_subdirectory(extern/polymesh)
+add_subdirectory(extern/polyscope)
+add_subdirectory(extern/pybind11)
+add_subdirectory(extern/reflector)
+add_subdirectory(extern/rich-log)
+add_subdirectory(extern/typed-geometry)
 
 # ===============================================
 # configure executable
@@ -284,29 +262,17 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     typed-geometry
     ctracer
     reflector
-    task-dispatcher
     rich-log
     polymesh
     polyscope
-    glpk
-    lpsolve
-    nanoflann
-    # scip
     embree
-    soplex
     Eigen3::Eigen3
     CGAL::Eigen3_support
     CGAL::SCIP_support
     CGAL::TBB_support
     ${GUROBI_LIBRARY}
-    # CGAL::GLPK_support
     ${PCL_LIBRARIES}
     ${PCL_COMMON_LIBRARIES}
-    # ${PCL_IO_LIBRARIES}
-#    glfw
-#    glow
-#    imgui
-#    glow-extras
     fmt
     nexus
 
@@ -322,19 +288,9 @@ foreach(TARGET_NAME
     typed-geometry
     ctracer
     reflector
-    task-dispatcher
     rich-log
     polymesh
-    nanoflann
     polyscope
-    glpk
-    lpsolve
-    # scip
-    # glfw
-    # glow
-    # imgui
-    # glow-extras
-    soplex
 
 )
 set_property(TARGET ${TARGET_NAME} PROPERTY FOLDER "Extern")

@@ -1,6 +1,6 @@
 #pragma once
 #include <vector>
-#include <types/plane.hh>
+#include <types/Plane.hh>
 
 
 namespace linkml {

@@ -1,5 +1,5 @@
 #pragma once
-#include "./data.hh"
+#include "./Data.hh"
 
 #include <filesystem>
 #include <initializer_list>

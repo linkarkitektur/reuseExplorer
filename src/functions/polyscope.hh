@@ -1,5 +1,5 @@
 #pragma once
-#include <types/point_cloud.hh>
+#include <types/PointCloud.hh>
 #include <types/CellComplex.hh>
 #include <types/Surface_Mesh.hh>
 #include <typed-geometry/types/objects/aabb.hh>
@@ -37,16 +37,6 @@ namespace polyscope  {
         polyscope::show();
     }
 
-    static void display(linkml::point_cloud const & cloud, std::string name = "Cloud"){
-        auto pcd = polyscope::registerPointCloud(name, cloud.pts);
-        pcd->setPointRadius(0.001);
-
-        if (cloud.colors.size() == cloud.pts.size()){
-            auto pcd_color =  pcd->addColorQuantity("RGB", cloud.colors);
-            pcd_color->setEnabled(true);
-        }
-
-    }
     static void display(linkml::CellComplex & cw){
 
 
