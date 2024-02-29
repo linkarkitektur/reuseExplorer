@@ -5,8 +5,8 @@
 #include <pcl/point_cloud.h>
 
 #include <typed-geometry/tg-lean.hh>
-#include "../types/point_cloud.hh"
-#include "../types/data.hh"
+#include "../types/PointCloud.hh"
+#include "../types/Data.hh"
 
 namespace linkml {
 

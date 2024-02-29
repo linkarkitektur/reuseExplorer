@@ -2,7 +2,7 @@
 #include <string>
 #include <pybind11/embed.h>
 
-#include <types/point_cloud.hh>
+#include <types/PointCloud.hh>
 
 namespace py = pybind11;
 
@@ -18,7 +18,7 @@ namespace linkml
 
         std::string get_status(){ return status;}
 
-        py::object ToSpeckle(linkml::point_cloud const & cloud);
+        py::object ToSpeckle(linkml::PointCloud const & cloud);
 
     };
     

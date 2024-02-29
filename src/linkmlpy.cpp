@@ -46,125 +46,6 @@ PYBIND11_MODULE(linkml_py, m) {
     // Classes
     py::class_<linkml::PointCloud, std::shared_ptr<linkml::PointCloud>>(m, "PointCloud")
         ;
-    py::class_<linkml::point_cloud>(m, "PointCloud old")
-        .def(py::init<const std::vector<tg::pos3> &, const std::vector<tg::vec3> &>(), py::return_value_policy::automatic_reference)
-        .def("from_numpy", [](py::array_t<float> const & points, py::array_t<float> const & normals ){
-
-            auto points_ = points.unchecked<2>();
-            auto normals_ = normals.unchecked<2>();
-
-            if (points_.shape(1) != 3)
-                throw std::length_error("The point row size needs to be 3");
-            if (normals_.shape(1) != 3)
-                throw std::length_error("The normal row size needs to be 3");
-            if (points_.shape(0) != normals_.shape(0))
-                throw std::length_error("Points and Normals need to have the same length");
-
-
-            py::buffer_info points_info = points.request();
-            tg::pos3 *points_ptr = static_cast<tg::pos3 *>(points_info.ptr);
-
-            py::buffer_info normals_info = normals.request();
-            tg::pos3 *normals_ptr = static_cast<tg::pos3 *>(normals_info.ptr);
-
-
-            auto pos_vec = std::vector<tg::pos3>();
-            auto norm_vec = std::vector<tg::vec3>();
-
-            pos_vec.reserve(points_.shape(0));
-            norm_vec.reserve(normals_.shape(0));
-
-             for (long i = 0; i < points_.shape(0); i++)
-             {
-                 pos_vec.push_back(
-                     tg::pos3(
-                         *points_.data(i,0),
-                         *points_.data(i,1),
-                         *points_.data(i,2)
-                         ));
-                 norm_vec.push_back(
-                     tg::vec3(
-                         *normals_.data(i,0),
-                         *normals_.data(i,1),
-                         *normals_.data(i,2)
-                         ));
-
-             };
-
-            return linkml::point_cloud(pos_vec, norm_vec);
-        })
-        .def("from_numpy", [](py::array_t<float> const & points, py::array_t<float> const & normals, py::array_t<float> const & colors ){
-
-            auto points_ = points.unchecked<2>();
-            auto normals_ = normals.unchecked<2>();
-            auto colors_ = colors.unchecked<2>();
-
-
-            if (points_.shape(1) != 3)
-                throw std::length_error("The point row size needs to be 3");
-            if (normals_.shape(1) != 3)
-                throw std::length_error("The normal row size needs to be 3");
-            if (points_.shape(0) != normals_.shape(0))
-                throw std::length_error("Points and Normals need to have the same length");
-            if (points_.shape(0) != colors_.shape(0))
-                throw std::length_error("Points and Colors need to have the same length");
-
-
-            py::buffer_info points_info = points.request();
-            tg::pos3 *points_ptr = static_cast<tg::pos3 *>(points_info.ptr);
-
-            py::buffer_info normals_info = normals.request();
-            tg::pos3 *normals_ptr = static_cast<tg::pos3 *>(normals_info.ptr);
-
-            py::buffer_info colors_info = normals.request();
-            tg::pos3 *colors_ptr = static_cast<tg::pos3 *>(colors_info.ptr);
-
-
-            auto pos_vec = std::vector<tg::pos3>();
-            auto norm_vec = std::vector<tg::vec3>();
-            auto color_vec = std::vector<tg::color3>();
-
-
-            pos_vec.reserve(points_.shape(0));
-            norm_vec.reserve(normals_.shape(0));
-            color_vec.reserve(normals_.shape(0));
-
-
-             for (long i = 0; i < points_.shape(0); i++)
-             {
-                 pos_vec.push_back(
-                     tg::pos3(
-                         *points_.data(i,0),
-                         *points_.data(i,1),
-                         *points_.data(i,2)
-                         ));
-                 norm_vec.push_back(
-                     tg::vec3(
-                         *normals_.data(i,0),
-                         *normals_.data(i,1),
-                         *normals_.data(i,2)
-                         ));
-                 color_vec.push_back(
-                     tg::color3(
-                         *colors_.data(i,0),
-                         *colors_.data(i,1),
-                         *colors_.data(i,2)
-                         ));
-
-             };
-
-            return linkml::point_cloud(pos_vec, norm_vec, color_vec);
-        })
-        .def("__repr__", [](const linkml::point_cloud &a){
-            std::stringstream ss;
-            ss << "Point cloud (" << a.pts.size() << "," << a.norm.size() << ")";
-            return ss.str();
-            //std::format("Point cloud {}, {}",a.pts.size() ,a.norm.size());
-        })
-        .def("buildIndex", &linkml::point_cloud::buildIndex)
-        .def("radiusSearch", py::overload_cast<const int, const float>(&linkml::point_cloud::radiusSearch, py::const_), "Radius search")
-        .def("radiusSearch", py::overload_cast<const tg::pos3  &, const float>(&linkml::point_cloud::radiusSearch, py::const_), "Radius search")
-        ;
     py::class_<tg::pos3>(m, "pos")
         .def(py::init<const float, const float, const float>())
         .def(("__repr__"), [](const tg::pos3 &p){
@@ -220,31 +101,6 @@ PYBIND11_MODULE(linkml_py, m) {
         })
         .def_readwrite("origin", &linkml::Plane::origin)
         .def_readonly("normal", &linkml::Plane::normal)
-
-        ;
-    py::class_<linkml::reg>(m, "Register")
-        .def(py::init<const int>())
-        .def("__repr__", [](const linkml::reg &a){
-            std::stringstream ss;
-            ss << "Register of size => " << a.mask.size();
-            return ss.str();
-        })
-        ;
-    py::class_<linkml::plane_fitting_parameters>(m, "PlaneFittingParams")
-        .def(py::init<const float &,const float &,const float &,const int & >(),
-             "cosalpha"_a =0.96592583,
-             "normal_distance_threshhold"_a=0.05,
-             "distance_threshhold"_a=0.15,
-             "plane_size_threshhold"_a=500)
-        .def("__repr__", [](const linkml::plane_fitting_parameters &p){
-            std::stringstream ss;
-            ss << "Plane fitting Parameters:" << std::endl
-            << "cosalpha=" << p.cosalpha << std::endl
-            << "normal_distance_threshhold=" << p.normal_distance_threshhold << std::endl
-            << "distance_threshhold=" << p.distance_threshhold << std::endl
-            << "plane_size_threshhold=" << p.plane_size_threshhold;
-            return ss.str();
-        })
         ;
     py::class_<linkml::result_fit_plane>(m, "PlaneFittingResult")
         .def(py::init<const int &>())
@@ -289,8 +145,6 @@ PYBIND11_MODULE(linkml_py, m) {
             ss << "Planes :" << a.planes.size();
             return ss.str();
         })
-        ;
-    py::class_<linkml::PlaneFit_Solver >(m, "PlaneFit_Solver")
         ;
     py::class_<std::vector<std::atomic_bool>>(m, "a_bool")
         ;
@@ -397,48 +251,8 @@ PYBIND11_MODULE(linkml_py, m) {
 
 
     // Functions
-    m.def("fit_plane",
-            static_cast<
-              linkml::result_fit_plane(*)(
-                  linkml::point_cloud const  &,
-                  linkml::plane_fitting_parameters const &)> (&linkml::fit_plane),
-          "point_cloud"_a,
-          "params"_a);
-
-    m.def("fit_planes", [](linkml::point_cloud const &cloud, linkml::plane_fitting_parameters const &param) {
-        py::scoped_ostream_redirect stream(
-            std::cout,                               // std::ostream&
-            py::module_::import("sys").attr("stdout") // Python output
-            );
-
-        auto s = linkml::PlaneFit_Solver();
-        return s.run(cloud, param);
-    },
-    "point_cloud"_a,
-    "params"_a
-        );
-
     m.def("create_cell_complex", &linkml::create_cell_complex, "point_cloud"_a, "plane_fit_results"_a );
-    m.def("refine_planes", 
-        static_cast<linkml::result_fit_planes(*)(
-            linkml::point_cloud const &,
-            linkml::result_fit_planes const &,
-            linkml::refinement_parameters const &)> (&linkml::refine), 
-        "cloud_a"_a, "fit_plane_results_a"_a, "params_a"_a);
-
-    // result_fit_planes refine(point_cloud &cloud, result_fit_planes & rs,  refinement_parameters const & param)
-    m.def("fit_plane_thorugh_points", 
-        static_cast<
-            linkml::Plane(*)(
-                linkml::point_cloud const&, 
-                std::vector<int> const&)> (&linkml::fit_plane_thorugh_points),
-        "cloud"_a, 
-        "indecies"_a);
-    m.def("fit_plane_thorugh_points", 
-        static_cast<
-            linkml::Plane(*)(
-                std::vector<tg::pos3> const&)> (&linkml::fit_plane_thorugh_points),
-        "points"_a);
+    m.def("refine_planes", &linkml::refine,"cloud"_a, "clusters"_a, "params"_a);
     m.def("clustering", &linkml::clustering, "point_cloud"_a, "fit_plane_results"_a);
     m.def("read", &linkml::parse_input_files, "Parse a StrayScanner scan in to a point cloud"
         "path"_a,

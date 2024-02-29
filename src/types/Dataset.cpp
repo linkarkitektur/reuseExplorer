@@ -1,4 +1,4 @@
-#include "./dataset.hh"
+#include "./Dataset.hh"
 #include <functions/lodepng.hh>
 #include <fstream>
 #include <iostream>

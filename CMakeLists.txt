@@ -232,7 +232,7 @@ add_subdirectory(extern/reflector)
 add_subdirectory(extern/task-dispatcher)
 add_subdirectory(extern/rich-log)
 add_subdirectory(extern/polymesh)
-add_subdirectory(extern/nanoflann)
+# add_subdirectory(extern/nanoflann)
 add_subdirectory(extern/pybind11)
 add_subdirectory(extern/polyscope)
 add_subdirectory(extern/glpk)
@@ -290,7 +290,7 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     polyscope
     glpk
     lpsolve
-    nanoflann
+    # nanoflann
     # scip
     embree
     soplex
@@ -325,7 +325,7 @@ foreach(TARGET_NAME
     task-dispatcher
     rich-log
     polymesh
-    nanoflann
+    # nanoflann
     polyscope
     glpk
     lpsolve

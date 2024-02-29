@@ -28,15 +28,6 @@ namespace linkml {
 
     }
 
-    static linkml::Plane fit_plane_thorugh_points(linkml::point_cloud const& cloud, std::vector<int> const& indecies){
-
-        std::vector<tg::pos3> points = std::vector<tg::pos3>();
-        for (size_t i = 0; i < indecies.size(); i++ )
-            points.push_back(cloud.pts.at(indecies[i]));
-
-        return fit_plane_thorugh_points(points);
-    }
-
     static linkml::Plane fit_plane_thorugh_points(PointCloud::Ptr cloud,  pcl::PointIndices const & indecies){
 
 

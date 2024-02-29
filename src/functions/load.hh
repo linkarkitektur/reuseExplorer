@@ -1,6 +1,6 @@
 #pragma once
 #include <string>
-#include <types/point_cloud.hh>
+#include <types/PointCloud.hh>
 #include <pcl/io/pcd_io.h>
 
 namespace linkml{

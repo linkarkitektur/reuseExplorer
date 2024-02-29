@@ -1,6 +1,6 @@
 
 #pragma once
-#include <types/plane.hh>
+#include <types/Plane.hh>
 #include <types/CellComplex.hh>
 #include <types/result_fit_planes.hh>
 #include <types/Surface_Mesh.hh>

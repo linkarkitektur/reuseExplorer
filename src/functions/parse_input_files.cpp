@@ -1,20 +1,4 @@
 
-// #include <h5pp/h5pp.h>
-// #include <omp.h>
-// #include <string>
-// #include <fstream>
-// #include <filesystem>
-// #include <fmt/printf.h>
-// #include <optional>
-
-// #include <vector>
-// #include <any>
-
-// #include <opencv4/opencv2/opencv.hpp>
-// #include <functions/progress_bar.hh>
-
-// #include <functions/lodepng.hh>
-
 #define PCL_NO_PRECOMPILE
 #include <pcl/memory.h>
 #include <pcl/filters/voxel_grid.h>
@@ -51,7 +35,7 @@
 #include <fmt/color.h>
 
 #include "parse_input_files.hh"
-#include <types/dataset.hh>
+#include <types/Dataset.hh>
 #include <functions/progress_bar.hh>
 #include <algorithms/surface_reconstruction.hh>
 
@@ -61,6 +45,7 @@
 
 #include <mutex>
 #include <thread>
+#include <future>
 
 
 

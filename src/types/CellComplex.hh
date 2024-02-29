@@ -4,7 +4,7 @@
 
 #include <clean-core/vector.hh>
 
-#include <types/plane.hh>
+#include <types/Plane.hh>
 
 #include <typed-geometry/types/pos.hh>
 #include <typed-geometry/types/objects/aabb.hh>

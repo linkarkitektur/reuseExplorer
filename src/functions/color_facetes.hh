@@ -1,7 +1,7 @@
 #pragma once
 #include <omp.h>
 
-#include <types/point_cloud.hh>
+#include <types/PointCloud.hh>
 #include <types/CellComplex.hh>
 #include <types/result_fit_planes.hh>
 #include <functions/progress_bar.hh>
@@ -63,15 +63,15 @@ namespace linkml{
      * This map is used to store cell complex information, where each key represents a cell ID
      * and the associated vector contains the indices of points belonging to that cell.
      */
-    std::map<size_t, std::vector<int>> make_cw(point_cloud const& cloud, result_fit_planes const& results ) {
+    std::map<size_t, std::vector<int>> make_cw(PointCloud const& cloud, result_fit_planes const& results ) {
 
         auto cell_map = std::map<size_t, std::vector<int>>();
         const std::vector<int> default_id(results.planes.size()+1, 0);
-        auto bar_create_cw = util::progress_bar(cloud.pts.size(), "Create Cell Complex");
+        auto bar_create_cw = util::progress_bar(cloud.size(), "Create Cell Complex");
 
         #pragma omp parallel for shared(cell_map)
-        for (size_t i = 0; i < cloud.pts.size(); i++){
-            auto point = cloud.pts[i];
+        for (size_t i = 0; i < cloud.size(); i++){
+            auto point = cloud.points[i].getPos();
 
             auto point_location_map = std::vector<int>(default_id);
 

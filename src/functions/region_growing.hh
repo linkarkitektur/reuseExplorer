@@ -1,5 +1,5 @@
 #pragma once
-#include <types/point_cloud.hh>
+#include <types/PointCloud.hh>
 
 
 namespace linkml {

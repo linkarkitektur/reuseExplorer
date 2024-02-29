@@ -2,7 +2,7 @@
 
 #include <types/CellComplex.hh>
 #include <types/result_fit_planes.hh>
-#include <types/point_cloud.hh>
+#include <types/PointCloud.hh>
 
 // #include <vector>
 // #include <map>
@@ -114,7 +114,7 @@ typedef CGAL::Nth_of_tuple_property_map<2, PNI>								Plane_index_map;
 #include <CGAL/Polygon_mesh_processing/triangulate_faces.h>
 
 
-void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_planes& results){
+void linkml::create_cell_complex(linkml::PointCloud& cloud, linkml::result_fit_planes& results){
 
 
 	// const std::string input_file = CGAL::data_file_path("/home/mephisto/Downloads/ball.ply");
@@ -154,8 +154,8 @@ void linkml::create_cell_complex(linkml::point_cloud& cloud, linkml::result_fit_
 			auto point_idx = results.indecies[i][j];
 			auto plane_idx =  i;
 
-			auto pt = cloud.pts[point_idx];
-			auto norm = cloud.norm[point_idx];
+			auto pt = cloud.points[point_idx].getPos();
+			auto norm = cloud.points[point_idx].getNormal();
 
 			points.push_back(PNI(Point(pt.x, pt.y, pt.z), Vector(norm.x, norm.y, norm.z), plane_idx ));
 		}
