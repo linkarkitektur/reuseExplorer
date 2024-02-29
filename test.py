@@ -38,7 +38,7 @@ except Exception as e:
 # clusters = linkml_py.clustering(data.cloud, data.plane_results)
 
 # linkml_py.read("/home/mephisto/server_data/stray_scans/0ba33d855b", start=0, n_frames=0, step=5, inference=True)
-# linkml_py.read("/home/mephisto/server_data/stray_scans/0ba33d855b", start=1850, n_frames=500, step=5, inference=True)
+linkml_py.read("/home/mephisto/server_data/stray_scans/0ba33d855b", start=1850, n_frames=500, step=5, inference=True)
 # linkml_py.read("/home/mephisto/server_data/stray_scans/7092626a22", start=0, n_frames=0, step=5)
 
 # pcd = linkml_py.merge("/home/mephisto/repos/linkml_cpp/clouds", "/home/mephisto/repos/linkml_cpp/merged_cloud.pcd", 1000)

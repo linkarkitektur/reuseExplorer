@@ -240,14 +240,12 @@ add_subdirectory(extern/lpsolve)
 add_subdirectory(extern/soplex)
 # add_subdirectory(extern/scip)
 # add_subdirectory(extern/cgal)
-# add_subdirectory(extern/pcl)
 # add_subdirectory(extern/glfw)
 # add_subdirectory(extern/glow)
 # add_subdirectory(extern/imgui)
 # add_subdirectory(extern/glow-extras)
 add_subdirectory(extern/fmt)
 add_subdirectory(extern/nexus)
-# add_subdirectory(extern/Open3D)
 
 # ===============================================
 # configure executable
@@ -302,7 +300,6 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     CGAL::TBB_support
     ${GUROBI_LIBRARY}
     # CGAL::GLPK_support
-    # pcl
     ${PCL_LIBRARIES}
     ${PCL_COMMON_LIBRARIES}
     # ${PCL_IO_LIBRARIES}
