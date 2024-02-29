@@ -127,16 +127,6 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # REMOVED: this is not needed anymore
 set(CGAL_DO_NOT_WARN_ABOUT_CMAKE_BUILD_TYPE On)
 
-## ===============================================
-## disable glfw additionals
-#option(GLFW_BUILD_EXAMPLES  OFF)
-#option(GLFW_BUILD_TESTS  OFF)
-#option(GLFW_BUILD_DOCS  OFF)
-#option(GLFW_INSTALL  OFF)
-
-
-
-# set(ENV{CUDACXX} "/usr/local/cuda/bin/nvcc")
 
 
 # ===============================================
@@ -219,8 +209,7 @@ endif()
 
 
 list(APPEND CMAKE_MODULE_PATH "./cmake/FindHDF5.cmake") # Replaces the bundled FindHDF5.cmake module
-find_package(HDF5 1.10 COMPONENTS C HL REQUIRED)
-
+find_package(HDF5 1.10 COMPONENTS C HL)
 
 
 # ===============================================
