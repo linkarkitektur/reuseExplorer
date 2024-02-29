@@ -55,7 +55,17 @@ imgui.ini
 **/*.lp
 
 
-# Ignore machine learning data
+# Ignore data
 *.onnx
 *.pt
 *.pcd
+*.off
+
+
+# Ignore logging
+*.log
+
+# Ignore Notebooks
+*.ipynb
+
+# Ignore data
