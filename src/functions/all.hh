@@ -5,7 +5,6 @@
 #include <functions/parse_input_files.hh>
 #include <functions/merge_files.hh>
 #include <functions/polyscope.hh>
-#include <functions/load.hh>
-#include <functions/save.hh>
 #include <functions/filter.hh>
 #include <functions/region_growing.hh>
+#include <functions/register_PointClouds.hh>

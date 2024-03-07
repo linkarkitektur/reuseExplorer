@@ -5,6 +5,9 @@
 - [x] Add instructions for installing Dependencies
     - [x] Add instructions for installing OpenCV and PCL
 - [x] Add an explanation of the project structure
+- [ ] Implement Regiongrowing based on `pcl::RegionGrowing< PointT, NormalT >` \
+See `10.1016/j.autcon.`2022.104250` for reference.
+- [x] Separate read, register, and merge functions to enable working with larger datasets, that don't fit in memory.
 
 ### Notes
 Scanning app:
@@ -13,6 +16,25 @@ Scanning app:
 [Speckle](https://speckle.systems/); an open data platform for AEC. 
 
 [Speckle Automate (Video)](https://www.youtube.com/watch?v=6_rXXGpnfb4); a CI/CD like flow for triggering custom functions on Speckle data.
+
+
+Some bench marking:
+```shell
+Number of frames: 2500 -> ( start: 0; step: 4; end: 9996 ) 6.58% 
+[polyscope] Backend: openGL3_glfw -- Loaded openGL version: 3.3.0 NVIDIA 535.154.05
+[============================================================] (2500/2500) 100% -     0s -  48 threads - (Loading data)
+Total time: 00:02:10s (Loading data)
+[============================================================] (2500/2500) 100% -     0s -  48 threads - (Preprocessing)
+Total time: 00:02:06s (Preprocessing)
+[============================================================] (2500/2500) 100% -     0s -   1 threads - (Running Inference)
+Total time: 00:01:15s (Running Inference)
+[============================================================] (2500/2500) 100% -     0s -  48 threads - (Postprocessing)
+Total time: 00:00:00s (Postprocessing)
+[============================================================] (2500/2500) 100% -     0s -  48 threads - (Computing normals)
+Total time: 00:03:33s (Computing normals)
+[============================================================] (2500/2500) 100% -     0s -  48 threads - (Saving clouds)
+Done
+```
 
 
 ## Description
@@ -28,9 +50,9 @@ graph TD;
     D[CLI ?]
 
 
-    A-->B;
-    A-->C;
-    A-->D;
+    A --> B;
+    A --> C;
+    A --> D;
 
 ```
 Classes Diagram:

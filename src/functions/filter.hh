@@ -5,7 +5,7 @@
 
 namespace linkml
 {
-    PointCloud::Ptr filter(PointCloud::Ptr const & cloud){
+    static PointCloud::Ptr filter(PointCloud::Ptr const & cloud){
         // Only keep highest confidence
         ///////////////////////////////////////////////////////////////////////////////
         size_t j = 0;

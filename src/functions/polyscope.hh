@@ -117,7 +117,8 @@ namespace polyscope  {
         cn->addEdgeColorQuantity("Identity", colors)->setEnabled(true);
 
     }
-    static void display(linkml::PointCloud & cloud, std::string const name = "Cloud"){
+    template <typename PointCloud>
+    static void display( PointCloud cloud, std::string const name = "Cloud"){
 
         auto  points = std::vector<std::array<float, 3>>();
         points.resize(cloud.points.size());

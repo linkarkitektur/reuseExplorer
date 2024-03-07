@@ -22,7 +22,7 @@ linkml::PointCloud::Ptr linkml::region_growing(
     float curvatureThreshold
     ){
 
-        tg::aabb3 aabb = get_bbox(*cloud);
+        tg::aabb3 aabb =  cloud->get_bbox();
 
         // Region growing
         ///////////////////////////////////////////////////////////////////////////////

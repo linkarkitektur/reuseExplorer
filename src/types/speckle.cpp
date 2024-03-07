@@ -137,7 +137,7 @@ py::object ToSpeckle(linkml::PointCloud const & cloud){
     }
     
     auto sizes = std::vector<int>(cloud.size(), 3); // Nuber of values per point
-    auto bbox = ToSpeckle(linkml::get_bbox(cloud));
+    auto bbox = ToSpeckle(cloud.get_bbox());
 
     auto sp_cloud = Pointcloud();
     sp_cloud.attr("points") = points;

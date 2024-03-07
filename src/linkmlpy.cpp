@@ -45,6 +45,14 @@ PYBIND11_MODULE(linkml_py, m) {
 
     // Classes
     py::class_<linkml::PointCloud, std::shared_ptr<linkml::PointCloud>>(m, "PointCloud")
+        .def(py::init<>())
+        .def("load", &linkml::PointCloud::load, "Load a point cloud from disk"
+            "path"_a)
+        .def("save", &linkml::PointCloud::save, "Save a point cloud to disk"
+            "output_file"_a,
+            "binary"_a = true)
+        .def("display",&linkml::PointCloud::display, "Display the point cloud"
+            "name"_a = "Cloud")
         ;
     py::class_<tg::pos3>(m, "pos")
         .def(py::init<const float, const float, const float>())
@@ -261,9 +269,9 @@ PYBIND11_MODULE(linkml_py, m) {
         "n_frames"_a = size_t(0),
         "inference"_a = true
     );
-    m.def("load", &linkml::load, "Load a point cloud from disk"
-        "path"_a
-    );
+    //m.def("load", &linkml::load, "Load a point cloud from disk"
+    //    "path"_a
+    //);
     m.def("merge", &linkml::merge_files, "Merge a directory of pcd files in to a single file"
         "input_path"_a,
         "output_file"_a,
@@ -272,27 +280,6 @@ PYBIND11_MODULE(linkml_py, m) {
     m.def("filter", &linkml::filter, "Filter a point cloud"
         "Point cloud"_a
     );
-    m.def("save", &linkml::save, "Save a point cloud to disk"
-        "Point cloud"_a,
-        "output_file"_a,
-        "binary"_a = true
-    );
-    m.def("display", [](std::string path){
-        linkml::PointCloud::Ptr cloud = linkml::load(path);
-        polyscope::myinit();
-        polyscope::display(*cloud);
-        polyscope::myshow();
-    },
-    "path"_a
-    );
-    m.def("display", [](linkml::PointCloud::Ptr cloud){
-        polyscope::myinit();
-        polyscope::display(*cloud);
-        polyscope::myshow();
-    },
-    "cloud"_a
-    );
-
     m.def("region_growing", &linkml::region_growing, "Region growing"
         "Point cloud"_a,
         "minClusterSize"_a = 2*(1/0.02)*(1/0.02),
@@ -300,56 +287,7 @@ PYBIND11_MODULE(linkml_py, m) {
         "smoothnessThreshold"_a =  3.0 / 180.0 * M_PI,
         "curvatureThreshold"_a = 0.1
     );
-
-
-    // Alternative
-    // m.def("fit_plane_thorugh_points", [](const linkml::point_cloud& cloud, const std::vector<int>& indices) {
-    //     return linkml::fit_plane_thorugh_points(cloud, indices);
-    // }, "cloud"_a, "indices"_a);
-    // m.def("fit_plane_thorugh_points", [](const std::vector<tg::pos3>& points) {
-    //     return linkml::fit_plane_thorugh_points(points);
-    // }, "points"_a);
-
-
-//    m.def("fit_planes", &linkml::fit_planes,
-//          "point_cloud"_a,
-//          "params"_a
-//          );
-
-//    m.def("main", &linkml::main);
-
+    m.def("register", &linkml::register_PointClouds, "Register a directory of point clouds"
+        "directory"_a
+    );
 }
-
-
-
-
-//PYBIND11_NUMPY_DTYPE(tg::pos3, x, y, z);
-//PYBIND11_NUMPY_DTYPE(tg::vec3, x, y, z);
-
-//py::class_<std::vector<tg::pos3>>(m, "Matrix", py::buffer_protocol())
-//    .def(py::init([](py::buffer b) {
-//        typedef Eigen::Stride<Eigen::Dynamic, Eigen::Dynamic> Strides;
-
-//        /* Request a buffer descriptor from Python */
-//        py::buffer_info info = b.request();
-
-//        /* Some basic validation checks ... */
-//        if (info.format != py::format_descriptor<Scalar>::format())
-//            throw std::runtime_error("Incompatible format: expected a double array!");
-
-//        if (info.ndim != 2)
-//            throw std::runtime_error("Incompatible buffer dimension!");
-
-//        auto strides = Strides(
-//            info.strides[rowMajor ? 0 : 1] / (py::ssize_t)sizeof(Scalar),
-//            info.strides[rowMajor ? 1 : 0] / (py::ssize_t)sizeof(Scalar));
-
-
-//        //            auto map = Eigen::Map<PosMap, 0, Strides>(
-//        //                static_cast<Scalar *>(info.ptr), info.shape[0], info.shape[1], strides);
-
-//        auto map = Eigen::Map<Matrix, 0, Strides>(
-//            static_cast<Scalar *>(info.ptr), info.shape[0], info.shape[1], strides); //std::vector<tg::pos3>
-
-//        return Matrix(map);
-//    }));

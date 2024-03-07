@@ -2,6 +2,7 @@
 
 #include <typed-geometry/feature/colors.hh>
 #include <typed-geometry/types/angle.hh>
+#include <typed-geometry/tg.hh> // for tg::pi since just the others is not enough
 
 #define PHI 1.618033988749894
 

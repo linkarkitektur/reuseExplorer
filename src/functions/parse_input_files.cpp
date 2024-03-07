@@ -175,7 +175,8 @@ namespace linkml{
 
     }
 
-    void setConficence(PointCloud & cloud, Eigen::MatrixXd const confidences){
+    template<typename PointCloud>
+    void setConficence(PointCloud  cloud, Eigen::MatrixXd const confidences){
 
         if (confidences.size() != cloud.size())
             std::cout << "Confidences size is not equal to cloud size" << std::endl;
@@ -189,8 +190,8 @@ namespace linkml{
         }
     }
 
-
-    void setHeader(PointCloud & cloud, size_t const i,  Eigen::MatrixXd const & odometry){
+    template<typename PointCloud>
+    void setHeader(PointCloud cloud, size_t const i,  Eigen::MatrixXd const & odometry){
 
         uint64_t time_stamp = odometry(0,0);
         std::string frame_id = fmt::format("{:06}", (int)odometry(0,1));
@@ -471,6 +472,7 @@ namespace linkml{
                 source_images[i] = image;
                 
                 Yolov8Seg::Preprocess(image, blobs[i], params[i]);
+                infrence_precrocessing_bar.update();
             }
             duration += infrence_precrocessing_bar.stop();
 
@@ -578,6 +580,22 @@ namespace linkml{
         }
         duration += n_bar.stop();
 
+        // Save indevidula clous
+        ///////////////////////////////////////////////////////////////////////////////
+        auto cwd = std::filesystem::current_path();
+        std::filesystem::create_directory("clouds");
+        std::filesystem::current_path("clouds");
+        auto save_bar = util::progress_bar(n_frames,"Saving clouds");
+        #pragma omp parallel for shared(point_clouds)
+        for (size_t i=0; i < point_clouds.size(); ++i){
+            std::string filename = fmt::format("cloud_{}.pcd", point_clouds[i]->header.frame_id);
+            pcl::io::savePCDFileBinary(filename, *point_clouds[i]);
+            save_bar.update();
+        }
+        duration += save_bar.stop();
+        std::filesystem::current_path(cwd);
+        return;
+
 
         // Calculate Registartion
         ///////////////////////////////////////////////////////////////////////////////
@@ -611,22 +629,6 @@ namespace linkml{
         }
         duration += move_bar.stop();
 
-
-        // Save indevidula clous
-        ///////////////////////////////////////////////////////////////////////////////
-        auto cwd = std::filesystem::current_path();
-        std::filesystem::create_directory("clouds");
-        std::filesystem::current_path("clouds");
-        auto save_bar = util::progress_bar(n_frames,"Saving clouds");
-        #pragma omp parallel for shared(point_clouds)
-        for (size_t i=0; i < point_clouds.size(); ++i){
-            std::string filename = fmt::format("cloud_{}.pcd", point_clouds[i]->header.frame_id);
-            pcl::io::savePCDFileBinary(filename, *point_clouds[i]);
-            save_bar.update();
-        }
-        std::filesystem::current_path(cwd);
-
-        return;
 
         // Merge
         ///////////////////////////////////////////////////////////////////////////////

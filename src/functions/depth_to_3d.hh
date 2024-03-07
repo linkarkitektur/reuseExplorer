@@ -10,8 +10,9 @@
 
 namespace linkml {
 
+    template <typename PointCloud>
     void depth_to_3d( 
-        PointCloud & point_cloud,
+        PointCloud point_cloud,
         Eigen::MatrixXd const& depths,
         tg::dmat3 const& intrinsic_matrix,
         tg::dmat4 const& pose,

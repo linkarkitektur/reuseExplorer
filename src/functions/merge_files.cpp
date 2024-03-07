@@ -1,4 +1,5 @@
 #include <functions/merge_files.hh>
+#include <functions/filter.hh>
 
 #include <types/PointCloud.hh>
 #include <types/accumulators.hh>
@@ -12,6 +13,8 @@
 
 #include <filesystem>
 #include <vector>
+
+#include <fmt/printf.h>
 
 
 // using fs = std::filesystem;
@@ -28,44 +31,34 @@ namespace linkml{
     
 
     template <typename PointCloud>
-    static std::vector<typename PointCloud::Ptr, Eigen::aligned_allocator<typename  PointCloud::Ptr>> load(std::vector<std::string> const & files){
-        std::vector<typename PointCloud::Ptr, Eigen::aligned_allocator<typename PointCloud::Ptr>> clouds;
-        clouds.reserve(files.size());
-        for (auto const& file : files){
-            typename  PointCloud::Ptr cloud (new PointCloud);
-            pcl::io::loadPCDFile<PointCloud::PointType> (file, *cloud);
-            clouds.push_back(cloud);
-        }
-        return clouds;
-    }
+    static typename  PointCloud::Ptr merge(typename  PointCloud::Ptr left, typename PointCloud::Ptr right){
+        left->reserve(left->size() + right->size());
+        *left += *right;
+        return left;
 
-    template <typename PointCloud>
-    static typename  PointCloud::Ptr merge(std::vector< typename  PointCloud::Ptr, Eigen::aligned_allocator< typename PointCloud::Ptr>> const & clouds){
-        typename PointCloud::Ptr merged_cloud (new PointCloud);
-        merged_cloud->reserve(get_total_size(clouds));
-        for (auto const& cloud : clouds)
-            *merged_cloud += *cloud;
-
-        return merged_cloud;
-
+        // typename PointCloud::Ptr merged_cloud (new PointCloud);
+        // merged_cloud->reserve(left->size() + right->size());
+        // *merged_cloud += *left;
+        // *merged_cloud += *right;
+        // return merged_cloud;
     }
 
 
     template <typename PointCloud>
     static typename  PointCloud::Ptr downsample( typename  PointCloud::Ptr cloud){
+
         pcl::octree::OctreePointCloudPointVector<typename PointCloud::PointType> octree(0.02);
-        typename  PointCloud::Ptr filtered_cloud (new PointCloud);
         octree.setInputCloud(cloud);
         octree.addPointsFromInputCloud();
-        filtered_cloud->resize(octree.getLeafCount());
-
 
         std::vector<typename pcl::octree::OctreePointCloudPointVector<typename PointCloud::PointType>::LeafNodeIterator> nodes;
         for (auto it = octree.leaf_depth_begin(), it_end = octree.leaf_depth_end(); it != it_end; ++it)
             nodes.push_back(it);
 
+        typename  PointCloud::Ptr filtered_cloud (new PointCloud);
+        filtered_cloud->resize(octree.getLeafCount());
         
-        #pragma omp parallel for shared(octree, filtered_cloud, nodes, cloud)
+        // #pragma omp parallel for shared(octree, filtered_cloud, nodes, cloud)
         for (size_t i = 0; i < octree.getLeafCount(); i++){
             pcl::octree::OctreeContainerPointIndices& container = nodes[i].getLeafContainer();
 
@@ -86,8 +79,42 @@ namespace linkml{
         return filtered_cloud;
     }
 
+    PointCloud::Ptr merge_files(std::vector<std::string>::iterator begin, std::vector<std::string>::iterator end){
+
+    
+        // If there is only one file, just load it and return
+        if (std::distance(begin, end) == 1){
+            PointCloud::Ptr cloud (new PointCloud);
+            cloud->load(*begin);
+            return cloud;
+        }
+
+        // If ther are more files split the list and merge them separately
+        PointCloud::Ptr left, right;
+        auto middle = begin + std::distance(begin, end) / 2;
+
+        #pragma omp task shared(left)
+        left = merge_files(begin, middle);
+        #pragma omp task shared(right)
+        right = merge_files(middle, end);
+
+        // Merge clouds
+        #pragma omp taskwait
+        PointCloud::Ptr merged_cloud = merge<PointCloud>(left, right);
+
+
+        return merged_cloud;
+
+        // if (merged_cloud->size() < 200'000)
+        //     return merged_cloud;
+        // return downsample<PointCloud>(merged_cloud);
+
+
+    }
+
     PointCloud::Ptr merge_files(const std::string& input_dir, const std::string& output_file, int chunk_size){
 
+        fmt::printf("Entering merging files function\n");
         std::vector<std::string> files;
 
         //TODO: Find a way to speed up this process.
@@ -96,59 +123,35 @@ namespace linkml{
         // Consider using openMP tasks.
 
 
+        // Load and sort files
+        fmt::printf("Loading file paths\n");
         std::transform(
             std::filesystem::directory_iterator(input_dir), 
             std::filesystem::directory_iterator(), std::back_inserter(files), 
             [](const auto& entry){return entry.path();});
+        fmt::printf("Sorting file paths\n");
         std::sort(files.begin(), files.end());
 
-
-        int n_chucks = (int)std::ceil((double)files.size() / chunk_size);
-        auto  filtered_chunks = std::vector<PointCloud::Ptr, Eigen::aligned_allocator<PointCloud::Ptr>>(n_chucks);
-
-
-        auto bar = util::progress_bar(files.size(), "Merging Chunks files");
-        for (int i = 0; i < n_chucks; i++){
-
-
-            // Load clouds
-            ///////////////////////////////////////////////////////////////////////////////
-            auto  chunk_clouds = std::vector<PointCloud::Ptr, Eigen::aligned_allocator<PointCloud::Ptr>>();
-            size_t chunk_size_ = std::min(chunk_size, (int)files.size() - i * chunk_size);
-
-            chunk_clouds.resize(chunk_size_);
-            #pragma omp parallel for shared(chunk_clouds, files)
-            for (size_t j = 0; j < chunk_size_; j++){
-                int index = i * chunk_size + j;
-                chunk_clouds[j] = PointCloud::Ptr(new PointCloud);
-                pcl::io::loadPCDFile<PointCloud::PointType> (files[index], *chunk_clouds[j]);
-            }
-
-
-            // Merge clouds
-            ///////////////////////////////////////////////////////////////////////////////
-            auto merged_chunks = merge<PointCloud>(chunk_clouds);
-            
-            // Downsampling
-            ///////////////////////////////////////////////////////////////////////////////
-            filtered_chunks[i] = downsample<PointCloud>(merged_chunks);
-
-
-            bar.update(chunk_size_);
+        // Divide-and-conquer algorithm to merge files
+        fmt::printf("Merging {} files\n", files.size());
+        PointCloud::Ptr point_cloud;
+        #pragma omp parallel
+        {
+            #pragma omp single
+                point_cloud = merge_files(files.begin(), files.end());
         }
-        bar.stop();
+
+        fmt::printf("Saving merged cloud to {}\n", output_file);
+        pcl::io::savePCDFileBinary(output_file, *point_cloud);
 
 
-        // Merge clouds
-        ///////////////////////////////////////////////////////////////////////////////
-        auto merged_cloud = merge<PointCloud>(filtered_chunks);
+        point_cloud = filter(point_cloud);
+        point_cloud = downsample<PointCloud>(point_cloud);
 
-        // Downsampling
-        ///////////////////////////////////////////////////////////////////////////////
-        auto filtered_cloud = downsample<PointCloud>(merged_cloud);
-        pcl::io::savePCDFileBinary(output_file, *filtered_cloud);
 
-        return filtered_cloud;
+        fmt::printf("Return from function\n");
+        return point_cloud;
+
 
     }
 }
