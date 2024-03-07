@@ -79,7 +79,7 @@ linkml::PointCloud::Ptr linkml::region_growing(
                 cloud->at(clusters[i].indices[j]).label = i;
             }
 
-            planes[i] = linkml::fit_plane_thorugh_points(cloud, clusters[i]);
+            planes[i] = linkml::fit_plane_thorugh_points(cloud, clusters[i].indices);
 
         }
 

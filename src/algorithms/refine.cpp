@@ -1,6 +1,5 @@
 #include <algorithms/refine.hh>
 #include <typed-geometry/tg.hh>
-#include <types/result_fit_planes.hh>
 #include <types/PointCloud.hh>
 #include <clean-core/vector.hh>
 
@@ -74,14 +73,14 @@
 // }
 
 namespace linkml{
-    std::vector<pcl::PointIndices> refine(PointCloud::Ptr const cloud, std::vector<pcl::PointIndices> const & clusters, refinement_parameters const & param){
+    static std::vector<pcl::PointIndices> refine(PointCloud::Ptr const cloud, std::vector<pcl::PointIndices> const & clusters, refinement_parameters const & param){
 
         std::vector<linkml::Plane> planes;
         planes.resize(clusters.size());
 
         #pragma omp parallel for
         for (size_t i = 0; i < clusters.size(); ++i)
-            planes[i] = fit_plane_thorugh_points(cloud, clusters[i]);
+            planes[i] = fit_plane_thorugh_points(cloud, clusters[i].indices);
 
         
         std::vector<pcl::PointIndices> indecies;
@@ -127,7 +126,7 @@ namespace linkml{
                     pcl::PointIndices merged;
                     std::copy(A_idx.indices.begin(), A_idx.indices.end(), std::back_inserter(merged.indices));
                     std::copy(B_idx.indices.begin(), B_idx.indices.end(), std::back_inserter(merged.indices));
-                    planes[i] = fit_plane_thorugh_points(cloud, merged);
+                    planes[i] = fit_plane_thorugh_points(cloud, merged.indices);
                     indecies[i] = merged;
                 }
 

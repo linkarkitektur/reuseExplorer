@@ -2,7 +2,6 @@
 #pragma once
 #include <types/Plane.hh>
 #include <types/CellComplex.hh>
-#include <types/result_fit_planes.hh>
 #include <types/Surface_Mesh.hh>
 
 #include <functions/color.hh>
@@ -98,79 +97,79 @@ static void make_unique(std::vector<tg::pos3> & collection){
 
 namespace linkml {
 
-    static cc::optional<std::vector<pm::face_handle>> crop_plane_with_aabb(pm::Mesh& m, pm::vertex_attribute<tg::pos3>& pos, tg::aabb3 const &box, Plane const &plane ){
+    //static cc::optional<std::vector<pm::face_handle>> crop_plane_with_aabb(pm::Mesh& m, pm::vertex_attribute<tg::pos3>& pos, tg::aabb3 const &box, Plane const &plane ){
 
 
-        std::vector<pm::face_handle> faces;
+    //    std::vector<pm::face_handle> faces;
 
-        auto const segemets = get_segemets(box);
-        auto points = get_points(segemets, plane);
-        
-        make_unique(points);
+    //    auto const segemets = get_segemets(box);
+    //    auto points = get_points(segemets, plane);
+    //    
+    //    make_unique(points);
 
-        if (points.size() < 3) return {};
-
-
-        auto [mat, center] = get_csystem(points, plane);
-        auto agles = get_angles_in_plane(mat, points, center);
-
-        cc::vector<cc::pair<tg::angle, tg::pos3>> pairs;
-        for (size_t i = 0; i < agles.size(); ++i) {
-            pairs.emplace_back(agles[i], points[i]);
-        }
-
-        std::sort(pairs.begin(), pairs.end(), comparator);
-
-        auto plist = cc::vector<tg::pos3>();
-        for (auto & p : pairs)
-            plist.push_back(p.second);
+    //    if (points.size() < 3) return {};
 
 
+    //    auto [mat, center] = get_csystem(points, plane);
+    //    auto agles = get_angles_in_plane(mat, points, center);
 
-        // Add faces
-        for (int i = 0; i< (int)plist.size()-1; ++i){
+    //    cc::vector<cc::pair<tg::angle, tg::pos3>> pairs;
+    //    for (size_t i = 0; i < agles.size(); ++i) {
+    //        pairs.emplace_back(agles[i], points[i]);
+    //    }
 
-            const auto vh0 = m.vertices().add();
-            const auto vh1 = m.vertices().add();
-            const auto vh2 = m.vertices().add();
+    //    std::sort(pairs.begin(), pairs.end(), comparator);
 
-            pos[vh0] = plist[i];
-            pos[vh1] = plist[i+1];
-            pos[vh2] = center;
+    //    auto plist = cc::vector<tg::pos3>();
+    //    for (auto & p : pairs)
+    //        plist.push_back(p.second);
 
-            faces.emplace_back(m.faces().add(vh0, vh1, vh2));
-        }
 
-        // Add last face
-        const auto vh0 = m.vertices().add();
-        const auto vh1 = m.vertices().add();
-        const auto vh2 = m.vertices().add();
 
-        pos[vh0] = plist[(int)plist.size()-1];
-        pos[vh1] = plist[0];
-        pos[vh2] = center;
+    //    // Add faces
+    //    for (int i = 0; i< (int)plist.size()-1; ++i){
 
-        faces.emplace_back(m.faces().add(vh0, vh1, vh2));
+    //        const auto vh0 = m.vertices().add();
+    //        const auto vh1 = m.vertices().add();
+    //        const auto vh2 = m.vertices().add();
 
-        pm::deduplicate(m, pos);
-        m.compactify();
+    //        pos[vh0] = plist[i];
+    //        pos[vh1] = plist[i+1];
+    //        pos[vh2] = center;
+
+    //        faces.emplace_back(m.faces().add(vh0, vh1, vh2));
+    //    }
+
+    //    // Add last face
+    //    const auto vh0 = m.vertices().add();
+    //    const auto vh1 = m.vertices().add();
+    //    const auto vh2 = m.vertices().add();
+
+    //    pos[vh0] = plist[(int)plist.size()-1];
+    //    pos[vh1] = plist[0];
+    //    pos[vh2] = center;
+
+    //    faces.emplace_back(m.faces().add(vh0, vh1, vh2));
+
+    //    pm::deduplicate(m, pos);
+    //    m.compactify();
     
-        return faces;
-    }
+    //    return faces;
+    //}
     
-    static void crop_plane_with_aabb(linkml::CellComplex& cw, tg::aabb3& box, result_fit_planes& results ){
+    //static void crop_plane_with_aabb(linkml::CellComplex& cw, tg::aabb3& box, std::vector<pcl::PointIndices> const & clusters){
 
-        // Intersect all planes wiht the bounding box to generate initila face candidates.
-        for (int i = 0; i < (int)results.planes.size(); i++){
-            auto faces = crop_plane_with_aabb(cw, cw.pos, box, results.planes[i]);
-            if (!faces.has_value()) continue;
-            for (auto h : faces.value()){
-                if (!h.is_valid()) continue;
-                cw.supporting_plans[h] = results.planes[i];
-                cw.plane_colors[h] = get_color_forom_angle(sample_circle(i));
-            }
-        }
-    }
+    //    // Intersect all planes wiht the bounding box to generate initila face candidates.
+    //    for (int i = 0; i < (int)results.planes.size(); i++){
+    //        auto faces = crop_plane_with_aabb(cw, cw.pos, box, results.planes[i]);
+    //        if (!faces.has_value()) continue;
+    //        for (auto h : faces.value()){
+    //            if (!h.is_valid()) continue;
+    //            cw.supporting_plans[h] = results.planes[i];
+    //            cw.plane_colors[h] = get_color_forom_angle(sample_circle(i));
+    //        }
+    //    }
+    //}
 
     static void crop_plane_with_aabb(Surface_mesh & mesh, const tg::aabb3& box, const tg::plane3 plane ){
     

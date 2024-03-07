@@ -110,24 +110,24 @@ PYBIND11_MODULE(linkml_py, m) {
         .def_readwrite("origin", &linkml::Plane::origin)
         .def_readonly("normal", &linkml::Plane::normal)
         ;
-    py::class_<linkml::result_fit_plane>(m, "PlaneFittingResult")
-        .def(py::init<const int &>())
-        .def(py::init<const linkml::Plane &, const std::vector<int> &>())
-        .def_property_readonly("valid", [](linkml::result_fit_plane &r){return r.valid;})
-        .def_property_readonly("plane", [](linkml::result_fit_plane &r){return r.plane;})
-        .def_property_readonly("indecies", [](linkml::result_fit_plane &r){return r.indecies;})
-        .def_property_readonly("index", [](linkml::result_fit_plane &r){return r.index;})
-        .def("__repr__", [](const linkml::result_fit_plane &a){
-            std::stringstream ss;
-            if (a.valid){
-                ss << "Plane Result A("<< a.plane.normal.x<<") B(" <<a.plane.normal.y << ") C(" <<a.plane.normal.z << ") D(" << a.plane.dis << ")";
-            }
-            else{
-                ss << "Invalid Result, the starting index was :" << a.index;
-            }
-            return ss.str();
-        })
-        ;
+    //py::class_<linkml::result_fit_plane>(m, "PlaneFittingResult")
+    //    .def(py::init<const int &>())
+    //    .def(py::init<const linkml::Plane &, const std::vector<int> &>())
+    //    .def_property_readonly("valid", [](linkml::result_fit_plane &r){return r.valid;})
+    //    .def_property_readonly("plane", [](linkml::result_fit_plane &r){return r.plane;})
+    //    .def_property_readonly("indecies", [](linkml::result_fit_plane &r){return r.indecies;})
+    //    .def_property_readonly("index", [](linkml::result_fit_plane &r){return r.index;})
+    //    .def("__repr__", [](const linkml::result_fit_plane &a){
+    //        std::stringstream ss;
+    //        if (a.valid){
+    //            ss << "Plane Result A("<< a.plane.normal.x<<") B(" <<a.plane.normal.y << ") C(" <<a.plane.normal.z << ") D(" << a.plane.dis << ")";
+    //        }
+    //        else{
+    //            ss << "Invalid Result, the starting index was :" << a.index;
+    //        }
+    //        return ss.str();
+    //    })
+    //    ;
     py::class_<linkml::speckle>(m, "Speckle")
         .def(py::init<std::string, std::string>())
         .def("__repr__", [](linkml::speckle &a){
@@ -136,24 +136,24 @@ PYBIND11_MODULE(linkml_py, m) {
         ;
 
 
-    py::class_<linkml::result_fit_planes>(m, "PlaneFittingResults")
-        .def("from_numpy", [](std::vector<linkml::Plane> const & planes, std::vector<std::vector<int>> const & indecies ){
+    //py::class_<linkml::result_fit_planes>(m, "PlaneFittingResults")
+    //    .def("from_numpy", [](std::vector<linkml::Plane> const & planes, std::vector<std::vector<int>> const & indecies ){
 
-            auto res = linkml::result_fit_planes();
+    //        auto res = linkml::result_fit_planes();
 
-            res.planes = planes;
-            res.indecies = indecies;
+    //        res.planes = planes;
+    //        res.indecies = indecies;
 
-            return  res;
-        })
-        .def_property_readonly("planes", [](linkml::result_fit_planes &r){return r.planes;})
-        .def_property_readonly("indecies", [](linkml::result_fit_planes &r){return r.indecies;})
-        .def("__repr__", [](const linkml::result_fit_planes &a){
-            std::stringstream ss;
-            ss << "Planes :" << a.planes.size();
-            return ss.str();
-        })
-        ;
+    //        return  res;
+    //    })
+    //    .def_property_readonly("planes", [](linkml::result_fit_planes &r){return r.planes;})
+    //    .def_property_readonly("indecies", [](linkml::result_fit_planes &r){return r.indecies;})
+    //    .def("__repr__", [](const linkml::result_fit_planes &a){
+    //        std::stringstream ss;
+    //        ss << "Planes :" << a.planes.size();
+    //        return ss.str();
+    //    })
+    //    ;
     py::class_<std::vector<std::atomic_bool>>(m, "a_bool")
         ;
     py::class_<linkml::CellComplex>(m, "CellComplex")

@@ -24,7 +24,7 @@
 #include <typed-geometry/tg.hh>
 #include <functions/depth_to_3d.hh>
 #include <types/Yolo.hh>
-#include <types/accumulators.hh>
+#include <types/Accumulators.hh>
 
 #include <functions/polyscope.hh>
 #include <polyscope/polyscope.h>

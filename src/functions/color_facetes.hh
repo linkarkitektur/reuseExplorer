@@ -3,7 +3,7 @@
 
 #include <types/PointCloud.hh>
 #include <types/CellComplex.hh>
-#include <types/result_fit_planes.hh>
+#include <types/PlanarPointSet.hh>
 #include <functions/progress_bar.hh>
 
 #include <typed-geometry/tg.hh>
@@ -27,24 +27,25 @@ std::size_t hashVector(const std::vector<T>& vec) {
 
 namespace linkml{
 
-    void color_facets(linkml::CellComplex & cw, linkml::result_fit_planes const & results ){
+    void color_facets(linkml::CellComplex & cw, std::vector<PlanarPointSet> const & clusters){
 
-        const std::vector<int> default_id(results.planes.size()+1, 0);
+        const std::vector<int> default_id(clusters.size()+1, 0);
         auto facets_vec =  pm::face_attribute<std::vector<int>>(cw, default_id);
 
         //Color Facetes
-        auto bar_color_facets = util::progress_bar(results.planes.size(), "Color Facets");
-        for (int i = 0; i < (int)results.planes.size(); i++){
+        auto bar_color_facets = util::progress_bar(clusters.size(), "Color Facets");
+        for (int i = 0; i < (int)clusters.size(); i++){
 
             for (auto face : cw.faces()){
 
-                if (cw.supporting_plans[face] == results.planes[i] ){
-                    facets_vec[face][results.planes.size()] = i;
+                if (cw.supporting_plans[face] == clusters[i].Plane() ){
+                    facets_vec[face][clusters.size()] = i;
                     continue;
                 }
 
                 auto center = face.vertices().avg(cw.pos);
-                auto distance = tg::signed_distance(center, results.planes[i]);
+                auto distance = tg::signed_distance(center, clusters[i].Plane());
+                
                 // if (tg::abs(distance)< EPSILON) continue;
                 facets_vec[face][i] = (distance > 0)? 1 :0;
             }
@@ -63,28 +64,28 @@ namespace linkml{
      * This map is used to store cell complex information, where each key represents a cell ID
      * and the associated vector contains the indices of points belonging to that cell.
      */
-    std::map<size_t, std::vector<int>> make_cw(PointCloud const& cloud, result_fit_planes const& results ) {
+    std::map<size_t, std::vector<int>> make_cw(PointCloud::ConstPtr cloud,  std::vector<PlanarPointSet> const & clusters ) {
 
         auto cell_map = std::map<size_t, std::vector<int>>();
-        const std::vector<int> default_id(results.planes.size()+1, 0);
-        auto bar_create_cw = util::progress_bar(cloud.size(), "Create Cell Complex");
+        const std::vector<int> default_id(clusters.size()+1, 0);
+        auto bar_create_cw = util::progress_bar(cloud->size(), "Create Cell Complex");
 
         #pragma omp parallel for shared(cell_map)
-        for (size_t i = 0; i < cloud.size(); i++){
-            auto point = cloud.points[i].getPos();
+        for (size_t i = 0; i < cloud->size(); i++){
+            auto point = cloud->points[i].getPos();
 
             auto point_location_map = std::vector<int>(default_id);
 
 
-            for (int j = 0; j < results.planes.size(); j++){
+            for (int j = 0; j < clusters.size(); j++){
 
-                auto point_indecies = results.indecies[j];
+                auto point_indecies = clusters[j].indices;
                 if (std::find(point_indecies.begin(), point_indecies.end(), i) != point_indecies.end()) {
-                    point_location_map[results.planes.size()] = j;
+                    point_location_map[clusters.size()] = j;
                     continue;
                 }
 
-                auto plane = results.planes[j];
+                auto plane = clusters[j].Plane();
                 auto distance = tg::signed_distance(point, plane);
 
                 point_location_map[j] = (distance > 0)? 1 :0;

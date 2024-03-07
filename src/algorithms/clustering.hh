@@ -7,7 +7,6 @@
 #include <set>
 
 #include <types/PointCloud.hh>
-#include <types/result_fit_planes.hh>
 #include <functions/alpha_shape.hh>
 #include <functions/color_facetes.hh>
 #include <functions/project_2d.hh>
@@ -197,18 +196,17 @@ namespace linkml{
     }
 
 
-    std::vector<std::vector<size_t>> clustering(linkml::PointCloud const& cloud, result_fit_planes const& results ) {
-
+    std::vector<std::vector<size_t>> clustering(linkml::PointCloud::ConstPtr cloud, std::vector<PlanarPointSet> const & clusters){
         auto clampted_points = std::vector<tg::pos3>();
-        clampted_points.resize(cloud.size());
-        for (size_t i = 0; i < cloud.size(); i++)
-            clampted_points[i] = cloud.points[i].getPos();
+        clampted_points.resize(cloud->size());
+        for (size_t i = 0; i < cloud->size(); i++)
+            clampted_points[i] = cloud->points[i].getPos();
 
-        for (size_t i = 0; i < results.indecies.size(); i++){
-            auto indecies = results.indecies[i];
-            auto plane = results.planes[i];
+        for (size_t i = 0; i < clusters.size(); i++){
+            auto cluster = clusters[i];
+            auto plane = fit_plane_thorugh_points(cloud, cluster.indices);
 
-            for (auto const& index : indecies){
+            for (auto const& index : cluster.indices){
                 auto point = clampted_points[index];
                 auto new_point = tg::project(point, plane);
                 clampted_points[index] = new_point;
@@ -229,11 +227,11 @@ namespace linkml{
 
 
         // Visualize the planes
-        auto plane_colors = std::vector<tg::color3>(cloud.size(), tg::color3(0,0,0));
-        for (int i = 0; i < results.indecies.size(); i++){
-            auto indcies = results.indecies[i];
+        auto plane_colors = std::vector<tg::color3>(cloud->size(), tg::color3(0,0,0));
+        for (int i = 0; i < clusters.size(); i++){
+            auto cluster = clusters[i];
             auto color = linkml::get_color_forom_angle(linkml::sample_circle(i));
-            for (auto const& index : indcies){
+            for (auto const& index : cluster.indices){
                 plane_colors[index] = color;
             }
         }
@@ -242,14 +240,14 @@ namespace linkml{
 
 
         // created cell complex by evaluating each point for wich side it lies on for each plane
-        auto cell_map = make_cw(cloud, results);
+        auto cell_map = make_cw(cloud, clusters);
         auto cell_map_int_to_id = std::map<int, size_t>();
         auto cell_map_id_to_int = std::map<int, size_t>();
 
 
 // Visualize the cells
 #if Visualize
-        auto cell_colors = std::vector<tg::color3>(cloud.size(), tg::color3(0,0,0));
+        auto cell_colors = std::vector<tg::color3>(cloud->size(), tg::color3(0,0,0));
         for (auto const& [i, indcies ]: cell_map){
             auto color = linkml::get_color_forom_angle(linkml::sample_circle(i));
             for (auto const& idx : indcies){
@@ -280,7 +278,7 @@ namespace linkml{
             auto points = std::vector<tg::pos3>();
             std::transform(cell_map[id].begin(), cell_map[id].end(), std::back_insert_iterator(points), [&](int j){
                 #pragma omp critical
-                return cloud.points[j].getPos();
+                return cloud->points[j].getPos();
             });
 
             if (points.size() < 3) continue;
@@ -293,7 +291,7 @@ namespace linkml{
             // Ensure normal is allighned with point normals
             auto normals = std::vector<tg::vec3>();
             std::transform(cell_map[id].begin(), cell_map[id].end(), std::back_insert_iterator(normals), [&](int j){
-                return cloud.points[j].getNormal();
+                return cloud->points[j].getNormal();
             });
             auto average_normal = tg::average(normals);
 
@@ -547,7 +545,7 @@ namespace linkml{
         // C++ Markov Clustering
         // 2.5 < infaltion < 2.8  => 3.5
         matrix = markov_clustering::run_mcl(matrix, 2, 1.3);
-        std::set<std::vector<size_t>> clusters = markov_clustering::get_clusters(matrix);
+        std::set<std::vector<size_t>> mk_clusters = markov_clustering::get_clusters(matrix);
         std::printf("n_clusters sp_matrix: %d\n", clusters.size());
 
 
@@ -558,16 +556,16 @@ namespace linkml{
 
 #if Visualize
 
-        auto cluster_colors = std::vector<tg::color3>(cloud.size(), tg::color3(0,0,0));
+        auto cluster_colors = std::vector<tg::color3>(cloud->size(), tg::color3(0,0,0));
 
         // Loop over all clusters
         int couter = 0;
-        for (auto cluster : clusters){
+        for (auto indices : mk_clusters){
             auto color = linkml::get_color_forom_angle(linkml::sample_circle(couter));
             couter++;
 
             // Loop over all cells in a cluster
-            for (auto const& cell_index : cluster){
+            for (auto const& cell_index : indices){
 
                 auto cell_id = cell_map_int_to_id[cell_index];
                 auto cell_indecies = cell_map[cell_id];
@@ -591,8 +589,8 @@ namespace linkml{
 #endif
 
         auto clusters_list = std::vector<std::vector<size_t>>();
-        for (auto cluster : clusters)
-            clusters_list.push_back(cluster);
+        for (auto mk_cluster : mk_clusters)
+            clusters_list.push_back(mk_cluster);
 
 
         // make list of list of indecies

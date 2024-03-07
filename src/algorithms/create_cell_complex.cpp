@@ -1,7 +1,6 @@
 #include <algorithms/create_cell_complex.hh>
 
 #include <types/CellComplex.hh>
-#include <types/result_fit_planes.hh>
 #include <types/PointCloud.hh>
 
 // #include <vector>
@@ -113,8 +112,7 @@ typedef CGAL::Nth_of_tuple_property_map<2, PNI>								Plane_index_map;
 #include <CGAL/IO/read_points.h>
 #include <CGAL/Polygon_mesh_processing/triangulate_faces.h>
 
-
-void linkml::create_cell_complex(linkml::PointCloud& cloud, linkml::result_fit_planes& results){
+void linkml::create_cell_complex(linkml::PointCloud& cloud, std::vector<pcl::PointIndices> const & clusters ){
 
 
 	// const std::string input_file = CGAL::data_file_path("/home/mephisto/Downloads/ball.ply");
@@ -148,10 +146,10 @@ void linkml::create_cell_complex(linkml::PointCloud& cloud, linkml::result_fit_p
 	// Load point, normal and plan idx in to points
 	// apparently -1 is a vailied value if a point does not belong to any plane.
 	Point_vector points{};
-	for (int i = 0; i< results.indecies.size(); i++){
-		for (int j = 0; j<results.indecies[i].size(); j++){
+	for (int i = 0; i < clusters.size(); i++){
+		for (int j = 0; j < clusters[i].indices.size(); j++){
 
-			auto point_idx = results.indecies[i][j];
+			auto point_idx = clusters[i].indices[j];
 			auto plane_idx =  i;
 
 			auto pt = cloud.points[point_idx].getPos();

@@ -5,7 +5,6 @@
 
 #include <types/Plane.hh>
 #include <types/PointCloud.hh>
-#include <types/result_fit_planes.hh>
 
 
 namespace linkml {
@@ -16,5 +15,5 @@ namespace linkml {
         float distance_threshhold = 0.5; //0.1
     };
     
-    std::vector<pcl::PointIndices> refine(PointCloud::Ptr const cloud, std::vector<pcl::PointIndices> const & clusters, refinement_parameters const & param);
+    static std::vector<pcl::PointIndices> refine(PointCloud::Ptr const cloud, std::vector<pcl::PointIndices> const & clusters, refinement_parameters const & param);
 }
