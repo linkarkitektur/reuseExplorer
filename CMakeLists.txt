@@ -208,8 +208,8 @@ if(PCL_FOUND)
 endif()
 
 
-list(APPEND CMAKE_MODULE_PATH "./cmake/FindHDF5.cmake") # Replaces the bundled FindHDF5.cmake module
-find_package(HDF5 1.10 COMPONENTS C HL)
+# list(APPEND CMAKE_MODULE_PATH "./cmake/FindHDF5.cmake") # Replaces the bundled FindHDF5.cmake module
+# find_package(HDF5 1.10 COMPONENTS C HL)
 
 
 # ===============================================
@@ -255,7 +255,7 @@ target_link_libraries(${LIB_PROJECT_NAME}
     pybind11::embed 
     optimized ${GUROBI_CXX_LIBRARY}
     debug ${GUROBI_CXX_DEBUG_LIBRARY}
-    HDF5::HDF5
+    # HDF5::HDF5
     )
 target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     clean-core

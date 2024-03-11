@@ -8,11 +8,11 @@
 namespace linkml
 {
     template <typename T>
-    static T downsample(T cloud, float leaf_size){
+    static T downsample(T cloud, double leaf_size){
         static_assert(std::is_same<T, PointCloud::Ptr>::value, "T must be a PointCloud::Ptr");
     }
 
-    static PointCloud::Ptr downsample( PointCloud::Ptr cloud){
+    static PointCloud::Ptr downsample( PointCloud::Ptr cloud, double leaf_size){
 
         pcl::octree::OctreePointCloudPointVector<PointCloud::PointType> octree(leaf_size);
         octree.setInputCloud(cloud);

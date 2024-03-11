@@ -19,7 +19,8 @@ print("LinkML-Py loaded")
 #parse_dataset(Dataset("/home/mephisto/server_data/stray_scans/665518e46a", ), "./second/")
 #PointCloudsOnDisk("./second/").register() # .merge().filter().save("./second.pcd").display()
 # Currently register is returning an invalid pointer.
-PointCloudsOnDisk("./second/").merge().filter().save("./second.pcd").display()
+#PointCloudsOnDisk("./second/").merge().filter().save("./second.pcd").display()
+
 
 # Load data½
 # import test_data_loaders.VertexGroup as data

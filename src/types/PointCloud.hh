@@ -264,10 +264,10 @@ namespace linkml{
         /// @brief Transform the point cloud.
         Ptr filter(); 
 
-        /// @brief Register the point cloud.
-        PointCloud::Ptr downsample(float leaf_size = 0.02f){
-          return linkml::downsample(*this);
-        };
+        ///// @brief Register the point cloud.
+        //PointCloud::Ptr downsample(float leaf_size = 0.02f){
+        //  return linkml::downsample(*this);
+        //};
 
         /// @brief Register the point cloud.
         PointCloud::Ptr display(std::string name = "Cloud") const {
