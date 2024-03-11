@@ -7,30 +7,6 @@
 #include <fmt/printf.h>
 #include <typed-geometry/tg-std.hh>
 #include <typed-geometry/tg.hh>
-// #include <typed-geometry/types/quat.hh>
-// #include <typed-geometry/feature/quat.hh>
-// #include <typed-geometry/types/mat.hh>
-
-
-
-
-// #include <functions/progress_bar.hh>
-
-// #include <filesystem>
-// #include <initializer_list>
-// #include <vector>
-// #include <cassert>
-
-// #include <fmt/format.h>
-// #include <h5pp/h5pp.h>
-// #include <omp.h>
-
-// #include <pcl/point_types.h>
-// #include <Eigen/Dense>
-// #include <opencv4/opencv2/opencv.hpp>
-// #include <typed-geometry/tg.hh>
-// #include <typed-geometry/tg-std.hh>
-
 
 #define CHECK_EXSISTANCE(path, file) if (!std::filesystem::exists(path / file)){ fmt::printf("{} does not exist\n", file); break; }
 
@@ -82,27 +58,6 @@ Eigen::MatrixXd read_csv(std::ifstream & stream, char delimiter = ',', bool head
 
     return matrix;
 }
-
-// Eigen::Matrix<tg::color3, Eigen::Dynamic, Eigen::Dynamic> fram_to_matrix(cv::Mat const& frame){
-
-//     auto rows = frame.rows;
-//     auto cols = frame.cols;
-//     auto dims = frame.channels();
-
-//     auto matrix = Eigen::Matrix<tg::color3, Eigen::Dynamic, Eigen::Dynamic>(rows, cols);
-
-//     for (int i = 0; i < rows; i++){
-//         for (int j = 0; j < cols * dims; j++){
-//             float red   = frame.at<uchar>(i, j, 0);
-//             float green = frame.at<uchar>(i, j, 1);
-//             float blue  = frame.at<uchar>(i, j, 2);
-//             matrix(i, j) = tg::color3(red,green,blue );
-//         }
-//     }
-
-//     return matrix;
-// }
-
 
 std::optional<cv::Mat> read_frame_at_index(std::filesystem::path const& path, int idx){
 
@@ -253,8 +208,6 @@ auto create_pose(Eigen::Vector3d const& p, Eigen::Vector4d const& q){
 
 namespace linkml {
 
-
-
 Dataset::Dataset(const std::filesystem::path & path, const std::initializer_list<Field> & fields) {
 
     // Check if directories and files exists
@@ -335,7 +288,7 @@ tg::dmat3 Dataset::intrinsic_matrix() const {
     return matrix;
 }
 
-Data Dataset::operator[] (int idx){
+Data Dataset::operator[] (int idx) const {
 
     // TODO: Check if idx is in range
 

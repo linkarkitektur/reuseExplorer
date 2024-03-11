@@ -1,4 +1,5 @@
 #include <types/PointCloud.hh>
+#include <types/PointClouds.hh>
 #include <functions/progress_bar.hh>
 
 #include <string>
@@ -6,30 +7,14 @@
 #include <vector>
 #include <optional>
 
-#include <pcl/io/file_io.h>
-
-// #include <fmt/core.h>
 #include <fmt/printf.h>
 #include <fmt/color.h>
 
-// #include <pcl/memory.h>
-// #include <pcl/filters/voxel_grid.h>
-// #include <pcl/octree/octree.h>
-// #include <pcl/common/impl/accumulators.hpp>
-// #include <pcl/point_types.h>
-// #include <pcl/point_cloud.h>
-// #include <pcl/point_representation.h>
-// #include <pcl/segmentation/region_growing.h>
-
+#include <pcl/io/file_io.h>
+#include <pcl/memory.h>
 #include <pcl/filters/filter.h>
-
-// #include <pcl/features/normal_3d_omp.h>
-
 #include <pcl/registration/icp.h>
 #include <pcl/registration/icp_nl.h>
-// #include <pcl/common/transforms.h>
-// #include <pcl/io/pcd_io.h>
-
 #include <pcl/filters/conditional_removal.h>
 
 // Define a new point representation for < x, y, z, curvature >
@@ -160,31 +145,35 @@ void pairAlign (
 
 
 namespace linkml{
-    void register_PointClouds(std::string directory){
 
 
-        auto files = std::vector<std::string>();
-        for (const auto & entry : std::filesystem::directory_iterator(directory)){
-            files.push_back(entry.path());
-        }
-        std::sort(files.begin(), files.end());
-
+    // TODO: In theory this should be a single template class.
+    // But for some reason 
+    template <class T>
+    typename PointClouds<T>::Ptr PointClouds<T>::register_clouds(){
 
         auto duration = std::chrono::nanoseconds(0);
 
         // Calculate Registartion
         ///////////////////////////////////////////////////////////////////////////////
-        auto transforms = std::vector<Eigen::Matrix4f>(files.size(), Eigen::Matrix4f::Identity());
-        auto reg_bar = util::progress_bar(files.size(),"Registration");
+        auto transforms = std::vector<Eigen::Matrix4f>(data.size(), Eigen::Matrix4f::Identity());
+        auto reg_bar = util::progress_bar(data.size(),"Registration");
         reg_bar.update(); // Skipping the first frame
         #pragma omp parallel for shared(transforms)
-        for (std::size_t i = 1; i < files.size() ; ++i){
+        for (std::size_t i = 1; i < data.size() ; ++i){
 
             PointCloud::Ptr target; // = load(files[i-1]);
             PointCloud::Ptr source; // = load(files[i]);
 
-            target->load(files[i-1]);
-            source->load(files[i]);
+            // If the underlying type is a string, load the file
+            if constexpr (std::is_same<T, std::string>::value){
+                target = PointCloud::load(data[i-1]);
+                source = PointCloud::load(data[i]);
+            // Oterwise it is assumed to be a PointCloud::Ptr
+            } else {
+                target = data[i-1];
+                source = data[i];
+            }
 
             Eigen::Matrix4f pairTransform;
 
@@ -198,9 +187,9 @@ namespace linkml{
 
         // Compute compound transformations
         ///////////////////////////////////////////////////////////////////////////////
-        auto update_bar = util::progress_bar(files.size(),"Compute compound transformations");
-        auto compund_transforms = std::vector<Eigen::Matrix4f>(files.size(), Eigen::Matrix4f::Identity());
-        for (std::size_t i = 1; i < files.size() ; ++i){
+        auto update_bar = util::progress_bar(data.size(),"Compute compound transformations");
+        auto compund_transforms = std::vector<Eigen::Matrix4f>(data.size(), Eigen::Matrix4f::Identity());
+        for (std::size_t i = 1; i < data.size() ; ++i){
             compund_transforms[i] = compund_transforms[i-1] * transforms[i];
             // update_bar.update(); // Too fast for printing
         }
@@ -209,15 +198,22 @@ namespace linkml{
 
         // Update Position
         ///////////////////////////////////////////////////////////////////////////////
-        auto move_bar = util::progress_bar(files.size(),"Moving clouds");
+        auto move_bar = util::progress_bar(data.size(),"Moving clouds");
         move_bar.update(); // Skipping the first frame
-        #pragma omp parallel for shared(files)
-        for (std::size_t i = 1; i < files.size() ; ++i){
-            PointCloud::Ptr point_cloud; // = load(files[i]);
-            point_cloud->load(files[i]);
-            pcl::transformPointCloudWithNormals(*point_cloud, *point_cloud, compund_transforms[i]);
-            point_cloud->save(files[i], true);
-            //save(*point_cloud, files[i], true);
+        #pragma omp parallel for shared(data)
+        for (std::size_t i = 1; i < data.size() ; ++i){
+
+            // If the underlying type is a string, load the file
+            if constexpr (std::is_same<T, std::string>::value){
+                PointCloud::Ptr point_cloud = PointCloud::load(data[i]);
+                pcl::transformPointCloudWithNormals(*point_cloud, *point_cloud, compund_transforms[i]);
+                point_cloud->save(data[i], true);
+            // Oterwise it is assumed to be a PointCloud::Ptr
+            } else {
+                pcl::transformPointCloudWithNormals(*data[i], *data[i], compund_transforms[i]);
+            }
+
+
             move_bar.update();
         }
         duration += move_bar.stop();
@@ -226,5 +222,135 @@ namespace linkml{
         fmt::print(fg(fmt::color::green), "Total duration: ");
         fmt::print(fmt::emphasis::italic,  "{:3.2f}ms\n", std::chrono::duration<double, std::milli>(duration).count());
 
+        return pcl::make_shared<PointClouds<T>>(*this);
+    }
+
+
+    template<>
+    PointCloudsInMemory::Ptr PointCloudsInMemory::register_clouds(){
+        auto duration = std::chrono::nanoseconds(0);
+
+        // Calculate Registartion
+        ///////////////////////////////////////////////////////////////////////////////
+        auto transforms = std::vector<Eigen::Matrix4f>(data.size(), Eigen::Matrix4f::Identity());
+        auto reg_bar = util::progress_bar(data.size(),"Registration");
+        reg_bar.update(); // Skipping the first frame
+        #pragma omp parallel for shared(transforms)
+        for (std::size_t i = 1; i < data.size() ; ++i){
+
+            PointCloud::Ptr target; // = load(files[i-1]);
+            PointCloud::Ptr source; // = load(files[i]);
+
+            // Oterwise it is assumed to be a PointCloud::Ptr
+                target = data[i-1];
+                source = data[i];
+
+            Eigen::Matrix4f pairTransform;
+
+            // ICP
+            pairAlign(source, target, pairTransform, 0.1f, 2U);
+            transforms[i] = pairTransform;
+            reg_bar.update();
+        }
+        duration += reg_bar.stop();
+
+
+        // Compute compound transformations
+        ///////////////////////////////////////////////////////////////////////////////
+        auto update_bar = util::progress_bar(data.size(),"Compute compound transformations");
+        auto compund_transforms = std::vector<Eigen::Matrix4f>(data.size(), Eigen::Matrix4f::Identity());
+        for (std::size_t i = 1; i < data.size() ; ++i){
+            compund_transforms[i] = compund_transforms[i-1] * transforms[i];
+            // update_bar.update(); // Too fast for printing
+        }
+        duration += update_bar.stop();
+        
+
+        // Update Position
+        ///////////////////////////////////////////////////////////////////////////////
+        auto move_bar = util::progress_bar(data.size(),"Moving clouds");
+        move_bar.update(); // Skipping the first frame
+        #pragma omp parallel for shared(data)
+        for (std::size_t i = 1; i < data.size() ; ++i){
+
+                pcl::transformPointCloudWithNormals(*data[i], *data[i], compund_transforms[i]);
+
+            move_bar.update();
+        }
+        duration += move_bar.stop();
+
+
+        fmt::print(fg(fmt::color::green), "Total duration: ");
+        fmt::print(fmt::emphasis::italic,  "{:3.2f}ms\n", std::chrono::duration<double, std::milli>(duration).count());
+
+        return pcl::make_shared<PointCloudsInMemory>(*this);
+    }
+
+    
+    template<>
+    PointCloudsOnDisk::Ptr PointCloudsOnDisk::register_clouds(){
+         auto duration = std::chrono::nanoseconds(0);
+
+        // Calculate Registartion
+        ///////////////////////////////////////////////////////////////////////////////
+        auto transforms = std::vector<Eigen::Matrix4f>(data.size(), Eigen::Matrix4f::Identity());
+        auto reg_bar = util::progress_bar(data.size(),"Registration");
+        reg_bar.update(); // Skipping the first frame
+        #pragma omp parallel for shared(transforms)
+        for (std::size_t i = 1; i < data.size() ; ++i){
+
+            PointCloud::Ptr target; // = load(files[i-1]);
+            PointCloud::Ptr source; // = load(files[i]);
+
+            // If the underlying type is a string, load the file
+            target = PointCloud::load(data[i-1]);
+            source = PointCloud::load(data[i]);
+            // Oterwise it is assumed to be a PointCloud::Ptr
+
+            Eigen::Matrix4f pairTransform;
+
+            // ICP
+            pairAlign(source, target, pairTransform, 0.1f, 2U);
+            transforms[i] = pairTransform;
+            reg_bar.update();
+        }
+        duration += reg_bar.stop();
+
+
+        // Compute compound transformations
+        ///////////////////////////////////////////////////////////////////////////////
+        auto update_bar = util::progress_bar(data.size(),"Compute compound transformations");
+        auto compund_transforms = std::vector<Eigen::Matrix4f>(data.size(), Eigen::Matrix4f::Identity());
+        for (std::size_t i = 1; i < data.size() ; ++i){
+            compund_transforms[i] = compund_transforms[i-1] * transforms[i];
+            // update_bar.update(); // Too fast for printing
+        }
+        duration += update_bar.stop();
+        
+
+        // Update Position
+        ///////////////////////////////////////////////////////////////////////////////
+        auto move_bar = util::progress_bar(data.size(),"Moving clouds");
+        move_bar.update(); // Skipping the first frame
+        #pragma omp parallel for shared(data)
+        for (std::size_t i = 1; i < data.size() ; ++i){
+
+            // If the underlying type is a string, load the file
+                PointCloud::Ptr point_cloud = PointCloud::load(data[i]);
+                pcl::transformPointCloudWithNormals(*point_cloud, *point_cloud, compund_transforms[i]);
+                point_cloud->save(data[i], true);
+
+
+            move_bar.update();
+        }
+        duration += move_bar.stop();
+
+
+        fmt::print(fg(fmt::color::green), "Total duration: ");
+        fmt::print(fmt::emphasis::italic,  "{:3.2f}ms\n", std::chrono::duration<double, std::milli>(duration).count());
+
+        // TODO: This seems to return an invalid pointer
+        // Or the pointer is lost when the function returns in python.
+        return pcl::make_shared<PointCloudsOnDisk>(*this);
     }
 }

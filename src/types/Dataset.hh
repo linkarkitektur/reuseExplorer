@@ -49,7 +49,7 @@ namespace linkml {
 
         // Operators
         operator bool() const {return !_fields.empty();};
-        Data operator[] (int idx);
+        Data operator[] (int idx) const;
 
         inline size_t size() const {return _n_frames;};
         inline cv::Size color_size() const {return cv::Size(_rgb_width, _rgb_hight);};

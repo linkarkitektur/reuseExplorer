@@ -58,7 +58,7 @@ linkml::PointCloud::Ptr linkml::region_growing(
         std::printf("Number of clusters is equal to %d\n", clusters.size());
 
         //TODO: Check default parameters
-        clusters = linkml::refine(cloud, clusters, linkml::refinement_parameters());
+        clusters = linkml::refine(cloud, clusters);
 
         std::printf("Number of clusters after refinement is equal to %d\n", clusters.size());
 

@@ -29,6 +29,7 @@
 #include <polyscope/polyscope.h>
 #include <polyscope/point_cloud.h>
 #include <functions/color.hh>
+#include <functions/downsample.hh>
 
 #include <vector>
 
@@ -121,19 +122,19 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(PointT,
 namespace linkml{
 
 
-    //using PointCloud = pcl::PointCloud<PointT>;
-
+    /// @brief A point cloud.
     class PointCloud : public pcl::PointCloud<PointT>{
       public:
-        using pcl::PointCloud<PointT>::PointCloud;
-        using pcl::PointCloud<PointT>::operator+=;
-        using pcl::PointCloud<PointT>::operator +;
-        using pcl::PointCloud<PointT>::concatenate;
-        using pcl::PointCloud<PointT>::at;
-        using pcl::PointCloud<PointT>::operator ();
-        using pcl::PointCloud<PointT>::isOrganized;
-        using pcl::PointCloud<PointT>::getMatrixXfMap;
 
+        // Inherit types
+        using pcl::PointCloud<PointT>::PointType;
+        using pcl::PointCloud<PointT>::VectorType;
+        using pcl::PointCloud<PointT>::CloudVectorType;
+
+        // Inherit constructors
+        using pcl::PointCloud<PointT>::PointCloud;
+
+        // Inherit properties
         using pcl::PointCloud<PointT>::header;
         using pcl::PointCloud<PointT>::points;
         using pcl::PointCloud<PointT>::width;
@@ -142,18 +143,22 @@ namespace linkml{
         using pcl::PointCloud<PointT>::sensor_origin_;
         using pcl::PointCloud<PointT>::sensor_orientation_;
 
-        using pcl::PointCloud<PointT>::PointType;
-        using pcl::PointCloud<PointT>::VectorType;
-        using pcl::PointCloud<PointT>::CloudVectorType;
-
-        using Ptr = std::shared_ptr<PointCloud>;
-        using ConstPtr = std::shared_ptr<const PointCloud>;
+        // Inherit operators
+        using pcl::PointCloud<PointT>::operator +=;
+        using pcl::PointCloud<PointT>::operator  +;
+        using pcl::PointCloud<PointT>::operator ();
+        using pcl::PointCloud<PointT>::operator [];
 
         using pcl::PointCloud<PointT>::value_type;
         using pcl::PointCloud<PointT>::reference;
         using pcl::PointCloud<PointT>::const_reference;
         using pcl::PointCloud<PointT>::difference_type;
         using pcl::PointCloud<PointT>::size_type;
+
+        using pcl::PointCloud<PointT>::at;
+        using pcl::PointCloud<PointT>::concatenate;
+        using pcl::PointCloud<PointT>::isOrganized;
+        using pcl::PointCloud<PointT>::getMatrixXfMap;
 
         using pcl::PointCloud<PointT>::iterator;
         using pcl::PointCloud<PointT>::const_iterator;
@@ -175,23 +180,19 @@ namespace linkml{
         using pcl::PointCloud<PointT>::data;
 
         using pcl::PointCloud<PointT>::resize;
+        using pcl::PointCloud<PointT>::assign;
 
-        using pcl::PointCloud<PointT>::operator[];
         using pcl::PointCloud<PointT>::front;
         using pcl::PointCloud<PointT>::back;
-
-        using pcl::PointCloud<PointT>::assign;
 
         using pcl::PointCloud<PointT>::push_back;
         using pcl::PointCloud<PointT>::transient_push_back;
         using pcl::PointCloud<PointT>::emplace_back;
         using pcl::PointCloud<PointT>::transient_emplace_back;
 
-
         using pcl::PointCloud<PointT>::insert;
         using pcl::PointCloud<PointT>::transient_insert;
       
-
         using pcl::PointCloud<PointT>::emplace;
         using pcl::PointCloud<PointT>::transient_emplace;
 
@@ -205,7 +206,28 @@ namespace linkml{
 
 
 
+
+        // Custom types
+        using Ptr = std::shared_ptr<PointCloud>;
+        using ConstPtr = std::shared_ptr<const PointCloud>;
+
+
+        // Constructors
+        /// @brief Load the point cloud from a file.
+        PointCloud(std::string const & filename ){
+          pcl::io::loadPCDFile(filename, *this);
+        }
+
+        /// @brief Load the point cloud from a file.
+        static PointCloud::Ptr load(std::string const& filename) {
+          PointCloud::Ptr cloud(new PointCloud);
+          pcl::io::loadPCDFile(filename, *cloud);
+          return cloud;
+        }
+
+
         // Custom methods
+        /// @brief Get the bounding box of the point cloud.
         tg::aabb3 get_bbox() const {
           float x_min = std::numeric_limits<float>::max();
           float y_min = std::numeric_limits<float>::max();
@@ -229,16 +251,25 @@ namespace linkml{
 
         }
 
+
+        // TODO: Add set header function 
+        // TODO: Add set confidence function
+
+        /// @brief Save the point cloud to a file.
         PointCloud::Ptr save(std::string const& filename, bool binary=true) const {
           pcl::io::savePCDFile(filename, *this, binary);
           return pcl::make_shared<PointCloud>(*this);
         }
 
-        PointCloud::Ptr load(std::string const& filename) {
-          pcl::io::loadPCDFile(filename, *this);
-          return pcl::make_shared<PointCloud>(*this);
-        }
+        /// @brief Transform the point cloud.
+        Ptr filter(); 
 
+        /// @brief Register the point cloud.
+        PointCloud::Ptr downsample(float leaf_size = 0.02f){
+          return linkml::downsample(*this);
+        };
+
+        /// @brief Register the point cloud.
         PointCloud::Ptr display(std::string name = "Cloud") const {
 
           polyscope::init();
@@ -364,28 +395,4 @@ namespace linkml{
         }
 
     };
-
-    //template <typename PointCloud>
-    //static tg::aabb3 get_bbox(const PointCloud & cloud){
-    //    float x_min = std::numeric_limits<float>::max();
-    //    float y_min = std::numeric_limits<float>::max();
-    //    float z_min = std::numeric_limits<float>::max();
-    //    float x_max = std::numeric_limits<float>::min();
-    //    float y_max = std::numeric_limits<float>::min();
-    //    float z_max = std::numeric_limits<float>::min();
-
-    //    #pragma omp parallel for reduction(min:x_min, y_min, z_min) reduction(max:x_max, y_max, z_max)
-    //    for (size_t i = 0; i < cloud.size(); i++){
-    //        auto p = cloud.at(i);
-    //        if (p.x < x_min) x_min = p.x;
-    //        if (p.y < y_min) y_min = p.y;
-    //        if (p.z < z_min) z_min = p.z;
-    //        if (p.x > x_max) x_max = p.x;
-    //        if (p.y > y_max) y_max = p.y;
-    //        if (p.z > z_max) z_max = p.z;
-    //    }
-
-    //    return tg::aabb3(tg::pos3(x_min, y_min, z_min), tg::pos3(x_max, y_max, z_max));
-    //}
-
 }

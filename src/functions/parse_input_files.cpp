@@ -176,7 +176,7 @@ namespace linkml{
     }
 
     template<typename PointCloud>
-    void setConficence(PointCloud  cloud, Eigen::MatrixXd const confidences){
+    void setConficence(PointCloud & cloud, Eigen::MatrixXd const confidences){
 
         if (confidences.size() != cloud.size())
             std::cout << "Confidences size is not equal to cloud size" << std::endl;
@@ -191,7 +191,7 @@ namespace linkml{
     }
 
     template<typename PointCloud>
-    void setHeader(PointCloud cloud, size_t const i,  Eigen::MatrixXd const & odometry){
+    void setHeader(PointCloud & cloud, size_t const i,  Eigen::MatrixXd const & odometry){
 
         uint64_t time_stamp = odometry(0,0);
         std::string frame_id = fmt::format("{:06}", (int)odometry(0,1));
@@ -801,5 +801,92 @@ namespace linkml{
 
     }
 
-}
+
+    void parse_Dataset( 
+        Dataset const & dataset, 
+        std::string const & output_path,
+        int start,
+        std::optional<int> stop_in,
+        int step){
+
+
+            auto fields = dataset.fields();
+
+            bool check = true;
+            check &= std::count(fields.begin(), fields.end(), Field::COLOR) == 1;
+            check &= std::count(fields.begin(), fields.end(), Field::DEPTH) == 1;
+            check &= std::count(fields.begin(), fields.end(), Field::CONFIDENCE) == 1;
+            check &= std::count(fields.begin(), fields.end(), Field::ODOMETRY) == 1;
+            check &= std::count(fields.begin(), fields.end(), Field::POSES) == 1;
+
+            if( !check){
+                fmt::print(fg(fmt::color::red), "Dataset does not contain all required fields [COLOR, DEPTH, CONFIDENCE, ODOMETRY, POSES]");
+                return;
+            }
+
+
+            int stop;
+            if (stop_in.has_value()) stop = stop_in.value();
+            else stop = dataset.size();
+
+            if (start < 0) start = dataset.size() + start;
+            if (stop < 0) stop = dataset.size() + stop;
+            if (start < 0 || start >= dataset.size() || stop < 0 || stop > dataset.size() || step == 0){
+                fmt::print(fg(fmt::color::red), "Invalid start, stop or step\n");
+                return;
+            }
+
+            
+            size_t n_frames = (stop - start) / step;
+            double ratio = (double)n_frames / (double)dataset.size() * 100;
+
+            // Print info
+            fmt::print("Number of frames: ");
+            fmt::print(fg(fmt::color::red), "{}", n_frames);
+            fmt::print(fmt::emphasis::italic,  " -> ( start: {}; step: {}; end: {} ) {:3.2f}% \n", start, step, stop, ratio);
+
+            if (n_frames == 0) return;
+
+
+            auto progress_bar = util::progress_bar(n_frames,"Processing data");
+            #pragma omp parallel for firstprivate(step, start, step, output_path) shared(dataset)
+            for (size_t i = 0; i < n_frames; i++ ){
+
+                size_t index = start + (i * step);
+                auto data = dataset[index];
+
+                auto cloud = PointCloud::Ptr(new PointCloud);
+                setHeader(*cloud, i , data.get<Field::ODOMETRY>());
+                depth_to_3d(
+                            *cloud,
+                            data.get<Field::DEPTH>(),
+                            dataset.intrinsic_matrix(), 
+                            data.get<Field::POSES>(), 
+                            data.get<Field::COLOR>());
+                setConficence(*cloud, data.get<Field::CONFIDENCE>());
+
+
+                // Compute surface normals and curvature
+                pcl::NormalEstimationOMP<PointT, PointT> ne;
+                pcl::search::KdTree<PointT>::Ptr tree (new pcl::search::KdTree<PointT> ());
+                ne.setSearchMethod(tree);
+                // ne.setRadiusSearch (0.05);
+                ne.setKSearch(15);
+
+                ne.setInputCloud(cloud);
+                ne.compute(*cloud);
+
+
+                std::filesystem::create_directory(output_path);
+                std::string filename = fmt::format("{}/cloud_{}.pcd", output_path, cloud->header.frame_id);
+                pcl::io::savePCDFileBinary(filename, *cloud);
+
+                progress_bar.update();
+            }
+            progress_bar.stop();
+
+        }
+ 
+
+} // namespace linkml
 

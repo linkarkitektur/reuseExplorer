@@ -73,7 +73,14 @@
 // }
 
 namespace linkml{
-    static std::vector<pcl::PointIndices> refine(PointCloud::Ptr const cloud, std::vector<pcl::PointIndices> const & clusters, refinement_parameters const & param){
+
+
+    std::vector<pcl::PointIndices> refine(
+            PointCloud::Ptr const cloud, 
+            std::vector<pcl::PointIndices> const & clusters,
+            tg::angle angle_threashhold,
+            float distance_threshhold
+            ){
 
         std::vector<linkml::Plane> planes;
         planes.resize(clusters.size());
@@ -97,7 +104,7 @@ namespace linkml{
             for (auto j = i+1; j < (int)planes.size(); j++){
 
                 auto dot = tg::dot(planes[i].normal, planes[j].normal);
-                if (dot < tg::cos(param.angle_threashhold)){
+                if (dot < tg::cos(angle_threashhold)){
                     sel.push_back(j);
                 }
             }
@@ -114,8 +121,8 @@ namespace linkml{
                 auto A_idx =indecies[i];
                 auto B_idx =indecies[j];
                 
-                auto n_point_of_B_in_A = (long)tg::sum(B_idx.indices, [&](int idx){ return tg::distance(A,cloud->points.at(idx).getPos()) < param.distance_threshhold; });
-                auto n_point_of_A_in_B = (long)tg::sum(A_idx.indices, [&](int idx){ return tg::distance(B,cloud->points.at(idx).getPos()) < param.distance_threshhold; });
+                auto n_point_of_B_in_A = (long)tg::sum(B_idx.indices, [&](int idx){ return tg::distance(A,cloud->points.at(idx).getPos()) < distance_threshhold; });
+                auto n_point_of_A_in_B = (long)tg::sum(A_idx.indices, [&](int idx){ return tg::distance(B,cloud->points.at(idx).getPos()) < distance_threshhold; });
 
 
                 auto Nt = (long)tg::min( A_idx.indices.size(),B_idx.indices.size())/5;
