@@ -72,7 +72,7 @@ std::optional<cv::Mat> read_frame_at_index(std::filesystem::path const& path, in
         return {};
     }
 
-    // return fram_to_matrix(frame);
+    cv::cvtColor(frame, frame, cv::COLOR_BGR2RGB);
 
     return frame;
 
