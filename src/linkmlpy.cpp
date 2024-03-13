@@ -142,6 +142,7 @@ PYBIND11_MODULE(linkml_py, m) {
             "output_file"_a,
             "binary"_a = true)
         .def("filter", &linkml::PointCloud::filter, "Filter the point cloud")
+        .def("downsample", &linkml::PointCloud::downsample, "Downsample the point cloud" "leaf_size"_a=0.02)
         .def("bbox", &linkml::PointCloud::get_bbox, "Get the bounding box of the point cloud")
         .def("display",&linkml::PointCloud::display, "Display the point cloud"
             "name"_a = "Cloud")

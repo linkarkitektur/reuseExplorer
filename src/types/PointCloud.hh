@@ -29,7 +29,6 @@
 #include <polyscope/polyscope.h>
 #include <polyscope/point_cloud.h>
 #include <functions/color.hh>
-#include <functions/downsample.hh>
 
 #include <vector>
 
@@ -218,6 +217,9 @@ namespace linkml{
           pcl::io::loadPCDFile(filename, *this);
         }
 
+        // TODO: Implement Buffer protocol
+        // https://pybind11.readthedocs.io/en/stable/advanced/pycpp/numpy.html
+
         /// @brief Load the point cloud from a file.
         static PointCloud::Ptr load(std::string const& filename) {
           PointCloud::Ptr cloud(new PointCloud);
@@ -264,10 +266,11 @@ namespace linkml{
         /// @brief Transform the point cloud.
         Ptr filter(); 
 
-        ///// @brief Register the point cloud.
-        //PointCloud::Ptr downsample(float leaf_size = 0.02f){
-        //  return linkml::downsample(*this);
-        //};
+        /// @brief Register the point cloud.
+        PointCloud::Ptr downsample(double leaf_size = 0.02f);
+
+        /// @brief Annotate the point cloud.
+        PointCloud::Ptr annotate();
 
         /// @brief Register the point cloud.
         PointCloud::Ptr display(std::string name = "Cloud") const {
@@ -313,6 +316,8 @@ namespace linkml{
 
           auto importance = std::vector<float>();
           importance.resize(this->points.size());
+
+
         
 
           #pragma omp parallel for
@@ -359,12 +364,32 @@ namespace linkml{
               sematic_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle(this->points[i].semantic));
               instance_lables[i] = this->points[i].instance;
 
-              importance[i] = (this->points[i].confidence+0.01f)
+
+          }
+
+
+          // Set unused lables to 
+          int selection[]{60, 56, 57, 58, 41, 62, 63, 64, 66, 41};
+          #pragma omp parallel for
+          for (size_t i = 0; i < this->points.size(); i++){
+            auto semantic = sematic_lables[i];
+            if (std::count(std::begin(selection), std::end(selection), semantic) == 0){
+              sematic_lables[i] = 0;
+              sematic_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle(0));
+            }
+          }
+
+
+          // Set importance
+          #pragma omp parallel for
+          for (size_t i = 0; i < this->points.size(); i++){
+               importance[i] = (this->points[i].confidence+0.01f)
                                   *
                                   ( (this->points[i].label == 0 ? 0.1f : 1.0f)
-                                  + (this->points[i].semantic == 0 ? 0.1f : 2.0f)
-                                  + (this->points[i].instance == 0 ? 0.1f : 3.0f));
+                                  + (sematic_lables[i] == 0 ? 0.1f : 2.0f)
+                                  + (this->points[i].instance == 0 ? 0.1f : 3.0f));         
           }
+
 
           auto pcd = polyscope::registerPointCloud(name, points);
           pcd->setPointRadius(0.001);

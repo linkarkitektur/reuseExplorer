@@ -1,18 +1,14 @@
-#include <functions/downsample.hh>
 #include <types/PointCloud.hh>
-#include <types/PointClouds.hh>
 #include <types/Accumulators.hh>
 #include <pcl/octree/octree.h>
 
 
 namespace linkml
 {
-    template <typename T>
-    static T downsample(T cloud, double leaf_size){
-        static_assert(std::is_same<T, PointCloud::Ptr>::value, "T must be a PointCloud::Ptr");
-    }
+    PointCloud::Ptr PointCloud::downsample(double leaf_size){
 
-    static PointCloud::Ptr downsample( PointCloud::Ptr cloud, double leaf_size){
+
+        auto cloud = this->makeShared();
 
         pcl::octree::OctreePointCloudPointVector<PointCloud::PointType> octree(leaf_size);
         octree.setInputCloud(cloud);
@@ -24,9 +20,11 @@ namespace linkml
 
         PointCloud::Ptr filtered_cloud (new PointCloud);
         filtered_cloud->resize(octree.getLeafCount());
+
+        size_t leaf_count = octree.getLeafCount();
         
-        // #pragma omp parallel for shared(octree, filtered_cloud, nodes, cloud)
-        for (size_t i = 0; i < octree.getLeafCount(); i++){
+        #pragma omp parallel for shared(filtered_cloud, nodes, cloud)
+        for (size_t i = 0; i < leaf_count; i++){
             pcl::octree::OctreeContainerPointIndices& container = nodes[i].getLeafContainer();
 
             pcl::Indices indexVector;

@@ -8,6 +8,8 @@
 - [ ] Implement Regiongrowing based on `pcl::RegionGrowing< PointT, NormalT >` \
 See `10.1016/j.autcon.`2022.104250` for reference.
 - [x] Separate read, register, and merge functions to enable working with larger datasets, that don't fit in memory.
+- [ ] Fix pointer issues. [see](https://pybind11.readthedocs.io/en/stable/advanced/smart_ptrs.html?highlight=pointers)
+- [ ] Implement Buffer protocol for `PointCloud` to enable direct access to the data from Python. [see](https://pybind11.readthedocs.io/en/stable/advanced/pycpp/numpy.html)
 
 ### Notes
 Scanning app:
