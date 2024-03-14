@@ -158,6 +158,7 @@ PYBIND11_MODULE(linkml_py, m) {
         .def("filter", &linkml::PointCloudsInMemory::filter, "Filter the point cloud")
         .def("register", &linkml::PointCloudsInMemory::register_clouds, "Register the point clouds")
         .def("merge", &linkml::PointCloudsInMemory::merge, "Merge the point clouds")
+        .def("display", &linkml::PointCloudsInMemory::display, "Display the point clouds" "show_clouds"_a = false)
         .def("__getitem__", [](const linkml::PointCloudsInMemory &obj, std::size_t index) {
             return obj[index]; }, "Get a point cloud", "index"_a)
         .def("__getitem__", [](const linkml::PointCloudsInMemory &obj, py::slice slice) {
@@ -177,6 +178,7 @@ PYBIND11_MODULE(linkml_py, m) {
         .def("filter", &linkml::PointCloudsOnDisk::filter, "Filter the point cloud")
         .def("register", &linkml::PointCloudsOnDisk::register_clouds, "Register the point clouds")
         .def("merge", &linkml::PointCloudsOnDisk::merge, "Merge the point clouds")
+        .def("display", &linkml::PointCloudsOnDisk::display, "Display the point clouds" "show_clouds"_a = false)
         .def("__getitem__", [](const linkml::PointCloudsOnDisk &obj, std::size_t index) {
             return obj[index]; }, "Get a point cloud", "index"_a)
         .def("__getitem__", [](const linkml::PointCloudsOnDisk &obj, py::slice slice) {

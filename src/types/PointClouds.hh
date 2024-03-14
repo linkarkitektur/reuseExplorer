@@ -70,6 +70,7 @@ namespace linkml
             // Return a point cloud or subset of point clouds
             PointCloud::Ptr merge();
 
+            void display(bool show_clouds=false);
 
             std::size_t size() const {
                 return data.size();
