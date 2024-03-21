@@ -166,7 +166,7 @@ namespace linkml{
         std::vector<cv::Mat> Detect(cv::Mat srcImg);
 
         static void Preprocess(cv::Mat & srcImg, cv::Mat & blob, cv::Vec4d & params);
-        static std::vector<OutputParams> Postprocess(const std::vector<cv::Mat> & blob, const cv::Vec4d & params, const cv::Mat & srcImg);
+        static std::vector<OutputParams> Postprocess(const std::vector<cv::Mat> & blob, const cv::Vec4d & params, const cv::Size & srcImgSize);
 
 
         static std::string GetClassName(int id) { return _className[id];}

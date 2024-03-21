@@ -31,6 +31,8 @@
 #include <functions/color.hh>
 
 #include <vector>
+#include <filesystem>
+#include <opencv4/opencv2/core.hpp>
 
 struct EIGEN_ALIGN16 PointT
 {
@@ -222,9 +224,33 @@ namespace linkml{
 
         /// @brief Load the point cloud from a file.
         static PointCloud::Ptr load(std::string const& filename) {
+
+          std::filesystem::path pcd = filename;
           PointCloud::Ptr cloud(new PointCloud);
-          pcl::io::loadPCDFile(filename, *cloud);
+          
+          pcl::io::loadPCDFile(pcd, *cloud);
+
+          cloud->header = load_header(filename);
+
           return cloud;
+        }
+
+        static pcl::PCLHeader load_header(std::string const& filename) {
+          pcl::PCLHeader header;
+
+          std::filesystem::path head = filename;
+          head.replace_extension(".head");
+
+          if (std::filesystem::exists(head)){
+              std::ifstream header_file(head);
+              if (header_file.is_open()){
+                  header_file >> header.frame_id;
+                  header_file >> header.stamp;
+                  header_file >> header.seq;
+                  header_file.close();
+              }
+          }
+          return header;
         }
 
 
@@ -260,6 +286,18 @@ namespace linkml{
         /// @brief Save the point cloud to a file.
         PointCloud::Ptr save(std::string const& filename, bool binary=true) const {
           pcl::io::savePCDFile(filename, *this, binary);
+
+          // Save header information
+          std::filesystem::path p(filename);
+          p.replace_extension(".head");
+          std::filesystem::exists(p) ? std::filesystem::remove(p) : std::filesystem::create_directories(p.parent_path());
+          std::ofstream header_file(p);
+          if (header_file.is_open()){
+              header_file << this->header.frame_id << std::endl;
+              header_file << this->header.stamp << std::endl;
+              header_file << this->header.seq << std::endl;
+              header_file.close();
+          }
           return pcl::make_shared<PointCloud>(*this);
         }
 
@@ -271,6 +309,47 @@ namespace linkml{
 
         /// @brief Annotate the point cloud.
         PointCloud::Ptr annotate();
+
+
+
+        cv::Mat image(std::string field_name = "rgb") const {
+
+          if (!this->is_dense)
+            throw std::runtime_error("Clouds must be dense");
+
+          cv::Mat img = cv::Mat::zeros(this->height, this->width, CV_8UC3);
+
+          if ( field_name == "rgb" ){
+            #pragma omp parallel for shared(img)
+            for (size_t i = 0; i < this->size(); i++){
+                auto point = this->at(i);
+                size_t y = i % this->width;
+                size_t x = i / this->width;
+                img.at<cv::Vec3b>(x, y) = cv::Vec3b(point.r, point.g, point.b);
+            }
+          }
+          else if ( field_name == "semantic"){
+            #pragma omp parallel for shared(img)
+            for (size_t i = 0; i < this->size(); i++){
+                auto point = this->at(i);
+                size_t y = i % this->width;
+                size_t x = i / this->width;
+                auto c = linkml::get_color_forom_angle(linkml::sample_circle(point.semantic));
+                img.at<cv::Vec3b>(x, y) = cv::Vec3b(c.r * 255, c.g * 255, c.b * 255);
+            }
+          }
+          else {
+            PCL_WARN ("Filed not implemented");
+          }
+
+
+          return img;
+        }
+
+
+        PointType at(size_t x, size_t y) {
+          return this->points.at(y * this->width + x);
+        }
 
         /// @brief Register the point cloud.
         PointCloud::Ptr display(std::string name = "Cloud") const {

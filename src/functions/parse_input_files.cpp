@@ -489,7 +489,7 @@ namespace linkml{
             #pragma omp parallel for shared(point_clouds, outputs, params)
             for (size_t i = 0; i < point_clouds.size(); i++){
 
-                auto results = Yolov8Seg::Postprocess(outputs[i], params[i], source_images[i]);
+                auto results = Yolov8Seg::Postprocess(outputs[i], params[i], source_images[i].size());
 
                 auto color_size = dataset.color_size();
                 auto depth_size = dataset.depth_size();
@@ -876,10 +876,11 @@ namespace linkml{
                 ne.setInputCloud(cloud);
                 ne.compute(*cloud);
 
-
+                // Save cloud
                 std::filesystem::create_directory(output_path);
                 std::string filename = fmt::format("{}/cloud_{}.pcd", output_path, cloud->header.frame_id);
-                pcl::io::savePCDFileBinary(filename, *cloud);
+                cloud->save(filename, true);
+
 
                 progress_bar.update();
             }

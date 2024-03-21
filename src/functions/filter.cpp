@@ -30,6 +30,9 @@ namespace linkml
         return filterPointCloud(pcl::make_shared<PointCloud>(*this));
     }
 
+
+    // TODO: Initilaise the timplate rather then the classes indevidually
+    // For an example see the annotation implementation
     template<>
     PointClouds<std::string>::Ptr PointClouds<std::string>::filter(){
 

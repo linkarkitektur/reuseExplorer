@@ -60,6 +60,7 @@ imgui.ini
 *.pt
 *.pcd
 *.off
+*.head
 
 
 # Ignore logging

@@ -91,7 +91,7 @@ namespace linkml {
         cv::Size shape = image.size();
         float r = std::min((float)newShape.height / (float)shape.height,
             (float)newShape.width / (float)shape.width);
-        if (!scaleUp)
+         if (!scaleUp)
             r = std::min(r, 1.0f);
 
         float ratio[2]{ r, r };
@@ -137,35 +137,6 @@ namespace linkml {
         cv::copyMakeBorder(outImage, outImage, top, bottom, left, right, cv::BORDER_CONSTANT, color);
     }
 
-    // void GetMask(const cv::Mat& maskProposals, const cv::Mat& maskProtos, std::vector<OutputSeg>& output, const MaskParams& maskParams) {
-    //     //cout << maskProtos.size << endl;
-    //     int net_width = maskParams.netWidth;
-    //     int net_height = maskParams.netHeight;
-    //     int seg_channels = maskProtos.size[1];
-    //     int seg_height = maskProtos.size[2];
-    //     int seg_width = maskProtos.size[3];
-    //     float mask_threshold = maskParams.maskThreshold;
-    //     Vec4f params = maskParams.params;
-    //     Size src_img_shape = maskParams.srcImgShape;
-    //     Mat protos = maskProtos.reshape(0, { seg_channels,seg_width * seg_height });
-    //     Mat matmul_res = (maskProposals * protos).t();
-    //     Mat masks = matmul_res.reshape(output.size(), { seg_width,seg_height });
-    //     vector<Mat> maskChannels;
-    //     split(masks, maskChannels);
-    //     for (int i = 0; i < output.size(); ++i) {
-    //         Mat dest, mask;
-    //         //sigmoid
-    //         cv::exp(-maskChannels[i], dest);
-    //         dest = 1.0 / (1.0 + dest);
-    //         Rect roi(int(params[2] / net_width * seg_width), int(params[3] / net_height * seg_height), int(seg_width - params[2] / 2), int(seg_height - params[3] / 2));
-    //         dest = dest(roi);
-    //         resize(dest, mask, src_img_shape, INTER_NEAREST);
-    //         //crop
-    //         Rect temp_rect = output[i].box;
-    //         mask = mask(temp_rect) > mask_threshold;
-    //         output[i].boxMask = mask;
-    //     }
-    // }
 
     void GetMask2(const cv::Mat& maskProposals, const cv::Mat& maskProtos, OutputParams& output, const MaskParams& maskParams) {
 	int net_width = maskParams.netWidth;
@@ -266,20 +237,21 @@ namespace linkml {
 
         cv::Mat netInputImg;
 
-
-        // cv::resize(srcImg, srcImg, cv::Size(640, 640), cv::INTER_LINEAR);
         LetterBox(srcImg, netInputImg, params, cv::Size(_netWidth, _netHeight));
-
         cv::dnn::blobFromImage(netInputImg, blob  ,1.0 / 255, cv::Size(_netWidth, _netHeight), cv::Scalar(0, 0, 0), true, false);
 
     }
-    std::vector<OutputParams> Yolov8Seg::Postprocess( const std::vector<cv::Mat> & blob, const cv::Vec4d & params, const cv::Mat & srcImg){
+
+    std::vector<OutputParams> Yolov8Seg::Postprocess( const std::vector<cv::Mat> & blob, const cv::Vec4d & params, const cv::Size & srcImgSize){
 
         auto output = std::vector<OutputParams>();
         
         std::vector<int> class_ids;// res-class_id
         std::vector<float> confidences;// res-conf 
         std::vector<cv::Rect> boxes;// res-box
+        // https://github.com/ultralytics/ultralytics/issues/2953
+        // output0 = [bs, 116 ( => 4:xywh, 80:cls, 32:mask wights), 8400:boxes ]
+        // output1 = [bs, 32:masks, 160, 160 (mask size)]
         std::vector<std::vector<float>> picked_proposals;  //output0[:,:, 4 + _className.size():net_width]===> for mask
         cv::Mat output0 = cv::Mat(cv::Size(blob[0].size[2], blob[0].size[1]), CV_32F, (float*)blob[0].data).t();  //[bs,116,8400]=>[bs,8400,116]
         int rows = output0.rows;
@@ -313,7 +285,9 @@ namespace linkml {
         std::vector<int> nms_result;
         cv::dnn::NMSBoxes(boxes, confidences, _classThreshold, _nmsThreshold, nms_result);
         std::vector<std::vector<float>> temp_mask_proposals;
-        cv::Rect holeImgRect(0, 0, srcImg.cols, srcImg.rows);
+        //cv::Rect holeImgRect(0, 0, srcImg.cols, srcImg.rows);
+        cv::Rect holeImgRect(0, 0, srcImgSize.width, srcImgSize.height);
+        
         for (int i = 0; i < nms_result.size(); ++i) {
 
             int idx = nms_result[i];
@@ -324,12 +298,15 @@ namespace linkml {
             temp_mask_proposals.push_back(picked_proposals[idx]);
             output.push_back(result);
         }
-        MaskParams mask_params;
+
+        
+         MaskParams mask_params;
         mask_params.params = params;
-        mask_params.srcImgShape = srcImg.size();
+        mask_params.srcImgShape = srcImgSize;
         mask_params.netHeight = _netHeight;
         mask_params.netWidth = _netWidth;
         mask_params.maskThreshold = _maskThreshold;
+
         for (int i = 0; i < temp_mask_proposals.size(); ++i) {
             GetMask2(cv::Mat(temp_mask_proposals[i]).t(), blob[1], output[i], mask_params);
         }
@@ -351,87 +328,5 @@ namespace linkml {
 
     }
 
-    // std::optional<std::vector<OutputParams>> Yolov8Seg::Detect(cv::Mat srcImg){
-
-    //     auto output = std::vector<OutputParams>();
-
-    //     cv::Mat blob;
-    //     output.clear();
-    //     int col = srcImg.cols;
-    //     int row = srcImg.rows;
-    //     cv::Mat netInputImg;
-    //     cv::Vec4d params;
-
-    //     // cv::resize(srcImg, srcImg, cv::Size(640, 640), cv::INTER_LINEAR);
-    //     LetterBox(srcImg, netInputImg, params, cv::Size(_netWidth, _netHeight));
-
-    //     cv::dnn::blobFromImage(netInputImg, blob  ,1.0 / 255, cv::Size(_netWidth, _netHeight), cv::Scalar(0, 0, 0), true, false);
-        
-    //     model.setInput(blob);
-    //     std::vector<cv::Mat> net_output_img;
-
-    //     std::vector<std::string> output_layer_names{ "output0","output1" };
-    //     model.forward(net_output_img, output_layer_names);
-    //     // model.forward(net_output_img, model.getUnconnectedOutLayersNames());
-
-    //     std::vector<int> class_ids;// res-class_id
-    //     std::vector<float> confidences;// res-conf 
-    //     std::vector<cv::Rect> boxes;// res-box
-    //     std::vector<std::vector<float>> picked_proposals;  //output0[:,:, 4 + _className.size():net_width]===> for mask
-    //     cv::Mat output0 = cv::Mat(cv::Size(net_output_img[0].size[2], net_output_img[0].size[1]), CV_32F, (float*)net_output_img[0].data).t();  //[bs,116,8400]=>[bs,8400,116]
-    //     int rows = output0.rows;
-    //     int net_width = output0.cols;
-    //     int socre_array_length = net_width - 4 - net_output_img[1].size[1];
-    //     float* pdata = (float*)output0.data;
-
-    //     for (int r = 0; r < rows; ++r) {
-    //         cv::Mat scores(1, socre_array_length, CV_32FC1, pdata + 4);
-    //         cv::Point classIdPoint;
-    //         double max_class_socre;
-    //         minMaxLoc(scores, 0, &max_class_socre, 0, &classIdPoint);
-    //         max_class_socre = (float)max_class_socre;
-    //         if (max_class_socre >= _classThreshold) {
-    //             std::vector<float> temp_proto(pdata + 4 + socre_array_length, pdata + net_width);
-    //             picked_proposals.push_back(temp_proto);
-    //             //rect [x,y,w,h]
-    //             float x = (pdata[0] - params[2]) / params[0];
-    //             float y = (pdata[1] - params[3]) / params[1];
-    //             float w = pdata[2] / params[0];
-    //             float h = pdata[3] / params[1];
-    //             int left = MAX(int(x - 0.5 * w + 0.5), 0);
-    //             int top = MAX(int(y - 0.5 * h + 0.5), 0);
-    //             class_ids.push_back(classIdPoint.x);
-    //             confidences.push_back(max_class_socre);
-    //             boxes.push_back(cv::Rect(left, top, int(w + 0.5), int(h + 0.5)));
-    //         }
-    //         pdata += net_width;//next line
-    //     }
-    //     //NMS
-    //     std::vector<int> nms_result;
-    //     cv::dnn::NMSBoxes(boxes, confidences, _classThreshold, _nmsThreshold, nms_result);
-    //     std::vector<std::vector<float>> temp_mask_proposals;
-    //     cv::Rect holeImgRect(0, 0, srcImg.cols, srcImg.rows);
-    //     for (int i = 0; i < nms_result.size(); ++i) {
-
-    //         int idx = nms_result[i];
-    //         OutputParams result;
-    //         result.id = class_ids[idx];
-    //         result.confidence = confidences[idx];
-    //         result.box = boxes[idx] & holeImgRect;
-    //         temp_mask_proposals.push_back(picked_proposals[idx]);
-    //         output.push_back(result);
-    //     }
-    //     MaskParams mask_params;
-    //     mask_params.params = params;
-    //     mask_params.srcImgShape = srcImg.size();
-    //     mask_params.netHeight = _netHeight;
-    //     mask_params.netWidth = _netWidth;
-    //     mask_params.maskThreshold = _maskThreshold;
-    //     for (int i = 0; i < temp_mask_proposals.size(); ++i) {
-    //         GetMask2(cv::Mat(temp_mask_proposals[i]).t(), net_output_img[1], output[i], mask_params);
-    //     }
-
-    //     return output;
-    // }
 
 }

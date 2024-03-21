@@ -62,6 +62,9 @@ namespace linkml{
 
     }
 
+
+    // TODO: Initialise the template rather the implementing the cases indeviually
+    // See the annotioation mehtod for an example
     template <>
     PointCloud::Ptr PointCloudsOnDisk::merge(){
 

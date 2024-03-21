@@ -1,10 +1,12 @@
 #pragma once
 #include "PointCloud.hh"
+#include "Dataset.hh"
 
 #include <Eigen/Core>
 #include <vector>
 #include <valarray>
 #include <filesystem>
+#include <optional>
 
 namespace linkml
 {
@@ -40,24 +42,26 @@ namespace linkml
 
                 if constexpr (std::is_same<T, std::string>::value){
                     for (const auto & entry : std::filesystem::directory_iterator(directory))
-                        data.push_back(entry.path());
+                        if (entry.is_regular_file() && entry.path().extension() == ".pcd")
+                            data.push_back(entry.path());
                     std::sort(data.begin(), data.end());
                 } else {
                     std::vector<std::string> files;
                     for (const auto & entry : std::filesystem::directory_iterator(directory))
-                        files.push_back(entry.path());
+                        if (entry.is_regular_file() && entry.path().extension() == ".pcd")
+                            files.push_back(entry.path());
                     std::sort(files.begin(), files.end());
 
                     data.resize(files.size());
 
                     #pragma omp parallel for shared(files, data)
                     for (std::size_t i = 0; i < files.size(); ++i){
-                        data[i] = PointCloud::Ptr(new PointCloud);
-                        data[i]->load(files[i]);
+                        data[i] = PointCloud::load(files[i]);
                     }
 
                 }
             };
+            
             static Ptr load(std::string directory){
                 return Ptr(new PointClouds(directory));
             }
@@ -65,6 +69,7 @@ namespace linkml
             // Modify the point clouds
             Ptr filter();
             Ptr register_clouds();
+            Ptr annotate(std::string yolo_path, std::optional<Dataset> & dataset);
 
 
             // Return a point cloud or subset of point clouds

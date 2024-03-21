@@ -208,6 +208,9 @@ OpenCV and PCL have been compiled from source and are not included but need to b
 
 #### OpenCV
 Open CV needs to be compiled with CUDA support for inference on the GPU.
+The branch needs to be `4.x` and commit  `0c6fc763f4` has been confirmed to work.
+
+```shell
 
 Dependencies:
 - CUDA
