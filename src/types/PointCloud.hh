@@ -284,7 +284,7 @@ namespace linkml{
         // TODO: Add set confidence function
 
         /// @brief Save the point cloud to a file.
-        PointCloud::Ptr save(std::string const& filename, bool binary=true) const {
+        PointCloud save(std::string const& filename, bool binary=true) const {
           pcl::io::savePCDFile(filename, *this, binary);
 
           // Save header information
@@ -298,17 +298,17 @@ namespace linkml{
               header_file << this->header.seq << std::endl;
               header_file.close();
           }
-          return pcl::make_shared<PointCloud>(*this);
+          return *this;
         }
 
         /// @brief Transform the point cloud.
-        Ptr filter(); 
+        PointCloud filter(); 
 
         /// @brief Register the point cloud.
-        PointCloud::Ptr downsample(double leaf_size = 0.02f);
+        PointCloud downsample(double leaf_size = 0.02f);
 
         /// @brief Annotate the point cloud.
-        PointCloud::Ptr annotate();
+        PointCloud annotate();
 
 
 
@@ -352,7 +352,7 @@ namespace linkml{
         }
 
         /// @brief Register the point cloud.
-        PointCloud::Ptr display(std::string name = "Cloud") const {
+        PointCloud display(std::string name = "Cloud") const {
 
           polyscope::init();
 
@@ -495,7 +495,8 @@ namespace linkml{
 
           polyscope::show();
 
-          return pcl::make_shared<PointCloud>(*this);
+          return *this;
+
         }
 
     };

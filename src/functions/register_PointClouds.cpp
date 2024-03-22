@@ -147,10 +147,8 @@ void pairAlign (
 namespace linkml{
 
 
-    // TODO: In theory this should be a single template class.
-    // But for some reason 
     template <class T>
-    typename PointClouds<T>::Ptr PointClouds<T>::register_clouds(){
+    PointClouds<T> PointClouds<T>::register_clouds(){
 
         auto duration = std::chrono::nanoseconds(0);
 
@@ -222,135 +220,10 @@ namespace linkml{
         fmt::print(fg(fmt::color::green), "Total duration: ");
         fmt::print(fmt::emphasis::italic,  "{:3.2f}ms\n", std::chrono::duration<double, std::milli>(duration).count());
 
-        return pcl::make_shared<PointClouds<T>>(*this);
+        return *this;
     }
 
+    template PointCloudsInMemory  PointCloudsInMemory::register_clouds();
+    template PointCloudsOnDisk  PointCloudsOnDisk::register_clouds();
 
-    template<>
-    PointCloudsInMemory::Ptr PointCloudsInMemory::register_clouds(){
-        auto duration = std::chrono::nanoseconds(0);
-
-        // Calculate Registartion
-        ///////////////////////////////////////////////////////////////////////////////
-        auto transforms = std::vector<Eigen::Matrix4f>(data.size(), Eigen::Matrix4f::Identity());
-        auto reg_bar = util::progress_bar(data.size(),"Registration");
-        reg_bar.update(); // Skipping the first frame
-        #pragma omp parallel for shared(transforms)
-        for (std::size_t i = 1; i < data.size() ; ++i){
-
-            PointCloud::Ptr target; // = load(files[i-1]);
-            PointCloud::Ptr source; // = load(files[i]);
-
-            // Oterwise it is assumed to be a PointCloud::Ptr
-                target = data[i-1];
-                source = data[i];
-
-            Eigen::Matrix4f pairTransform;
-
-            // ICP
-            pairAlign(source, target, pairTransform, 0.1f, 2U);
-            transforms[i] = pairTransform;
-            reg_bar.update();
-        }
-        duration += reg_bar.stop();
-
-
-        // Compute compound transformations
-        ///////////////////////////////////////////////////////////////////////////////
-        auto update_bar = util::progress_bar(data.size(),"Compute compound transformations");
-        auto compund_transforms = std::vector<Eigen::Matrix4f>(data.size(), Eigen::Matrix4f::Identity());
-        for (std::size_t i = 1; i < data.size() ; ++i){
-            compund_transforms[i] = compund_transforms[i-1] * transforms[i];
-            // update_bar.update(); // Too fast for printing
-        }
-        duration += update_bar.stop();
-        
-
-        // Update Position
-        ///////////////////////////////////////////////////////////////////////////////
-        auto move_bar = util::progress_bar(data.size(),"Moving clouds");
-        move_bar.update(); // Skipping the first frame
-        #pragma omp parallel for shared(data)
-        for (std::size_t i = 1; i < data.size() ; ++i){
-
-                pcl::transformPointCloudWithNormals(*data[i], *data[i], compund_transforms[i]);
-
-            move_bar.update();
-        }
-        duration += move_bar.stop();
-
-
-        fmt::print(fg(fmt::color::green), "Total duration: ");
-        fmt::print(fmt::emphasis::italic,  "{:3.2f}ms\n", std::chrono::duration<double, std::milli>(duration).count());
-
-        return pcl::make_shared<PointCloudsInMemory>(*this);
-    }
-
-    
-    template<>
-    PointCloudsOnDisk::Ptr PointCloudsOnDisk::register_clouds(){
-         auto duration = std::chrono::nanoseconds(0);
-
-        // Calculate Registartion
-        ///////////////////////////////////////////////////////////////////////////////
-        auto transforms = std::vector<Eigen::Matrix4f>(data.size(), Eigen::Matrix4f::Identity());
-        auto reg_bar = util::progress_bar(data.size(),"Registration");
-        reg_bar.update(); // Skipping the first frame
-        #pragma omp parallel for shared(transforms)
-        for (std::size_t i = 1; i < data.size() ; ++i){
-
-            PointCloud::Ptr target; // = load(files[i-1]);
-            PointCloud::Ptr source; // = load(files[i]);
-
-            // If the underlying type is a string, load the file
-            target = PointCloud::load(data[i-1]);
-            source = PointCloud::load(data[i]);
-            // Oterwise it is assumed to be a PointCloud::Ptr
-
-            Eigen::Matrix4f pairTransform;
-
-            // ICP
-            pairAlign(source, target, pairTransform, 0.1f, 2U);
-            transforms[i] = pairTransform;
-            reg_bar.update();
-        }
-        duration += reg_bar.stop();
-
-
-        // Compute compound transformations
-        ///////////////////////////////////////////////////////////////////////////////
-        auto update_bar = util::progress_bar(data.size(),"Compute compound transformations");
-        auto compund_transforms = std::vector<Eigen::Matrix4f>(data.size(), Eigen::Matrix4f::Identity());
-        for (std::size_t i = 1; i < data.size() ; ++i){
-            compund_transforms[i] = compund_transforms[i-1] * transforms[i];
-            // update_bar.update(); // Too fast for printing
-        }
-        duration += update_bar.stop();
-        
-
-        // Update Position
-        ///////////////////////////////////////////////////////////////////////////////
-        auto move_bar = util::progress_bar(data.size(),"Moving clouds");
-        move_bar.update(); // Skipping the first frame
-        #pragma omp parallel for shared(data)
-        for (std::size_t i = 1; i < data.size() ; ++i){
-
-            // If the underlying type is a string, load the file
-                PointCloud::Ptr point_cloud = PointCloud::load(data[i]);
-                pcl::transformPointCloudWithNormals(*point_cloud, *point_cloud, compund_transforms[i]);
-                point_cloud->save(data[i], true);
-
-
-            move_bar.update();
-        }
-        duration += move_bar.stop();
-
-
-        fmt::print(fg(fmt::color::green), "Total duration: ");
-        fmt::print(fmt::emphasis::italic,  "{:3.2f}ms\n", std::chrono::duration<double, std::milli>(duration).count());
-
-        // TODO: This seems to return an invalid pointer
-        // Or the pointer is lost when the function returns in python.
-        return pcl::make_shared<PointCloudsOnDisk>(*this);
-    }
 }

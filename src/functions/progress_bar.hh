@@ -78,15 +78,16 @@ public:
     }
 
 private:
-    cc::string    _task_name      = "";   ///< Name of the task being performed
-    uint32_t      _total_work     = 0;    ///< Total work to be accomplished
-    uint32_t      _finished_work  = 0;    ///< Amount of work done
-    // uint32_t      _next_update    = 0;    ///< Next point to update the visible progress bar
+    cc::string    _task_name      = "";     ///< Name of the task being performed
+    uint32_t      _total_work     = 0;      ///< Total work to be accomplished
+    uint32_t      _finished_work  = 0;      ///< Amount of work done
+    uint32_t      _next_update    = 0;      ///< Next point to update the visible progress bar
+    bool          _finalized      = false;  ///< True if the final line has been reutrn
 
-    uint32_t      _bar_width      = 60;   ///< Width of the progress bar
+    uint32_t      _bar_width      = 60;     ///< Width of the progress bar
     // uint32_t      _call_diff      = 1;    ///< Interval between updates in work units
 
-    Timer         _timer;                 ///< Used for generating ETA
+    Timer         _timer;                   ///< Used for generating ETA
 
 
 private:

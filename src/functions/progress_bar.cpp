@@ -49,13 +49,12 @@ void util::progress_bar::print()
       return;
 
 
+    //Quick return if insufficient progress has occurred
+    if(_finished_work < _next_update)
+      return;
 
-    // //Quick return if insufficient progress has occurred
-    // if(_finished_work<_next_update)
-    //   return;
-
-    // //Update the next time at which we'll do the expensive update stuff
-    // _next_update += _call_diff;
+    //Update the next time at which we'll do the expensive update stuff
+    _next_update += _total_work/200;
 
     // Handle overflow
     if (_finished_work > _total_work)
@@ -89,8 +88,10 @@ void util::progress_bar::print()
 
     if (!_task_name.empty())
         std::printf(" - (%s)", _task_name.c_str());
-    if (finished())
+    if (finished()){
         std::printf("\n");
+        _finalized = true;
+    }
     std::fflush(stdout);
 
 }
@@ -106,9 +107,15 @@ std::chrono::nanoseconds util::progress_bar::stop(){
     reset_line();
     _timer.stop();
 
+
     #ifdef NOPROGRESS
       return _timer.accumulated();
     #endif
+
+    if (!_finalized){
+      std::printf("\n");
+      _finalized = true;
+    }
 
     // use fmt to print duration with hours minutes and seconds
     fmt::print(fg(fmt::color::gray), "Total time: ");

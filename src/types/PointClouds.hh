@@ -62,20 +62,20 @@ namespace linkml
                 }
             };
             
-            static Ptr load(std::string directory){
-                return Ptr(new PointClouds(directory));
+            static PointClouds load(std::string directory){
+                return PointClouds(directory);
             }
 
             // Modify the point clouds
-            Ptr filter();
-            Ptr register_clouds();
-            Ptr annotate(std::string yolo_path, std::optional<Dataset> & dataset);
+            PointClouds filter();
+            PointClouds register_clouds();
+            PointClouds annotate(std::string yolo_path, std::optional<Dataset> & dataset);
 
 
             // Return a point cloud or subset of point clouds
-            PointCloud::Ptr merge();
+            PointCloud merge();
 
-            void display(bool show_clouds=false);
+            PointClouds<T> display(bool show_clouds=false);
 
             std::size_t size() const {
                 return data.size();

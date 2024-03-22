@@ -16,25 +16,30 @@ from linkml_py import *
 
 
 print("LinkML-Py loaded")
-#parse_dataset(Dataset("/home/mephisto/server_data/stray_scans/665518e46a", ), "./second/")
-#PointCloudsOnDisk("./second/").register() # .merge().filter().save("./second.pcd").display()
-# Currently register is returning an invalid pointer.
-#PointCloudsOnDisk("./second/").merge().filter().save("./second.pcd").display()
-
-#PointCloud("./merged_cloud.pcd").display()
 
 
-dataset = Dataset("/home/mephisto/server_data/stray_scans/0ba33d855b/")
-parse_dataset(dataset, "./clouds/", step=5)
 
-#PointCloudsInMemory("./one_room/").annotate("./yolov8x-seg.onnx",dataset)
+def chunks(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
 
-clouds = PointCloudsOnDisk("./clouds/").annotate("./yolov8x-seg.onnx",dataset)
-#clouds = PointCloudsOnDisk("./clouds/").register()
-#clouds = PointCloudsOnDisk("./clouds/").merge().filter().save("./CPH_office.pcd").display()
+dataset = Dataset("/home/mephisto/server_data/stray_scans/7092626a22/")
+parse_dataset(dataset, "./clouds/", step=4)
 
 
-#PointCloud("./CPH_office.pcd").display()
-#clouds = PointCloudsOnDisk("./clouds/").display()
+clouds = PointCloudsOnDisk("./clouds/")
+
+for idx, subset in enumerate(chunks(clouds, 1000)):
+    subset.annotate("./yolov8x-seg.onnx", dataset)
+    print(f"Annotated {idx+1}th subset of {len(clouds)/1000} subsets")
+
+clouds.register()
+
+cloud_t = clouds.merge().filter() # <-- There is an issue if a point cloud is freed.
+cloud = cloud_t.downsample(0.02).save("./Aarhus_office_downsampled.pcd")
+
+cloud.display()
+clouds.display()
 
 print("Done")

@@ -5,58 +5,50 @@
 #include <types/PointCloud.hh>
 #include <functions/progress_bar.hh>
 
-static linkml::PointCloud::Ptr filterPointCloud(linkml::PointCloud::Ptr cloud){
-
-    // Only keep highest confidence
-    ///////////////////////////////////////////////////////////////////////////////
-    size_t j = 0;
-    for (size_t k = 0; k < cloud->size(); k++){
-        if (cloud->at(k).confidence >= 2U){
-            cloud->at(j) = cloud->at(k);
-            j++;
-        }
-    }
-    cloud->resize(j);
-    cloud->width = j;
-    cloud->height = 1;
-    cloud->is_dense = false;
-
-    return cloud;
-}
 
 namespace linkml
 {
-    PointCloud::Ptr PointCloud::filter(){
-        return filterPointCloud(pcl::make_shared<PointCloud>(*this));
-    }
-
-
-    // TODO: Initilaise the timplate rather then the classes indevidually
-    // For an example see the annotation implementation
-    template<>
-    PointClouds<std::string>::Ptr PointClouds<std::string>::filter(){
+    PointCloud PointCloud::filter(){
 
         // Only keep highest confidence
         ///////////////////////////////////////////////////////////////////////////////
-        #pragma omp parallel for
-        for (size_t i = 0; i < data.size(); i++){
-            PointCloud(data[i]).filter()->save(data[i]);
+        size_t j = 0;
+        for (size_t k = 0; k < this->size(); k++){
+            if (this->at(k).confidence >= 2U){
+                this->at(j) = this->at(k);
+                j++;
+            }
         }
+        this->resize(j);
+        this->width = j;
+        this->height = 1;
+        this->is_dense = false;
 
-        return std::make_shared<PointClouds<std::string>>(*this);
-
+        return *this;
     }
 
-    template<>
-    PointClouds<PointCloud::Ptr>::Ptr PointClouds<PointCloud::Ptr>::filter(){
+    template <typename T>
+    PointClouds<T> PointClouds<T>::filter(){
 
         // Only keep highest confidence
         ///////////////////////////////////////////////////////////////////////////////
+        auto filter_bar = util::progress_bar(data.size(), "Filtering");
         #pragma omp parallel for
         for (size_t i = 0; i < data.size(); i++){
-            data[i] = filterPointCloud(data[i]);
+            if constexpr (std::is_same<T, std::string>::value){
+                PointCloud::load(data[i])->filter().save(data[i]);
+            } else {
+                data[i]->filter();
+            }
+            filter_bar.update();
         }
+        filter_bar.stop();
 
-        return pcl::make_shared<PointClouds<PointCloud::Ptr>>(*this);
+        return *this;
+
     }
+
+    template PointCloudsInMemory  PointCloudsInMemory::filter();
+    template PointCloudsOnDisk  PointCloudsOnDisk::filter();
+
 } // namespace linkml

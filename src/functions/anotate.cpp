@@ -34,7 +34,7 @@ static void draw_box(cv::Mat & img,  linkml::OutputParams const& param){
 namespace linkml
 {
     template<class T>
-    typename PointClouds<T>::Ptr PointClouds<T>::annotate(std::string yolo_path, std::optional<Dataset> & dataset){ 
+    PointClouds<T> PointClouds<T>::annotate(std::string yolo_path, std::optional<Dataset> & dataset){ 
 
 
         auto model = Yolov8Seg(yolo_path, true); // <- true for GPU
@@ -204,14 +204,12 @@ namespace linkml
 
         cv::destroyAllWindows();
 
-        if constexpr (std::is_same<T, std::string>::value){
-            return std::make_shared<PointClouds<T>>(*this);
-        } else {
-            return pcl::make_shared<PointClouds<T>>(*this);
-        }         
+        return *this;
+
+       
     }
 
-    template PointCloudsInMemory::Ptr  PointCloudsInMemory::annotate(std::string ,std::optional<Dataset> & );
-    template PointCloudsOnDisk::Ptr  PointCloudsOnDisk::annotate(std::string ,std::optional<Dataset> & );
+    template PointCloudsInMemory  PointCloudsInMemory::annotate(std::string ,std::optional<Dataset> & );
+    template PointCloudsOnDisk  PointCloudsOnDisk::annotate(std::string ,std::optional<Dataset> & );
 
 } // namespace linkml

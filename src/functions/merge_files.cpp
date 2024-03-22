@@ -8,6 +8,7 @@
 #include <pcl/gpu/octree/octree.hpp>
 #include <pcl/io/pcd_io.h>
 
+#include <functions/progress_bar.hh>
 
 #include <filesystem>
 #include <vector>
@@ -28,6 +29,8 @@ namespace linkml{
 
     template <typename T>
     PointCloud::Ptr merge_files(typename PointClouds<T>::iterator begin, typename PointClouds<T>::iterator end){
+
+        // TODO: Add optional progregress bar
 
         // If there is only one file, just load it and return
         if (std::distance(begin, end) == 1){
@@ -63,31 +66,23 @@ namespace linkml{
     }
 
 
-    // TODO: Initialise the template rather the implementing the cases indeviually
-    // See the annotioation mehtod for an example
-    template <>
-    PointCloud::Ptr PointCloudsOnDisk::merge(){
+    template <typename T>
+    PointCloud PointClouds<T>::merge(){
 
         PointCloud::Ptr cloud;
+
+        auto merge_bar = util::progress_bar(data.size(), "Merging");
         #pragma omp parallel
         {
             #pragma omp single
-                cloud = merge_files<std::string>(data.begin(), data.end());
+                cloud = merge_files<T>(data.begin(), data.end());
         }
-        return cloud;
+        merge_bar.stop();
+        return *cloud;
     }
 
-    template <>
-    PointCloud::Ptr PointCloudsInMemory::merge(){
+    template PointCloud PointCloudsInMemory::merge();
+    template PointCloud PointCloudsOnDisk::merge();
 
-        PointCloud::Ptr cloud;
-        #pragma omp parallel
-        {
-            #pragma omp single
-                cloud = merge_files<PointCloud::Ptr>(data.begin(), data.end());
-        }
-
-        return cloud;
-    }
 
 }

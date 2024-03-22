@@ -131,9 +131,11 @@ PYBIND11_MODULE(linkml_py, m) {
         })
         ;
  
+    // TODO: Capture standard out on all functions that use the progress bar
+    // https://pybind11.readthedocs.io/en/stable/advanced/pycpp/utilities.html#capturing-standard-output-from-ostream
 
     /// @brief PointCloud class
-    py::class_<linkml::PointCloud, std::shared_ptr<linkml::PointCloud>>(m, "PointCloud")
+    py::class_<linkml::PointCloud>(m, "PointCloud")
         .def(py::init<const std::string &>(), "Load a point cloud from disk"
             "path"_a)
         .def_static("load", &linkml::PointCloud::load, "Load a point cloud from disk"
@@ -337,13 +339,6 @@ PYBIND11_MODULE(linkml_py, m) {
         float dist ){return linkml::refine(cloud, clusters, tg::degree(angle), dist);}, 
         "cloud"_a, "clusters"_a, "angle_threashhold_degree"_a =25, "distance_threshhold"_a = 0.5);
     m.def("clustering", &linkml::clustering, "point_cloud"_a, "fit_plane_results"_a);
-    //m.def("read", &linkml::parse_input_files, "Parse a StrayScanner scan in to a point cloud"
-    //    "path"_a,
-    //    "start"_a = size_t(0),
-    //    "step"_a = size_t(5),
-    //    "n_frames"_a = size_t(0),
-    //    "inference"_a = true
-    //);
     m.def("region_growing", &linkml::region_growing, "Region growing"
         "Point cloud"_a,
         "minClusterSize"_a = 2*(1/0.02)*(1/0.02),
