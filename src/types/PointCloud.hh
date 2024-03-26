@@ -57,7 +57,6 @@ struct EIGEN_ALIGN16 PointT
       float data_c[4];
     };
     PCL_ADD_EIGEN_MAPS_RGB;
-    PCL_MAKE_ALIGNED_OPERATOR_NEW
 
 
     inline PointT (float _curvature = 0.f):
@@ -97,6 +96,7 @@ struct EIGEN_ALIGN16 PointT
         return os;
     }
     
+    PCL_MAKE_ALIGNED_OPERATOR_NEW
 };
 
 
@@ -203,14 +203,12 @@ namespace linkml{
         using pcl::PointCloud<PointT>::swap;
         using pcl::PointCloud<PointT>::clear;
 
-        using pcl::PointCloud<PointT>::makeShared;
-
-
-
-
         // Custom types
-        using Ptr = std::shared_ptr<PointCloud>;
-        using ConstPtr = std::shared_ptr<const PointCloud>;
+        using Ptr = pcl::shared_ptr<PointCloud>;
+        using ConstPtr = pcl::shared_ptr<const PointCloud>;
+
+        inline Ptr
+        makeShared () const { return Ptr (new PointCloud (*this)); }
 
 
         // Constructors
@@ -309,6 +307,16 @@ namespace linkml{
 
         /// @brief Annotate the point cloud.
         PointCloud annotate();
+
+        /// @brief Region growing, plane fitting
+        PointCloud region_growing(
+          int minClusterSize = 2*(1/0.02)*(1/0.02), // ca 2sqm in 2cm resolution of point cloud 
+          int numberOfNeighbours = 30, 
+          float smoothnessThreshold =  3.0 / 180.0 * M_PI,
+          float curvatureThreshold = 0.1
+        );
+
+
 
 
 
@@ -499,5 +507,6 @@ namespace linkml{
 
         }
 
+        PCL_MAKE_ALIGNED_OPERATOR_NEW
     };
 }

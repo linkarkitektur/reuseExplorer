@@ -1,3 +1,4 @@
+#include <types/PointCloud.hh>
 #include <functions/region_growing.hh>
 #include <functions/progress_bar.hh>
 #include <functions/polyscope.hh>
@@ -14,14 +15,14 @@
 
 
 
-linkml::PointCloud::Ptr linkml::region_growing(
-    linkml::PointCloud::Ptr cloud, 
+linkml::PointCloud linkml::PointCloud::region_growing(
     int minClusterSize, 
     int numberOfNeighbours, 
     float smoothnessThreshold, 
     float curvatureThreshold
     ){
 
+        PointCloud::Ptr cloud = this->makeShared();
         tg::aabb3 aabb =  cloud->get_bbox();
 
         // Region growing
@@ -94,6 +95,6 @@ linkml::PointCloud::Ptr linkml::region_growing(
         polyscope::display(*cloud);
         polyscope::myshow();
 
-        return cloud;
+        return *this;
 
 }

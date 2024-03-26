@@ -142,12 +142,17 @@ PYBIND11_MODULE(linkml_py, m) {
             "path"_a)
         .def("save", &linkml::PointCloud::save, "Save a point cloud to disk"
             "output_file"_a,
-            "binary"_a = true)
-        .def("filter", &linkml::PointCloud::filter, "Filter the point cloud")
-        .def("downsample", &linkml::PointCloud::downsample, "Downsample the point cloud" "leaf_size"_a=0.02)
+            "binary"_a = true, py::return_value_policy::reference_internal)
+        .def("filter", &linkml::PointCloud::filter, "Filter the point cloud", py::return_value_policy::reference_internal)
+        .def("downsample", &linkml::PointCloud::downsample, "Downsample the point cloud" "leaf_size"_a=0.02, py::return_value_policy::reference)
+        .def("region_growing", &linkml::PointCloud::region_growing, "Region growing"
+            "minClusterSize"_a = 2*(1/0.02)*(1/0.02),
+            "numberOfNeighbours"_a = 30,
+            "smoothnessThreshold"_a =  3.0 / 180.0 * M_PI,
+            "curvatureThreshold"_a = 0.1)
         .def("bbox", &linkml::PointCloud::get_bbox, "Get the bounding box of the point cloud")
         .def("display",&linkml::PointCloud::display, "Display the point cloud"
-            "name"_a = "Cloud")
+            "name"_a = "Cloud", py::return_value_policy::reference_internal)
         .def("__len__", &linkml::PointCloud::size)
         ;
 
@@ -157,11 +162,11 @@ PYBIND11_MODULE(linkml_py, m) {
             "path"_a)
         .def_static("load", &linkml::PointCloudsInMemory::load, "Load a point cloud from disk"
             "path"_a)
-        .def("filter", &linkml::PointCloudsInMemory::filter, "Filter the point cloud")
-        .def("register", &linkml::PointCloudsInMemory::register_clouds, "Register the point clouds")
+        .def("filter", &linkml::PointCloudsInMemory::filter, "Filter the point cloud", py::return_value_policy::reference_internal)
+        .def("register", &linkml::PointCloudsInMemory::register_clouds, "Register the point clouds", py::return_value_policy::reference_internal)
         .def("merge", &linkml::PointCloudsInMemory::merge, "Merge the point clouds")
-        .def("annotate", &linkml::PointCloudsInMemory::annotate, "Annotate the point clouds" "yolo_path"_a, "dataset"_a = py::none())
-        .def("display", &linkml::PointCloudsInMemory::display, "Display the point clouds" "show_clouds"_a = false)
+        .def("annotate", &linkml::PointCloudsInMemory::annotate, "Annotate the point clouds" "yolo_path"_a, "dataset"_a = py::none(), py::return_value_policy::reference_internal)
+        .def("display", &linkml::PointCloudsInMemory::display, "Display the point clouds" "show_clouds"_a = false, py::return_value_policy::reference_internal)
         .def("__getitem__", [](const linkml::PointCloudsInMemory &obj, std::size_t index) {
             return obj[index]; }, "Get a point cloud", "index"_a)
         .def("__getitem__", [](const linkml::PointCloudsInMemory &obj, py::slice slice) {
@@ -178,11 +183,11 @@ PYBIND11_MODULE(linkml_py, m) {
             "path"_a)
         .def_static("load", &linkml::PointCloudsOnDisk::load, "Load a point cloud from disk"
             "path"_a)
-        .def("filter", &linkml::PointCloudsOnDisk::filter, "Filter the point cloud")
-        .def("register", &linkml::PointCloudsOnDisk::register_clouds, "Register the point clouds")
+        .def("filter", &linkml::PointCloudsOnDisk::filter, "Filter the point cloud", py::return_value_policy::reference_internal)
+        .def("register", &linkml::PointCloudsOnDisk::register_clouds, "Register the point clouds", py::return_value_policy::reference_internal)
         .def("merge", &linkml::PointCloudsOnDisk::merge, "Merge the point clouds")
-        .def("annotate", &linkml::PointCloudsOnDisk::annotate, "Annotate the point clouds" "yolo_path"_a, "dataset"_a = py::none())
-        .def("display", &linkml::PointCloudsOnDisk::display, "Display the point clouds" "show_clouds"_a = false)
+        .def("annotate", &linkml::PointCloudsOnDisk::annotate, "Annotate the point clouds" "yolo_path"_a, "dataset"_a = py::none(), py::return_value_policy::reference_internal)
+        .def("display", &linkml::PointCloudsOnDisk::display, "Display the point clouds" "show_clouds"_a = false, py::return_value_policy::reference_internal)
         .def("__getitem__", [](const linkml::PointCloudsOnDisk &obj, std::size_t index) {
             return obj[index]; }, "Get a point cloud", "index"_a)
         .def("__getitem__", [](const linkml::PointCloudsOnDisk &obj, py::slice slice) {
@@ -339,11 +344,5 @@ PYBIND11_MODULE(linkml_py, m) {
         float dist ){return linkml::refine(cloud, clusters, tg::degree(angle), dist);}, 
         "cloud"_a, "clusters"_a, "angle_threashhold_degree"_a =25, "distance_threshhold"_a = 0.5);
     m.def("clustering", &linkml::clustering, "point_cloud"_a, "fit_plane_results"_a);
-    m.def("region_growing", &linkml::region_growing, "Region growing"
-        "Point cloud"_a,
-        "minClusterSize"_a = 2*(1/0.02)*(1/0.02),
-        "numberOfNeighbours"_a = 30,
-        "smoothnessThreshold"_a =  3.0 / 180.0 * M_PI,
-        "curvatureThreshold"_a = 0.1
-    );
+    
 } // PYBIND11_MODULE(linkml_py, m) 

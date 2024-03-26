@@ -10,7 +10,7 @@ namespace linkml
 
         auto octree_bar = util::progress_bar(1, "Building Octree");
         pcl::octree::OctreePointCloudPointVector<PointCloud::PointType> octree(leaf_size);
-        octree.setInputCloud((PointCloud::ConstPtr)this);
+        octree.setInputCloud(this->makeShared());
         octree.addPointsFromInputCloud();
         octree_bar.stop();
 
@@ -22,19 +22,10 @@ namespace linkml
             nodes.push_back(it);
         nodes_bar.stop();
 
-        PointCloud filtered_cloud = PointCloud();
-        filtered_cloud.resize(octree.getLeafCount());
         size_t leaf_count = octree.getLeafCount();
-
-
-        //#pragma omp parallel
-        //{
-        //    #pragma omp single
-        //    for (auto it = octree.leaf_depth_begin(), it_end = octree.leaf_depth_end(); it != it_end; ++it)
-        //        nodes.push_back(it);
-        //}
-
-
+        //PointCloud filtered_cloud = PointCloud();
+        PointCloud::Ptr filtered_cloud = PointCloud::Ptr(new PointCloud());
+        filtered_cloud->resize(leaf_count);
 
 
         
@@ -53,14 +44,14 @@ namespace linkml
                 boost::fusion::for_each (acc, pcl::detail::AddPoint<PointCloud::PointType> (point));
             }
 
-            boost::fusion::for_each (acc, pcl::detail::GetPoint< PointCloud::PointType> (filtered_cloud.at(i), indexVector.size()));
+            boost::fusion::for_each (acc, pcl::detail::GetPoint< PointCloud::PointType> (filtered_cloud->at(i), indexVector.size()));
             downsample_bar.update();
 
         }
         downsample_bar.stop();
 
 
-        return filtered_cloud;
+        return *filtered_cloud;
 
     }
 } // namespace linkml

@@ -7,7 +7,7 @@
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_representation.h>
-#include <pcl/segmentation/region_growing.h>
+//#include <pcl/segmentation/region_growing.h>
 
 #include <pcl/filters/filter.h>
 

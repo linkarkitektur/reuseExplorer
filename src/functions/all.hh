@@ -4,4 +4,3 @@
 #include <functions/fit_plane_thorugh_points.hh>
 #include <functions/parse_input_files.hh>
 #include <functions/polyscope.hh>
-#include <functions/region_growing.hh>

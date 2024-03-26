@@ -17,29 +17,31 @@ from linkml_py import *
 
 print("LinkML-Py loaded")
 
-
-
 def chunks(lst, n):
     """Yield successive n-sized chunks from lst."""
     for i in range(0, len(lst), n):
         yield lst[i:i + n]
 
-dataset = Dataset("/home/mephisto/server_data/stray_scans/7092626a22/")
-parse_dataset(dataset, "./clouds/", step=4)
+#dataset = Dataset("/home/mephisto/server_data/stray_scans/7092626a22/")
+#parse_dataset(dataset, "./clouds/", step=4)
 
 
-clouds = PointCloudsOnDisk("./clouds/")
+#clouds = PointCloudsOnDisk("./one_room/")
+#clouds = PointCloudsInMemory("./one_room/")
 
-for idx, subset in enumerate(chunks(clouds, 1000)):
-    subset.annotate("./yolov8x-seg.onnx", dataset)
-    print(f"Annotated {idx+1}th subset of {len(clouds)/1000} subsets")
 
-clouds.register()
+#for idx, subset in enumerate(chunks(clouds, 1000)):
+#    subset.annotate("./yolov8x-seg.onnx", dataset)
+#    print(f"Annotated {idx+1}th subset of {len(clouds)/1000} subsets")
 
-cloud_t = clouds.merge().filter() # <-- There is an issue if a point cloud is freed.
-cloud = cloud_t.downsample(0.02).save("./Aarhus_office_downsampled.pcd")
+#clouds.register()
+#cloud = clouds.merge().downsample(0.02)
 
-cloud.display()
-clouds.display()
+
+PointCloud("./one_room_downsampled.pcd").region_growing(
+    5000, 30, 0.01235987755982988, 0.1
+).save("./one_room_downsampled.pcd")
+
+#clouds.display()
 
 print("Done")
