@@ -159,6 +159,7 @@ PYBIND11_MODULE(linkml_py, m) {
             "min_cluster_size"_a = 100,
             "max_cluster_size"_a = std::numeric_limits<pcl::uindex_t>::max(),
             py::return_value_policy::reference_internal)
+        .def("soldify", &linkml::PointCloud::solidify, "Solidify the point cloud", py::return_value_policy::reference_internal)
         .def("bbox", &linkml::PointCloud::get_bbox, "Get the bounding box of the point cloud")
         .def("display",&linkml::PointCloud::display, "Display the point cloud"
             "name"_a = "Cloud", py::return_value_policy::reference_internal)
