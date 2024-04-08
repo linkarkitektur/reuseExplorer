@@ -37,9 +37,10 @@ def chunks(lst, n):
 #clouds.register()
 #cloud = clouds.merge().downsample(0.02)
 
-path = "./CPH_office_downsampled.pcd"
-#path = "./one_room_downsampled.pcd"
-PointCloud(path).clustering().save(path).display()
+#path = "./CPH_office_downsampled.pcd"
+#path = "./Aarhus_office_downsampled.pcd"
+path = "./one_room_downsampled.pcd"
+PointCloud(path).solidify()#.save(path).display()
 
 #clouds.display()
 

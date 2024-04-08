@@ -324,6 +324,7 @@ namespace linkml{
           pcl::uindex_t min_cluster_size = 100,
           pcl::uindex_t max_cluster_size =  std::numeric_limits<pcl::uindex_t>::max()
         );
+        PointCloud solidify();
 
 
 
