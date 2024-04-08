@@ -154,6 +154,7 @@ PYBIND11_MODULE(linkml_py, m) {
             "interval_0"_a = 16, 
             "interval_factor"_a = 1.5           
             )
+        .def("clustering", &linkml::PointCloud::clustering, "Cluster the sematic labels in to instances", py::return_value_policy::reference_internal)
         .def("bbox", &linkml::PointCloud::get_bbox, "Get the bounding box of the point cloud")
         .def("display",&linkml::PointCloud::display, "Display the point cloud"
             "name"_a = "Cloud", py::return_value_policy::reference_internal)

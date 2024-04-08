@@ -146,6 +146,9 @@ namespace polyscope  {
 
         auto instance_lables = std::vector<int>();
         instance_lables.resize(cloud.points.size());
+
+        auto instance_color = std::vector<tg::color3>();
+        instance_color.resize(cloud.points.size());
         
         auto normals = std::vector<std::array<float, 3>>();
         normals.resize(cloud.points.size());
@@ -200,6 +203,7 @@ namespace polyscope  {
             sematic_lables[i] = cloud.points[i].semantic;
             sematic_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle(cloud.points[i].semantic));
             instance_lables[i] = cloud.points[i].instance;
+            instance_color[i] = linkml::get_color_forom_angle(linkml::sample_circle(cloud.points[i].instance));
 
             importance[i] = (cloud.points[i].confidence+0.01f)
                                 *
@@ -221,6 +225,7 @@ namespace polyscope  {
         pcd->addScalarQuantity("Lables", lables);
         pcd->addScalarQuantity("Sematic Lables", sematic_lables);
         pcd->addScalarQuantity("Instance Lables", instance_lables);
+        pcd->addColorQuantity("Instance Color", instance_color);
         pcd->addScalarQuantity("Importance", importance );
 
         pcd->addColorQuantity("Confidence Colors", confideces_colors);

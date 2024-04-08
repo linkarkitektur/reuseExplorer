@@ -319,7 +319,7 @@ namespace linkml{
           float interval_factor = 1.5
         );
 
-
+        PointCloud clustering();
 
 
 
@@ -397,6 +397,9 @@ namespace linkml{
 
           auto instance_lables = std::vector<int>();
           instance_lables.resize(this->points.size());
+
+          auto instance_colors = std::vector<tg::color3>();
+          instance_colors.resize(this->points.size());
         
           auto normals = std::vector<std::array<float, 3>>();
           normals.resize(this->points.size());
@@ -453,7 +456,7 @@ namespace linkml{
               sematic_lables[i] = this->points[i].semantic;
               sematic_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle(this->points[i].semantic));
               instance_lables[i] = this->points[i].instance;
-
+              instance_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle(this->points[i].instance));
 
           }
 
@@ -499,6 +502,7 @@ namespace linkml{
           pcd->addColorQuantity("Confidence Colors", confideces_colors);
           pcd->addColorQuantity("Lables Colors", lables_colors);
           pcd->addColorQuantity("Sematic Colors", sematic_colors);
+          pcd->addColorQuantity("Instance Colors", instance_colors);
 
           pcd->setPointRadiusQuantity("Importance", true);
 
