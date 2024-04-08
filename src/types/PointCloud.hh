@@ -310,10 +310,13 @@ namespace linkml{
 
         /// @brief Region growing, plane fitting
         PointCloud region_growing(
+          float angle_threshold = 0.96592583, // cos(25°)
+          float plane_dist_threshold = 0.1,
           int minClusterSize = 2*(1/0.02)*(1/0.02), // ca 2sqm in 2cm resolution of point cloud 
-          int numberOfNeighbours = 30, 
-          float smoothnessThreshold =  3.0 / 180.0 * M_PI,
-          float curvatureThreshold = 0.1
+          float early_stop = 0.3,
+          float radius = 0.1,
+          float interval_0 = 16, 
+          float interval_factor = 1.5
         );
 
 

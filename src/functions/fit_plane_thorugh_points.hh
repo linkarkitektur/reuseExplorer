@@ -1,6 +1,7 @@
 #pragma once
 
 #include <typed-geometry/tg.hh>
+#include "../types/Plane.hh"
 
 
 #include <pcl/common/centroid.h>

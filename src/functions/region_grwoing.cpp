@@ -1,7 +1,6 @@
 #include <types/PointCloud.hh>
 #include <functions/region_growing.hh>
 #include <functions/progress_bar.hh>
-#include <functions/polyscope.hh>
 #include <functions/fit_plane_thorugh_points.hh>
 
 #include <pcl/segmentation/region_growing.h>
@@ -25,7 +24,6 @@
 #include <typed-geometry/tg.hh>
 
 #include <tbb/parallel_sort.h>
-#include <polyscope/polyscope.h>
 
 
 // Custom reduction function for std::unordered_set
@@ -39,20 +37,16 @@ void merge_sets(std::unordered_set<int>& lhs, const std::unordered_set<int>& rhs
     initializer(omp_priv = std::unordered_set<int>())
 
 linkml::PointCloud linkml::PointCloud::region_growing(
+    float angle_threshold, // cos(25°)
+    float plane_dist_threshold,
     int minClusterSize, 
-    int numberOfNeighbours, 
-    float smoothnessThreshold, 
-    float curvatureThreshold
+    float early_stop,
+    float radius,
+    float interval_0, 
+    float interval_factor
     ){
-        //cloud::PointCloud, 
-        //n::Integer; 
-        //max_tries_per_region = 100, 
-        //min_size = 100,  
-        //α = 5°, 
-        //ϵ = 0.1, 
-        float interval_0 = 16; 
-        float interval_factor = 1.5;
 
+        // FIXME: This is bad, as makeShared will create a new copy of the point cloud
         PointCloud::Ptr cloud = this->makeShared();
 
         auto clusters = std::vector<std::unordered_set<int>>();
@@ -81,19 +75,9 @@ linkml::PointCloud linkml::PointCloud::region_growing(
         size_t total = indices.size();
 
 
-        // TODO: Remove when done
-        polyscope::myinit();
-        tg::aabb3 aabb =  cloud->get_bbox();
-        auto pcd = polyscope::registerPointCloud("cloud", cloud->points);
-        std::vector<float> vals(cloud->size(), 0);
-        auto color = pcd->addScalarQuantity("plane",vals);
-        
-        
-        
         auto progress = util::progress_bar(indices.size(), "Region Growing");
-        // FIXME: Chage 0.3 to a parameter
         int plane_idx = 1;
-        while (indices.size() > 0 && indices.size() > total * 0.3){ 
+        while (indices.size() > 0 && indices.size() > total * early_stop){ 
 
             // Select seed
             int seed = indices.back();
@@ -113,14 +97,7 @@ linkml::PointCloud linkml::PointCloud::region_growing(
             // Plane
             Eigen::Vector3f plane_normal = cloud->at(seed).getNormalVector3fMap();
             Eigen::Vector3f plane_origin = cloud->at(seed).getVector3fMap();
-            Plane p = Plane(
-                plane_normal.x(), 
-                plane_normal.y(), 
-                plane_normal.z(), 
-                0, 
-                plane_origin.x(), 
-                plane_origin.y(), 
-                plane_origin.z());
+
 
 
             next_update = interval_0;
@@ -133,12 +110,22 @@ linkml::PointCloud linkml::PointCloud::region_growing(
                 for (size_t i = 0; i < front.size(); ++i){
                     int current = front[i];
 
+                    // Find neighbors
                     std::vector<float> nn_dists;
                     std::vector<int> nn_indices;
 
-                    // FIXME: Change radius
-                    tree.radiusSearch(current, 0.1, nn_indices, nn_dists);
+                    tree.radiusSearch(current, radius, nn_indices, nn_dists);
 
+                    // Filter neighbors that are already part of other clusters
+                    std::vector<int> temp;
+                    temp.reserve(nn_indices.size());
+                    std::copy_if (nn_indices.begin(), nn_indices.end(), std::back_inserter(temp),
+                        [&](int i){
+                            return index_map.find(i) != index_map.end();
+                        } );
+                    std::swap(nn_indices, temp);
+
+                    // Compute distance to plane and angle to plane
                     auto plane_dist = std::vector<float>(nn_indices.size());
                     auto angles = std::vector<float>(nn_indices.size());
 
@@ -162,11 +149,9 @@ linkml::PointCloud linkml::PointCloud::region_growing(
                     // Filter points
                     for (size_t i = 0; i < nn_indices.size(); ++i){
 
-                        // FIXME: Change distance
-                        if (plane_dist[i] > 0.1) 
+                        if (plane_dist[i] > plane_dist_threshold) 
                             continue;
-                        // FIXME: Change angle
-                        if (angles[i] < 0.96592583 /*tg::cos(tg::angle::from_degree(25).radians())*/ )
+                        if (angles[i] < angle_threshold)
                             continue;
 
                         results.insert(nn_indices[i]);
@@ -193,42 +178,22 @@ linkml::PointCloud linkml::PointCloud::region_growing(
 
                     // TODO: Replace with pcl native implementation
                     // This should make it easier to port the code
-                    /*Plane*/p = fit_plane_thorugh_points(cloud, indices_local);
+                    Plane p = fit_plane_thorugh_points(cloud, indices_local);
 
                     plane_normal = {p.normal.x, p.normal.y, p.normal.z};
                     plane_origin = {p.origin.x, p.origin.y, p.origin.z};
 
                     next_update *= interval_factor;
                 }
-                
-                // Update Color
-                color->values.ensureHostBufferAllocated();
-                for (auto i : cluster_indices)
-                    color->values.data[i] = plane_idx;
-                color->values.markHostBufferUpdated();
-                color->setMapRange({0, plane_idx});
-
-                
-                polyscope::display(p, aabb, "plane");
-                polyscope::frameTick();
             }
 
 
 
             // Check cluster size
             if (cluster_indices.size() < minClusterSize){
-                for (auto i : cluster_indices)
-                    color->values.data[i] = 0;
                 progress.update(1);
                 continue;
             }
-
-            // Update Color
-            for (auto i : cluster_indices)
-                color->values.data[i] = plane_idx;
-            
-
-            //polyscope::frameTick();
 
             // Remove cluster from indices
             // TODO: See if parralelization is possible
@@ -255,7 +220,7 @@ linkml::PointCloud linkml::PointCloud::region_growing(
 
             progress.update(cluster_indices.size());
 
-            polyscope::show();
+            //polyscope::frameTick();
             plane_idx++;
         }
         progress.stop();
@@ -269,32 +234,7 @@ linkml::PointCloud linkml::PointCloud::region_growing(
         }
 
         
-
-
-        //// Display planes
-        //for (size_t i = 0; i < clusters.size(); ++i){
-        //    Eigen::Vector3f p;
-        //    Eigen::Vector3f origin = {0,0,0};
-        //    pcl::geometry::project(origin, plane_origins[i], plane_normals[i], p);
-        //    // Point to point distance
-        //    Eigen::Vector3f diff = origin - p;
-        //    float dist = diff.norm();
-        //    Plane plane = Plane(
-        //        plane_normals[i].x(), 
-        //        plane_normals[i].y(), 
-        //        plane_normals[i].z(), 
-        //        -dist, 
-        //        plane_origins[i].x(), 
-        //        plane_origins[i].y(), 
-        //        plane_origins[i].z());
-        //    polyscope::display(plane, aabb, "plane_" + std::to_string(i));
-        //}
-
-
-        polyscope::myshow();
-
-
-        return *this;
+        return *cloud;
 
 
 }

@@ -39,9 +39,7 @@ def chunks(lst, n):
 
 #path = "./CPH_office_downsampled.pcd"
 path = "./one_room_downsampled.pcd"
-PointCloud(path).region_growing(
-    5000, 30, 0.01235987755982988, 0.1
-).save(path).display()
+PointCloud(path).save(path).display()
 
 #clouds.display()
 
