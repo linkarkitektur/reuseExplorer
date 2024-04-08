@@ -319,7 +319,11 @@ namespace linkml{
           float interval_factor = 1.5
         );
 
-        PointCloud clustering();
+        PointCloud clustering(
+          double cluster_tolerance = 0.02, // 2cm
+          pcl::uindex_t min_cluster_size = 100,
+          pcl::uindex_t max_cluster_size =  std::numeric_limits<pcl::uindex_t>::max()
+        );
 
 
 

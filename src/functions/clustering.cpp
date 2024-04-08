@@ -33,7 +33,11 @@ private:
     std::uint8_t value_;
 };
 
-linkml::PointCloud linkml::PointCloud::clustering(){
+linkml::PointCloud linkml::PointCloud::clustering(
+    double cluster_tolerance,
+    pcl::uindex_t min_cluster_size,
+    pcl::uindex_t max_cluster_size
+){
 
     using Filter = pcl::experimental::advanced::FunctorFilter<PointCloud::PointType, MatchCondition<PointCloud::PointType>>;
 
@@ -48,7 +52,6 @@ linkml::PointCloud linkml::PointCloud::clustering(){
     lables.erase(0U); //Do not cluster the unlabeled points
 
     std::vector<int> lables_vec(lables.begin(), lables.end());
-    
 
     pcl::search::KdTree<PointCloud::PointType>::Ptr tree (new pcl::search::KdTree<PointCloud::PointType>);
     tree->setInputCloud (cloud);
@@ -65,9 +68,9 @@ linkml::PointCloud linkml::PointCloud::clustering(){
 
         std::vector<pcl::PointIndices> cluster_indices;
         pcl::EuclideanClusterExtraction<PointCloud::PointType> ec;
-        ec.setClusterTolerance (0.02); // 2cm
-        ec.setMinClusterSize (100);
-        //ec.setMaxClusterSize (25000);
+        ec.setClusterTolerance (cluster_tolerance); // 2cm
+        ec.setMinClusterSize (min_cluster_size);
+        ec.setMaxClusterSize (max_cluster_size);
         ec.setSearchMethod (tree);
         ec.setInputCloud (cloud);
         ec.setIndices(points);
