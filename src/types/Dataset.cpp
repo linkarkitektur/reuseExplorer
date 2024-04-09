@@ -234,6 +234,7 @@ Dataset::Dataset(const std::filesystem::path & path, const std::initializer_list
                     std::filesystem::directory_iterator(path / "depth"), 
                     std::filesystem::directory_iterator(), std::back_inserter(_depth_paths), 
                     [](const auto& entry){return entry.path();});
+                std::sort(_depth_paths.begin(), _depth_paths.end());
                 _fields.insert(field);
                 break;
 
@@ -245,6 +246,7 @@ Dataset::Dataset(const std::filesystem::path & path, const std::initializer_list
                     std::filesystem::directory_iterator(path / "confidence"), 
                     std::filesystem::directory_iterator(), std::back_inserter(_confidence_paths), 
                     [](const auto& entry){return entry.path();});
+                std::sort(_confidence_paths.begin(), _confidence_paths.end());
                 _fields.insert(field);
                 break;
 
