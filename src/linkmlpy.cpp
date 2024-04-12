@@ -159,7 +159,7 @@ PYBIND11_MODULE(linkml_py, m) {
             "min_cluster_size"_a = 100,
             "max_cluster_size"_a = std::numeric_limits<pcl::uindex_t>::max(),
             py::return_value_policy::reference_internal)
-        .def("soldify", &linkml::PointCloud::solidify, "Solidify the point cloud", py::return_value_policy::reference_internal)
+        .def("solidify", &linkml::PointCloud::solidify, "Solidify the point cloud", py::return_value_policy::reference_internal)
         .def("bbox", &linkml::PointCloud::get_bbox, "Get the bounding box of the point cloud")
         .def("display",&linkml::PointCloud::display, "Display the point cloud"
             "name"_a = "Cloud", py::return_value_policy::reference_internal)
@@ -315,6 +315,6 @@ PYBIND11_MODULE(linkml_py, m) {
         float angle, 
         float dist ){return linkml::refine(cloud, clusters, tg::degree(angle), dist);}, 
         "cloud"_a, "clusters"_a, "angle_threashhold_degree"_a =25, "distance_threshhold"_a = 0.5);
-    m.def("clustering", &linkml::clustering, "point_cloud"_a, "fit_plane_results"_a);
+    //m.def("clustering", &linkml::clustering, "point_cloud"_a, "fit_plane_results"_a);
     
 } // PYBIND11_MODULE(linkml_py, m) 

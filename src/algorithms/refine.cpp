@@ -151,6 +151,7 @@ namespace linkml{
             pbar.update(1+to_be_deleted.size());
 
         }
+        pbar.stop();
 
         return indecies;
             

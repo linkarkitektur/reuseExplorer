@@ -33,7 +33,7 @@ typedef Alpha_shape_2::Alpha_shape_vertices_iterator        Alpha_shape_vertices
 typedef Alpha_shape_2::Finite_faces_iterator                Finite_faces_iterator;
 
 template <class OutputIterator>
-void alpha_vertecies( const Alpha_shape_2& A, OutputIterator out)
+static void alpha_vertecies( const Alpha_shape_2& A, OutputIterator out)
 {
   Alpha_shape_vertices_iterator it = A.alpha_shape_vertices_begin(),
                                 end = A.alpha_shape_vertices_end();
@@ -47,7 +47,7 @@ void alpha_vertecies( const Alpha_shape_2& A, OutputIterator out)
 }
 
 template <class OutputIterator>
-void alpha_indecies( const Alpha_shape_2& A, OutputIterator out, std::map<Point, std::size_t> const & pointIndexMap) {
+static void alpha_indecies( const Alpha_shape_2& A, OutputIterator out, std::map<Point, std::size_t> const & pointIndexMap) {
   Alpha_shape_vertices_iterator it = A.alpha_shape_vertices_begin(),
                                 end = A.alpha_shape_vertices_end();
     for( ; it!=end; ++it){
@@ -59,7 +59,7 @@ namespace linkml {
 
     // Reads a list of points and returns a list of segments
     // corresponding to the Alpha shape.
-    std::vector<size_t> alpha_shape(std::vector<tg::pos2> points_in)
+    static std::vector<size_t> alpha_shape(std::vector<tg::pos2> points_in)
     {
         std::vector<Point> points;
         for (auto & p : points_in)
