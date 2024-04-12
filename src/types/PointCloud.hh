@@ -82,7 +82,7 @@ struct EIGEN_ALIGN16 PointT
       curvature = _curvature;
     }
 
-    inline tg::pos3 getPos () const { return (tg::pos3(x, y, x)); }
+    inline tg::pos3 getPos () const { return (tg::pos3(x, y, z)); }
     inline tg::color3 getColor () const { return (tg::color3(r, g, b)); }
     inline tg::vec3 getNormal () const { return (tg::vec3(normal_x, normal_y, normal_z)); }
     friend std::ostream& operator<< (std::ostream& os, const PointT& p){
