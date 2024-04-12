@@ -32,7 +32,7 @@ public:
 /// @param atol Absolute tolerance
 /// @return 
 template <class ScalarT>
-bool sparse_allclose(Eigen::SparseMatrix<ScalarT> a, Eigen::SparseMatrix<ScalarT> b, double rtol=1e-5, double atol=1e-8){
+static bool sparse_allclose(Eigen::SparseMatrix<ScalarT> a, Eigen::SparseMatrix<ScalarT> b, double rtol=1e-5, double atol=1e-8){
 
     auto max = std::numeric_limits<ScalarT>::min();
 
@@ -65,7 +65,7 @@ bool sparse_allclose(Eigen::SparseMatrix<ScalarT> a, Eigen::SparseMatrix<ScalarT
 /// @param matrix The matrix to be normalized
 /// @return The normalized matrix
 template <class ScalarT>
-Eigen::SparseMatrix<ScalarT> normalize(Eigen::SparseMatrix<ScalarT> matrix){
+static Eigen::SparseMatrix<ScalarT> normalize(Eigen::SparseMatrix<ScalarT> matrix){
 
     // normalize each column
 
@@ -90,7 +90,7 @@ Eigen::SparseMatrix<ScalarT> normalize(Eigen::SparseMatrix<ScalarT> matrix){
 /// @param power Cluster inflation parameter
 /// @return The inflated matrix
 template <class ScalarT>
-Eigen::SparseMatrix<ScalarT> inflate(Eigen::SparseMatrix<ScalarT> matrix, double power){
+static Eigen::SparseMatrix<ScalarT> inflate(Eigen::SparseMatrix<ScalarT> matrix, double power){
 
     // raise the matrix to the given power
     for (int k = 0; k < matrix.outerSize(); ++k){
@@ -109,7 +109,7 @@ Eigen::SparseMatrix<ScalarT> inflate(Eigen::SparseMatrix<ScalarT> matrix, double
 /// @param power Cluster expansion parameter
 /// @return The expanded matrix
 template <class ScalarT>
-Eigen::SparseMatrix<ScalarT> expand(Eigen::SparseMatrix<ScalarT> matrix, int power){
+static Eigen::SparseMatrix<ScalarT> expand(Eigen::SparseMatrix<ScalarT> matrix, int power){
 
     for (int i=0; i < power - 1; i++)
         matrix = matrix * matrix;
@@ -123,7 +123,7 @@ Eigen::SparseMatrix<ScalarT> expand(Eigen::SparseMatrix<ScalarT> matrix, int pow
 /// @param loop_value Value to use for self-loops
 /// @return The matrix with self-loops
 template <class ScalarT>
-Eigen::SparseMatrix<ScalarT> add_self_loops(Eigen::SparseMatrix<ScalarT> matrix, int loop_value){
+static Eigen::SparseMatrix<ScalarT> add_self_loops(Eigen::SparseMatrix<ScalarT> matrix, int loop_value){
 
     assert( matrix.cols() == matrix.rows() && "Error, matrix is not square");
 
@@ -142,7 +142,7 @@ Eigen::SparseMatrix<ScalarT> add_self_loops(Eigen::SparseMatrix<ScalarT> matrix,
 /// @param threshold The value below which edges will be removed
 /// @return  The pruned matrix
 template <class ScalarT>
-Eigen::SparseMatrix<ScalarT> prune(Eigen::SparseMatrix<ScalarT> matrix, ScalarT threshold){
+static Eigen::SparseMatrix<ScalarT> prune(Eigen::SparseMatrix<ScalarT> matrix, ScalarT threshold){
 
     Eigen::SparseMatrix<ScalarT> pruned = Eigen::SparseMatrix<ScalarT>(matrix);
 
@@ -185,7 +185,7 @@ Eigen::SparseMatrix<ScalarT> prune(Eigen::SparseMatrix<ScalarT> matrix, ScalarT 
 /// @param matrix2 The matrix to compare with matrix1
 /// @return True if matrix1 and matrix2 approximately equal
 template <class ScalarT>
-bool converged(Eigen::SparseMatrix<ScalarT> matrix1, Eigen::SparseMatrix<ScalarT> matrix2){
+static bool converged(Eigen::SparseMatrix<ScalarT> matrix1, Eigen::SparseMatrix<ScalarT> matrix2){
 
     return sparse_allclose(matrix1, matrix2);
 
@@ -198,7 +198,7 @@ bool converged(Eigen::SparseMatrix<ScalarT> matrix1, Eigen::SparseMatrix<ScalarT
 /// @param inflation Cluster inflation factor
 /// @return 
 template <class ScalarT>
-Eigen::SparseMatrix<ScalarT> iterate(Eigen::SparseMatrix<ScalarT> matrix, int expansion, double inflation){
+static Eigen::SparseMatrix<ScalarT> iterate(Eigen::SparseMatrix<ScalarT> matrix, int expansion, double inflation){
 
     // Expansion
     matrix = expand(matrix, expansion);
@@ -214,7 +214,7 @@ Eigen::SparseMatrix<ScalarT> iterate(Eigen::SparseMatrix<ScalarT> matrix, int ex
 /// @param matrix The matrix produced by the MCL algorithm
 /// @return A list of tuples where each tuple represents a cluster and contains the indices of the nodes belonging to the cluster
 template <class ScalarT>
-std::set<std::vector<size_t>> get_clusters(Eigen::SparseMatrix<ScalarT> matrix){
+static std::set<std::vector<size_t>> get_clusters(Eigen::SparseMatrix<ScalarT> matrix){
 
     // get the attractors - non-zero elements of the matrix diagonal
     auto attractors = std::vector<size_t>();
@@ -251,7 +251,7 @@ std::set<std::vector<size_t>> get_clusters(Eigen::SparseMatrix<ScalarT> matrix){
 /// @param verbose Print extra information to the console
 /// @return The final matrix
 template <class ScalarT>
-Eigen::SparseMatrix<ScalarT> run_mcl(Eigen::SparseMatrix<ScalarT> matrix, int expansion=2, double inflation=2, int loop_value=1,
+static Eigen::SparseMatrix<ScalarT> run_mcl(Eigen::SparseMatrix<ScalarT> matrix, int expansion=2, double inflation=2, int loop_value=1,
             int iterations=100, ScalarT pruning_threshold=0.001, int pruning_frequency=1,
             int convergence_check_frequency=1, bool verbose=false){
 

@@ -202,7 +202,7 @@ namespace linkml
         outputs.clear();
         input_images.clear(); 
 
-        cv::destroyAllWindows();
+        //cv::destroyAllWindows();
 
         return *this;
 

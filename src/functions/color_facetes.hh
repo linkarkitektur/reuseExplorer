@@ -13,7 +13,7 @@
 #include <polymesh/algorithms/edge_split.hh>
 
 template <typename T>
-std::size_t hashVector(const std::vector<T>& vec) {
+static std::size_t hashVector(const std::vector<T>& vec) {
   std::size_t seed = vec.size();
   for(auto x : vec) {
     x = ((x >> 16) ^ x) * 0x45d9f3b;
@@ -27,7 +27,7 @@ std::size_t hashVector(const std::vector<T>& vec) {
 
 namespace linkml{
 
-    void color_facets(linkml::CellComplex & cw, std::vector<PlanarPointSet> const & clusters){
+    static void color_facets(linkml::CellComplex & cw, std::vector<PlanarPointSet> const & clusters){
 
         const std::vector<int> default_id(clusters.size()+1, 0);
         auto facets_vec =  pm::face_attribute<std::vector<int>>(cw, default_id);
@@ -64,7 +64,7 @@ namespace linkml{
      * This map is used to store cell complex information, where each key represents a cell ID
      * and the associated vector contains the indices of points belonging to that cell.
      */
-    std::map<size_t, std::vector<int>> make_cw(PointCloud::ConstPtr cloud,  std::vector<PlanarPointSet> const & clusters ) {
+    static std::map<size_t, std::vector<int>> make_cw(PointCloud::ConstPtr cloud,  std::vector<PlanarPointSet> const & clusters ) {
 
         auto cell_map = std::map<size_t, std::vector<int>>();
         const std::vector<int> default_id(clusters.size()+1, 0);
@@ -101,8 +101,10 @@ namespace linkml{
 
             #pragma omp critical
             cell_map[id].push_back(i);
-            bar_create_cw.update(i);
+            bar_create_cw.update();
         }
+
+        bar_create_cw.stop();
 
 
         return cell_map;

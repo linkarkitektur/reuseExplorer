@@ -238,22 +238,27 @@ namespace polyscope  {
     }
     static void display(const Surface_mesh & mesh, std::string name = "Mesh"){
 
-        std::vector<std::array<uint32_t,3>> faces;
+        std::vector<std::array<size_t,3>> faces;
         std::vector<std::array<double,  3>> vertecies;
 
+        std::unordered_map<Surface_mesh::Vertex_index, size_t> index_map;
+
+        size_t i = 0;
         for (auto & idx: mesh.vertices()){
             auto p = mesh.point(idx);
             vertecies.push_back({p.x(), p.y(), p.z()});
+            index_map[idx] = i;
+            i++;
         }
         for (auto & face_index: mesh.faces()){
 
             CGAL::Vertex_around_face_circulator<Surface_mesh> vcirc(mesh.halfedge(face_index), mesh), done(vcirc);
-            std::vector<uint32_t> indices;
+            std::vector<Surface_mesh::Vertex_index> indices;
             do {
                 indices.push_back(*vcirc++);
             } while (vcirc != done);
 
-            faces.push_back({indices[0], indices[1], indices[2]});
+            faces.push_back({index_map[indices[0]], index_map[indices[1]], index_map[indices[2]]});
         }
 
         polyscope::registerSurfaceMesh(name, vertecies, faces);

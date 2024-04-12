@@ -75,8 +75,7 @@ linkml::PointCloud linkml::PointCloud::region_growing(
         size_t total = indices.size();
 
 
-        auto progress = util::progress_bar(indices.size(), "Region Growing");
-        int plane_idx = 1;
+        auto progress = util::progress_bar(total, "Region Growing");
         while (indices.size() > 0 && indices.size() > total * early_stop){ 
 
             // Select seed
@@ -119,6 +118,7 @@ linkml::PointCloud linkml::PointCloud::region_growing(
                     // Filter neighbors that are already part of other clusters
                     std::vector<int> temp;
                     temp.reserve(nn_indices.size());
+                    // TODO: Find better way to filter
                     std::copy_if (nn_indices.begin(), nn_indices.end(), std::back_inserter(temp),
                         [&](int i){
                             return index_map.find(i) != index_map.end();
@@ -164,6 +164,8 @@ linkml::PointCloud linkml::PointCloud::region_growing(
                 // TODO: Maybe use a second set and parallelize
                 front.clear();
                 for (auto i : results){
+
+                    //FIXME: This is beeing added to as set and will always be unique
                     if (cluster_indices.find(i) != cluster_indices.end())
                         continue;
 
@@ -220,8 +222,6 @@ linkml::PointCloud linkml::PointCloud::region_growing(
 
             progress.update(cluster_indices.size());
 
-            //polyscope::frameTick();
-            plane_idx++;
         }
         progress.stop();
         
