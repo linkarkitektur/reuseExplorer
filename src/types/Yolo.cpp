@@ -10,7 +10,7 @@ namespace linkml {
     template <>
     OutputParams OutputParams::Rotate<cv::RotateFlags::ROTATE_90_CLOCKWISE>(cv::Size size) const {
         OutputParams result;
-        if(valid){
+        if(!valid){
             // Skip rotating if the result is invalid
             return result;
         }
@@ -33,7 +33,7 @@ namespace linkml {
     template <>
     OutputParams OutputParams::Rotate<cv::RotateFlags::ROTATE_90_COUNTERCLOCKWISE>(cv::Size size) const {
         OutputParams result;
-        if(valid){
+        if(!valid){
             // Skip rotating if the result is invalid
             return result;
         }
@@ -56,7 +56,7 @@ namespace linkml {
     template <>
     OutputParams OutputParams::Rotate<cv::RotateFlags::ROTATE_180>(cv::Size size) const {
         OutputParams result;
-        if (valid) {
+        if (!valid) {
             // Skip rotating if the result is invalid
             return result;
         }
