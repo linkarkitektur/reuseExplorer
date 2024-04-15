@@ -37,10 +37,9 @@ def chunks(lst, n):
 #clouds.register()
 #cloud = clouds.merge().downsample(0.02)
 
-
-PointCloud("./one_room_downsampled.pcd").region_growing(
-    5000, 30, 0.01235987755982988, 0.1
-).save("./one_room_downsampled.pcd")
+#path = "./CPH_office_downsampled.pcd"
+path = "./one_room_downsampled.pcd"
+PointCloud(path).save(path).display()
 
 #clouds.display()
 

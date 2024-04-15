@@ -146,10 +146,14 @@ PYBIND11_MODULE(linkml_py, m) {
         .def("filter", &linkml::PointCloud::filter, "Filter the point cloud", py::return_value_policy::reference_internal)
         .def("downsample", &linkml::PointCloud::downsample, "Downsample the point cloud" "leaf_size"_a=0.02, py::return_value_policy::reference)
         .def("region_growing", &linkml::PointCloud::region_growing, "Region growing"
+            "angle_threshold"_a = 0.96592583, // cos(25°)
+            "plane_dist_threshold"_a = 0.1,
             "minClusterSize"_a = 2*(1/0.02)*(1/0.02),
-            "numberOfNeighbours"_a = 30,
-            "smoothnessThreshold"_a =  3.0 / 180.0 * M_PI,
-            "curvatureThreshold"_a = 0.1)
+            "early_stop"_a = 0.3,
+            "radius"_a = 0.1,
+            "interval_0"_a = 16, 
+            "interval_factor"_a = 1.5           
+            )
         .def("bbox", &linkml::PointCloud::get_bbox, "Get the bounding box of the point cloud")
         .def("display",&linkml::PointCloud::display, "Display the point cloud"
             "name"_a = "Cloud", py::return_value_policy::reference_internal)
@@ -257,44 +261,6 @@ PYBIND11_MODULE(linkml_py, m) {
         ;
 
 
-   //py::class_<linkml::result_fit_plane>(m, "PlaneFittingResult")
-    //    .def(py::init<const int &>())
-    //    .def(py::init<const linkml::Plane &, const std::vector<int> &>())
-    //    .def_property_readonly("valid", [](linkml::result_fit_plane &r){return r.valid;})
-    //    .def_property_readonly("plane", [](linkml::result_fit_plane &r){return r.plane;})
-    //    .def_property_readonly("indecies", [](linkml::result_fit_plane &r){return r.indecies;})
-    //    .def_property_readonly("index", [](linkml::result_fit_plane &r){return r.index;})
-    //    .def("__repr__", [](const linkml::result_fit_plane &a){
-    //        std::stringstream ss;
-    //        if (a.valid){
-    //            ss << "Plane Result A("<< a.plane.normal.x<<") B(" <<a.plane.normal.y << ") C(" <<a.plane.normal.z << ") D(" << a.plane.dis << ")";
-    //        }
-    //        else{
-    //            ss << "Invalid Result, the starting index was :" << a.index;
-    //        }
-    //        return ss.str();
-    //    })
-    //    ;
-
-
-    //py::class_<linkml::result_fit_planes>(m, "PlaneFittingResults")
-    //    .def("from_numpy", [](std::vector<linkml::Plane> const & planes, std::vector<std::vector<int>> const & indecies ){
-
-    //        auto res = linkml::result_fit_planes();
-
-    //        res.planes = planes;
-    //        res.indecies = indecies;
-
-    //        return  res;
-    //    })
-    //    .def_property_readonly("planes", [](linkml::result_fit_planes &r){return r.planes;})
-    //    .def_property_readonly("indecies", [](linkml::result_fit_planes &r){return r.indecies;})
-    //    .def("__repr__", [](const linkml::result_fit_planes &a){
-    //        std::stringstream ss;
-    //        ss << "Planes :" << a.planes.size();
-    //        return ss.str();
-    //    })
-    //    ;
 
 
    //py::class_<linkml::CellComplex>(m, "CellComplex")
