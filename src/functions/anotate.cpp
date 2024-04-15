@@ -130,7 +130,6 @@ namespace linkml
 
             
 
-
             PointCloud::Ptr cloud;
             if constexpr (std::is_same<T, std::string>::value){
                 cloud = PointCloud::load(data.at(i));
@@ -155,22 +154,21 @@ namespace linkml
             //cv::cvtColor(img, img, cv::COLOR_RGB2BGR);
 
             for (OutputParams const& result_params: results ){
-
                 OutputParams result_param_r = result_params
                     .Scale(input_image_size, cv::Size(cloud_size.height, cloud_size.width))
                     .Rotate<cv::ROTATE_90_COUNTERCLOCKWISE>(cv::Size(cloud_size.height, cloud_size.width));
 
+                if (!result_param_r.valid)
+                    continue;
                 //draw_box(img, result_param_r);
-
 
                 // Get the start and end of the box
                 const auto row_start = result_param_r.box.y;
                 const auto row_end = result_param_r.box.y + result_param_r.box.height;
                 const auto col_start = result_param_r.box.x;
                 const auto col_end = result_param_r.box.x + result_param_r.box.width;
-
                 // Annotate the point cloud
-                #pragma omp parallel for collapse(2) shared(cloud, result_param_r) firstprivate(row_start, row_end, col_start, col_end)
+                // #pragma omp parallel for collapse(2) shared(cloud, result_param_r) firstprivate(row_start, row_end, col_start, col_end)
                 for (int y = row_start; y < row_end; y++){
                     for (int x = col_start; x < col_end; x++){
                         if (result_param_r.boxMask.at<uchar>(y - row_start, x - col_start) > 0.5)
@@ -202,7 +200,7 @@ namespace linkml
         outputs.clear();
         input_images.clear(); 
 
-        cv::destroyAllWindows();
+        // cv::destroyAllWindows();
 
         return *this;
 

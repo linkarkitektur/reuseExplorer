@@ -16,7 +16,7 @@ namespace linkml{
         cv::Rect box;               //Rectangle
         cv::RotatedRect rotatedBox; //obb result rectangular box
         cv::Mat boxMask;            //Mask within the rectangular frame to save memory space and speed up
-
+        bool valid = true;          //Whether the result is valid
         template <cv::RotateFlags flag>
         OutputParams Rotate(cv::Size size) const;
 
@@ -37,6 +37,11 @@ namespace linkml{
             result.rotatedBox =  cv::RotatedRect(center,size, rotatedBox.angle);
 
             cv::Size size_target = cv::Size(boxMask.cols * scale_x, boxMask.rows * scale_y);
+            // if target size is 0 in one of the dimensions
+            if (size_target.width == 0 || size_target.height == 0) {
+                result.valid = false;
+                return result;
+            }
             cv::resize(boxMask, result.boxMask, size_target);
 
             return result;
