@@ -168,7 +168,7 @@ namespace linkml
                 const auto col_start = result_param_r.box.x;
                 const auto col_end = result_param_r.box.x + result_param_r.box.width;
                 // Annotate the point cloud
-                // #pragma omp parallel for collapse(2) shared(cloud, result_param_r) firstprivate(row_start, row_end, col_start, col_end)
+                #pragma omp parallel for collapse(2) shared(cloud, result_param_r) firstprivate(row_start, row_end, col_start, col_end)
                 for (int y = row_start; y < row_end; y++){
                     for (int x = col_start; x < col_end; x++){
                         if (result_param_r.boxMask.at<uchar>(y - row_start, x - col_start) > 0.5)
