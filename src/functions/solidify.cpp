@@ -3,6 +3,7 @@
 #include "algorithms/markov_clustering.hh"
 #include "algorithms/refine.hh"
 #include "algorithms/clustering.hh"
+#include "types/surface.hh"
 
 #include <pcl/filters/random_sample.h>
 #include <pcl/filters/experimental/functor_filter.h>
@@ -134,6 +135,8 @@ namespace linkml
         cloud = filter_cloud(cloud, clusters);
 
         std::cout << "Number of points after filtering: " << cloud->points.size() << std::endl;
+
+        Surface surface(cloud, clusters[0].indices);
 
 
         //polyscope::myinit();
