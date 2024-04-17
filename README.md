@@ -314,3 +314,34 @@ launch.json with the  [Python C++ Debugger](https://marketplace.visualstudio.com
     ]
 }
 ```
+
+## Example
+
+
+```python
+from linkml_py import *
+
+dataset = Dataset("path_to_folder")
+parse_dataset(dataset, "./out_put_folder/", step=5)
+
+# Load all the frames into a collection of point clouds. 
+clouds = PointCloudsOnDisk("./out_put_folder/")
+
+# Annotate the frames, and use the dataset to provide access to the full-resolution images.
+clouds.annotate("./yolov8x-seg.onnx", dataset)
+
+# Register the individual frames to eachother
+clouds.register()
+
+# Merge and downsample the cloud
+cloud = clouds.filter().merge().downsample(0.02)
+
+# Cluster the semantic annotations into instances
+cloud.clustering().save("path_for_saving.pcd")
+
+# Create a solid model
+cloud.solidify()
+
+# Display the point cloud
+cloud..display()
+```

@@ -41,6 +41,7 @@ path = "./CPH_office_downsampled.pcd"
 #path = "./one_room_downsampled.pcd"
 PointCloud(path).clustering().save(path).display()
 
+
 #clouds.display()
 
 print("Done")

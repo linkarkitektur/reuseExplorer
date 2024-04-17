@@ -10,6 +10,10 @@ namespace linkml {
     template <>
     OutputParams OutputParams::Rotate<cv::RotateFlags::ROTATE_90_CLOCKWISE>(cv::Size size) const {
         OutputParams result;
+        if(!valid){
+            // Skip rotating if the result is invalid
+            return result;
+        }
         result.id = id;
         result.confidence = confidence;
 
@@ -29,6 +33,10 @@ namespace linkml {
     template <>
     OutputParams OutputParams::Rotate<cv::RotateFlags::ROTATE_90_COUNTERCLOCKWISE>(cv::Size size) const {
         OutputParams result;
+        if(!valid){
+            // Skip rotating if the result is invalid
+            return result;
+        }
         result.id = id;
         result.confidence = confidence;
 
@@ -48,6 +56,10 @@ namespace linkml {
     template <>
     OutputParams OutputParams::Rotate<cv::RotateFlags::ROTATE_180>(cv::Size size) const {
         OutputParams result;
+        if (!valid) {
+            // Skip rotating if the result is invalid
+            return result;
+        }
         result.id = id;
         result.confidence = confidence;
 
@@ -120,6 +132,7 @@ namespace linkml {
 
         if (shape.width != new_un_pad[0] && shape.height != new_un_pad[1])
         {
+
             cv::resize(image, outImage, cv::Size(new_un_pad[0], new_un_pad[1]));
         }
         else {
@@ -192,7 +205,7 @@ namespace linkml {
 	int top = floor((net_height / seg_height * rang_y - params[3]) / params[1]);
 	int width = ceil(net_width / seg_width * rang_w / params[0]);
 	int height = ceil(net_height / seg_height * rang_h / params[1]);
-
+    
 	resize(dest, mask, cv::Size(width, height), cv::INTER_NEAREST);
 	cv::Rect mask_rect = temp_rect - cv::Point(left, top);
 	mask_rect &= cv::Rect(0, 0, width, height);
