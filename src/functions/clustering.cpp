@@ -76,7 +76,7 @@ linkml::PointCloud linkml::PointCloud::clustering(
         ec.setIndices(points);
         ec.extract (cluster_indices);
 
-        #pragma omp parallel // for collapse(2)
+        //#pragma omp parallel // for collapse(2)
         for (size_t j = 0; j < cluster_indices.size(); j++)
             for (size_t k = 0; k < cluster_indices[j].indices.size(); k++)
                 this->points[cluster_indices[j].indices[k]].instance = j + 1;
