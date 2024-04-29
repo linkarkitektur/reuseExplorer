@@ -59,11 +59,36 @@ namespace linkml {
 
     // Reads a list of points and returns a list of segments
     // corresponding to the Alpha shape.
-    static std::vector<size_t> alpha_shape(std::vector<tg::pos2> points_in)
+    template <typename T>
+    static std::vector<size_t> alpha_shape(std::vector<T> points_in)
     {
         std::vector<Point> points;
-        for (auto & p : points_in)
-            points.emplace_back(Point(p.x, p.y));
+
+        // Check if T has a x and y member method or a x and y property
+        static_assert(
+            std::is_member_function_pointer<decltype(&T::x)>::value && 
+            std::is_member_function_pointer<decltype(&T::y)>::value, 
+            "T does not have x and y member methods or properties");
+        static_assert(
+            std::is_member_object_pointer<decltype(&T::x)>::value && 
+            std::is_member_object_pointer<decltype(&T::y)>::value, 
+            "T does not have x and y member properties");
+
+
+        if constexpr(
+                std::is_member_function_pointer<decltype(&T::x)>::value && 
+                std::is_member_function_pointer<decltype(&T::y)>::value) {
+            for (auto & p : points_in)
+                points.emplace_back(Point(p.x(), p.y()));
+        }
+        else if constexpr (
+                std::is_member_object_pointer<decltype(&T::x)>::value && 
+                std::is_member_object_pointer<decltype(&T::y)>::value) {
+            for (auto & p : points_in)
+                points.emplace_back(Point(p.x, p.y));
+        }
+
+
 
         // Maintain a mapping between points and their indices
         std::map<Point, std::size_t> pointIndexMap;
