@@ -345,3 +345,22 @@ cloud.solidify()
 # Display the point cloud
 cloud..display()
 ```
+
+Example of how to access the data in the point cloud from Python:
+As long as fields are continues in memory, structured_to_unstructured will provide a view of the data, rather then a copy.
+
+```python
+from numpy.lib.recfunctions import structured_to_unstructured
+
+cloud = PointCloud("path_to_file.pcd")
+data = np.asarray(cloud)
+
+# View of position values
+structured_to_unstructured(data[["x","y","z"]])
+
+# View of normal values
+structured_to_unstructured(data[["normal_x","normal_y","normal_z"]])
+
+# View of RGB values
+data["rgb"].view("u4").reshape(-1, 1).view("u1")[:, :3]
+```

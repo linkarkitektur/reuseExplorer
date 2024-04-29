@@ -36,6 +36,8 @@ PYBIND11_MODULE(linkml_py, m) {
 
     PYBIND11_NUMPY_DTYPE(tg::pos3, x, y, z);
     PYBIND11_NUMPY_DTYPE(tg::vec3, x, y, z);
+    PYBIND11_NUMPY_DTYPE(linkml::PointCloud::PointType, x, y, z, rgb, normal_x, normal_y, normal_z, curvature, confidence, semantic, instance, label);
+
 
     /// Classes
 
@@ -135,76 +137,185 @@ PYBIND11_MODULE(linkml_py, m) {
     // https://pybind11.readthedocs.io/en/stable/advanced/pycpp/utilities.html#capturing-standard-output-from-ostream
 
     /// @brief PointCloud class
-    py::class_<linkml::PointCloud>(m, "PointCloud")
-        .def(py::init<const std::string &>(), "Load a point cloud from disk"
-            "path"_a)
-        .def_static("load", &linkml::PointCloud::load, "Load a point cloud from disk"
-            "path"_a)
-        .def("save", &linkml::PointCloud::save, "Save a point cloud to disk"
+    py::class_<linkml::PointCloud>(m, "PointCloud", py::buffer_protocol())
+        .def(py::init<const std::string &>(), 
+            "Load a point cloud from disk",
+            "path"_a,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def_static("load", &linkml::PointCloud::load,
+            "Load a point cloud from disk",
+            "path"_a,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def("save", &linkml::PointCloud::save, 
+            "Save a point cloud to disk",
             "output_file"_a,
-            "binary"_a = true, py::return_value_policy::reference_internal)
-        .def("filter", &linkml::PointCloud::filter, "Filter the point cloud", py::return_value_policy::reference_internal)
-        .def("downsample", &linkml::PointCloud::downsample, "Downsample the point cloud" "leaf_size"_a=0.02, py::return_value_policy::reference)
-        .def("region_growing", &linkml::PointCloud::region_growing, "Region growing"
-            "angle_threshold"_a = 0.96592583, // cos(25°)
-            "plane_dist_threshold"_a = 0.1,
-            "minClusterSize"_a = 2*(1/0.02)*(1/0.02),
-            "early_stop"_a = 0.3,
-            "radius"_a = 0.1,
-            "interval_0"_a = 16, 
-            "interval_factor"_a = 1.5           
-            )
+            "binary"_a = true, py::return_value_policy::reference_internal,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def("filter", &linkml::PointCloud::filter, 
+            "Filter the point cloud", 
+            py::return_value_policy::reference_internal,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def("downsample", &linkml::PointCloud::downsample, 
+            "Downsample the point cloud", 
+            "leaf_size"_a=0.02, 
+            py::return_value_policy::reference,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def("region_growing", &linkml::PointCloud::region_growing, 
+            "Region growing",
+            "angle_threshold"_a = float(0.96592583), // cos(25°)
+            "plane_dist_threshold"_a = float(0.1),
+            "minClusterSize"_a = int(2*(1/0.02)*(1/0.02)),
+            "early_stop"_a = float(0.3),
+            "radius"_a = float(0.1),
+            "interval_0"_a = float(16),
+            "interval_factor"_a = float(1.5),
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
         .def("clustering", &linkml::PointCloud::clustering, "Cluster the sematic labels in to instances",
             "cluster_tolerance"_a = 0.02,
             "min_cluster_size"_a = 100,
             "max_cluster_size"_a = std::numeric_limits<pcl::uindex_t>::max(),
-            py::return_value_policy::reference_internal)
-        .def("solidify", &linkml::PointCloud::solidify, "Solidify the point cloud", py::return_value_policy::reference_internal)
-        .def("bbox", &linkml::PointCloud::get_bbox, "Get the bounding box of the point cloud")
-        .def("display",&linkml::PointCloud::display, "Display the point cloud"
-            "name"_a = "Cloud", py::return_value_policy::reference_internal)
+            py::return_value_policy::reference_internal,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def("solidify", &linkml::PointCloud::solidify, 
+            "Solidify the point cloud",
+            py::return_value_policy::reference_internal,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def("display",&linkml::PointCloud::display, 
+            "Display the point cloud",
+            "name"_a = "Cloud", 
+            py::return_value_policy::reference_internal
+        )
+        .def("bbox", &linkml::PointCloud::get_bbox, 
+            "Get the bounding box of the point cloud"
+        )
         .def("__len__", &linkml::PointCloud::size)
+        .def_buffer([](linkml::PointCloud &cloud) -> py::buffer_info {
+            return py::buffer_info(
+                cloud.points.data(),
+                sizeof(linkml::PointCloud::PointType),
+                py::format_descriptor<linkml::PointCloud::PointType>::format(),
+                1,
+                { cloud.points.size() },
+                { sizeof(linkml::PointCloud::PointType)}
+            );
+        })
         ;
 
     /// @brief Collection of point clouds in memory class
     py::class_<linkml::PointCloudsInMemory>(m, "PointCloudsInMemory")
-        .def(py::init<const std::string &>(), "Load a point cloud from disk"
-            "path"_a)
-        .def_static("load", &linkml::PointCloudsInMemory::load, "Load a point cloud from disk"
-            "path"_a)
-        .def("filter", &linkml::PointCloudsInMemory::filter, "Filter the point cloud", py::return_value_policy::reference_internal)
-        .def("register", &linkml::PointCloudsInMemory::register_clouds, "Register the point clouds", py::return_value_policy::reference_internal)
-        .def("merge", &linkml::PointCloudsInMemory::merge, "Merge the point clouds")
-        .def("annotate", &linkml::PointCloudsInMemory::annotate, "Annotate the point clouds" "yolo_path"_a, "dataset"_a = py::none(), py::return_value_policy::reference_internal)
-        .def("display", &linkml::PointCloudsInMemory::display, "Display the point clouds" "show_clouds"_a = false, py::return_value_policy::reference_internal)
+        .def(py::init<const std::string &>(), 
+            "Load a point cloud from disk",
+            "path"_a,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def_static("load", &linkml::PointCloudsInMemory::load, 
+            "Load a point cloud from disk",
+            "path"_a,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def("filter", &linkml::PointCloudsInMemory::filter, 
+            "Filter the point cloud", 
+            py::return_value_policy::reference_internal,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def("register", &linkml::PointCloudsInMemory::register_clouds, 
+            "Register the point clouds", 
+            py::return_value_policy::reference_internal,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def("merge", &linkml::PointCloudsInMemory::merge, 
+            "Merge the point clouds",
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def("annotate", &linkml::PointCloudsInMemory::annotate, 
+            "Annotate the point clouds",
+            "yolo_path"_a,
+            "dataset"_a = py::none(),
+            py::return_value_policy::reference_internal,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def("display", &linkml::PointCloudsInMemory::display, 
+            "Display the point clouds",
+            "show_clouds"_a = false, 
+            py::return_value_policy::reference_internal,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
         .def("__getitem__", [](const linkml::PointCloudsInMemory &obj, std::size_t index) {
-            return obj[index]; }, "Get a point cloud", "index"_a)
+            return obj[index]; }, 
+            "Get a point cloud", 
+            "index"_a
+        )
         .def("__getitem__", [](const linkml::PointCloudsInMemory &obj, py::slice slice) {
             py::size_t start, stop, step, slicelength;
             if (!slice.compute(obj.size(), &start, &stop, &step, &slicelength))
                 throw py::error_already_set();
-            return obj[std::slice(start, stop, step)];}, "Get a point cloud", "slice"_a)
+            return obj[std::slice(start, stop, step)];}, 
+            "Get a point cloud", 
+            "slice"_a
+        )
         .def("__len__", &linkml::PointCloudsInMemory::size)
         ; 
 
     /// @brief Collection of point clouds on disk class
     py::class_<linkml::PointCloudsOnDisk>(m, "PointCloudsOnDisk")
-        .def(py::init<const std::string &>(), "Load a point cloud from disk"
-            "path"_a)
-        .def_static("load", &linkml::PointCloudsOnDisk::load, "Load a point cloud from disk"
-            "path"_a)
-        .def("filter", &linkml::PointCloudsOnDisk::filter, "Filter the point cloud", py::return_value_policy::reference_internal)
-        .def("register", &linkml::PointCloudsOnDisk::register_clouds, "Register the point clouds", py::return_value_policy::reference_internal)
-        .def("merge", &linkml::PointCloudsOnDisk::merge, "Merge the point clouds")
-        .def("annotate", &linkml::PointCloudsOnDisk::annotate, "Annotate the point clouds" "yolo_path"_a, "dataset"_a = py::none(), py::return_value_policy::reference_internal)
-        .def("display", &linkml::PointCloudsOnDisk::display, "Display the point clouds" "show_clouds"_a = false, py::return_value_policy::reference_internal)
+        .def(py::init<const std::string &>(), 
+            "Load a point cloud from disk",
+            "path"_a,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def_static("load", &linkml::PointCloudsOnDisk::load, 
+            "Load a point cloud from disk",
+            "path"_a,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def("filter", &linkml::PointCloudsOnDisk::filter, 
+            "Filter the point cloud", 
+            py::return_value_policy::reference_internal,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def("register", &linkml::PointCloudsOnDisk::register_clouds, 
+            "Register the point clouds", 
+            py::return_value_policy::reference_internal,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def("merge", &linkml::PointCloudsOnDisk::merge, 
+            "Merge the point clouds",
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def("annotate", &linkml::PointCloudsOnDisk::annotate, 
+            "Annotate the point clouds",
+            "yolo_path"_a, 
+            "dataset"_a = py::none(), 
+            py::return_value_policy::reference_internal,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def("display", &linkml::PointCloudsOnDisk::display, 
+            "Display the point clouds",
+            "show_clouds"_a = false,
+            py::return_value_policy::reference_internal,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
         .def("__getitem__", [](const linkml::PointCloudsOnDisk &obj, std::size_t index) {
-            return obj[index]; }, "Get a point cloud", "index"_a)
+            return obj[index]; }, 
+            "Get a point cloud", 
+            "index"_a
+        )
         .def("__getitem__", [](const linkml::PointCloudsOnDisk &obj, py::slice slice) {
             py::size_t start, stop, step, slicelength;
             if (!slice.compute(obj.size(), &start, &stop, &step, &slicelength))
                 throw py::error_already_set();
-            return obj[std::slice(start, stop, step)];}, "Get a point cloud", "slice"_a)
+            return obj[std::slice(start, stop, step)];}, 
+            "Get a point cloud", 
+            "slice"_a
+        )
         .def("__len__", &linkml::PointCloudsOnDisk::size)
         ;
 
