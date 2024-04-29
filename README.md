@@ -347,7 +347,7 @@ cloud..display()
 ```
 
 Example of how to access the data in the point cloud from Python:
-As long as fields are continues in memory, structured_to_unstructured will provide a view of the data, rather then a copy.
+As long as fields are continuous in memory, structured_to_unstructured will provide a view of the data rather than a copy.
 
 ```python
 from numpy.lib.recfunctions import structured_to_unstructured
