@@ -37,7 +37,7 @@ void merge_sets(std::unordered_set<int>& lhs, const std::unordered_set<int>& rhs
     initializer(omp_priv = std::unordered_set<int>())
 
 linkml::PointCloud linkml::PointCloud::region_growing(
-    float angle_threshold, // cos(25°)
+    float angle_threshold,
     float plane_dist_threshold,
     int minClusterSize, 
     float early_stop,
