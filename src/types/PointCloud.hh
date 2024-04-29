@@ -111,10 +111,10 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(PointT,
     (float, normal_y, normal_y)
     (float, normal_z, normal_z)
     (float, curvature, curvature)
-    (int, confidence, confidence)
-    (int, semantic, semantic)
-    (int, instance, instance)
-    (int, label, label)
+    (std::uint8_t, confidence, confidence)
+    (std::uint8_t, semantic, semantic)
+    (std::uint8_t, instance, instance)
+    (std::uint8_t, label, label)
 )
 
 
