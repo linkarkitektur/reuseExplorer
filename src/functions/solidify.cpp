@@ -10,6 +10,8 @@
 #include <pcl/filters/extract_indices.h>
 #include <pcl/PointIndices.h>
 
+#include <embree3/rtcore.h>
+
 template<typename PointT>
 class MatchCondition
 {
@@ -136,18 +138,104 @@ namespace linkml
 
         std::cout << "Number of points after filtering: " << cloud->points.size() << std::endl;
 
-        Surface surface(cloud, clusters[0].indices);
 
 
-        //polyscope::myinit();
-        //polyscope::display(*cloud);
-        //polyscope::show();
+
+        // Create surfaces
+        std::vector<Surface> surfaces(clusters.size());
+        auto surface_bar = util::progress_bar(surfaces.size(), "Creating surfaces");
+        for (size_t i = 0; i < clusters.size(); i++){
+            surfaces[i] = Surface(cloud, clusters[i].indices);
+            surface_bar.update();
+        }
+        surface_bar.stop();
 
 
-        // Visual clustering
-        auto visual_clusters = linkml::clustering(cloud);
+
+        // Ray tracing
+
+        RTCDevice device = rtcNewDevice(NULL);
+        RTCScene scene   = rtcNewScene(device);
+
+        std::unordered_map<unsigned int, pcl::Indices> point_map;
+        Rays rays;
+
+        // TODO: Make this section parallel
+        // Ensure Crate_Embree_Geometry is thread safe
+        // Make custom reduction for rays
+        auto embree_bar = util::progress_bar(surfaces.size(), "Creating Embree geometries");
+        for (size_t i = 0; i < surfaces.size(); i++){
+            auto r = surfaces[i].Create_Embree_Geometry(device, scene, point_map);
+            rays.insert(rays.end(), r.begin(), r.end());
+            embree_bar.update();
+        }
+        embree_bar.stop();
+
+        rtcCommitScene(scene);
+
+        // Instatiate the context
+        RTCIntersectContext context;
+        rtcInitIntersectContext(&context);
+
+        // Intersect all rays with the scene
+        rtcIntersect1M(scene, &context, (RTCRayHit*)&rays[0], (unsigned int)rays.size(), sizeof(RTCRayHit));
+
+        std::unordered_map<size_t, unsigned int> id_to_int;
+        std::unordered_map<unsigned int, size_t> int_to_id;
+
+        size_t face_index = 0;
+        for (auto & [id,_]:   point_map){
+                id_to_int[id] = face_index;
+                int_to_id[face_index] = id;
+                face_index++;
+        }
+
+        // Initialize the matrix
+        SpMat matrix = SpMat(point_map.size(), point_map.size());
+        matrix += Eigen::VectorXd::Ones(matrix.cols()).template cast<FT>().asDiagonal();
+
+
+        auto result_bar = util::progress_bar(rays.size(), "Processing rays");
+        for (auto & ray : rays){
+            if (ray.hit.geomID != RTC_INVALID_GEOMETRY_ID) {
+
+                int source_int = id_to_int[ray.ray.id];
+                int target_int = id_to_int[ray.hit.geomID];
+
+                auto vaule = matrix.coeff(source_int, target_int) + 1;
+
+                // Increment the matrix
+                matrix.coeffRef(source_int, target_int) = vaule;
+                matrix.coeffRef(target_int, source_int) = vaule;
+
+            }
+            result_bar.update();
+        }
+        result_bar.stop();
+    
+        // Release the scene and device
+        rtcReleaseScene(scene);
+        rtcReleaseDevice(device);
+
+
+        // Markov Clustering
+        //// 2.5 < infaltion < 2.8  => 3.5
+        matrix = markov_clustering::run_mcl(matrix, 2, 2.5);
+        std::set<std::vector<size_t>> mc_clusters = markov_clustering::get_clusters(matrix);
+        std::printf("n_clusters sp_matrix: %d\n", (int)clusters.size());
+
+        u_int8_t cluster_index = 0;
+        for (const std::vector<size_t> & cluster: mc_clusters){
+            for (const size_t & idx: cluster)
+                cloud->points[int_to_id[(int)idx]].instance = cluster_index;
+            cluster_index += 1;
+        }
+        std::cout << "Number of clusters after Markov Clustering: " << (int)cluster_index << std::endl;
+
+        polyscope::myinit();
+        cloud->display("cloud");
 
         
-        return *this;
+        return *cloud;
     }
 } // namespace linkml

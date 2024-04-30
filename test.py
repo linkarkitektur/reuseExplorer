@@ -25,10 +25,13 @@ def chunks(lst, n):
         yield lst[i:i + n]
 
 #dataset = Dataset("/home/mephisto/server_data/stray_scans/7092626a22/")
+
+
+
+#dataset = Dataset("/home/mephisto/server_data/stray_scans/665518e46a/")
 #parse_dataset(dataset, "./clouds/", step=4)
 
-
-#clouds = PointCloudsOnDisk("./one_room/")
+#clouds = PointCloudsOnDisk("./clouds/")
 #clouds = PointCloudsInMemory("./one_room/")
 
 
@@ -36,14 +39,34 @@ def chunks(lst, n):
 #    subset.annotate("./yolov8x-seg.onnx", dataset)
 #    print(f"Annotated {idx+1}th subset of {len(clouds)/1000} subsets")
 
+#clouds.annotate("./yolov8x-seg.onnx", dataset)
 #clouds.register()
-#cloud = clouds.merge().downsample(0.02)
+
+
+#cloud = clouds.merge().filter().save("./665518e46a.pcd")
+#cloud.display()
+#cloud.downsample(0.02).save("./665518e46a.pcd")
+#cloud.display()
+
+#cloud = cloud.clustering().save("./665518e46a.pcd")
+#cloud.region_growing().save("./665518e46a.pcd")
+#cloud.display()
+
+
+#import pstats, cProfile
+
+
 
 #path = "./CPH_office_downsampled.pcd"
 #path = "./Aarhus_office_downsampled.pcd"
 path = "./one_room_downsampled.pcd"
-PointCloud(path).solidify()#.save(path).display()
+cloud = PointCloud(path)
+#cloud.region_growing().save(path)
+cloud.solidify()#.display()#.save(path).display()
 
-#clouds.display()
+#cProfile.runctx("cloud.solidify()", globals(), locals(), "Profile.prof")
+#s = pstats.Stats("Profile.prof")
+#s.strip_dirs().sort_stats("time").print_stats()
+#cloud.display()
 
 print("Done")
