@@ -12,6 +12,8 @@
 
 #include <embree3/rtcore.h>
 
+#include <opencv4/opencv2/opencv.hpp>
+
 template<typename PointT>
 class MatchCondition
 {
@@ -48,6 +50,7 @@ Clusters extract_clusters(linkml::PointCloud::ConstPtr cloud){
 
     // Create clusters
     Clusters clusters(cluster_indices.size());
+
     #pragma omp parallel for
     for (size_t i = 0; i < cluster_indices.size(); i++){
         size_t cluster_index = cluster_indices[i];
@@ -129,14 +132,14 @@ namespace linkml
         //clusters = refine(cloud, clusters);
 
 
-        clusters = filter_clusters(clusters);
+        //clusters = filter_clusters(clusters);
 
-        std::cout << "Number of clusters after simplification: " << clusters.size() << std::endl;
+        //std::cout << "Number of clusters after simplification: " << clusters.size() << std::endl;
 
 
-        cloud = filter_cloud(cloud, clusters);
+        //cloud = filter_cloud(cloud, clusters);
 
-        std::cout << "Number of points after filtering: " << cloud->points.size() << std::endl;
+        //std::cout << "Number of points after filtering: " << cloud->points.size() << std::endl;
 
 
 
@@ -151,56 +154,163 @@ namespace linkml
         surface_bar.stop();
 
 
-
         // Ray tracing
 
         RTCDevice device = rtcNewDevice(NULL);
         RTCScene scene   = rtcNewScene(device);
 
+
+
         std::unordered_map<unsigned int, pcl::Indices> point_map;
         Rays rays;
+
+
+        //CGAL::Surface_mesh<tg::pos3> mesh;
+        //auto face_id = mesh.template add_property_map<CGAL::Surface_mesh<tg::pos3>::Face_index, std::size_t>("f:id").first;
 
         // TODO: Make this section parallel
         // Ensure Crate_Embree_Geometry is thread safe
         // Make custom reduction for rays
-        auto embree_bar = util::progress_bar(surfaces.size(), "Creating Embree geometries");
+        //auto embree_bar = util::progress_bar(surfaces.size(), "Creating Embree geometries");
         for (size_t i = 0; i < surfaces.size(); i++){
-            auto r = surfaces[i].Create_Embree_Geometry(device, scene, point_map);
-            rays.insert(rays.end(), r.begin(), r.end());
-            embree_bar.update();
+            surfaces[i].Create_Embree_Geometry(device, scene, point_map, std::back_inserter(rays)) ;
+            //rays.insert(rays.end(), r.begin(), r.end());
+            //embree_bar.update();
         }
-        embree_bar.stop();
+        //embree_bar.stop();
+
+
+        // Display rays
+        //polyscope::myinit();
+        //std::vector<tg::pos3> verts(rays.size()*2);
+        //std::vector<std::array<size_t, 2>> edges(rays.size());
+        //for (size_t i = 0; i < rays.size(); i++){
+        //    verts[i*2] = tg::pos3(rays[i].ray.org_x , rays[i].ray.org_y, rays[i].ray.org_z);
+        //    verts[i*2+1] = tg::pos3(
+        //        rays[i].ray.org_x + (rays[i].ray.dir_x * 0.1), 
+        //        rays[i].ray.org_y + (rays[i].ray.dir_y * 0.1), 
+        //        rays[i].ray.org_z + (rays[i].ray.dir_z * 0.1)
+        //        );
+        //    edges[i] = {i*2, i*2+1};
+        //}
+        //auto ps_rays = polyscope::registerCurveNetwork("rays", verts, edges);
+        //ps_rays->setRadius(0.0001);
+        //// Display mesh
+        //std::vector<tg::pos3> mesh_verts;
+        //std::vector<std::array<size_t, 3>> mesh_faces;
+        //std::vector<double> face_id_val;
+        //for (auto & f: mesh.faces()){
+        //    auto h = mesh.halfedge(f);
+        //    auto v0 = mesh.point(mesh.source(h));
+        //    auto v1 = mesh.point(mesh.target(h));
+        //    auto v2 = mesh.point(mesh.target(mesh.next(h)));
+        //    mesh_verts.push_back(tg::pos3(v0[0], v0[1], v0[2]));
+        //    mesh_verts.push_back(tg::pos3(v1[0], v1[1], v1[2]));
+        //    mesh_verts.push_back(tg::pos3(v2[0], v2[1], v2[2]));
+        //    mesh_faces.push_back({mesh_verts.size()-3, mesh_verts.size()-2, mesh_verts.size()-1});
+        //    face_id_val.push_back(face_id[f]);
+        //}
+        //auto ps_mesh = polyscope::registerSurfaceMesh("mesh", mesh_verts, mesh_faces);
+        //ps_mesh->addFaceScalarQuantity("face_id", face_id_val)->setEnabled(true);
+
+
+        //RTCGeometry geom = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_TRIANGLE);
+
+        //float* vb = (float*) rtcSetNewGeometryBuffer(geom,
+        //    RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, 3*sizeof(float), 3);
+        //vb[0] = 0.f; vb[1] = 0.f; vb[2] = 0.f; // 1st vertex
+        //vb[3] = 1.f; vb[4] = 0.f; vb[5] = 0.f; // 2nd vertex
+        //vb[6] = 0.f; vb[7] = 1.f; vb[8] = 0.f; // 3rd vertex
+
+        //unsigned* ib = (unsigned*) rtcSetNewGeometryBuffer(geom,
+        //    RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, 3*sizeof(unsigned), 1);
+        //ib[0] = 0; ib[1] = 1; ib[2] = 2;
+
+        //rtcCommitGeometry(geom);
+        //rtcAttachGeometry(scene, geom);
+        //rtcReleaseGeometry(geom);        
+
 
         rtcCommitScene(scene);
+
+
+        //RTCRayHit rayhit; 
+        //rayhit.ray.org_x  = 0.5f; rayhit.ray.org_y = 0.5f; rayhit.ray.org_z = -2.f;
+        //rayhit.ray.dir_x  = 0.f; rayhit.ray.dir_y = 0.f; rayhit.ray.dir_z =  1.f;
+        //rayhit.ray.tnear  = 0.f;
+        //rayhit.ray.tfar   = std::numeric_limits<float>::infinity();
+        //rayhit.hit.geomID = RTC_INVALID_GEOMETRY_ID;
+
+        //RTCBounds bounds;
+        //rtcGetSceneBounds(scene, &bounds);
+        //auto bbox = cloud->get_bbox();
 
         // Instatiate the context
         RTCIntersectContext context;
         rtcInitIntersectContext(&context);
 
+
+        //rtcIntersect1(scene, &context, &rayhit);
+        //if (rayhit.hit.geomID != RTC_INVALID_GEOMETRY_ID) {
+        //  std::cout << "Intersection at t = " << rayhit.ray.tfar << std::endl;
+        //} else {
+        //  std::cout << "No Intersection" << std::endl;
+        //} 
+
+
+            
+        //for (size_t i = 0; i < rays.size(); i++){
+        //    rtcIntersect1(scene, &context, (RTCRayHit*)&rays[i]);
+        //    if (rays[i].hit.geomID != RTC_INVALID_GEOMETRY_ID){
+        //        std::cout << "Hit: " << rays[i].hit.geomID << std::endl;
+        //    }
+        //    else{
+
+        //        if (rays[i].ray.org_x < bbox.min.x || rays[i].ray.org_x > bbox.max.x ||
+        //            rays[i].ray.org_y < bbox.min.y || rays[i].ray.org_y > bbox.max.y ||
+        //            rays[i].ray.org_z < bbox.min.z || rays[i].ray.org_z > bbox.max.z)
+        //        {
+        //            std::cout << "Missed: " << rays[i].ray.id << std::endl;
+        //            std::cout << "Origin: " << rays[i].ray.org_x << " " << rays[i].ray.org_y << " " << rays[i].ray.org_z << std::endl;
+        //            std::cout << "Direction: " << rays[i].ray.dir_x << " " << rays[i].ray.dir_y << " " << rays[i].ray.dir_z << std::endl;
+        //            std::cout << "N: " << rays[i].ray.tnear << std::endl;
+        //            std::cout << "F: " << rays[i].ray.tfar << std::endl;
+        //            std::cout << "Time: " << rays[i].ray.time << std::endl;
+        //            std::cout << "Flags: " << rays[i].ray.flags << std::endl;
+        //            std::cout << "Mask: " << rays[i].ray.mask << std::endl;
+        //            std::cout << std::endl;
+        //        }
+        //    }
+        //}
+
         // Intersect all rays with the scene
-        rtcIntersect1M(scene, &context, (RTCRayHit*)&rays[0], (unsigned int)rays.size(), sizeof(RTCRayHit));
+        rtcIntersect1M(scene, &context, (RTCRayHit*)rays.data(), rays.size(), sizeof(RTCRayHit));
 
         std::unordered_map<size_t, unsigned int> id_to_int;
         std::unordered_map<unsigned int, size_t> int_to_id;
 
-        size_t face_index = 0;
+        size_t spm_idx = 0;
         for (auto & [id,_]:   point_map){
-                id_to_int[id] = face_index;
-                int_to_id[face_index] = id;
-                face_index++;
+                id_to_int[id] = spm_idx;
+                int_to_id[spm_idx] = id;
+                spm_idx++;
         }
+
+
+
 
         // Initialize the matrix
         SpMat matrix = SpMat(point_map.size(), point_map.size());
         matrix += Eigen::VectorXd::Ones(matrix.cols()).template cast<FT>().asDiagonal();
 
+        bool any_hit = false;
 
-        auto result_bar = util::progress_bar(rays.size(), "Processing rays");
-        for (auto & ray : rays){
-            if (ray.hit.geomID != RTC_INVALID_GEOMETRY_ID) {
+        //auto result_bar = util::progress_bar(rays.size(), "Processing rays");
+        for (size_t i = 0; i < rays.size(); i++){
+            if (rays[i].hit.geomID != RTC_INVALID_GEOMETRY_ID) {
 
-                int source_int = id_to_int[ray.ray.id];
-                int target_int = id_to_int[ray.hit.geomID];
+                int source_int = id_to_int[rays[i].ray.id];
+                int target_int = id_to_int[rays[i].hit.geomID];
 
                 auto vaule = matrix.coeff(source_int, target_int) + 1;
 
@@ -208,34 +318,59 @@ namespace linkml
                 matrix.coeffRef(source_int, target_int) = vaule;
                 matrix.coeffRef(target_int, source_int) = vaule;
 
+                any_hit = true;
+
             }
-            result_bar.update();
+            //result_bar.update();
         }
-        result_bar.stop();
+        //result_bar.stop();
+
+
+        //std::cout << "Error: " << rtcGetDeviceError(device) << std::endl;
     
         // Release the scene and device
         rtcReleaseScene(scene);
         rtcReleaseDevice(device);
 
+        std::cout << "Any hit: " << any_hit << std::endl;
+        std::cout << "Number of rays: " << rays.size() << std::endl;
+        std::cout << "Number of tiles: " << point_map.size() << std::endl;
+
+        
+
+        //cv::Mat img = cv::Mat::zeros(point_map.size(), point_map.size(), CV_8UC1);
+        //for (int k = 0; k < matrix.outerSize(); ++k)
+        //    for (SpMat::InnerIterator it(matrix, k); it; ++it)
+        //        img.at<u_int8_t>(k, it) = (u_int8_t)(it.value()*255);
+        //cv::imshow("Matrix", img);
+        //cv::waitKey(0);
+        //cv::destroyAllWindows();
+        //std::cout << "Imaged shown" << std::endl;
+
 
         // Markov Clustering
         //// 2.5 < infaltion < 2.8  => 3.5
-        matrix = markov_clustering::run_mcl(matrix, 2, 2.5);
+        matrix = markov_clustering::run_mcl(matrix, 4, 1.5);
         std::set<std::vector<size_t>> mc_clusters = markov_clustering::get_clusters(matrix);
-        std::printf("n_clusters sp_matrix: %d\n", (int)clusters.size());
+        std::printf("Number of clusters after Markov Clustering: %d\n", (int)mc_clusters.size());
 
-        u_int8_t cluster_index = 0;
+        u_int8_t cluster_index = 1;
         for (const std::vector<size_t> & cluster: mc_clusters){
             for (const size_t & idx: cluster)
-                cloud->points[int_to_id[(int)idx]].instance = cluster_index;
+                for(const size_t & index : point_map[int_to_id[(int)idx]])
+                    cloud->points[index].instance = cluster_index;
+
             cluster_index += 1;
         }
-        std::cout << "Number of clusters after Markov Clustering: " << (int)cluster_index << std::endl;
+        std::cout << "Number of clusters after Markov Clustering: " << (int)cluster_index-1 << std::endl;
 
-        polyscope::myinit();
+
         cloud->display("cloud");
+        //polyscope::myinit();
+        //polyscope::display(*cloud, "cloud");
+        //polyscope::getPointCloud("cloud")->getQuantity("Instance Colors")->setEnabled(true);
+        //polyscope::show();
 
-        
         return *cloud;
     }
 } // namespace linkml
