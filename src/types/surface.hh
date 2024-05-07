@@ -54,23 +54,89 @@ using Geometries = std::vector<RTCGeometry>;
 
 namespace linkml
 {
+
+    constexpr double const_sin(double x)
+    {
+        double sin{0}, pow{x};
+        for (auto fac{1LLU}, n{1ULL}; n != 20; fac *= ++n, pow *= x)
+            if (n & 1)
+                sin += (n & 2 ? -pow : pow) / fac;
+        return sin;
+    }
+
+    constexpr double const_cos(double x)
+    {
+        double cos{1}, pow{x};
+        for (auto fac{1ull}, n{1ull}; n != 19; fac *= ++n, pow *= x)
+            if ((n & 1) == 0)
+                cos += (n & 2 ? -pow : pow) / fac;
+        return cos;
+    }
+
+    static constexpr auto CreateSphere(){
+
+        constexpr int n_stacks = 10; // number of stacks
+        constexpr int n_slices = 10; // number of slices
+
+        std::array<Ray, (n_stacks-1)*n_slices+1> rays{};
+
+
+        // add north vetcor
+        rays[0].ray.dir_x = 0;
+        rays[0].ray.dir_y = 1;
+        rays[0].ray.dir_z = 0;
+
+        // generate vertices per stack / slice
+        for (int i = 0; i < n_stacks - 1; i++)
+        {
+            auto phi = M_PI * FT(i + 1) / FT(n_stacks);
+            for (int j = 0; j < n_slices; j++)
+            {
+                auto theta = 2.0 * M_PI * FT(j) / FT(n_slices);
+
+                auto x = const_sin(phi) * const_cos(theta);
+                auto y = const_cos(phi);
+                auto z = const_sin(phi) * const_sin(theta);
+
+                rays[i * n_slices + j + 1].ray.dir_x = x;
+                rays[i * n_slices + j + 1].ray.dir_y = y;
+                rays[i * n_slices + j + 1].ray.dir_z = z;
+            }
+        }
+
+
+        // add south vetcor
+        int last_ray_index = (n_stacks - 1) * n_slices;
+        rays[last_ray_index].ray.dir_x = 0;
+        rays[last_ray_index].ray.dir_y = -1;
+        rays[last_ray_index].ray.dir_z = 0;
+
+        return rays;
+    }
+    
     class Surface
     {
     private:
-            Plane_3 plane;
-            Mesh mesh;
-            Rays default_rays;
 
-        public:
-            Surface() = default;
-            Surface(PointCloud::Ptr cloud, pcl::Indices indices);
-            void Create_Embree_Geometry(RTCDevice & device, RTCScene & scene, std::unordered_map<unsigned int, pcl::Indices>& point_map, std::back_insert_iterator<Rays> rays);
+        Plane_3 plane;
+        Mesh mesh;
+        Rays default_rays;
 
-        private:
+        // The size of the tiles
+        float tile_x_size = 0.4;
+        float tile_y_size = 0.4;
+            
+        static const constexpr auto ray_sphere = CreateSphere();
 
-            pcl::Indices supporting_points(typename Mesh::Face_index face, const Mesh& mesh, const PointCloud::ConstPtr cloud, const pcl::Indices indices);
-            FT face_area(typename Mesh::Face_index f, const Mesh& mesh) const;
- 
+    public:
+        Surface() = default;
+        Surface(PointCloud::Ptr cloud, pcl::Indices indices);
+        void Create_Embree_Geometry(RTCDevice & device, RTCScene & scene, std::unordered_map<unsigned int, pcl::Indices>& point_map, std::back_insert_iterator<Rays> rays);
+
+    private:
+
+        pcl::Indices supporting_points(typename Mesh::Face_index face, const Mesh& mesh, const PointCloud::ConstPtr cloud, const pcl::Indices indices);
+        FT face_area(typename Mesh::Face_index f, const Mesh& mesh) const;
 
     };
 
@@ -115,8 +181,6 @@ namespace linkml
     }
     void Surface::Create_Embree_Geometry(RTCDevice & device, RTCScene & scene, std::unordered_map<unsigned int, pcl::Indices>& point_map, std::back_insert_iterator<Rays> rays){
 
-        //Geometries embree_geometry;
-        //Rays embree_rays;
 
         //auto covered_area = mesh.property_map<Mesh::Face_index, FT>("f:covered_area").first;
         //auto face_area = mesh.property_map<Mesh::Face_index, FT>("f:face_areas").first;
@@ -124,8 +188,6 @@ namespace linkml
         auto face_num_supporting_points = mesh.property_map<Mesh::Face_index, std::size_t>("f:face_num_supporting_points").first;
 
        
-
-        //auto face_id = mesh_2.property_map<Mesh::Face_index, size_t>("f:id").first;
 
         for (auto f : mesh.faces()){
             
@@ -168,11 +230,6 @@ namespace linkml
             vb[6] = points[2].x(); vb[7]  = points[2].y(); vb[8]  = points[2].z();
             vb[9] = points[3].x(); vb[10] = points[3].y(); vb[11] = points[3].z();
             
-            //for (int i = 0; i < 4; i++){
-            //    vb[3*i+0] = points[i].x();
-            //    vb[3*i+1] = points[i].y();
-            //    vb[3*i+2] = points[i].z();
-            //}
 
             // Add the faces to the index buffer
             ib[0] = 0;
@@ -180,19 +237,8 @@ namespace linkml
             ib[2] = 2;
             ib[3] = 3;
 
-            //for (int j = 0; j < 2; j++){
-            //    ib[3*j+0] = 0;
-            //    ib[3*j+1] = j+1;
-            //    ib[3*j+2] = j+2;
-            //}
 
-            //auto v1 = mesh_2.add_vertex(tg::pos3(points[0].x(), points[0].y(), points[0].z()));
-            //auto v2 = mesh_2.add_vertex(tg::pos3(points[1].x(), points[1].y(), points[1].z()));
-            //auto v3 = mesh_2.add_vertex(tg::pos3(points[2].x(), points[2].y(), points[2].z()));
-            //auto v4 = mesh_2.add_vertex(tg::pos3(points[3].x(), points[3].y(), points[3].z()));
 
-            //face_id[mesh_2.add_face(v1, v2, v3)] = id;
-            //face_id[mesh_2.add_face(v1, v3, v4)] = id;
 
 
             // Attach the geometry to the scene
@@ -202,8 +248,6 @@ namespace linkml
 
             // Store the face point indecies
             point_map[genomID] = face_point_indecies[f];
-
-            //embree_geometry.push_back(geom);
 
 
             // Finde the avereage point of the face (Center of mass)
@@ -243,6 +287,23 @@ namespace linkml
                 return rayhit;
             });
 
+            // Set the intersect filter function
+            // https://spec.oneapi.io/oneart/0.5-rev-1/embree-spec.html#rtcsetgeometryintersectfilterfunction
+
+
+            RTCGeometry sphere = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_SPHERE_POINT);
+
+             // Get the vertex buffer (x,y,z,r)
+            float* s_vb = (float*) rtcSetNewGeometryBuffer(sphere,
+                RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT4, 4*sizeof(float), 1);
+            
+            s_vb[0] = origin.x();
+            s_vb[1] = origin.y();
+            s_vb[2] = origin.z();
+            s_vb[3] = 0.4;
+
+          
+
        }
 
 
@@ -276,15 +337,21 @@ namespace linkml
     Surface::Surface(PointCloud::Ptr cloud, pcl::Indices indices){
 
         // Construct Plane
-        double x = 0, y = 0, z = 0;
-        double n_x = 0, n_y = 0, n_z = 0;
+        double x, y, z, n_x, n_y, n_z = 0;
 
+
+        // TODO: Avoid impresission due to large intermediate values
+        // Theoretically this can cause the sum of the points is to be very 
+        // large resulting in inpersision due to the floating point arithmetics.
+        // Ideally the sum should be done in buckets
         #pragma omp parallel for reduction(+:x,y,z, n_x, n_y, n_z)
         for (size_t i = 0; i < indices.size(); i++){
-            auto norm = cloud->points[indices[i]].normal;
+
             x += cloud->points[indices[i]].x;
             y += cloud->points[indices[i]].y;
             z += cloud->points[indices[i]].z;
+
+            auto norm = cloud->points[indices[i]].normal;
             n_x += norm[0];
             n_y += norm[1];
             n_z += norm[2];
@@ -306,46 +373,6 @@ namespace linkml
         plane = Plane_3(normal[0], normal[1], normal[2], -1 * normal.dot(centroid));
 
 
-
-        //// Fit Plane through points
-        //Eigen::Vector4f vp = Eigen::Vector4f::Zero ();
-        //Eigen::Vector4f clust_centroid = Eigen::Vector4f::Zero ();
-        //Eigen::Matrix3f clust_cov;
-
-        //pcl::computeMeanAndCovarianceMatrix (*cloud, indices, clust_cov, clust_centroid);
-        
-        //EIGEN_ALIGN16 Eigen::Vector3f::Scalar eigen_value;
-        //EIGEN_ALIGN16 Eigen::Vector3f eigen_vector;
-        //pcl::eigen33 (clust_cov, eigen_value, eigen_vector);
-
-        //Eigen::Vector4f plane_params;
-        //plane_params[0] = eigen_vector[0];
-        //plane_params[1] = eigen_vector[1];
-        //plane_params[2] = eigen_vector[2];
-        //plane_params[3] = 0;
-        //plane_params[3] = -1 * plane_params.dot (clust_centroid);
-
-        //vp -= clust_centroid;
-        //float cos_theta = vp.dot (plane_params);
-        //if (cos_theta < 0)
-        //{
-        //    plane_params *= -1;
-        //    plane_params[3] = 0;
-        //    plane_params[3] = -1 * plane_params.dot (clust_centroid);
-        //}
-
-        //// Flip normal if pointing outwards
-        //Eigen::Vector3f average_normal = Eigen::Vector3f::Zero();
-        //for (size_t i = 0; i < indices.size(); i++)
-        //    average_normal += cloud->points[indices[i]].getVector3fMap();
-        //average_normal /= indices.size();
-        //if (average_normal.dot(plane_params.head<3>()) < 0)
-        //    plane_params *= -1;
-
-        //// Construct Plane
-        //plane = Plane_3(plane_params[0], plane_params[1], plane_params[2], plane_params[3]);
-
-
         // Project points to 2D
         std::vector<Point_2> points_2d(indices.size());
         #pragma omp parallel for
@@ -362,8 +389,8 @@ namespace linkml
         // Subdivide Bounding Box
         auto dx  = bbox.xmax() - bbox.xmin();
         auto dy  = bbox.ymax() - bbox.ymin();
-        int nx = dx / 0.2;
-        int ny = dy / 0.2;
+        int nx = dx / tile_x_size;
+        int ny = dy / tile_y_size;
         
 
         // Create Surface Mesh
@@ -373,8 +400,6 @@ namespace linkml
             vertices[i] = mesh.add_vertex();
 
         auto points = mesh.template add_property_map<Mesh::Vertex_index, Point_3>("v:points").first;
-
-        // FIXME: Point at the end/start of each row/colume is not being set
 
         for (int i = 0; i < nx+1; i++)
             for (int j = 0; j < ny+1; j++)
@@ -423,93 +448,14 @@ namespace linkml
                 face_point_indecies[faces[i]] = idxs;
                 face_num_supporting_points[faces[i]] = idxs.size();
 
-                //std::vector<Point_2> pts;
-                //pts.reserve(idxs.size());
-                //for (std::size_t i = 0; i < idxs.size(); ++i) {
-                //        std::size_t idx = idxs[i];
-                //        auto point = cloud->points[idx].getVector3fMap();
-                //        pts.emplace_back(plane.to_2d(Point_3(point.x(), point.y(), point.z())));
-                //}
-
-                //FT covered_area(0);
-
-
-                //Alpha_shape alpha_shape(pts.begin(), pts.end());
-
-                //auto it = alpha_shape.finite_faces_begin();
-                //for(; it!=alpha_shape.finite_faces_end(); ++it){
-
-                //    // FIXME: It appears that all faces are classified as EXTERIOR
-
-                //    //if (alpha_shape.classify(it) == Alpha_shape::EXTERIOR)
-                //    //    continue;
-
-                //    // FIXME: This is not returning the correct points
-                //    // Hence the area is not correct
-
-                //    auto p0 = alpha_shape.point(it, 0);
-                //    auto p1 = alpha_shape.point(it, 1);
-                //    auto p2 = alpha_shape.point(it, 2);
-
-                //    auto a = CGAL::area(p0, p1, p2);
-                
-                //    covered_area += CGAL::area(p0, p1, p2);
-
-                //}
-
-                //face_covered_areas[faces[i]] = covered_area;
-                //if (covered_area > area)
-                //        face_covered_areas[faces[i]] = area;
             }
             else { // For tiny faces, we can simple assign zero supporting points
                 face_num_supporting_points[faces[i]] = 0;
                 face_covered_areas[faces[i]] = FT(0.0);
-                //std::cout << "Skipping face " << i << " with area " << area << std::endl;
             }
-            }
-            //bar.update();
-        }
-        //bar.stop();
-
-        // Create sphere with all possible vectors
-        int n_slices = 10;
-        int n_stacks = 10;
-
-        Rays ray_sphere((n_slices-1)*n_stacks+1);
-
-        // add north vetcor
-        ray_sphere[0] = Ray();
-        ray_sphere[0].ray.dir_x = 0;
-        ray_sphere[0].ray.dir_y = 1;
-        ray_sphere[0].ray.dir_z = 0;
-
-        // generate vertices per stack / slice
-        for (int i = 0; i < n_stacks - 1; i++)
-        {
-            auto phi = M_PI * FT(i + 1) / FT(n_stacks);
-            for (int j = 0; j < n_slices; j++)
-            {
-                auto theta = 2.0 * M_PI * FT(j) / FT(n_slices);
-
-                auto x = std::sin(phi) * std::cos(theta);
-                auto y = std::cos(phi);
-                auto z = std::sin(phi) * std::sin(theta);
-
-                ray_sphere[i * n_slices + j + 1] = Ray();
-                ray_sphere[i * n_slices + j + 1].ray.dir_x = x;
-                ray_sphere[i * n_slices + j + 1].ray.dir_y = y;
-                ray_sphere[i * n_slices + j + 1].ray.dir_z = z;
-
             }
         }
 
-        // add south vetcor
-        Ray last_ray = Ray();
-        last_ray.ray.dir_x = 0;
-        last_ray.ray.dir_y = -1;
-        last_ray.ray.dir_z = 0;
-        ray_sphere[(n_stacks - 1) * n_slices] = last_ray;
-        //ray_sphere.push_back(Vector_3(0, -1, 0));
 
         // Filter rays that are pointing forward form the surface
         std::copy_if(ray_sphere.begin(), ray_sphere.end(), std::back_inserter(default_rays), [&](const Ray& ray){
@@ -518,11 +464,6 @@ namespace linkml
             return CGAL::scalar_product(v, dir) > FT(0.3);
         });
 
-        for (auto & ray : default_rays){
-            ray.ray.tnear = 0.0f;
-            ray.ray.tfar = std::numeric_limits<float>::infinity();
-            ray.hit.geomID = RTC_INVALID_GEOMETRY_ID;
-        }
 
     }
 

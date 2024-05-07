@@ -350,7 +350,7 @@ namespace linkml
 
         // Markov Clustering
         //// 2.5 < infaltion < 2.8  => 3.5
-        matrix = markov_clustering::run_mcl(matrix, 4, 1.5);
+        matrix = markov_clustering::run_mcl(matrix, 3, 1.9);
         std::set<std::vector<size_t>> mc_clusters = markov_clustering::get_clusters(matrix);
         std::printf("Number of clusters after Markov Clustering: %d\n", (int)mc_clusters.size());
 
