@@ -126,22 +126,7 @@ namespace linkml
         // Extract clusters
         Clusters clusters = extract_clusters(cloud);
 
-        std::cout << "Number of clusters: " << clusters.size() << std::endl;
-
-        // Simplify clusters
-        //clusters = refine(cloud, clusters);
-
-
-        //clusters = filter_clusters(clusters);
-
-        //std::cout << "Number of clusters after simplification: " << clusters.size() << std::endl;
-
-
-        //cloud = filter_cloud(cloud, clusters);
-
-        //std::cout << "Number of points after filtering: " << cloud->points.size() << std::endl;
-
-
+        std::cout << "Number of planes: " << clusters.size() << std::endl;
 
 
         // Create surfaces
@@ -154,222 +139,248 @@ namespace linkml
         surface_bar.stop();
 
 
+
+
+
         // Ray tracing
-
         RTCDevice device = rtcNewDevice(NULL);
+
+        // Create scene
         RTCScene scene   = rtcNewScene(device);
+        auto embree_bar = util::progress_bar(surfaces.size(), "Creating Embree Scene");
+        for (size_t i = 0; i < surfaces.size(); i++)
+            surfaces[i].Create_Embree_Geometry(device, scene);
+        embree_bar.stop();
 
+        // // Test geometry
+        // RTCGeometry geom = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_TRIANGLE);
+        // float* vb = (float*) rtcSetNewGeometryBuffer(geom,
+        //     RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, 3*sizeof(float), 3);
+        // vb[0] = 0.f; vb[1] = 0.f; vb[2] = 0.f; // 1st vertex
+        // vb[3] = 1.f; vb[4] = 0.f; vb[5] = 0.f; // 2nd vertex
+        // vb[6] = 0.f; vb[7] = 1.f; vb[8] = 0.f; // 3rd vertex
 
+        // unsigned* ib = (unsigned*) rtcSetNewGeometryBuffer(geom,
+        //     RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, 3*sizeof(unsigned), 1);
+        // ib[0] = 0; ib[1] = 1; ib[2] = 2;
 
-        std::unordered_map<unsigned int, pcl::Indices> point_map;
-        Rays rays;
-
-
-        //CGAL::Surface_mesh<tg::pos3> mesh;
-        //auto face_id = mesh.template add_property_map<CGAL::Surface_mesh<tg::pos3>::Face_index, std::size_t>("f:id").first;
-
-        // TODO: Make this section parallel
-        // Ensure Crate_Embree_Geometry is thread safe
-        // Make custom reduction for rays
-        //auto embree_bar = util::progress_bar(surfaces.size(), "Creating Embree geometries");
-        for (size_t i = 0; i < surfaces.size(); i++){
-            surfaces[i].Create_Embree_Geometry(device, scene, point_map, std::back_inserter(rays)) ;
-            //rays.insert(rays.end(), r.begin(), r.end());
-            //embree_bar.update();
-        }
-        //embree_bar.stop();
-
-
-        // Display rays
-        //polyscope::myinit();
-        //std::vector<tg::pos3> verts(rays.size()*2);
-        //std::vector<std::array<size_t, 2>> edges(rays.size());
-        //for (size_t i = 0; i < rays.size(); i++){
-        //    verts[i*2] = tg::pos3(rays[i].ray.org_x , rays[i].ray.org_y, rays[i].ray.org_z);
-        //    verts[i*2+1] = tg::pos3(
-        //        rays[i].ray.org_x + (rays[i].ray.dir_x * 0.1), 
-        //        rays[i].ray.org_y + (rays[i].ray.dir_y * 0.1), 
-        //        rays[i].ray.org_z + (rays[i].ray.dir_z * 0.1)
-        //        );
-        //    edges[i] = {i*2, i*2+1};
-        //}
-        //auto ps_rays = polyscope::registerCurveNetwork("rays", verts, edges);
-        //ps_rays->setRadius(0.0001);
-        //// Display mesh
-        //std::vector<tg::pos3> mesh_verts;
-        //std::vector<std::array<size_t, 3>> mesh_faces;
-        //std::vector<double> face_id_val;
-        //for (auto & f: mesh.faces()){
-        //    auto h = mesh.halfedge(f);
-        //    auto v0 = mesh.point(mesh.source(h));
-        //    auto v1 = mesh.point(mesh.target(h));
-        //    auto v2 = mesh.point(mesh.target(mesh.next(h)));
-        //    mesh_verts.push_back(tg::pos3(v0[0], v0[1], v0[2]));
-        //    mesh_verts.push_back(tg::pos3(v1[0], v1[1], v1[2]));
-        //    mesh_verts.push_back(tg::pos3(v2[0], v2[1], v2[2]));
-        //    mesh_faces.push_back({mesh_verts.size()-3, mesh_verts.size()-2, mesh_verts.size()-1});
-        //    face_id_val.push_back(face_id[f]);
-        //}
-        //auto ps_mesh = polyscope::registerSurfaceMesh("mesh", mesh_verts, mesh_faces);
-        //ps_mesh->addFaceScalarQuantity("face_id", face_id_val)->setEnabled(true);
-
-
-        //RTCGeometry geom = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_TRIANGLE);
-
-        //float* vb = (float*) rtcSetNewGeometryBuffer(geom,
-        //    RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, 3*sizeof(float), 3);
-        //vb[0] = 0.f; vb[1] = 0.f; vb[2] = 0.f; // 1st vertex
-        //vb[3] = 1.f; vb[4] = 0.f; vb[5] = 0.f; // 2nd vertex
-        //vb[6] = 0.f; vb[7] = 1.f; vb[8] = 0.f; // 3rd vertex
-
-        //unsigned* ib = (unsigned*) rtcSetNewGeometryBuffer(geom,
-        //    RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, 3*sizeof(unsigned), 1);
-        //ib[0] = 0; ib[1] = 1; ib[2] = 2;
-
-        //rtcCommitGeometry(geom);
-        //rtcAttachGeometry(scene, geom);
-        //rtcReleaseGeometry(geom);        
-
-
+        // rtcCommitGeometry(geom);
+        // auto rid = rtcAttachGeometry(scene, geom);
+        // rtcReleaseGeometry(geom);
+        
         rtcCommitScene(scene);
 
 
-        //RTCRayHit rayhit; 
-        //rayhit.ray.org_x  = 0.5f; rayhit.ray.org_y = 0.5f; rayhit.ray.org_z = -2.f;
-        //rayhit.ray.dir_x  = 0.f; rayhit.ray.dir_y = 0.f; rayhit.ray.dir_z =  1.f;
-        //rayhit.ray.tnear  = 0.f;
-        //rayhit.ray.tfar   = std::numeric_limits<float>::infinity();
-        //rayhit.hit.geomID = RTC_INVALID_GEOMETRY_ID;
 
-        //RTCBounds bounds;
-        //rtcGetSceneBounds(scene, &bounds);
-        //auto bbox = cloud->get_bbox();
+        // Create a map of point indicies
+        std::unordered_map<unsigned int, pcl::Indices> point_map;
+        for (auto & surface: surfaces)
+            for (const auto & [id, indices]: surface)
+                std::copy(indices.begin(), indices.end(), std::back_insert_iterator(point_map[id]));
 
+
+        using Tile = std::pair<unsigned int, Surface *>;
+
+        std::vector<Tile> tiles;
+        for (auto & surface: surfaces)
+            for (const auto & [id, _]: surface)
+                tiles.push_back(std::make_pair(id, &surface));
+
+
+        // Create rays
+        FT const constexpr offset = 0.10;
+        using Rays = std::vector<std::pair<Ray, Tile*>>;
+        Rays rays;
+        for (size_t i = 0; i < tiles.size(); i++){
+            for (size_t j = i+1; j < tiles.size(); j++){
+                auto [id1, surface1] = tiles[i];
+                auto [id2, surface2] = tiles[j];
+
+                Point_3 source = surface1->GetCentroid(id1);
+                Point_3 target = surface2->GetCentroid(id2);
+
+                Vector_3 normal1 = surface1->plane.orthogonal_vector();
+                Vector_3 normal2 = surface2->plane.orthogonal_vector();
+
+                source = source + offset*normal1;
+                target = target + offset*normal2;
+
+                // Create ray
+                Ray ray;
+
+                ray.ray.org_x = source.x();
+                ray.ray.org_y = source.y();
+                ray.ray.org_z = source.z();
+
+                Vector_3 dir = target - source;
+                dir = dir / CGAL::sqrt(dir.squared_length());
+
+                ray.ray.dir_x = dir.x();
+                ray.ray.dir_y = dir.y();
+                ray.ray.dir_z = dir.z();
+
+                ray.ray.tnear = 0.0f;
+                ray.ray.tfar = std::sqrt(CGAL::squared_distance(source, target));
+
+                ray.hit.geomID = RTC_INVALID_GEOMETRY_ID; // Geometry ID, if the ray hits something, this will be the id of the geometry
+
+                ray.ray.id = id2; // Target id, if the ray does not hit anything, this will be the id of the target
+
+                rays.push_back(std::make_pair(ray, &tiles[i]));
+                
+            }
+        }
+
+
+
+        
+        // RTCRayHit rayhit; 
+        // rayhit.ray.org_x  = 0.f; rayhit.ray.org_y = 0.f; rayhit.ray.org_z = -1.f;
+        // rayhit.ray.dir_x  = 0.f; rayhit.ray.dir_y = 0.f; rayhit.ray.dir_z =  1.f;
+        // rayhit.ray.tnear  = 0.f;
+        // rayhit.ray.tfar   = 2.f;
+        // rayhit.hit.geomID = RTC_INVALID_GEOMETRY_ID;
+        
         // Instatiate the context
         RTCIntersectContext context;
         rtcInitIntersectContext(&context);
 
+        // rtcIntersect1(scene, &context, &rayhit);
+        // std::cout << "Hit: " << rayhit.hit.geomID << " -- " << rid << std::endl;
+        // std::cout << "Hit distance: " << rayhit.ray.tfar << std::endl;
 
-        //rtcIntersect1(scene, &context, &rayhit);
-        //if (rayhit.hit.geomID != RTC_INVALID_GEOMETRY_ID) {
-        //  std::cout << "Intersection at t = " << rayhit.ray.tfar << std::endl;
-        //} else {
-        //  std::cout << "No Intersection" << std::endl;
-        //} 
-
-
-            
-        //for (size_t i = 0; i < rays.size(); i++){
-        //    rtcIntersect1(scene, &context, (RTCRayHit*)&rays[i]);
-        //    if (rays[i].hit.geomID != RTC_INVALID_GEOMETRY_ID){
-        //        std::cout << "Hit: " << rays[i].hit.geomID << std::endl;
-        //    }
-        //    else{
-
-        //        if (rays[i].ray.org_x < bbox.min.x || rays[i].ray.org_x > bbox.max.x ||
-        //            rays[i].ray.org_y < bbox.min.y || rays[i].ray.org_y > bbox.max.y ||
-        //            rays[i].ray.org_z < bbox.min.z || rays[i].ray.org_z > bbox.max.z)
-        //        {
-        //            std::cout << "Missed: " << rays[i].ray.id << std::endl;
-        //            std::cout << "Origin: " << rays[i].ray.org_x << " " << rays[i].ray.org_y << " " << rays[i].ray.org_z << std::endl;
-        //            std::cout << "Direction: " << rays[i].ray.dir_x << " " << rays[i].ray.dir_y << " " << rays[i].ray.dir_z << std::endl;
-        //            std::cout << "N: " << rays[i].ray.tnear << std::endl;
-        //            std::cout << "F: " << rays[i].ray.tfar << std::endl;
-        //            std::cout << "Time: " << rays[i].ray.time << std::endl;
-        //            std::cout << "Flags: " << rays[i].ray.flags << std::endl;
-        //            std::cout << "Mask: " << rays[i].ray.mask << std::endl;
-        //            std::cout << std::endl;
-        //        }
-        //    }
-        //}
 
         // Intersect all rays with the scene
-        rtcIntersect1M(scene, &context, (RTCRayHit*)rays.data(), rays.size(), sizeof(RTCRayHit));
+        auto rays_bar = util::progress_bar(rays.size(), "Intersecting rays");
+        rtcIntersect1M(scene, &context, (RTCRayHit*)&rays[0], rays.size(), sizeof(std::pair<Ray, Tile*>));
+        rays_bar.stop();
+
+        std::cout << "Error: " << rtcGetDeviceError(device) << "\n";
+
+
+
+        // polyscope::myinit();
+        // auto vertices = std::vector<tg::pos3>();
+        // auto faces = std::vector<std::array<size_t, 4>>();
+        // size_t offset_2 = 0;
+        // for (auto & ray: rays){
+        //     auto & tile = ray.second;
+        //     auto & [id, _] = *tile;
+
+        //     RTCGeometry geo = rtcGetGeometry(scene, id);
+
+        //     float *vb = (float *)rtcGetGeometryBufferData( geo, RTC_BUFFER_TYPE_VERTEX, 0);
+        //     unsigned int * ib = (unsigned int *)rtcGetGeometryBufferData(geo, RTC_BUFFER_TYPE_INDEX, 0);
+
+        //     vertices.emplace_back(vb[0], vb[1], vb[2]);
+        //     vertices.emplace_back(vb[3], vb[4], vb[5]);
+        //     vertices.emplace_back(vb[6], vb[7], vb[8]);
+        //     vertices.emplace_back(vb[9], vb[10], vb[11]);
+
+        //     faces.push_back(std::array<size_t, 4>{
+        //         ib[0]+offset_2, 
+        //         ib[1]+offset_2, 
+        //         ib[2]+offset_2, 
+        //         ib[3]+offset_2});
+        //     offset_2 += 4;
+
+        // }
+        // polyscope::registerSurfaceMesh("planes", vertices, faces);
+        // polyscope::show();
+        
+        // Release the scene and device
+        rtcReleaseScene(scene);
+        rtcReleaseDevice(device);
 
         std::unordered_map<size_t, unsigned int> id_to_int;
         std::unordered_map<unsigned int, size_t> int_to_id;
 
         size_t spm_idx = 0;
-        for (auto & [id,_]:   point_map){
+        for (auto & [id,_]:   tiles){
                 id_to_int[id] = spm_idx;
                 int_to_id[spm_idx] = id;
                 spm_idx++;
         }
 
 
-
-
         // Initialize the matrix
         SpMat matrix = SpMat(point_map.size(), point_map.size());
         matrix += Eigen::VectorXd::Ones(matrix.cols()).template cast<FT>().asDiagonal();
 
-        bool any_hit = false;
 
-        //auto result_bar = util::progress_bar(rays.size(), "Processing rays");
+        auto matrix_bar = util::progress_bar(rays.size(), "Creating matrix");
+        // bool any_hit = false;
         for (size_t i = 0; i < rays.size(); i++){
-            if (rays[i].hit.geomID != RTC_INVALID_GEOMETRY_ID) {
+            matrix_bar.update();
 
-                int source_int = id_to_int[rays[i].ray.id];
-                int target_int = id_to_int[rays[i].hit.geomID];
+            auto & [ray, tile] = rays[i];
 
-                auto vaule = matrix.coeff(source_int, target_int) + 1;
+            // If we did not hit anything, there is a clear line of sight between the two points
+            double value = (ray.hit.geomID == RTC_INVALID_GEOMETRY_ID) ? 1 : 0;
+            if (value == 0)
+                continue;
+            
+            int source_int = id_to_int[tile->first];
+            int target_int = id_to_int[ray.ray.id];
 
-                // Increment the matrix
-                matrix.coeffRef(source_int, target_int) = vaule;
-                matrix.coeffRef(target_int, source_int) = vaule;
+            // Increment the matrix
+            matrix.coeffRef(source_int, target_int) = value;
+            matrix.coeffRef(target_int, source_int) = value;
 
-                any_hit = true;
+            // any_hit = any_hit || (ray.hit.geomID != RTC_INVALID_GEOMETRY_ID);
 
-            }
-            //result_bar.update();
         }
-        //result_bar.stop();
+        matrix_bar.stop();
 
 
-        //std::cout << "Error: " << rtcGetDeviceError(device) << std::endl;
-    
-        // Release the scene and device
-        rtcReleaseScene(scene);
-        rtcReleaseDevice(device);
 
-        std::cout << "Any hit: " << any_hit << std::endl;
-        std::cout << "Number of rays: " << rays.size() << std::endl;
         std::cout << "Number of tiles: " << point_map.size() << std::endl;
+        std::cout << "Number of rays: " << rays.size() << std::endl;
+        // std::cout << "Any hit: " << any_hit << std::endl;
 
-        
-
-        //cv::Mat img = cv::Mat::zeros(point_map.size(), point_map.size(), CV_8UC1);
-        //for (int k = 0; k < matrix.outerSize(); ++k)
-        //    for (SpMat::InnerIterator it(matrix, k); it; ++it)
-        //        img.at<u_int8_t>(k, it) = (u_int8_t)(it.value()*255);
-        //cv::imshow("Matrix", img);
-        //cv::waitKey(0);
-        //cv::destroyAllWindows();
-        //std::cout << "Imaged shown" << std::endl;
 
 
         // Markov Clustering
         //// 2.5 < infaltion < 2.8  => 3.5
-        matrix = markov_clustering::run_mcl(matrix, 3, 1.9);
+        matrix = markov_clustering::run_mcl(matrix, 2, 2);
         std::set<std::vector<size_t>> mc_clusters = markov_clustering::get_clusters(matrix);
         std::printf("Number of clusters after Markov Clustering: %d\n", (int)mc_clusters.size());
 
+
+
+        // Assigne the clusters to the point cloud
         u_int8_t cluster_index = 1;
         for (const std::vector<size_t> & cluster: mc_clusters){
             for (const size_t & idx: cluster)
-                for(const size_t & index : point_map[int_to_id[(int)idx]])
+                for(const auto & index : point_map[int_to_id[(int)idx]])
                     cloud->points[index].instance = cluster_index;
 
             cluster_index += 1;
         }
         std::cout << "Number of clusters after Markov Clustering: " << (int)cluster_index-1 << std::endl;
 
+        polyscope::myinit();
+        auto ray_points = std::vector<tg::pos3>();
+        for (auto & ray: rays){
+            if (ray.first.hit.geomID != RTC_INVALID_GEOMETRY_ID)
+                continue;
+
+            ray_points.emplace_back(ray.first.ray.org_x, ray.first.ray.org_y, ray.first.ray.org_z);
+            auto length = ray.first.ray.tfar;
+            ray_points.emplace_back(
+                    ray.first.ray.org_x + (ray.first.ray.dir_x * length), 
+                    ray.first.ray.org_y + (ray.first.ray.dir_y * length), 
+                    ray.first.ray.org_z + (ray.first.ray.dir_z * length));
+        }
+
+        auto ray_edges = std::vector<std::array<size_t, 2>>();
+        for (size_t i = 0; i < ray_points.size(); i+=2)
+            ray_edges.push_back({i, i+1});
+
+        auto ps_rays = polyscope::registerCurveNetwork("ray", ray_points, ray_edges);
+        ps_rays->setRadius(0.0001);
 
         cloud->display("cloud");
-        //polyscope::myinit();
-        //polyscope::display(*cloud, "cloud");
-        //polyscope::getPointCloud("cloud")->getQuantity("Instance Colors")->setEnabled(true);
-        //polyscope::show();
 
         return *cloud;
     }

@@ -34,7 +34,6 @@ using Vector_3 = Kernel::Vector_3;
 using Dt = CGAL::Delaunay_triangulation_2<Kernel>;
 using Ht = CGAL::Triangulation_hierarchy_2<Dt>;
 
-
 using Vb = CGAL::Alpha_shape_vertex_base_2<Kernel>;
 using Fb = CGAL::Alpha_shape_face_base_2<Kernel>;
 using Tds = CGAL::Triangulation_data_structure_2<Vb, Fb>;
@@ -55,105 +54,80 @@ using Geometries = std::vector<RTCGeometry>;
 namespace linkml
 {
 
-    constexpr double const_sin(double x)
+    class Surface;
+
+    template <typename SurfacePointer>
+    class IndciesIterator
     {
-        double sin{0}, pow{x};
-        for (auto fac{1LLU}, n{1ULL}; n != 20; fac *= ++n, pow *= x)
-            if (n & 1)
-                sin += (n & 2 ? -pow : pow) / fac;
-        return sin;
-    }
+        public:
+            IndciesIterator(typename std::unordered_map<unsigned int, Mesh::Face_index>::iterator it, SurfacePointer surface) : it(it), surface(surface) {}
+            IndciesIterator& operator++() { ++it; return *this; }
+            bool operator!=(const IndciesIterator& other) const { return it != other.it; }
+            std::pair<unsigned int, pcl::Indices> operator*() const { return std::pair<unsigned int, pcl::Indices>(it->first, surface->GetPoints(it->second)); }
+        private:
+            typename std::unordered_map<unsigned int, Mesh::Face_index>::iterator it;
+            SurfacePointer surface;
+    };
 
-    constexpr double const_cos(double x)
+    class Surface  
     {
-        double cos{1}, pow{x};
-        for (auto fac{1ull}, n{1ull}; n != 19; fac *= ++n, pow *= x)
-            if ((n & 1) == 0)
-                cos += (n & 2 ? -pow : pow) / fac;
-        return cos;
-    }
-
-    static constexpr auto CreateSphere(){
-
-        constexpr int n_stacks = 10; // number of stacks
-        constexpr int n_slices = 10; // number of slices
-
-        std::array<Ray, (n_stacks-1)*n_slices+1> rays{};
+        public:
+            Plane_3 plane;
 
 
-        // add north vetcor
-        rays[0].ray.dir_x = 0;
-        rays[0].ray.dir_y = 1;
-        rays[0].ray.dir_z = 0;
+        private:
+            static constexpr FT tile_x_size = 0.4;
+            static constexpr FT tile_y_size = 0.4;
 
-        // generate vertices per stack / slice
-        for (int i = 0; i < n_stacks - 1; i++)
-        {
-            auto phi = M_PI * FT(i + 1) / FT(n_stacks);
-            for (int j = 0; j < n_slices; j++)
-            {
-                auto theta = 2.0 * M_PI * FT(j) / FT(n_slices);
+            static constexpr auto coords_name = "v:coords";
+            static constexpr auto centeroids_name = "f:centeroids";
+            static constexpr auto indecies_name = "f:indecies";
+            static constexpr auto num_supporting_points_name = "f:num_supporting_points";
 
-                auto x = const_sin(phi) * const_cos(theta);
-                auto y = const_cos(phi);
-                auto z = const_sin(phi) * const_sin(theta);
+            // Serves as filter for valid faces and enables selection through the Embree ID
+            std::unordered_map<unsigned int, Mesh::Face_index> valid;
 
-                rays[i * n_slices + j + 1].ray.dir_x = x;
-                rays[i * n_slices + j + 1].ray.dir_y = y;
-                rays[i * n_slices + j + 1].ray.dir_z = z;
-            }
-        }
-
-
-        // add south vetcor
-        int last_ray_index = (n_stacks - 1) * n_slices;
-        rays[last_ray_index].ray.dir_x = 0;
-        rays[last_ray_index].ray.dir_y = -1;
-        rays[last_ray_index].ray.dir_z = 0;
-
-        return rays;
-    }
-    
-    class Surface
-    {
-    private:
-
-        Plane_3 plane;
-        Mesh mesh;
-        Rays default_rays;
-
-        // The size of the tiles
-        float tile_x_size = 0.4;
-        float tile_y_size = 0.4;
-            
-        static const constexpr auto ray_sphere = CreateSphere();
+            Mesh mesh;
 
     public:
         Surface() = default;
         Surface(PointCloud::Ptr cloud, pcl::Indices indices);
-        void Create_Embree_Geometry(RTCDevice & device, RTCScene & scene, std::unordered_map<unsigned int, pcl::Indices>& point_map, std::back_insert_iterator<Rays> rays);
+        
+        void Create_Embree_Geometry(RTCDevice & device, RTCScene & scene);
+
+        inline Point_3 GetCentroid(unsigned int id) { 
+            return mesh.property_map<Mesh::Face_index, Point_3>(centeroids_name).first[valid[id]]; }
+        inline pcl::Indices GetPoints(unsigned int id) { 
+            return mesh.property_map<Mesh::Face_index, pcl::Indices>(indecies_name).first[valid[id]]; }
+        inline pcl::Indices GetPoints(Mesh::Face_index f) { 
+            return mesh.property_map<Mesh::Face_index, pcl::Indices>(indecies_name).first[f]; }
+        inline size_t size() const { return valid.size(); }
+
+        auto begin() { return IndciesIterator(valid.begin(), this); }
+        auto end() { return IndciesIterator(valid.end(), this); }
+
+
 
     private:
 
-        pcl::Indices supporting_points(typename Mesh::Face_index face, const Mesh& mesh, const PointCloud::ConstPtr cloud, const pcl::Indices indices);
-        FT face_area(typename Mesh::Face_index f, const Mesh& mesh) const;
+        std::pair<pcl::Indices,size_t> supporting_points(typename Mesh::Face_index face, const Mesh& mesh, const PointCloud::ConstPtr cloud, const pcl::Indices indices);
+        Point_3 compute_centroid(typename Mesh::Face_index f, const Mesh& mesh) const;
 
     };
 
 
 
     // Implementation
+    std::pair<pcl::Indices, size_t> Surface::supporting_points(typename Mesh::Face_index face, const Mesh& mesh, const PointCloud::ConstPtr cloud, const pcl::Indices indices_in) {
 
-    pcl::Indices Surface::supporting_points(typename Mesh::Face_index face, const Mesh& mesh, const PointCloud::ConstPtr cloud, const pcl::Indices indices_in) {
         pcl::Indices indices;
-
         if (face == Mesh::null_face())
-                return indices;
+                return std::make_pair(indices,0);
 
-        const typename Mesh::template Property_map<typename Mesh::Vertex_index, Point_3>& coords = 
-            mesh.property_map<typename Mesh::Vertex_index, Point_3>("v:points").first;
+        auto coords = mesh.property_map<Mesh::Vertex_index, Point_3>(coords_name).first;
 
-        typename Mesh::Vertex_around_face_circulator cir(mesh.halfedge(face), mesh), done(cir);
+        
+        typename Mesh::Vertex_around_face_circulator cir(mesh.halfedge(face), mesh);
         Point_3 points_3d[4];
         points_3d[0] = coords[*cir]; ++cir;
         points_3d[1] = coords[*cir]; ++cir;
@@ -167,38 +141,29 @@ namespace linkml
 
         auto bbox = CGAL::bounding_box(points_2d.begin(), points_2d.end());
 
-
+        size_t count = 0;
         for (size_t i = 0; i < indices_in.size(); i++){
 
             auto point = cloud->points[indices_in[i]].getVector3fMap();
             Point_2 p = plane.to_2d(Point_3(point[0], point[1], point[2]));
         
-            if ( bbox.xmin() <= p.x() && bbox.xmax() >= p.x() && bbox.ymin() <= p.y() && bbox.ymax() >= p.y() )
+            if ( bbox.xmin() <= p.x() && bbox.xmax() >= p.x() && bbox.ymin() <= p.y() && bbox.ymax() >= p.y() ){
                 indices.push_back(indices_in[i]);
+                count++;
+            }
+
         }
 
-        return indices;
+        return std::make_pair(indices, count);
     }
-    void Surface::Create_Embree_Geometry(RTCDevice & device, RTCScene & scene, std::unordered_map<unsigned int, pcl::Indices>& point_map, std::back_insert_iterator<Rays> rays){
+    void Surface::Create_Embree_Geometry(RTCDevice & device, RTCScene & scene){
 
-
-        //auto covered_area = mesh.property_map<Mesh::Face_index, FT>("f:covered_area").first;
-        //auto face_area = mesh.property_map<Mesh::Face_index, FT>("f:face_areas").first;
-        auto face_point_indecies = mesh.property_map<Mesh::Face_index, pcl::Indices>("f:point_indecies").first;
-        auto face_num_supporting_points = mesh.property_map<Mesh::Face_index, std::size_t>("f:face_num_supporting_points").first;
-
-       
+        auto num_supporting_points = mesh.property_map<Mesh::Face_index, size_t>(num_supporting_points_name).first;
+        auto coords = mesh.property_map<Mesh::Vertex_index, Point_3>(coords_name).first;
 
         for (auto f : mesh.faces()){
             
-
-            // FIXME: The area is not correct
-            // So the check if skipped. 
-            // Skip faces with too low coverage
-            //if (covered_area[f] < 0.5 * face_area[f])
-            //    continue;
-
-            if (face_num_supporting_points[f] == 0)
+            if (num_supporting_points[f] == 0 )
                 continue;
 
             // Create the geometry
@@ -212,10 +177,7 @@ namespace linkml
             unsigned* ib = (unsigned*) rtcSetNewGeometryBuffer(geom,
                 RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT4, 4*sizeof(unsigned), 1);
 
-            const typename Mesh::template Property_map<typename Mesh::Vertex_index, Point_3>& coords = 
-                mesh.property_map<typename Mesh::Vertex_index, Point_3>("v:points").first;
-
-            typename Mesh::Vertex_around_face_circulator cir(mesh.halfedge(f), mesh), done_v(cir);
+            typename Mesh::Vertex_around_face_circulator cir(mesh.halfedge(f), mesh); 
 
             Point_3 points[4];
             points[0] = coords[*cir]; ++cir;
@@ -238,19 +200,39 @@ namespace linkml
             ib[3] = 3;
 
 
-
-
-
             // Attach the geometry to the scene
             rtcCommitGeometry(geom);
             auto genomID = rtcAttachGeometry(scene, geom);
             rtcReleaseGeometry(geom);
 
-            // Store the face point indecies
-            point_map[genomID] = face_point_indecies[f];
+
+            valid[genomID] = f;
 
 
-            // Finde the avereage point of the face (Center of mass)
+       }
+
+
+    
+    };  
+    Point_3 Surface::compute_centroid(typename Mesh::Face_index f, const Mesh& mesh) const {
+
+            // Set the default values
+            Point_3 centroid(0,0,0);
+
+            // Get the vertex buffer
+            typename Mesh::Vertex_around_face_circulator cir(mesh.halfedge(f), mesh), done_v(cir);
+
+            auto coords = mesh.property_map<Mesh::Vertex_index, Point_3>(coords_name).first;
+
+            // Get the vertex coordinates
+            Point_3 points[4];
+            points[0] = coords[*cir]; ++cir;
+            points[1] = coords[*cir]; ++cir;
+            points[2] = coords[*cir]; ++cir;
+            points[3] = coords[*cir];
+
+           
+            // Compute the centroid
             FT X(0.0), Y(0.0), Z(0.0);
             for (int i = 0; i < 4; i++){
                 X += points[i].x();
@@ -258,86 +240,24 @@ namespace linkml
                 Z += points[i].z();
             }
             X /= 4; Y /= 4; Z /= 4;
+            centroid = Point_3(X, Y, Z);
 
-            // Move the origin a bit away from the face
-            X += plane.orthogonal_direction().dx() * FT(0.01);
-            Y += plane.orthogonal_direction().dy() * FT(0.01);
-            Z += plane.orthogonal_direction().dz() * FT(0.01);
+            return centroid;
 
-            Point_3 origin = Point_3(X, Y, Z);
-
-            std::transform(default_rays.begin(), default_rays.end(), rays, [&](const Ray& ray){
-
-
-                RTCRayHit rayhit;
-
-                rayhit.ray.org_x = origin.x();
-                rayhit.ray.org_y = origin.y();
-                rayhit.ray.org_z = origin.z();
-                rayhit.ray.id = genomID;
-                
-                rayhit.ray.dir_x = ray.ray.dir_x;
-                rayhit.ray.dir_y = ray.ray.dir_y;
-                rayhit.ray.dir_z = ray.ray.dir_z;
-
-                rayhit.ray.tnear  = 0.f;
-                rayhit.ray.tfar   = std::numeric_limits<float>::infinity();
-                rayhit.hit.geomID = RTC_INVALID_GEOMETRY_ID;
-
-                return rayhit;
-            });
-
-            // Set the intersect filter function
-            // https://spec.oneapi.io/oneart/0.5-rev-1/embree-spec.html#rtcsetgeometryintersectfilterfunction
-
-
-            RTCGeometry sphere = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_SPHERE_POINT);
-
-             // Get the vertex buffer (x,y,z,r)
-            float* s_vb = (float*) rtcSetNewGeometryBuffer(sphere,
-                RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT4, 4*sizeof(float), 1);
-            
-            s_vb[0] = origin.x();
-            s_vb[1] = origin.y();
-            s_vb[2] = origin.z();
-            s_vb[3] = 0.4;
-
-          
-
-       }
-
-
-    };  
-    FT Surface::face_area(typename Mesh::Face_index f, const Mesh& mesh) const {
-            FT result(0);
-
-            const typename Mesh::template Property_map<typename Mesh::Vertex_index, Point_3>& coords = 
-                mesh.property_map<typename Mesh::Vertex_index, Point_3>("v:points").first;
-
-            typename Mesh::Vertex_around_face_circulator cir(mesh.halfedge(f), mesh), done_v(cir);
-
-            Point_3 points[4];
-            points[0] = coords[*cir]; ++cir;
-            points[1] = coords[*cir]; ++cir;
-            points[2] = coords[*cir]; ++cir;
-            points[3] = coords[*cir];
-
-            std::array<Point_2,4> points_2d;
-            for (int i = 0; i < 4; i++)
-                points_2d[i] = plane.to_2d(points[i]);                
-
-            auto bbox = CGAL::bounding_box(points_2d.begin(), points_2d.end());
-            FT dx = bbox.xmax() - bbox.xmin();
-            FT dy = bbox.ymax() - bbox.ymin();
-
-            result = dx * dy;
-
-            return result;
     }
     Surface::Surface(PointCloud::Ptr cloud, pcl::Indices indices){
 
+
+
+        // Initialize the Mesh properties
+        auto coords = mesh.template add_property_map<Mesh::Vertex_index, Point_3>(coords_name).first;
+        auto num_supporting_points = mesh.template add_property_map<Mesh::Face_index, std::size_t>(num_supporting_points_name, 0).first;
+        auto indecies = mesh.template add_property_map<Mesh::Face_index, pcl::Indices>(indecies_name).first;
+        auto centeroids = mesh.template add_property_map<Mesh::Face_index, Point_3>(centeroids_name).first;
+
+
         // Construct Plane
-        double x, y, z, n_x, n_y, n_z = 0;
+        double x=0, y=0, z=0, n_x=0, n_y=0, n_z=0;
 
 
         // TODO: Avoid impresission due to large intermediate values
@@ -399,11 +319,10 @@ namespace linkml
         for (size_t i = 0; i < num_verticies; i++)
             vertices[i] = mesh.add_vertex();
 
-        auto points = mesh.template add_property_map<Mesh::Vertex_index, Point_3>("v:points").first;
 
         for (int i = 0; i < nx+1; i++)
             for (int j = 0; j < ny+1; j++)
-                points[vertices[i + j * (nx+1)]] = plane.to_3d(Point_2(bbox.xmin() + i * dx / nx, bbox.ymin() + j * dy / ny));
+                coords[vertices[i + j * (nx+1)]] = plane.to_3d(Point_2(bbox.xmin() + i * dx / nx, bbox.ymin() + j * dy / ny));
             
         
         for (int i = 0; i < nx; i++)
@@ -418,52 +337,25 @@ namespace linkml
         
 
         // Compute occupancy per face 
-        auto face_areas = mesh.template add_property_map<Mesh::Face_index, FT>("f:face_areas").first;
-        auto face_num_supporting_points = mesh.template add_property_map<Mesh::Face_index, std::size_t>("f:face_num_supporting_points").first;
-        auto face_covered_areas = mesh.template add_property_map<Mesh::Face_index, FT>("f:covered_area").first;
-        auto face_point_indecies = mesh.template add_property_map<Mesh::Face_index, pcl::Indices>("f:point_indecies").first;
-        
-        FT degenerate_face_area_threshold = CGAL::snap_squared_distance_threshold<FT>() * CGAL::snap_squared_distance_threshold<FT>();
-
-
         std::vector<typename Mesh::Face_index> faces;
         for (auto f : mesh.faces())
             faces.push_back(f);
 
 
         // Compute face areas and covered areas
-        #pragma omp parallel
-        #pragma omp single
+        #pragma omp parallel for
         for (size_t i = 0; i < faces.size(); i++){
 
-            #pragma omp task
-            {
-            // Face area
-            FT area = face_area(faces[i], mesh);
-            face_areas[faces[i]] = area;
+            auto f = faces[i];
 
-            if (area > degenerate_face_area_threshold) {
-                const pcl::Indices idxs = supporting_points(faces[i], mesh, cloud, indices);
+            // Face centroid
+            const auto & [idx, count] = supporting_points(f, mesh, cloud, indices);
 
-                face_point_indecies[faces[i]] = idxs;
-                face_num_supporting_points[faces[i]] = idxs.size();
+            indecies[f] = idx;
+            num_supporting_points[f] = count;
 
-            }
-            else { // For tiny faces, we can simple assign zero supporting points
-                face_num_supporting_points[faces[i]] = 0;
-                face_covered_areas[faces[i]] = FT(0.0);
-            }
-            }
+            centeroids[f] = compute_centroid(f, mesh);
         }
-
-
-        // Filter rays that are pointing forward form the surface
-        std::copy_if(ray_sphere.begin(), ray_sphere.end(), std::back_inserter(default_rays), [&](const Ray& ray){
-            Vector_3 v = Vector_3(ray.ray.dir_x, ray.ray.dir_y, ray.ray.dir_z);
-            Vector_3 dir = plane.orthogonal_vector();
-            return CGAL::scalar_product(v, dir) > FT(0.3);
-        });
-
 
     }
 
