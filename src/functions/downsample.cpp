@@ -8,6 +8,8 @@ namespace linkml
 {
     PointCloud PointCloud::downsample(double leaf_size){
 
+        // TODO: Add a check to see if we are running out of memory
+
         auto octree_bar = util::progress_bar(1, "Building Octree");
         pcl::octree::OctreePointCloudPointVector<PointCloud::PointType> octree(leaf_size);
         octree.setInputCloud(this->makeShared());

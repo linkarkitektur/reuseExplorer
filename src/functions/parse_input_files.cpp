@@ -48,6 +48,8 @@
 #include <future>
 
 
+namespace fs = std::filesystem;
+
 
 namespace linkml{
 
@@ -387,6 +389,14 @@ namespace linkml{
         std::optional<int> stop_in,
         int step){
 
+            // TODO: Make output path optional.
+            // And in case it is not set use a temp folder
+            //auto path = fs::temp_directory_path() / "linkml";
+            
+            // TODO: Optionally clear the output folder before saving the files
+            //if (fs::exists(path))
+            //    fs::remove_all(path);
+            
 
             auto fields = dataset.fields();
 

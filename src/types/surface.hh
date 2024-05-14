@@ -306,6 +306,12 @@ namespace linkml
         // Find Bounding Box in 2D
         auto bbox = CGAL::bounding_box(points_2d.begin(), points_2d.end());
 
+        // Offset the bounding box
+        // Ofthen there is a gap between surfaces, allowing stray rays to escape
+        // muddeling the results
+        FT offset = 0.15;
+        bbox = CGAL::Bbox_2(bbox.xmin() - offset, bbox.ymin() - offset, bbox.xmax() + offset, bbox.ymax() + offset);
+
         // Subdivide Bounding Box
         auto dx  = bbox.xmax() - bbox.xmin();
         auto dy  = bbox.ymax() - bbox.ymin();

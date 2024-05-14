@@ -4,6 +4,7 @@
 #include "algorithms/refine.hh"
 #include "algorithms/clustering.hh"
 #include "types/surface.hh"
+#include "functions/color.hh"
 
 #include <pcl/filters/random_sample.h>
 #include <pcl/filters/experimental/functor_filter.h>
@@ -13,6 +14,7 @@
 #include <embree3/rtcore.h>
 
 #include <opencv4/opencv2/opencv.hpp>
+#include <omp.h>
 
 template<typename PointT>
 class MatchCondition
@@ -141,7 +143,6 @@ namespace linkml
 
 
 
-
         // Ray tracing
         RTCDevice device = rtcNewDevice(NULL);
 
@@ -152,47 +153,40 @@ namespace linkml
             surfaces[i].Create_Embree_Geometry(device, scene);
         embree_bar.stop();
 
-        // // Test geometry
-        // RTCGeometry geom = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_TRIANGLE);
-        // float* vb = (float*) rtcSetNewGeometryBuffer(geom,
-        //     RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, 3*sizeof(float), 3);
-        // vb[0] = 0.f; vb[1] = 0.f; vb[2] = 0.f; // 1st vertex
-        // vb[3] = 1.f; vb[4] = 0.f; vb[5] = 0.f; // 2nd vertex
-        // vb[6] = 0.f; vb[7] = 1.f; vb[8] = 0.f; // 3rd vertex
 
-        // unsigned* ib = (unsigned*) rtcSetNewGeometryBuffer(geom,
-        //     RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, 3*sizeof(unsigned), 1);
-        // ib[0] = 0; ib[1] = 1; ib[2] = 2;
-
-        // rtcCommitGeometry(geom);
-        // auto rid = rtcAttachGeometry(scene, geom);
-        // rtcReleaseGeometry(geom);
-        
         rtcCommitScene(scene);
 
-
-
+        auto point_map_bar = util::progress_bar(surfaces.size(), "Creating point map");
         // Create a map of point indicies
         std::unordered_map<unsigned int, pcl::Indices> point_map;
         for (auto & surface: surfaces)
             for (const auto & [id, indices]: surface)
                 std::copy(indices.begin(), indices.end(), std::back_insert_iterator(point_map[id]));
+        point_map_bar.stop();
 
 
         using Tile = std::pair<unsigned int, Surface *>;
 
+        auto tile_bar = util::progress_bar(surfaces.size(), "Creating tiles");
         std::vector<Tile> tiles;
         for (auto & surface: surfaces)
             for (const auto & [id, _]: surface)
                 tiles.push_back(std::make_pair(id, &surface));
+        tile_bar.stop();
+        std::cout << "Number of tiles: " << tiles.size() << std::endl;
 
 
         // Create rays
-        FT const constexpr offset = 0.10;
         using Rays = std::vector<std::pair<Ray, Tile*>>;
-        Rays rays;
+        FT const constexpr offset = 0.10;
+        size_t const nrays = tiles.size()*(tiles.size()-1)/2;
+        Rays rays(nrays);
+        std::cout << "Number of rays: " << nrays << std::endl;
+        auto creating_rays_bar = util::progress_bar(nrays, "Creating rays");
+        #pragma omp parallel for collapse(2)
         for (size_t i = 0; i < tiles.size(); i++){
             for (size_t j = i+1; j < tiles.size(); j++){
+
                 auto [id1, surface1] = tiles[i];
                 auto [id2, surface2] = tiles[j];
 
@@ -226,71 +220,36 @@ namespace linkml
 
                 ray.ray.id = id2; // Target id, if the ray does not hit anything, this will be the id of the target
 
-                rays.push_back(std::make_pair(ray, &tiles[i]));
+                size_t idx = i*(2*tiles.size()-i-1)/2 + j-i-1;
+                rays[idx] = std::make_pair(ray, &tiles[i]);
                 
             }
         }
+        creating_rays_bar.stop();
 
-
-
-        
-        // RTCRayHit rayhit; 
-        // rayhit.ray.org_x  = 0.f; rayhit.ray.org_y = 0.f; rayhit.ray.org_z = -1.f;
-        // rayhit.ray.dir_x  = 0.f; rayhit.ray.dir_y = 0.f; rayhit.ray.dir_z =  1.f;
-        // rayhit.ray.tnear  = 0.f;
-        // rayhit.ray.tfar   = 2.f;
-        // rayhit.hit.geomID = RTC_INVALID_GEOMETRY_ID;
         
         // Instatiate the context
         RTCIntersectContext context;
         rtcInitIntersectContext(&context);
 
-        // rtcIntersect1(scene, &context, &rayhit);
-        // std::cout << "Hit: " << rayhit.hit.geomID << " -- " << rid << std::endl;
-        // std::cout << "Hit distance: " << rayhit.ray.tfar << std::endl;
-
 
         // Intersect all rays with the scene
         auto rays_bar = util::progress_bar(rays.size(), "Intersecting rays");
-        rtcIntersect1M(scene, &context, (RTCRayHit*)&rays[0], rays.size(), sizeof(std::pair<Ray, Tile*>));
+        //rtcIntersect1M(scene, &context, (RTCRayHit*)&rays[0], rays.size(), sizeof(std::pair<Ray, Tile*>));
+        #pragma omp parallel for
+        for (size_t i = 0; i < rays.size(); i++){
+            rtcIntersect1(scene, &context, (RTCRayHit*)&rays[i].first);
+            rays_bar.update();
+        }
         rays_bar.stop();
 
-        std::cout << "Error: " << rtcGetDeviceError(device) << "\n";
 
 
-
-        // polyscope::myinit();
-        // auto vertices = std::vector<tg::pos3>();
-        // auto faces = std::vector<std::array<size_t, 4>>();
-        // size_t offset_2 = 0;
-        // for (auto & ray: rays){
-        //     auto & tile = ray.second;
-        //     auto & [id, _] = *tile;
-
-        //     RTCGeometry geo = rtcGetGeometry(scene, id);
-
-        //     float *vb = (float *)rtcGetGeometryBufferData( geo, RTC_BUFFER_TYPE_VERTEX, 0);
-        //     unsigned int * ib = (unsigned int *)rtcGetGeometryBufferData(geo, RTC_BUFFER_TYPE_INDEX, 0);
-
-        //     vertices.emplace_back(vb[0], vb[1], vb[2]);
-        //     vertices.emplace_back(vb[3], vb[4], vb[5]);
-        //     vertices.emplace_back(vb[6], vb[7], vb[8]);
-        //     vertices.emplace_back(vb[9], vb[10], vb[11]);
-
-        //     faces.push_back(std::array<size_t, 4>{
-        //         ib[0]+offset_2, 
-        //         ib[1]+offset_2, 
-        //         ib[2]+offset_2, 
-        //         ib[3]+offset_2});
-        //     offset_2 += 4;
-
-        // }
-        // polyscope::registerSurfaceMesh("planes", vertices, faces);
-        // polyscope::show();
         
         // Release the scene and device
         rtcReleaseScene(scene);
         rtcReleaseDevice(device);
+
 
         std::unordered_map<size_t, unsigned int> id_to_int;
         std::unordered_map<unsigned int, size_t> int_to_id;
@@ -305,11 +264,13 @@ namespace linkml
 
         // Initialize the matrix
         SpMat matrix = SpMat(point_map.size(), point_map.size());
+        //auto matrix = Eigen::MatrixX<FT>::Zero(point_map.size(), point_map.size());
         matrix += Eigen::VectorXd::Ones(matrix.cols()).template cast<FT>().asDiagonal();
 
 
+        cv::Mat img = cv::Mat::zeros(point_map.size(), point_map.size(), CV_8UC3);
+
         auto matrix_bar = util::progress_bar(rays.size(), "Creating matrix");
-        // bool any_hit = false;
         for (size_t i = 0; i < rays.size(); i++){
             matrix_bar.update();
 
@@ -327,23 +288,22 @@ namespace linkml
             matrix.coeffRef(source_int, target_int) = value;
             matrix.coeffRef(target_int, source_int) = value;
 
-            // any_hit = any_hit || (ray.hit.geomID != RTC_INVALID_GEOMETRY_ID);
+            img.at<cv::Vec3b>(source_int, target_int) = cv::Vec3b(255, 255, 255);
+            img.at<cv::Vec3b>(target_int, source_int) = cv::Vec3b(255, 255, 255);
 
         }
         matrix_bar.stop();
 
-
-
-        std::cout << "Number of tiles: " << point_map.size() << std::endl;
-        std::cout << "Number of rays: " << rays.size() << std::endl;
-        // std::cout << "Any hit: " << any_hit << std::endl;
+        cv::imwrite("matrix_bw.png", img); 
 
 
 
         // Markov Clustering
         //// 2.5 < infaltion < 2.8  => 3.5
-        matrix = markov_clustering::run_mcl(matrix, 2, 2);
+        auto clustering_bar = util::progress_bar(1, "Markov Clustering");
+        matrix = markov_clustering::run_mcl(matrix, 5, 2);
         std::set<std::vector<size_t>> mc_clusters = markov_clustering::get_clusters(matrix);
+        clustering_bar.stop();
         std::printf("Number of clusters after Markov Clustering: %d\n", (int)mc_clusters.size());
 
 
@@ -351,34 +311,22 @@ namespace linkml
         // Assigne the clusters to the point cloud
         u_int8_t cluster_index = 1;
         for (const std::vector<size_t> & cluster: mc_clusters){
-            for (const size_t & idx: cluster)
-                for(const auto & index : point_map[int_to_id[(int)idx]])
-                    cloud->points[index].instance = cluster_index;
+            auto color = get_color_forom_angle(sample_circle(cluster_index));
+            for (const size_t & idx: cluster){
+                for (size_t i = 0; i < img.rows; i++)
+                    if (img.at<cv::Vec3b>(idx, i)[0] > 0)
+                        img.at<cv::Vec3b>(idx, i) = cv::Vec3b(color.b*255, color.g*255, color.r*255);
+                img.at<cv::Vec3b>(idx, idx) = cv::Vec3b(color.b*255, color.g*255, color.r*255);
+                
 
+                for(const auto & index : point_map[int_to_id[(int)idx]])
+                    cloud->points[index].instance = cluster_index;   
+            }
             cluster_index += 1;
         }
         std::cout << "Number of clusters after Markov Clustering: " << (int)cluster_index-1 << std::endl;
 
-        polyscope::myinit();
-        auto ray_points = std::vector<tg::pos3>();
-        for (auto & ray: rays){
-            if (ray.first.hit.geomID != RTC_INVALID_GEOMETRY_ID)
-                continue;
-
-            ray_points.emplace_back(ray.first.ray.org_x, ray.first.ray.org_y, ray.first.ray.org_z);
-            auto length = ray.first.ray.tfar;
-            ray_points.emplace_back(
-                    ray.first.ray.org_x + (ray.first.ray.dir_x * length), 
-                    ray.first.ray.org_y + (ray.first.ray.dir_y * length), 
-                    ray.first.ray.org_z + (ray.first.ray.dir_z * length));
-        }
-
-        auto ray_edges = std::vector<std::array<size_t, 2>>();
-        for (size_t i = 0; i < ray_points.size(); i+=2)
-            ray_edges.push_back({i, i+1});
-
-        auto ps_rays = polyscope::registerCurveNetwork("ray", ray_points, ray_edges);
-        ps_rays->setRadius(0.0001);
+        cv::imwrite("matrix_color.png", img);
 
         cloud->display("cloud");
 

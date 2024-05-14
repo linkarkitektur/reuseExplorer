@@ -229,12 +229,12 @@ linkml::PointCloud linkml::PointCloud::region_growing(
         #pragma omp parallel for
         for (size_t i = 0; i < clusters.size(); ++i){
             for (auto idx: clusters[i]){
-                cloud->at(idx).label = i+1;
+                this->at(idx).label = i+1;
             }
         }
 
         
-        return *cloud;
+        return *this;
 
 
 
