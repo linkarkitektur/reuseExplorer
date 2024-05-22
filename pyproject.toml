@@ -1,0 +1,36 @@
+[project]
+name = "linkml_py"
+version = "0.0.1"
+readme = "README.md"
+keywords = ["linkml", "python", "ReUse Explorer"]
+maintainers = [
+    {name = "Povl Filip Sonne-Frederiksen", email="pfs@linkarkitektur.dk"},
+    ]
+requires-python = ">=3.9"
+dependencies = [
+    "numpy", 
+    "specklepy",
+    "wheel",
+    ]
+
+[project.urls]
+source = "https://github.com/linkarkitektur/linkml_cpp"
+
+[build-system]
+requires = ["scikit-build-core>=0.3.3", "pybind11"]
+build-backend = "scikit_build_core.build"
+
+[tool.scikit-build]
+cmake.verbose = true
+cmake.build-type = "Debug"
+logging.level = "ERROR"
+cmake.version = "==3.22.1"
+ninja.version = "==1.10.1"
+sdist.exclude = [".github", "test.py", ".gitignore", ".gitmodules", ".clang-format", "test_data_loaders"]
+cmake.args = [
+    # Turn off tests
+    "-DLINKML_SAMPLES_TESTS=OFF",
+    # Ensure that polyscope is not build to a directory with out write access
+    # Otherwise the wheel will fail to build
+    "-DCMAKE_INSTALL_PREFIX=./build/"
+    ]

@@ -69,3 +69,7 @@ imgui.ini
 # Ignore Notebooks
 *.ipynb
 
+.venv/
+linkml_py.egg-info/
+*.whl
+*.gz

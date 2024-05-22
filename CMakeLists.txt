@@ -1,8 +1,7 @@
 cmake_minimum_required(VERSION 3.8)
-project(linkml)
+project(linkml VERSION ${SKBUILD_PROJECT_VERSION} LANGUAGES CXX)
 
 set(LIB_PROJECT_NAME "${PROJECT_NAME}_lib")
-set(PYBIND_PROJECT_NAME "${PROJECT_NAME}_py")
 set(TEST_PROJECT_NAME "${PROJECT_NAME}_test")
 
 
@@ -65,7 +64,7 @@ if (MSVC)
     endif()
 else()
     list(APPEND COMMON_COMPILER_FLAGS -Wall -Wextra)
-
+    
     # Add support for OpenMP
     list(APPEND COMMON_COMPILER_FLAGS -fopenmp -lgomp)
 
@@ -170,10 +169,11 @@ find_package( TBB REQUIRED )
 include(CGAL_TBB_support)
 
 find_package(SCIP REQUIRED)
+message(STATUS "Found SCIP ${SCIP_VERSION}: ${SCIP_DIR}")
+
 include(CGAL_SCIP_support)
 
 find_package(embree 3.12.2 REQUIRED)
-
 IF (EMBREE_ISPC_SUPPORT)
 
   OPTION(ENABLE_ISPC_SUPPORT "Build ISPC version of find_embree tutorial." OFF)
@@ -207,6 +207,7 @@ if(PCL_FOUND)
     add_definitions(${PCL_DEFINITIONS})
 endif()
 
+find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
 
 # list(APPEND CMAKE_MODULE_PATH "./cmake/FindHDF5.cmake") # Replaces the bundled FindHDF5.cmake module
 # find_package(HDF5 1.10 COMPONENTS C HL)
@@ -303,11 +304,21 @@ target_include_directories(${LIB_PROJECT_NAME} PUBLIC "src")
 target_compile_options(${LIB_PROJECT_NAME} PUBLIC ${COMMON_COMPILER_FLAGS})
 
 
-# ===============================================
-# pyind11
-pybind11_add_module("${PYBIND_PROJECT_NAME}" src/linkmlpy.cpp)
-target_link_libraries("${PYBIND_PROJECT_NAME}" PRIVATE ${LIB_PROJECT_NAME})
+# # ===============================================
+# # pyind11
+# pybind11_add_module("${PYBIND_PROJECT_NAME}" src/linkmlpy.cpp)
+# target_link_libraries("${PYBIND_PROJECT_NAME}" PRIVATE ${LIB_PROJECT_NAME})
 
+# ===============================================
+# scikit_build
+python_add_library(_core MODULE src/linkmlpy.cpp WITH_SOABI)
+target_link_libraries(_core PRIVATE pybind11::headers ${LIB_PROJECT_NAME})
+
+# This is passing in the version as a define just as an example
+target_compile_definitions(_core PRIVATE VERSION_INFO=${PROJECT_VERSION})
+
+# The install directory is the output (wheel) directory
+install(TARGETS _core DESTINATION linkml_py)
 
 # ===============================================
 # tests

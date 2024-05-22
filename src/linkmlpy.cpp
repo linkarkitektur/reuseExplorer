@@ -12,6 +12,9 @@
 #include <sstream>
 #include <string>
 
+#define STRINGIFY(x) #x
+#define MACRO_STRINGIFY(x) STRINGIFY(x)
+
 #define PYBIND11_DETAILED_ERROR_MESSAGES
 
 namespace py = pybind11;
@@ -20,7 +23,7 @@ using namespace pybind11::literals;
 
 
 
-PYBIND11_MODULE(linkml_py, m) {
+PYBIND11_MODULE(_core, m) {
 
     // Header
     m.doc() = R"pbdoc(
@@ -141,6 +144,94 @@ PYBIND11_MODULE(linkml_py, m) {
         .def(py::init<const std::string &>(), 
             "Load a point cloud from disk",
             "path"_a,
+            py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
+        )
+        .def(py::init([](
+            const py::array_t<float> xyz, 
+            std::optional<const py::array_t<uint8_t>> rgb, 
+            std::optional<const py::array_t<float>> normal, 
+            std::optional<const py::array_t<uint8_t>> semantic, 
+            std::optional<const py::array_t<uint8_t>> instance, 
+            std::optional<const py::array_t<uint8_t>> label) {
+
+                /* Request a buffer descriptor from Python */
+                py::buffer_info xyz_info = xyz.request();
+
+                /* Some basic validation checks ... */
+                if (xyz_info.format != py::format_descriptor<float>::format()
+                    && xyz_info.format != py::format_descriptor<double>::format())
+                    throw std::runtime_error("Incompatible format: expected a float or double array!");
+
+                if (xyz_info.ndim != 2)
+                    throw std::runtime_error("Incompatible buffer dimension!");
+
+                auto xyz_ = xyz.unchecked<2>();
+
+
+                linkml::PointCloud cloud;
+                cloud.points.resize(xyz.shape(0));
+                cloud.height = xyz.shape(0);
+                cloud.width = 1;
+                
+                for (size_t i = 0; i < (size_t)xyz_.shape(0); i++){
+                    cloud.points[i].x = *xyz_.data(i, 0);
+                    cloud.points[i].y = *xyz_.data(i, 1);
+                    cloud.points[i].z = *xyz_.data(i, 2);
+                }
+
+                if (rgb.has_value()){
+                    auto rgb_ = rgb.value().unchecked<2>();
+                    for (size_t i = 0; i < (size_t)xyz_.shape(0); i++){
+                        cloud.points[i].r = *rgb_.data(i, 2);
+                        cloud.points[i].g = *rgb_.data(i, 1);
+                        cloud.points[i].b = *rgb_.data(i, 0);
+                    }
+                }
+                    
+                
+
+                if (normal.has_value()){
+                    auto normal_ = normal.value().unchecked<2>();
+                    for (size_t i = 0; i < (size_t)xyz_.shape(0); i++){
+                        cloud.points[i].normal_x = *normal_.data(i, 0);
+                        cloud.points[i].normal_y = *normal_.data(i, 1);
+                        cloud.points[i].normal_z = *normal_.data(i, 2);
+                    }
+                }
+                
+
+                if (semantic.has_value()){
+                    auto semantic_ = semantic.value().unchecked<2>();
+                    for (size_t i = 0; i < (size_t)xyz_.shape(0); i++)
+                        cloud.points[i].semantic = *semantic_.data(i, 0);
+                }
+                    
+                
+
+                if (instance.has_value()){
+                    auto instance_ = instance.value().unchecked<2>();
+                    for (size_t i = 0; i < (size_t)xyz_.shape(0); i++)
+                        cloud.points[i].instance = *instance_.data(i, 0);
+                }
+                    
+                
+
+                if (label.has_value()){
+                    auto label_ = label.value().unchecked<2>();
+                    for (size_t i = 0; i < (size_t)xyz_.shape(0); i++)
+                        cloud.points[i].label = *label_.data(i, 0);
+                }
+                    
+                
+                return cloud;
+            }),
+            "Create Point Cloud from Numpy arrays",
+            "xyz"_a, 
+            "rgb"_a = py::none(), 
+            "normal"_a = py::none(), 
+            "semantic"_a = py::none(), 
+            "instance"_a = py::none(), 
+            "label"_a = py::none(),
             py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
         )
         .def_static("load", &linkml::PointCloud::load,
@@ -367,6 +458,29 @@ PYBIND11_MODULE(linkml_py, m) {
         .def_property_readonly("valid", [](const tg::dir3 &v){ return tg::normalize_safe((tg::vec3)v) !=  tg::vec3::zero;
          })
         ;
+    py::class_<tg::aabb3>(m, "AABB")
+        .def(py::init<const tg::pos3, const tg::pos3>())
+        .def("__repr__", [](const tg::aabb3 &a){
+            std::stringstream ss;
+            ss << "AABB min(" << a.min.x << ", " << a.min.y << ", " << a.min.z << ") max(" << a.max.x << ", " << a.max.y << ", " << a.max.z << ")";
+            return ss.str();
+        })
+        .def("volume", [](const tg::aabb3 &a){
+            return (a.max.x - a.min.x) * (a.max.y - a.min.y) * (a.max.z - a.min.z);
+        })
+        .def("center", [](const tg::aabb3 &a){
+            return tg::pos3((a.max.x + a.min.x) / 2, (a.max.y + a.min.y) / 2, (a.max.z + a.min.z) / 2);
+        })
+        .def("xInterval", [](const tg::aabb3 &a){
+            return std::make_tuple(a.min.x, a.max.x);
+        })
+        .def("yInterval", [](const tg::aabb3 &a){
+            return std::make_tuple(a.min.y, a.max.y);
+        })
+        .def("zInterval", [](const tg::aabb3 &a){
+            return std::make_tuple(a.min.z, a.max.z);
+        })
+        ;
 
 
     /// @brief Speckle, class to access interopability with the Speckle API
@@ -427,5 +541,13 @@ PYBIND11_MODULE(linkml_py, m) {
         float dist ){return linkml::refine(cloud, clusters, tg::degree(angle), dist);}, 
         "cloud"_a, "clusters"_a, "angle_threashhold_degree"_a =25, "distance_threshhold"_a = 0.5);
     //m.def("clustering", &linkml::clustering, "point_cloud"_a, "fit_plane_results"_a);
+
+
+
+#ifdef VERSION_INFO
+    m.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
+#else
+    m.attr("__version__") = "dev";
+#endif    
     
 } // PYBIND11_MODULE(linkml_py, m) 
