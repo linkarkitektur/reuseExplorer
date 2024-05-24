@@ -7,7 +7,7 @@
 #include <functions/progress_bar.hh>
 
 #include <typed-geometry/tg.hh>
-#include <typed-geometry/detail/optional.hh>
+#include <clean-core/optional.hh>
 
 #include <polymesh/pm.hh>
 #include <polymesh/algorithms/edge_split.hh>
@@ -38,13 +38,13 @@ namespace linkml{
 
             for (auto face : cw.faces()){
 
-                if (cw.supporting_plans[face] == clusters[i].Plane() ){
+                if (cw.supporting_plans[face] == clusters[i].get_Plane() ){
                     facets_vec[face][clusters.size()] = i;
                     continue;
                 }
 
                 auto center = face.vertices().avg(cw.pos);
-                auto distance = tg::signed_distance(center, clusters[i].Plane());
+                auto distance = tg::signed_distance(center, clusters[i].get_Plane());
                 
                 // if (tg::abs(distance)< EPSILON) continue;
                 facets_vec[face][i] = (distance > 0)? 1 :0;
@@ -85,7 +85,7 @@ namespace linkml{
                     continue;
                 }
 
-                auto plane = clusters[j].Plane();
+                auto plane = clusters[j].get_Plane();
                 auto distance = tg::signed_distance(point, plane);
 
                 point_location_map[j] = (distance > 0)? 1 :0;

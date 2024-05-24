@@ -12,7 +12,7 @@ namespace linkml
         Eigen::Vector4f coefficients = Eigen::Vector4f();
 
 
-        Plane Plane() const
+        Plane get_Plane() const
         {
             return linkml::Plane( coefficients[0], coefficients[1], coefficients[2], coefficients[3], centroid[0], centroid[1], centroid[2] );
         }

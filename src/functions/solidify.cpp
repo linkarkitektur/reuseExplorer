@@ -5,6 +5,8 @@
 #include "algorithms/clustering.hh"
 #include "types/surface.hh"
 #include "functions/color.hh"
+#include "algorithms/mcl.hh"
+#include "algorithms/mcl_gpu.cu"
 
 #include <pcl/filters/random_sample.h>
 #include <pcl/filters/experimental/functor_filter.h>
@@ -15,6 +17,8 @@
 
 #include <opencv4/opencv2/opencv.hpp>
 #include <omp.h>
+
+#include <opencv4/opencv2/core/eigen.hpp>
 
 template<typename PointT>
 class MatchCondition
@@ -102,6 +106,138 @@ linkml::PointCloud::Ptr filter_cloud(linkml::PointCloud::Ptr cloud, Clusters & c
     return cloud;
 }
 
+using Tiles = std::vector<std::pair<unsigned int, linkml::Surface *>>;
+
+class FaceMap{
+    class FaceIterator{
+        public:
+        FaceIterator(int idx) : index(idx){}
+
+        FaceIterator & operator++(){
+            index++;
+            return *this;
+        }
+        bool operator==(const FaceIterator & rhs) const{
+            return index == rhs.index;
+        }
+        bool operator!=(const FaceIterator & rhs) const{
+            return index != rhs.index;
+        }
+
+       std::array<int, 4> operator*(){
+            int v1 = index * offset;
+            int v2 = index * offset + 1;
+            int v3 = index * offset + 2;
+            int v4 = index * offset + 3;
+            return std::array<int, 4>{v1, v2, v3, v4};
+        }
+        private:
+        constexpr static int offset = 4;
+        size_t index = 0;
+    };
+
+
+    public:
+    FaceMap(Tiles & tiles) : tiles(tiles){}
+
+    FaceIterator begin() const {
+        return FaceIterator(0);
+    }
+    FaceIterator end() const {
+        return FaceIterator(tiles.size());
+    }
+    size_t size() const { return tiles.size();}
+    private:
+    Tiles & tiles;
+};
+class VertexMap{
+    class VertexIterator{
+        public:
+        VertexIterator(Tiles & tiles, RTCScene & scene, size_t index) : tiles(tiles), scene(scene), index(index){}
+
+        VertexIterator & operator++(){
+            vertex++;
+            if (vertex == offset){
+                vertex = 0;
+                index++;
+            }
+            return *this;
+        }
+        bool operator==(const VertexIterator & rhs) const{
+            return index == rhs.index;
+        }
+        bool operator!=(const VertexIterator & rhs) const{
+            return index != rhs.index;
+        }
+
+        std::array<float,3> operator*(){
+            auto & [id, surface] = tiles[index];
+            RTCGeometry geo = rtcGetGeometry(scene, id);
+            float * points = (float*)rtcGetGeometryBufferData(geo, RTC_BUFFER_TYPE_VERTEX, 0);
+            return std::array<float, 3>{points[vertex*3], points[vertex*3+1], points[vertex*3+2]};
+        }
+        private:
+        Tiles & tiles;
+        RTCScene & scene;
+        size_t index = 0;
+        size_t vertex = 0;
+        constexpr static int offset = 4;
+    };
+
+
+    public:
+    VertexMap(Tiles & tiles, RTCScene & scene) : tiles(tiles), scene(scene){}
+
+    VertexIterator begin() const {
+        return VertexIterator(tiles, scene, 0);
+    }
+    VertexIterator end()const {
+        return VertexIterator(tiles, scene, tiles.size());
+    }
+    size_t size() const { return tiles.size()*4; }
+    private:
+    Tiles & tiles;
+    RTCScene & scene;
+};
+
+class FaceIDMap{
+    class FaceIDIterator{
+        public:
+        FaceIDIterator(Tiles & tiles, size_t index) : tiles(tiles), index(index){}
+
+        FaceIDIterator & operator++(){
+            index++;
+            return *this;
+        }
+        bool operator==(const FaceIDIterator & rhs) const{
+            return index == rhs.index;
+        }
+        bool operator!=(const FaceIDIterator & rhs) const{
+            return index != rhs.index;
+        }
+
+        int operator*(){
+            auto & [id, surface] = tiles[index];
+            int address = (int)(size_t)surface;
+            return address;
+        }
+        private:
+        Tiles & tiles;
+        size_t index = 0;
+    };
+
+    public:
+    FaceIDMap(Tiles & tiles) : tiles(tiles){}
+    FaceIDIterator begin() const {
+        return FaceIDIterator(tiles, 0);
+    }
+    FaceIDIterator end() const {
+        return FaceIDIterator(tiles, tiles.size());
+    }
+    size_t size() const { return tiles.size();}
+    private:
+    Tiles & tiles;
+};
 
 namespace linkml
 {
@@ -235,6 +371,7 @@ namespace linkml
 
         // Intersect all rays with the scene
         auto rays_bar = util::progress_bar(rays.size(), "Intersecting rays");
+        //FIXME: This is not realably parallel, sometimes all and other times a single thread is used.
         //rtcIntersect1M(scene, &context, (RTCRayHit*)&rays[0], rays.size(), sizeof(std::pair<Ray, Tile*>));
         #pragma omp parallel for
         for (size_t i = 0; i < rays.size(); i++){
@@ -244,7 +381,9 @@ namespace linkml
         rays_bar.stop();
 
 
-
+        polyscope::myinit();
+        auto ps_tiles = polyscope::registerSurfaceMesh("tiles", VertexMap(tiles, scene ), FaceMap(tiles));
+        ps_tiles->addFaceScalarQuantity("id", FaceIDMap(tiles));
         
         // Release the scene and device
         rtcReleaseScene(scene);
@@ -263,70 +402,56 @@ namespace linkml
 
 
         // Initialize the matrix
-        SpMat matrix = SpMat(point_map.size(), point_map.size());
-        //auto matrix = Eigen::MatrixX<FT>::Zero(point_map.size(), point_map.size());
-        matrix += Eigen::VectorXd::Ones(matrix.cols()).template cast<FT>().asDiagonal();
+        Eigen::MatrixXd matrix = Eigen::MatrixXd::Zero(point_map.size(), point_map.size());
 
-
-        cv::Mat img = cv::Mat::zeros(point_map.size(), point_map.size(), CV_8UC3);
 
         auto matrix_bar = util::progress_bar(rays.size(), "Creating matrix");
+        #pragma omp parallel for
         for (size_t i = 0; i < rays.size(); i++){
-            matrix_bar.update();
 
             auto & [ray, tile] = rays[i];
 
             // If we did not hit anything, there is a clear line of sight between the two points
-            double value = (ray.hit.geomID == RTC_INVALID_GEOMETRY_ID) ? 1 : 0;
-            if (value == 0)
-                continue;
+            const double value = (ray.hit.geomID == RTC_INVALID_GEOMETRY_ID) ? 1 : 0;
+            const auto  color = (ray.hit.geomID == RTC_INVALID_GEOMETRY_ID) ? cv::Vec3b(255, 255, 255) : cv::Vec3b(0, 0, 0);
             
             int source_int = id_to_int[tile->first];
             int target_int = id_to_int[ray.ray.id];
 
             // Increment the matrix
-            matrix.coeffRef(source_int, target_int) = value;
-            matrix.coeffRef(target_int, source_int) = value;
+            matrix(source_int, target_int) = value;
+            matrix(target_int, source_int) = value;
 
-            img.at<cv::Vec3b>(source_int, target_int) = cv::Vec3b(255, 255, 255);
-            img.at<cv::Vec3b>(target_int, source_int) = cv::Vec3b(255, 255, 255);
 
+            matrix_bar.update();
         }
         matrix_bar.stop();
 
-        cv::imwrite("matrix_bw.png", img); 
+        cv::Mat img;
+        cv::eigen2cv(matrix,img);
+        cv::imwrite("matrix_rays.png", img*255);
 
 
 
-        // Markov Clustering
-        //// 2.5 < infaltion < 2.8  => 3.5
+        // // Markov Clustering
+        // //// 2.5 < infaltion < 2.8  => 3.5
         auto clustering_bar = util::progress_bar(1, "Markov Clustering");
-        matrix = markov_clustering::run_mcl(matrix, 5, 2);
-        std::set<std::vector<size_t>> mc_clusters = markov_clustering::get_clusters(matrix);
+        auto asign_cluster = [&](size_t cluster_j, size_t member_i){
+            // Assigne the clusters to the point cloud
+            #pragma omp parallel for
+            for(const auto & index : point_map[int_to_id[(int)member_i]])
+                        cloud->points[index].instance = cluster_j;   
+        };
+        auto mcl = mcl_cpp::mcl_gpu(matrix, asign_cluster);
+        matrix = mcl.cluster_mcl(2,2);
+
+        cv::eigen2cv(matrix,img);
+        cv::imwrite("matrix_mcl.png", img*255);
+
         clustering_bar.stop();
-        std::printf("Number of clusters after Markov Clustering: %d\n", (int)mc_clusters.size());
 
 
 
-        // Assigne the clusters to the point cloud
-        u_int8_t cluster_index = 1;
-        for (const std::vector<size_t> & cluster: mc_clusters){
-            auto color = get_color_forom_angle(sample_circle(cluster_index));
-            for (const size_t & idx: cluster){
-                for (size_t i = 0; i < img.rows; i++)
-                    if (img.at<cv::Vec3b>(idx, i)[0] > 0)
-                        img.at<cv::Vec3b>(idx, i) = cv::Vec3b(color.b*255, color.g*255, color.r*255);
-                img.at<cv::Vec3b>(idx, idx) = cv::Vec3b(color.b*255, color.g*255, color.r*255);
-                
-
-                for(const auto & index : point_map[int_to_id[(int)idx]])
-                    cloud->points[index].instance = cluster_index;   
-            }
-            cluster_index += 1;
-        }
-        std::cout << "Number of clusters after Markov Clustering: " << (int)cluster_index-1 << std::endl;
-
-        cv::imwrite("matrix_color.png", img);
 
         cloud->display("cloud");
 

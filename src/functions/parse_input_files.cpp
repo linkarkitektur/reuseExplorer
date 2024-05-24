@@ -437,7 +437,7 @@ namespace linkml{
 
 
             auto progress_bar = util::progress_bar(n_frames,"Processing data");
-            #pragma omp parallel for firstprivate(step, start, step, output_path) shared(dataset)
+            #pragma omp parallel for firstprivate(step, start, output_path) shared(dataset)
             for (size_t i = 0; i < n_frames; i++ ){
 
                 size_t index = start + (i * step);

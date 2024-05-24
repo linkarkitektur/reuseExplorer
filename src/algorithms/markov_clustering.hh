@@ -1,5 +1,7 @@
 # pragma once
 #include <Eigen/Sparse>
+#include <unsupported/Eigen/MatrixFunctions>
+
 #include <iostream>
 #include <cassert>
 #include <vector>
@@ -32,7 +34,7 @@ public:
 /// @param atol Absolute tolerance
 /// @return 
 template <class ScalarT>
-static bool sparse_allclose(Eigen::SparseMatrix<ScalarT> a, Eigen::SparseMatrix<ScalarT> b, double rtol=1e-5, double atol=1e-8){
+static bool sparse_allclose(const Eigen::SparseMatrix<ScalarT> & a, const Eigen::SparseMatrix<ScalarT> & b, const double rtol=1e-5, const double  atol=1e-8){
 
     auto max = std::numeric_limits<ScalarT>::min();
 
@@ -59,13 +61,32 @@ static bool sparse_allclose(Eigen::SparseMatrix<ScalarT> a, Eigen::SparseMatrix<
     // noinspection PyUnresolvedReferences
     // return c.max() <= atol;
 }
+template <class ScalarT>
+static bool sparse_allclose(const Eigen::MatrixX<ScalarT> & a, const Eigen::MatrixX<ScalarT> & b, const double rtol=1e-5, const double atol=1e-8){
+    auto max = std::numeric_limits<ScalarT>::min();
+
+    #pragma omp parallel for collapse(2) reduction(max:max)
+    for (size_t i = 0; i < (size_t)a.rows(); i++){
+        for (size_t j = 0; j < (size_t)a.cols(); j++){
+            auto value1 = std::abs(a(i, j) - b(i, j));
+            auto value2 = rtol * std::abs(b(i, j));
+
+            auto difference = value1 - value2;
+
+            if (difference > max)
+                max = difference;
+        }
+    }
+
+    return max <= atol;
+}
 
 /// @brief Normalize the columns of the given matrix
 /// @tparam ScalarT 
 /// @param matrix The matrix to be normalized
 /// @return The normalized matrix
 template <class ScalarT>
-static Eigen::SparseMatrix<ScalarT> normalize(Eigen::SparseMatrix<ScalarT> matrix){
+static void normalize(Eigen::SparseMatrix<ScalarT> &  matrix){
 
     // normalize each column
 
@@ -81,7 +102,25 @@ static Eigen::SparseMatrix<ScalarT> normalize(Eigen::SparseMatrix<ScalarT> matri
         }
     }
 
-    return matrix;
+}
+template <class ScalarT>
+static void normalize(Eigen::MatrixX<ScalarT> & matrix){
+
+    #pragma omp parallel for
+    for (size_t i = 0; i < (size_t)matrix.cols(); i++){
+
+        ScalarT sum = 0.0;
+
+        #pragma omp parallel for reduction(+:sum)
+        for (size_t j = 0; j < (size_t)matrix.rows(); j++)
+            sum += matrix(j, i);
+        
+        #pragma omp parallel for
+        for (size_t j = 0; j < (size_t)matrix.rows(); j++)
+            matrix(j, i) /= sum;
+        
+    }
+
 }
 
 /// @brief Apply cluster inflation to the given matrix by raising each element to the given power.
@@ -90,7 +129,7 @@ static Eigen::SparseMatrix<ScalarT> normalize(Eigen::SparseMatrix<ScalarT> matri
 /// @param power Cluster inflation parameter
 /// @return The inflated matrix
 template <class ScalarT>
-static Eigen::SparseMatrix<ScalarT> inflate(Eigen::SparseMatrix<ScalarT> matrix, double power){
+static void inflate(Eigen::SparseMatrix<ScalarT> & matrix, const double power){
 
     // raise the matrix to the given power
     for (int k = 0; k < matrix.outerSize(); ++k){
@@ -99,22 +138,41 @@ static Eigen::SparseMatrix<ScalarT> inflate(Eigen::SparseMatrix<ScalarT> matrix,
         }
     }
 
-    return normalize(matrix);
+    normalize(matrix);
 
 }
- 
+template <class ScalarT>
+static void inflate(Eigen::MatrixX<ScalarT> & matrix, const double power){
+
+    #pragma omp parallel for collapse(2)
+    for (size_t i = 0; i < (size_t)matrix.rows(); i++)
+        for (size_t j = 0; j < (size_t)matrix.cols(); j++)
+            matrix(i,j) = std::pow(matrix(i, j), power);
+
+    normalize(matrix);
+}
+
 /// @brief Apply cluster expansion to the given matrix by raising the matrix to the given power.
 /// @tparam ScalarT 
 /// @param matrix The matrix to be expanded
 /// @param power Cluster expansion parameter
 /// @return The expanded matrix
 template <class ScalarT>
-static Eigen::SparseMatrix<ScalarT> expand(Eigen::SparseMatrix<ScalarT> matrix, int power){
+static void expand(Eigen::SparseMatrix<ScalarT> & matrix,const double power){
 
-    for (int i=0; i < power - 1; i++)
+    for (int i=0; i < int(power) - 1; i++)
         matrix = matrix * matrix;
 
-    return matrix;
+}
+template <class ScalarT>
+static void expand(Eigen::MatrixX<ScalarT> & matrix, const double power){
+
+    for (int i=0; i < int(power) - 1; i++)
+        matrix = matrix * matrix;
+
+    //auto matrix_copy = Eigen::MatrixX<ScalarT>(matrix);
+    //Eigen::MatrixPower<Eigen::MatrixX<ScalarT>> Pow(matrix_copy);
+    //Pow.compute(matrix, power);
 }
 
 /// @brief Add self-loops to the matrix by setting the diagonal to loop_value
@@ -123,17 +181,28 @@ static Eigen::SparseMatrix<ScalarT> expand(Eigen::SparseMatrix<ScalarT> matrix, 
 /// @param loop_value Value to use for self-loops
 /// @return The matrix with self-loops
 template <class ScalarT>
-static Eigen::SparseMatrix<ScalarT> add_self_loops(Eigen::SparseMatrix<ScalarT> matrix, int loop_value){
+static void add_self_loops(Eigen::SparseMatrix<ScalarT> & matrix, int loop_value){
 
     assert( matrix.cols() == matrix.rows() && "Error, matrix is not square");
 
+    //FIXME: This is not working
+
     // Enusring that the diagonal exists
-    matrix += Eigen::VectorXd::Ones(matrix.cols()).template cast<ScalarT>().asDiagonal();
+    auto diagonal = Eigen::VectorXd::Ones(matrix.cols()).template cast<ScalarT>().asDiagonal();
+    //matrix += diagonal;
 
     // Setting the diagonal to loop_value
-    matrix.diagonal() = Eigen::VectorXd::Constant(matrix.cols(), static_cast<ScalarT>(loop_value)).template cast<ScalarT>();
+    //matrix.diagonal() = Eigen::VectorXd::Constant(matrix.cols(), static_cast<ScalarT>(loop_value)).template cast<ScalarT>();
 
-    return matrix;
+}
+template <class ScalarT>
+static void add_self_loops(Eigen::MatrixX<ScalarT> & matrix, const int loop_value){
+
+    assert( matrix.cols() == matrix.rows() && "Error, matrix is not square");
+
+    #pragma omp parallel for
+    for (int i = 0; i < matrix.rows(); i++)
+        matrix(i, i) = loop_value;
 }
 
 /// @brief Prune the matrix so that very small edges are removed. The maximum value in each column is never pruned.
@@ -142,7 +211,7 @@ static Eigen::SparseMatrix<ScalarT> add_self_loops(Eigen::SparseMatrix<ScalarT> 
 /// @param threshold The value below which edges will be removed
 /// @return  The pruned matrix
 template <class ScalarT>
-static Eigen::SparseMatrix<ScalarT> prune(Eigen::SparseMatrix<ScalarT> matrix, ScalarT threshold){
+static Eigen::SparseMatrix<ScalarT> prune(Eigen::SparseMatrix<ScalarT> & matrix, const ScalarT threshold){
 
     Eigen::SparseMatrix<ScalarT> pruned = Eigen::SparseMatrix<ScalarT>(matrix);
 
@@ -178,14 +247,45 @@ static Eigen::SparseMatrix<ScalarT> prune(Eigen::SparseMatrix<ScalarT> matrix, S
     pruned.prune(threshold);
     return pruned;
 }
+template <class ScalarT>
+static Eigen::MatrixX<ScalarT> prune(Eigen::MatrixX<ScalarT> & matrix, const ScalarT threshold){
+
+    // TODO: Get rid of this copy operration
+
+    Eigen::MatrixX<ScalarT> pruned = Eigen::MatrixX<ScalarT>(matrix);
+
+    for (size_t i = 0; i < matrix.rows(); i++){
+        for (size_t j = 0; j < matrix.cols(); j++){
+            if (matrix(i, j) < threshold)
+                pruned(i, j) = 0;
+        }
+    }
+
+    for (size_t i = 0; i < matrix.cols(); i++){
+        auto max = std::numeric_limits<ScalarT>::min();
+        int max_index = -1;
+        for (size_t j = 0; j < matrix.rows(); j++){
+            if (matrix(j, i) > max){
+                max = matrix(j, i);
+                max_index = j;
+            }
+        }
+
+        if (max_index != -1)
+            pruned(max_index, i) = max;
+    }
+
+
+    return pruned;
+}
 
 /// @brief Check for convergence by determining if matrix1 and matrix2 are approximately equal.
 /// @tparam ScalarT 
 /// @param matrix1 The matrix to compare with matrix2
 /// @param matrix2 The matrix to compare with matrix1
 /// @return True if matrix1 and matrix2 approximately equal
-template <class ScalarT>
-static bool converged(Eigen::SparseMatrix<ScalarT> matrix1, Eigen::SparseMatrix<ScalarT> matrix2){
+template <class MatrixT>
+inline static bool converged(const MatrixT & matrix1, const MatrixT & matrix2){
 
     return sparse_allclose(matrix1, matrix2);
 
@@ -197,24 +297,24 @@ static bool converged(Eigen::SparseMatrix<ScalarT> matrix1, Eigen::SparseMatrix<
 /// @param expansion Cluster expansion factor
 /// @param inflation Cluster inflation factor
 /// @return 
-template <class ScalarT>
-static Eigen::SparseMatrix<ScalarT> iterate(Eigen::SparseMatrix<ScalarT> matrix, int expansion, double inflation){
+template <class MatrixT>
+static void iterate(MatrixT & matrix, const double expansion, const double inflation){
 
     // Expansion
-    matrix = expand(matrix, expansion);
-
+    std::cout << "Expanding" << std::endl;
+    expand(matrix, expansion);
+    std::cout << "Inflating" << std::endl;
     // Inflation
-    matrix = inflate(matrix, inflation);
-
-    return matrix;
+    inflate(matrix, inflation);
+    std::cout << "Done intteration" << std::endl;
 }
 
 /// @brief Retrieve the clusters from the matrix
 /// @tparam ScalarT 
 /// @param matrix The matrix produced by the MCL algorithm
 /// @return A list of tuples where each tuple represents a cluster and contains the indices of the nodes belonging to the cluster
-template <class ScalarT>
-static std::set<std::vector<size_t>> get_clusters(Eigen::SparseMatrix<ScalarT> matrix){
+template <class MatrixT>
+static std::set<std::vector<size_t>> get_clusters(MatrixT & matrix){
 
     // get the attractors - non-zero elements of the matrix diagonal
     auto attractors = std::vector<size_t>();
@@ -250,10 +350,12 @@ static std::set<std::vector<size_t>> get_clusters(Eigen::SparseMatrix<ScalarT> m
 /// @param convergence_check_frequency Perform the check for convergence every convergence_check_frequency iterations.
 /// @param verbose Print extra information to the console
 /// @return The final matrix
-template <class ScalarT>
-static Eigen::SparseMatrix<ScalarT> run_mcl(Eigen::SparseMatrix<ScalarT> matrix, int expansion=2, double inflation=2, int loop_value=1,
-            int iterations=100, ScalarT pruning_threshold=0.001, int pruning_frequency=1,
-            int convergence_check_frequency=1, bool verbose=false){
+template <class MatrixT>
+static MatrixT run_mcl(MatrixT & matrix, const int expansion=2, const double inflation=2, const int loop_value=1,
+            const size_t iterations=100, const double pruning_threshold=0.001, const int pruning_frequency=1,
+            const int convergence_check_frequency=1, const bool verbose=false){
+
+    using ScalarT = typename MatrixT::value_type;
 
     assert(expansion > 1 && "Invalid expansion parameter");
     assert(inflation > 1 && "Invalid inflation parameter");
@@ -279,27 +381,26 @@ static Eigen::SparseMatrix<ScalarT> run_mcl(Eigen::SparseMatrix<ScalarT> matrix,
 
     // Initialize self-loops
     if (loop_value > 0)
-        matrix = add_self_loops(matrix, loop_value);
+        add_self_loops(matrix, loop_value);
 
     // Normalize
-    matrix = normalize(matrix);
+    normalize(matrix);
 
     // iterations
     for (size_t i = 0; i < iterations; i++){
         printer.print(fmt::format("Iteration {}", i + 1));
 
         // store current matrix for convergence checking
-        auto last_mat = Eigen::SparseMatrix<ScalarT>(matrix);
+        auto last_mat = MatrixT(matrix);
 
         // perform MCL expansion and inflation
-        matrix = iterate(matrix, expansion, inflation);
+        iterate(matrix, expansion, inflation);
 
         // prune
         if (pruning_threshold > 0 && i % pruning_frequency == pruning_frequency - 1){
 
             printer.print("Pruning");
-            matrix = prune(matrix, pruning_threshold);
-
+            matrix = prune(matrix, ScalarT(pruning_threshold));
         }
         // Check for convergence
         if (i % convergence_check_frequency == convergence_check_frequency - 1){

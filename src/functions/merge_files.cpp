@@ -9,6 +9,7 @@
 #include <pcl/io/pcd_io.h>
 
 #include <functions/progress_bar.hh>
+#include "functions/downsample.hh"
 
 #include <filesystem>
 #include <vector>
@@ -24,6 +25,7 @@ namespace linkml{
     static typename  PointCloud::Ptr merge(typename  PointCloud::Ptr left, typename PointCloud::Ptr right){
         left->reserve(left->size() + right->size());
         *left += *right;
+        downsample(left, 0.01);
         return left;
     }
 
