@@ -1,0 +1,11 @@
+# PCL
+find_package(PCL REQUIRED PATHS /usr/local NO_DEFAULT_PATH)
+if(PCL_FOUND)
+    message(NOTICE "PCL found")
+    message(STATUS "PCL Version: ${PCL_VERSION}")
+    include_directories(${PCL_INCLUDE_DIRS})
+    link_directories(${PCL_LIBRARY_DIRS})
+    add_definitions(${PCL_DEFINITIONS})
+else()
+    message(FATAL_ERROR "PCL not found")
+endif()

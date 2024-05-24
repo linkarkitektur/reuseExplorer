@@ -9,8 +9,7 @@ find_library(GUROBI_LIBRARY
     # NAMES gurobi_c++ gurobi_c
     HINTS ${GUROBI_DIR} $ENV{GUROBI_HOME}
     PATH_SUFFIXES lib)
-message("GUROBI_LIBRARY: ${GUROBI_LIBRARY}")
-message("GUROBI_INCLUDE_DIRS: ${GUROBI_INCLUDE_DIRS}")
+
 
 
 if(CXX)

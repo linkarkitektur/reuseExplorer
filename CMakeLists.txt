@@ -131,90 +131,27 @@ set(CGAL_DO_NOT_WARN_ABOUT_CMAKE_BUILD_TYPE On)
 # ===============================================
 # find packages
 
-find_package( OpenCV REQUIRED )
-if (OpenCV_FOUND)
-    message(STATUS "Using OpenCV - ${OpenCV_VERSION} - ${OpenCV_INCLUDE_DIRS}")
-    set("OPENCV_LOG_LEVEL" "WARNING")
-    include_directories(${OpenCV_INCLUDE_DIRS})
-    link_directories(${OpenCV_LIBRARY_DIRS})
-    add_definitions(${OpenCV_DEFINITIONS})
-endif()
-# CGAL and its components
-find_package(CGAL REQUIRED)
 
-# Boost and its components
-find_package(Boost REQUIRED)
-if(NOT Boost_FOUND)
+include(cmake/CUDA.cmake)
+include(cmake/TBB.cmake)
+include(cmake/Boost.cmake)
+include(cmake/SCIP.cmake)
+include(cmake/Gurobi.cmake)
+include(cmake/Embree.cmake)
 
-  message(
-    STATUS
-      "NOTICE: This project requires the Boost library, and will not be compiled."
-  )
-
-  return()
-
-endif()
-
-find_package(Eigen3 3.3 REQUIRED) #(requires 3.1.0 or greater)
-include(CGAL_Eigen3_support)
-if(NOT TARGET CGAL::Eigen3_support)
-  message(
-    STATUS
-      "NOTICE: This project requires Eigen 3.1 (or greater) and will not be compiled."
-  )
-  return()
-endif()
-
-find_package( TBB REQUIRED )
-include(CGAL_TBB_support)
-
-find_package(SCIP REQUIRED)
-message(STATUS "Found SCIP ${SCIP_VERSION}: ${SCIP_DIR}")
-
-include(CGAL_SCIP_support)
-
-find_package(embree 3.12.2 REQUIRED)
-IF (EMBREE_ISPC_SUPPORT)
-
-  OPTION(ENABLE_ISPC_SUPPORT "Build ISPC version of find_embree tutorial." OFF)
-
-  # this configures the ADD_EMBREE_ISPC_EXECUTABLE from Embree
-  IF (ENABLE_ISPC_SUPPORT)
-    SET(ISPC_TARGETS "sse2;sse4;avx;avx2")
-    SET(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../common/cmake" ${CMAKE_MODULE_PATH})
-    INCLUDE(ispc)
-
-    get_target_property(embree_include_dir embree INTERFACE_INCLUDE_DIRECTORIES)
-    INCLUDE_DIRECTORIES_ISPC(${embree_include_dir})
-    ADD_EMBREE_ISPC_EXECUTABLE(find_embree_ispc find_embree_ispc.cpp find_embree_ispc.ispc)
-    TARGET_LINK_LIBRARIES(find_embree_ispc embree)
-  ENDIF()
-ENDIF()
+include(cmake/Eigen.cmake)
+include(cmake/OpenCV.cmake)
+include(cmake/CGAL.cmake)
+include(cmake/PCL.cmake)
+include(cmake/Python.cmake)
+#include(cmake/HDF5.cmake)
 
 
-find_package(GUROBI REQUIRED)
-if (GUROBI_FOUND)
-    message(STATUS "Using Gurobi Solver")
-    add_compile_definitions(CGAL_USE_GUROBI=1)
-    include_directories(${GUROBI_INCLUDE_DIRS})
-endif()
-
-find_package(PCL REQUIRED PATHS /usr/local NO_DEFAULT_PATH)
-if(PCL_FOUND)
-    message(STATUS "Using PCL - ${PCL_VERSION}")
-    include_directories(${PCL_INCLUDE_DIRS})
-    link_directories(${PCL_LIBRARY_DIRS})
-    add_definitions(${PCL_DEFINITIONS})
-endif()
-
-find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
-
-# list(APPEND CMAKE_MODULE_PATH "./cmake/FindHDF5.cmake") # Replaces the bundled FindHDF5.cmake module
-# find_package(HDF5 1.10 COMPONENTS C HL)
 
 
 # ===============================================
 # add submodules
+
 add_subdirectory(extern/clean-core)
 add_subdirectory(extern/ctracer)
 add_subdirectory(extern/fmt)
@@ -228,9 +165,12 @@ add_subdirectory(extern/typed-geometry)
 
 # ===============================================
 # configure executable
+
+
 file(GLOB_RECURSE LIB_SOURCES
     "src/*.cc"
     "src/*.cpp"
+    "src/*.cu"
 )
 
 file(GLOB_RECURSE LIB_HEADERS
@@ -267,6 +207,8 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     polymesh
     polyscope
     embree
+    ${CUDA_LIBRARIES} 
+    ${CUDA_CUBLAS_LIBRARIES}
     Eigen3::Eigen3
     CGAL::Eigen3_support
     CGAL::SCIP_support

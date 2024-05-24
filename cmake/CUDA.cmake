@@ -1,0 +1,10 @@
+find_package(CUDA)
+if(CUDA_FOUND)
+    message(NOTICE "CUDA found")
+    message(STATUS "CUDA Version: ${CUDA_VERSION_STRING}")
+    message(STATUS "CUDA Libs: ${CUDA_LIBRARIES}")
+    include_directories(${CUDA_INCLUDE_DIRS})
+else()
+    message(WARNING "CUDA not found")
+endif(CUDA_FOUND)
+
