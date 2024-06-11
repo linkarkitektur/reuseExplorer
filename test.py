@@ -72,10 +72,10 @@ name = "./3c670b035f.pcd"
 
 
 #clouds = clouds.filter()
-cloud = clouds.merge().save(name)
+#cloud = clouds.merge().save(name)
 #cloud.display()
 cloud = PointCloud(name)
-cloud.downsample(0.02).save(name)
+#cloud.downsample(0.05).save(name)
 cloud.display()
 
 #cloud = cloud.clustering().save(name)

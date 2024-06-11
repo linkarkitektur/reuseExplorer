@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.8)
+if (NOT SKBUILD_PROJECT_VERSION)
+    set(SKBUILD_PROJECT_VERSION 0.0.1)
+endif()
 project(linkml VERSION ${SKBUILD_PROJECT_VERSION} LANGUAGES CXX)
 
 set(LIB_PROJECT_NAME "${PROJECT_NAME}_lib")
@@ -131,6 +134,10 @@ set(CGAL_DO_NOT_WARN_ABOUT_CMAKE_BUILD_TYPE On)
 # ===============================================
 # find packages
 
+
+#set("CUDA_TOOLKIT_ROOT_DIR" "/usr/local/cuda-12-3")
+#set(CUDA_INCLUDE_DIRS "${CUDA_TOOLKIT_ROOT_DIR}/include/")
+#set(CUDA_CUDART_LIBRARY "${CUDA_TOOLKIT_ROOT_DIR}/lib64/libcudart.so")
 
 include(cmake/CUDA.cmake)
 include(cmake/TBB.cmake)

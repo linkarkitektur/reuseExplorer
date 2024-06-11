@@ -15,63 +15,163 @@
 #include <vector>
 
 #include <fmt/printf.h>
+#include <omp.h>
 
 
 // using fs = std::filesystem;
 
 namespace linkml{
 
-    template <typename PointCloud>
-    static typename  PointCloud::Ptr merge(typename  PointCloud::Ptr left, typename PointCloud::Ptr right){
-        left->reserve(left->size() + right->size());
-        *left += *right;
-        downsample(left, 0.01);
+    template <typename T>
+    static T merge( T left, T right);
+
+    template <>
+    static std::string merge( std::string left, std::string right){
+
+        PointCloud::Ptr cloud_1, cloud_2;
+
+        cloud_1 = PointCloud::load(left);
+        cloud_2 = PointCloud::load(right);
+        
+
+        cloud_1->reserve(cloud_1->size() + cloud_2->size());
+        *cloud_1 += *cloud_2;
+        downsample(cloud_1, 0.01);
+
+        cloud_1->save(left);
+        std::filesystem::remove(right);
+        return left;
+
+    }
+
+    template <>
+    static PointCloud merge( PointCloud left, PointCloud right){
+
+        left.reserve(left.size() + right.size());
+        left += right;
+
         return left;
     }
 
-    template <typename T>
-    PointCloud::Ptr merge_files(typename PointClouds<T>::iterator begin, typename PointClouds<T>::iterator end){
 
-        // TODO: Add optional progregress bar
 
-        // If there is only one file, just load it and return
-        if (std::distance(begin, end) == 1){
-
-            // If the underlying type is a string, load the file
-            if constexpr (std::is_same<T, std::string>::value){
-                PointCloud::Ptr cloud (new PointCloud);
-
-                cloud = PointCloud::load(*begin);
-                return cloud;
-            }
-
-            // Oterwise it is assumed to be a PointCloud::Ptr
-            else {
-                return *begin;
-            }
-        }
-
-        // If ther are more files split the list and merge them separately
-        PointCloud::Ptr left, right;
-        auto middle = begin + std::distance(begin, end) / 2;
-
-        #pragma omp task shared(left)
-        left = merge_files<T>(begin, middle);
-        #pragma omp task shared(right)
-        right = merge_files<T>(middle, end);
-
-        // Merge clouds
-        #pragma omp taskwait
-        PointCloud::Ptr merged_cloud = merge<PointCloud>(left, right);
-        return merged_cloud;
-
+    // Custom reduction function for PointCloud::Ptr
+    void merge_clouds(PointCloud::Ptr lhs, const PointCloud::Ptr rhs) {
+        *lhs += *rhs;
     }
+
+
+    #pragma omp declare reduction(+ : PointCloud::Ptr : merge_clouds(omp_out, omp_in)) \
+        initializer(omp_priv = PointCloud::Ptr(new PointCloud))
+
 
 
     template <typename T>
     PointCloud PointClouds<T>::merge(){
 
+        static const size_t GROUP_SIZE = 250;
+
+        if (data.size()==0)
+            throw std::runtime_error("No point clouds to merge");
+
         PointCloud::Ptr cloud;
+
+        auto merge_bar = util::progress_bar(data.size()-1, "Merging");
+        if constexpr (std::is_same<T, PointCloud>::value){
+            if (data.size() == 1)
+                return *data[0];
+
+            #pragma omp parallel for reduction(+:cloud)
+            for (std::size_t i = 0; i < data.size(); ++i){
+                *cloud += *data[i];
+                //downsample(cloud, 0.01);
+                merge_bar.update();
+            }
+        }
+        else if constexpr (std::is_same<T, std::string>::value){
+
+            size_t loop_count = 0;
+
+
+            while (data.size() != 1){
+
+                std::cout << "Loop: " << loop_count << ", #Elements: " << data.size() << std::endl;
+
+
+                std::vector<std::string> new_paths(data.size(), "");
+
+                size_t threads =  (data.size() * GROUP_SIZE > (size_t)omp_get_max_threads() )? (size_t)omp_get_max_threads():1;
+                omp_set_num_threads(threads);
+
+                #pragma omp parallel for shared(data, new_paths)
+                for (std::size_t i = 0; i < data.size(); i+=GROUP_SIZE){
+
+                    PointCloud::Ptr merged = PointCloud::Ptr(new PointCloud);
+
+                    //#pragma omp parallel for reduction(+:merged)
+                    for (std::size_t j = 0; j < GROUP_SIZE; ++j)
+                        if (i+j < data.size())
+                            *merged += *PointCloud::load(data[i+j]);
+
+                    merged->save(data[i]);
+                    new_paths[i] = data[i];
+
+                    //#pragma omp parallel for reduction(+:merged)
+                    for (std::size_t j = 1 /*Don't remove the file we just saved*/; j < GROUP_SIZE; ++j){
+                        if (i+j < data.size()){
+                            std::filesystem::remove(data[i+j]);
+                            auto header = std::filesystem::path(data[i+j]).replace_extension(".head");
+                            if (std::filesystem::exists(header))
+                                std::filesystem::remove(header);
+                        }
+                    }
+                }
+
+
+                int total_before = data.size();
+                data.clear();
+                std::copy_if(new_paths.begin(), new_paths.end(), std::back_inserter(data), [](std::string path){return path != "";});
+                int diff = total_before - data.size();
+
+                std::cout << "Merging done! Total before: " << total_before << ", Total after: " << data.size() << ", Diff: " << diff << std::endl;
+
+                // Downsample
+                auto downsample_bar = util::progress_bar(data.size(), "Downsampling");
+                static const size_t MAX_THREADS = 10;
+                size_t reduction = loop_count * 2;
+
+                threads = (reduction < MAX_THREADS)? MAX_THREADS-reduction:1;
+                omp_set_num_threads(threads);
+                #pragma omp parallel for
+                for (std::size_t i = 0; i < data.size(); ++i){
+                    auto cloud = PointCloud::load(data[i]);
+                    downsample(cloud, 0.01);
+                    cloud->save(data[i]);
+                    downsample_bar.update();
+                }
+                downsample_bar.stop();
+
+
+                
+                merge_bar.update(diff);
+
+                loop_count++;
+            }
+
+            cloud = PointCloud::load(data[0]);
+        }
+        merge_bar.stop();
+
+        return *cloud;
+
+
+
+
+
+
+        /*
+        PointCloud::Ptr cloud;
+
 
         auto merge_bar = util::progress_bar(data.size(), "Merging");
         #pragma omp parallel
@@ -81,6 +181,8 @@ namespace linkml{
         }
         merge_bar.stop();
         return *cloud;
+        */
+        
     }
 
     template PointCloud PointCloudsInMemory::merge();

@@ -18,11 +18,45 @@ namespace mcl_cpp
 {
 	class mcl_gpu
 	{
+	private:
+	cudaError_t cudaStat;
+	cublasStatus_t stat;
+	cublasHandle_t handle;
+	size_t i, j;
+	float* devPtrA;
+	float* a;
+
 	public:
 		//! @brief MCL ctor. Register a callback function to return the cluster results
 		mcl_gpu(const Eigen::MatrixXd& Min, std::function< void(size_t cluster_j, size_t member_i) > f): ClusterResultCallback(f) {
-			cudaMalloc(&M, Min.rows() * Min.cols() * sizeof(float));
-			cudaMemcpy(M, Min.data(), Min.rows() * Min.cols() * sizeof(float) , cudaMemcpyHostToDevice);
+			cudaStat = cudaMalloc(&M, Min.rows() * Min.cols() * sizeof(float));
+			if (cudaStat != cudaSuccess) {
+				printf ("device memory allocation failed");
+				//free (a);
+				//return EXIT_FAILURE;
+			}
+
+			stat = cublasCreate(&handle);
+			if (stat != CUBLAS_STATUS_SUCCESS) {
+				printf ("CUBLAS initialization failed\n");
+				free (a);
+				cudaFree (devPtrA);
+				//return EXIT_FAILURE;
+			}
+
+			//stat = cublasSetMatrix (Min.rows(), Min.cols(), sizeof(*a), a, M, devPtrA, M);
+			if (stat != CUBLAS_STATUS_SUCCESS) {
+				printf ("data download failed");
+				free (a);
+				cudaFree (devPtrA);
+				cublasDestroy(handle);
+				//return EXIT_FAILURE;
+			}
+
+			// https://docs.nvidia.com/cuda/pdf/CUBLAS_Library.pdf
+			// Example 2
+
+			//cudaMemcpy(M, Min.data(), Min.rows() * Min.cols() * sizeof(float) , cudaMemcpyHostToDevice);
 			//cublasSetMatrix(M.rows(), M.cols(), sizeof(float), M, M.rows(), M, M.rows());
 		}
 		~mcl_gpu() {
