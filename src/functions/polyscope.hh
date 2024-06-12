@@ -121,67 +121,67 @@ namespace polyscope  {
     static void display( PointCloud cloud, std::string const name = "Cloud"){
 
         auto  points = std::vector<std::array<float, 3>>();
-        points.resize(cloud.points.size());
+        points.resize((*cloud).points.size());
 
         auto colors = std::vector<std::array<float, 3>>();
-        colors.resize(cloud.points.size());
+        colors.resize((*cloud).points.size());
 
         auto confideces = std::vector<int>();
-        confideces.resize(cloud.points.size());
+        confideces.resize((*cloud).points.size());
 
         auto confideces_colors = std::vector<tg::color3>();
-        confideces_colors.resize(cloud.points.size());
+        confideces_colors.resize((*cloud).points.size());
 
         auto lables = std::vector<int>();
-        lables.resize(cloud.points.size());
+        lables.resize((*cloud).points.size());
 
         auto lables_colors = std::vector<tg::color3>();
-        lables_colors.resize(cloud.points.size());
+        lables_colors.resize((*cloud).points.size());
 
         auto sematic_lables = std::vector<int>();
-        sematic_lables.resize(cloud.points.size());
+        sematic_lables.resize((*cloud).points.size());
 
         auto sematic_colors = std::vector<tg::color3>();
-        sematic_colors.resize(cloud.points.size());
+        sematic_colors.resize((*cloud).points.size());
 
         auto instance_lables = std::vector<int>();
-        instance_lables.resize(cloud.points.size());
+        instance_lables.resize((*cloud).points.size());
 
         auto instance_color = std::vector<tg::color3>();
-        instance_color.resize(cloud.points.size());
+        instance_color.resize((*cloud).points.size());
         
         auto normals = std::vector<std::array<float, 3>>();
-        normals.resize(cloud.points.size());
+        normals.resize((*cloud).points.size());
 
         auto normal_colors = std::vector<std::array<float, 3>>();
-        normal_colors.resize(cloud.points.size());
+        normal_colors.resize((*cloud).points.size());
 
         auto importance = std::vector<float>();
-        importance.resize(cloud.points.size());
+        importance.resize((*cloud).points.size());
         
 
         #pragma omp parallel for
-        for (size_t i = 0; i < cloud.points.size(); i++){
+        for (size_t i = 0; i < (*cloud).points.size(); i++){
 
-            points[i] = {cloud.points[i].x, cloud.points[i].y, cloud.points[i].z};
+            points[i] = {(*cloud).points[i].x, (*cloud).points[i].y, (*cloud).points[i].z};
 
             colors[i] = {
-                static_cast<float>(cloud.points[i].r)/256,
-                static_cast<float>(cloud.points[i].g)/256,
-                static_cast<float>(cloud.points[i].b)/256};
+                static_cast<float>((*cloud).points[i].r)/256,
+                static_cast<float>((*cloud).points[i].g)/256,
+                static_cast<float>((*cloud).points[i].b)/256};
 
             normals[i] = {
-                cloud.points[i].normal_x,
-                cloud.points[i].normal_y,
-                cloud.points[i].normal_z};
+                (*cloud).points[i].normal_x,
+                (*cloud).points[i].normal_y,
+                (*cloud).points[i].normal_z};
 
             // remap normals to 0-1
             normal_colors[i] = {
-                (cloud.points[i].normal_x + 1.0f)/2.0f,
-                (cloud.points[i].normal_y + 1.0f)/2.0f,
-                (cloud.points[i].normal_z + 1.0f)/2.0f};
+                ((*cloud).points[i].normal_x + 1.0f)/2.0f,
+                ((*cloud).points[i].normal_y + 1.0f)/2.0f,
+                ((*cloud).points[i].normal_z + 1.0f)/2.0f};
 
-            switch (cloud.points[i].confidence)
+            switch ((*cloud).points[i].confidence)
             {
             case 0:
                 confideces_colors[i] = tg::color3(1.0, 0.0, 0.0);
@@ -197,19 +197,19 @@ namespace polyscope  {
                 break;
             }
 
-            confideces[i] = cloud.points[i].confidence;
-            lables[i] = cloud.points[i].label;
-            lables_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle(cloud.points[i].label));
-            sematic_lables[i] = cloud.points[i].semantic;
-            sematic_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle(cloud.points[i].semantic));
-            instance_lables[i] = cloud.points[i].instance;
-            instance_color[i] = linkml::get_color_forom_angle(linkml::sample_circle(cloud.points[i].instance));
+            confideces[i] = (*cloud).points[i].confidence;
+            lables[i] = (*cloud).points[i].label;
+            lables_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle((*cloud).points[i].label));
+            sematic_lables[i] = (*cloud).points[i].semantic;
+            sematic_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle((*cloud).points[i].semantic));
+            instance_lables[i] = (*cloud).points[i].instance;
+            instance_color[i] = linkml::get_color_forom_angle(linkml::sample_circle((*cloud).points[i].instance));
 
-            importance[i] = (cloud.points[i].confidence+0.01f)
+            importance[i] = ((*cloud).points[i].confidence+0.01f)
                                 *
-                                ( (cloud.points[i].label == 0 ? 0.1f : 1.0f)
-                                + (cloud.points[i].semantic == 0 ? 0.1f : 2.0f)
-                                + (cloud.points[i].instance == 0 ? 0.1f : 3.0f));
+                                ( ((*cloud).points[i].label == 0 ? 0.1f : 1.0f)
+                                + ((*cloud).points[i].semantic == 0 ? 0.1f : 2.0f)
+                                + ((*cloud).points[i].instance == 0 ? 0.1f : 3.0f));
         }
 
         auto pcd = polyscope::registerPointCloud(name, points);

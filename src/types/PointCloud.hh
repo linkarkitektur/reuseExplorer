@@ -124,107 +124,39 @@ namespace linkml{
 
 
     /// @brief A point cloud.
-    class PointCloud : public pcl::PointCloud<PointT>{
+    class PointCloud : public pcl::PointCloud<PointT>::Ptr {
+
+      public:
+        using Cloud = pcl::PointCloud<PointT>;
+
+
+      private:
+        Cloud::Ptr _ptr = Cloud::Ptr(new Cloud());
+
       public:
 
-        // Inherit types
-        using pcl::PointCloud<PointT>::PointType;
-        using pcl::PointCloud<PointT>::VectorType;
-        using pcl::PointCloud<PointT>::CloudVectorType;
+        // Forward necessary smart pointer methods
+        Cloud& operator*() const { return *_ptr; }
+        Cloud* operator->() const { return _ptr.get(); }
+        Cloud* get() const { return _ptr.get(); }
 
-        // Inherit constructors
-        using pcl::PointCloud<PointT>::PointCloud;
-
-        // Inherit properties
-        using pcl::PointCloud<PointT>::header;
-        using pcl::PointCloud<PointT>::points;
-        using pcl::PointCloud<PointT>::width;
-        using pcl::PointCloud<PointT>::height;
-        using pcl::PointCloud<PointT>::is_dense;
-        using pcl::PointCloud<PointT>::sensor_origin_;
-        using pcl::PointCloud<PointT>::sensor_orientation_;
-
-        // Inherit operators
-        using pcl::PointCloud<PointT>::operator +=;
-        using pcl::PointCloud<PointT>::operator  +;
-        using pcl::PointCloud<PointT>::operator ();
-        using pcl::PointCloud<PointT>::operator [];
-
-        using pcl::PointCloud<PointT>::value_type;
-        using pcl::PointCloud<PointT>::reference;
-        using pcl::PointCloud<PointT>::const_reference;
-        using pcl::PointCloud<PointT>::difference_type;
-        using pcl::PointCloud<PointT>::size_type;
-
-        using pcl::PointCloud<PointT>::at;
-        using pcl::PointCloud<PointT>::concatenate;
-        using pcl::PointCloud<PointT>::isOrganized;
-        using pcl::PointCloud<PointT>::getMatrixXfMap;
-
-        using pcl::PointCloud<PointT>::iterator;
-        using pcl::PointCloud<PointT>::const_iterator;
-        using pcl::PointCloud<PointT>::reverse_iterator;
-        using pcl::PointCloud<PointT>::const_reverse_iterator;
-        using pcl::PointCloud<PointT>::begin;
-        using pcl::PointCloud<PointT>::end;
-        using pcl::PointCloud<PointT>::rbegin;
-        using pcl::PointCloud<PointT>::rend;
-        using pcl::PointCloud<PointT>::cbegin;
-        using pcl::PointCloud<PointT>::cend;
-        using pcl::PointCloud<PointT>::crbegin;
-        using pcl::PointCloud<PointT>::crend;
-
-        using pcl::PointCloud<PointT>::size;
-        using pcl::PointCloud<PointT>::max_size;
-        using pcl::PointCloud<PointT>::reserve;
-        using pcl::PointCloud<PointT>::empty;
-        using pcl::PointCloud<PointT>::data;
-
-        using pcl::PointCloud<PointT>::resize;
-        using pcl::PointCloud<PointT>::assign;
-
-        using pcl::PointCloud<PointT>::front;
-        using pcl::PointCloud<PointT>::back;
-
-        using pcl::PointCloud<PointT>::push_back;
-        using pcl::PointCloud<PointT>::transient_push_back;
-        using pcl::PointCloud<PointT>::emplace_back;
-        using pcl::PointCloud<PointT>::transient_emplace_back;
-
-        using pcl::PointCloud<PointT>::insert;
-        using pcl::PointCloud<PointT>::transient_insert;
-      
-        using pcl::PointCloud<PointT>::emplace;
-        using pcl::PointCloud<PointT>::transient_emplace;
-
-        using pcl::PointCloud<PointT>::erase;
-        using pcl::PointCloud<PointT>::transient_erase;
-
-        using pcl::PointCloud<PointT>::swap;
-        using pcl::PointCloud<PointT>::clear;
-
-        // Custom types
-        using Ptr = pcl::shared_ptr<PointCloud>;
-        using ConstPtr = pcl::shared_ptr<const PointCloud>;
-
-        inline Ptr
-        makeShared () const { return Ptr (new PointCloud (*this)); }
+        PointCloud(){};
 
 
         // Constructors
         /// @brief Load the point cloud from a file.
         PointCloud(std::string const & filename ){
-          pcl::io::loadPCDFile(filename, *this);
+          pcl::io::loadPCDFile(filename,  *_ptr);
         }
 
         // TODO: Implement Buffer protocol
         // https://pybind11.readthedocs.io/en/stable/advanced/pycpp/numpy.html
 
         /// @brief Load the point cloud from a file.
-        static PointCloud::Ptr load(std::string const& filename) {
+        static PointCloud load(std::string const& filename) {
 
           std::filesystem::path pcd = filename;
-          PointCloud::Ptr cloud(new PointCloud);
+          PointCloud cloud = PointCloud();
           
           pcl::io::loadPCDFile(pcd, *cloud);
 
@@ -263,8 +195,8 @@ namespace linkml{
           float z_max = std::numeric_limits<float>::min();
 
           #pragma omp parallel for reduction(min:x_min, y_min, z_min) reduction(max:x_max, y_max, z_max)
-          for (size_t i = 0; i < this->size(); i++){
-              auto p = this->at(i);
+          for (size_t i = 0; i < (*this)->size(); i++){
+              auto p = (*this)->at(i);
               if (p.x < x_min) x_min = p.x;
               if (p.y < y_min) y_min = p.y;
               if (p.z < z_min) z_min = p.z;
@@ -282,8 +214,8 @@ namespace linkml{
         // TODO: Add set confidence function
 
         /// @brief Save the point cloud to a file.
-        PointCloud save(std::string const& filename, bool binary=true) const {
-          pcl::io::savePCDFile(filename, *this, binary);
+        void save(std::string const& filename, bool binary=true) const {
+          pcl::io::savePCDFile(filename, **this, binary);
 
           // Save header information
           std::filesystem::path p(filename);
@@ -291,25 +223,24 @@ namespace linkml{
           std::filesystem::exists(p) ? std::filesystem::remove(p) : std::filesystem::create_directories(p.parent_path());
           std::ofstream header_file(p);
           if (header_file.is_open()){
-              header_file << this->header.frame_id << std::endl;
-              header_file << this->header.stamp << std::endl;
-              header_file << this->header.seq << std::endl;
+              header_file << (*this)->header.frame_id << std::endl;
+              header_file << (*this)->header.stamp << std::endl;
+              header_file << (*this)->header.seq << std::endl;
               header_file.close();
           }
-          return *this;
         }
 
         /// @brief Transform the point cloud.
-        PointCloud filter(); 
+        void filter(); 
 
         /// @brief Register the point cloud.
-        PointCloud downsample(double leaf_size = 0.02f);
+        void downsample(double leaf_size = 0.02f);
 
         /// @brief Annotate the point cloud.
-        PointCloud annotate();
+        void annotate();
 
         /// @brief Region growing, plane fitting
-        PointCloud region_growing(
+        void region_growing(
           float angle_threshold = 0.96592583, // cos(25°)
           float plane_dist_threshold = 0.1,
           int minClusterSize = 2*(1/0.02)*(1/0.02), // ca 2sqm in 2cm resolution of point cloud 
@@ -319,37 +250,37 @@ namespace linkml{
           float interval_factor = 1.5
         );
 
-        PointCloud clustering(
+        void clustering(
           double cluster_tolerance = 0.02, // 2cm
           pcl::uindex_t min_cluster_size = 100,
           pcl::uindex_t max_cluster_size =  std::numeric_limits<pcl::uindex_t>::max()
         );
-        PointCloud solidify();
+        void solidify();
 
 
 
         cv::Mat image(std::string field_name = "rgb") const {
 
-          if (!this->is_dense)
+          if (!(*this)->is_dense)
             throw std::runtime_error("Clouds must be dense");
 
-          cv::Mat img = cv::Mat::zeros(this->height, this->width, CV_8UC3);
+          cv::Mat img = cv::Mat::zeros((*this)->height, (*this)->width, CV_8UC3);
 
           if ( field_name == "rgb" ){
             #pragma omp parallel for shared(img)
-            for (size_t i = 0; i < this->size(); i++){
-                auto point = this->at(i);
-                size_t y = i % this->width;
-                size_t x = i / this->width;
+            for (size_t i = 0; i < (*this)->size(); i++){
+                auto point = (*this)->at(i);
+                size_t y = i % (*this)->width;
+                size_t x = i / (*this)->width;
                 img.at<cv::Vec3b>(x, y) = cv::Vec3b(point.r, point.g, point.b);
             }
           }
           else if ( field_name == "semantic"){
             #pragma omp parallel for shared(img)
-            for (size_t i = 0; i < this->size(); i++){
-                auto point = this->at(i);
-                size_t y = i % this->width;
-                size_t x = i / this->width;
+            for (size_t i = 0; i < (*this)->size(); i++){
+                auto point = (*this)->at(i);
+                size_t y = i % (*this)->width;
+                size_t x = i / (*this)->width;
                 auto c = linkml::get_color_forom_angle(linkml::sample_circle(point.semantic));
                 img.at<cv::Vec3b>(x, y) = cv::Vec3b(c.r * 255, c.g * 255, c.b * 255);
             }
@@ -363,12 +294,12 @@ namespace linkml{
         }
 
 
-        PointType at(size_t x, size_t y) {
-          return this->points.at(y * this->width + x);
+        Cloud::PointType at(size_t x, size_t y) {
+          return (*this)->points.at(y * (*this)->width + x);
         }
 
         /// @brief Register the point cloud.
-        PointCloud display(std::string name = "Cloud") const {
+        void display(std::string name = "Cloud") const {
 
           polyscope::init();
 
@@ -377,69 +308,69 @@ namespace linkml{
 
 
           auto  points = std::vector<std::array<float, 3>>();
-          points.resize(this->points.size());
+          points.resize((*this)->points.size());
 
           auto colors = std::vector<std::array<float, 3>>();
-          colors.resize(this->points.size());
+          colors.resize((*this)->points.size());
 
           auto confideces = std::vector<int>();
-          confideces.resize(this->points.size());
+          confideces.resize((*this)->points.size());
 
           auto confideces_colors = std::vector<tg::color3>();
-          confideces_colors.resize(this->points.size());
+          confideces_colors.resize((*this)->points.size());
 
           auto lables = std::vector<int>();
-          lables.resize(this->points.size());
+          lables.resize((*this)->points.size());
 
           auto lables_colors = std::vector<tg::color3>();
-          lables_colors.resize(this->points.size());
+          lables_colors.resize((*this)->points.size());
 
           auto sematic_lables = std::vector<int>();
-          sematic_lables.resize(this->points.size());
+          sematic_lables.resize((*this)->points.size());
 
           auto sematic_colors = std::vector<tg::color3>();
-          sematic_colors.resize(this->points.size());
+          sematic_colors.resize((*this)->points.size());
 
           auto instance_lables = std::vector<int>();
-          instance_lables.resize(this->points.size());
+          instance_lables.resize((*this)->points.size());
 
           auto instance_colors = std::vector<tg::color3>();
-          instance_colors.resize(this->points.size());
+          instance_colors.resize((*this)->points.size());
         
           auto normals = std::vector<std::array<float, 3>>();
-          normals.resize(this->points.size());
+          normals.resize((*this)->points.size());
 
           auto normal_colors = std::vector<std::array<float, 3>>();
-          normal_colors.resize(this->points.size());
+          normal_colors.resize((*this)->points.size());
 
           auto importance = std::vector<float>();
-          importance.resize(this->points.size());
+          importance.resize((*this)->points.size());
 
 
         
 
           #pragma omp parallel for
-          for (size_t i = 0; i < this->points.size(); i++){
+          for (size_t i = 0; i < (*this)->points.size(); i++){
 
-              points[i] = {this->points[i].x, this->points[i].y, this->points[i].z};
+              points[i] = {(*this)->points[i].x, (*this)->points[i].y, (*this)->points[i].z};
 
               colors[i] = {
-                  static_cast<float>(this->points[i].r)/256,
-                  static_cast<float>(this->points[i].g)/256,
-                  static_cast<float>(this->points[i].b)/256};
+                  static_cast<float>((*this)->points[i].r)/256,
+                  static_cast<float>((*this)->points[i].g)/256,
+                  static_cast<float>((*this)->points[i].b)/256};
 
               normals[i] = {
-                  this->points[i].normal_x,
-                  this->points[i].normal_y,
-                  this->points[i].normal_z};
+                  (*this)->points[i].normal_x,
+                  (*this)->points[i].normal_y,
+                  (*this)->points[i].normal_z};
 
               // remap normals to 0-1
               normal_colors[i] = {
-                  (this->points[i].normal_x + 1.0f)/2.0f,
-                  (this->points[i].normal_y + 1.0f)/2.0f,
-                  (this->points[i].normal_z + 1.0f)/2.0f};
+                  ((*this)->points[i].normal_x + 1.0f)/2.0f,
+                  ((*this)->points[i].normal_y + 1.0f)/2.0f,
+                  ((*this)->points[i].normal_z + 1.0f)/2.0f};
 
-              switch (this->points[i].confidence)
+              switch ((*this)->points[i].confidence)
               {
               case 0:
                   confideces_colors[i] = tg::color3(1.0, 0.0, 0.0);
@@ -455,13 +386,13 @@ namespace linkml{
                   break;
               }
 
-              confideces[i] = this->points[i].confidence;
-              lables[i] = this->points[i].label;
-              lables_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle(this->points[i].label));
-              sematic_lables[i] = this->points[i].semantic;
-              sematic_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle(this->points[i].semantic));
-              instance_lables[i] = this->points[i].instance;
-              instance_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle(this->points[i].instance));
+              confideces[i] = (*this)->points[i].confidence;
+              lables[i] = (*this)->points[i].label;
+              lables_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle((*this)->points[i].label));
+              sematic_lables[i] = (*this)->points[i].semantic;
+              sematic_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle((*this)->points[i].semantic));
+              instance_lables[i] = (*this)->points[i].instance;
+              instance_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle((*this)->points[i].instance));
 
           }
 
@@ -469,7 +400,7 @@ namespace linkml{
           // Set unused lables to 
           int selection[]{60, 56, 57, 58, 41, 62, 63, 64, 66, 41};
           #pragma omp parallel for
-          for (size_t i = 0; i < this->points.size(); i++){
+          for (size_t i = 0; i < (*this)->points.size(); i++){
             auto semantic = sematic_lables[i];
             if (std::count(std::begin(selection), std::end(selection), semantic) == 0){
               sematic_lables[i] = 0;
@@ -480,12 +411,12 @@ namespace linkml{
 
           // Set importance
           #pragma omp parallel for
-          for (size_t i = 0; i < this->points.size(); i++){
-               importance[i] = (this->points[i].confidence+0.01f)
+          for (size_t i = 0; i < (*this)->points.size(); i++){
+               importance[i] = ((*this)->points[i].confidence+0.01f)
                                   *
-                                  ( (this->points[i].label == 0 ? 0.1f : 1.0f)
+                                  ( ((*this)->points[i].label == 0 ? 0.1f : 1.0f)
                                   + (sematic_lables[i] == 0 ? 0.1f : 2.0f)
-                                  + (this->points[i].instance == 0 ? 0.1f : 3.0f));         
+                                  + ((*this)->points[i].instance == 0 ? 0.1f : 3.0f));         
           }
 
 
@@ -514,8 +445,6 @@ namespace linkml{
           pcd->quantities["Lables Colors"]->setEnabled(true);
 
           polyscope::show();
-
-          return *this;
 
         }
 

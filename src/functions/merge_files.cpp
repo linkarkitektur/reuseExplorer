@@ -28,7 +28,7 @@ namespace linkml{
     template <>
     static std::string merge( std::string left, std::string right){
 
-        PointCloud::Ptr cloud_1, cloud_2;
+        PointCloud cloud_1, cloud_2;
 
         cloud_1 = PointCloud::load(left);
         cloud_2 = PointCloud::load(right);
@@ -38,7 +38,7 @@ namespace linkml{
         *cloud_1 += *cloud_2;
         downsample(cloud_1, 0.01);
 
-        cloud_1->save(left);
+        cloud_1.save(left);
         std::filesystem::remove(right);
         return left;
 
@@ -47,8 +47,8 @@ namespace linkml{
     template <>
     static PointCloud merge( PointCloud left, PointCloud right){
 
-        left.reserve(left.size() + right.size());
-        left += right;
+        (*left).reserve((*left).size() + (*right).size());
+        *left += *right;
 
         return left;
     }
@@ -56,13 +56,13 @@ namespace linkml{
 
 
     // Custom reduction function for PointCloud::Ptr
-    void merge_clouds(PointCloud::Ptr lhs, const PointCloud::Ptr rhs) {
+    inline void merge_clouds(PointCloud lhs, const PointCloud rhs) {
         *lhs += *rhs;
     }
 
 
-    #pragma omp declare reduction(+ : PointCloud::Ptr : merge_clouds(omp_out, omp_in)) \
-        initializer(omp_priv = PointCloud::Ptr(new PointCloud))
+    #pragma omp declare reduction(+ : PointCloud : merge_clouds(omp_out, omp_in)) \
+        initializer(omp_priv = PointCloud())
 
 
 
@@ -74,12 +74,12 @@ namespace linkml{
         if (data.size()==0)
             throw std::runtime_error("No point clouds to merge");
 
-        PointCloud::Ptr cloud;
+        PointCloud cloud;
 
         auto merge_bar = util::progress_bar(data.size()-1, "Merging");
         if constexpr (std::is_same<T, PointCloud>::value){
             if (data.size() == 1)
-                return *data[0];
+                return data[0];
 
             #pragma omp parallel for reduction(+:cloud)
             for (std::size_t i = 0; i < data.size(); ++i){
@@ -106,14 +106,14 @@ namespace linkml{
                 #pragma omp parallel for shared(data, new_paths)
                 for (std::size_t i = 0; i < data.size(); i+=GROUP_SIZE){
 
-                    PointCloud::Ptr merged = PointCloud::Ptr(new PointCloud);
+                    PointCloud merged = PointCloud();
 
                     //#pragma omp parallel for reduction(+:merged)
                     for (std::size_t j = 0; j < GROUP_SIZE; ++j)
                         if (i+j < data.size())
                             *merged += *PointCloud::load(data[i+j]);
 
-                    merged->save(data[i]);
+                    merged.save(data[i]);
                     new_paths[i] = data[i];
 
                     //#pragma omp parallel for reduction(+:merged)
@@ -146,7 +146,7 @@ namespace linkml{
                 for (std::size_t i = 0; i < data.size(); ++i){
                     auto cloud = PointCloud::load(data[i]);
                     downsample(cloud, 0.01);
-                    cloud->save(data[i]);
+                    cloud.save(data[i]);
                     downsample_bar.update();
                 }
                 downsample_bar.stop();
@@ -162,26 +162,6 @@ namespace linkml{
         }
         merge_bar.stop();
 
-        return *cloud;
-
-
-
-
-
-
-        /*
-        PointCloud::Ptr cloud;
-
-
-        auto merge_bar = util::progress_bar(data.size(), "Merging");
-        #pragma omp parallel
-        {
-            #pragma omp single
-                cloud = merge_files<T>(data.begin(), data.end());
-        }
-        merge_bar.stop();
-        return *cloud;
-        */
         
     }
 

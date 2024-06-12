@@ -91,7 +91,7 @@ namespace linkml
 
     public:
         Surface() = default;
-        Surface(PointCloud::Ptr cloud, pcl::Indices indices);
+        Surface(PointCloud::Cloud::Ptr cloud, pcl::Indices indices);
         
         void Create_Embree_Geometry(RTCDevice & device, RTCScene & scene);
 
@@ -110,7 +110,7 @@ namespace linkml
 
     private:
 
-        std::pair<pcl::Indices,size_t> supporting_points(typename Mesh::Face_index face, const Mesh& mesh, const PointCloud::ConstPtr cloud, const pcl::Indices indices);
+        std::pair<pcl::Indices,size_t> supporting_points(typename Mesh::Face_index face, const Mesh& mesh, const PointCloud::Cloud::ConstPtr cloud, const pcl::Indices indices);
         Point_3 compute_centroid(typename Mesh::Face_index f, const Mesh& mesh) const;
 
     };
@@ -118,7 +118,7 @@ namespace linkml
 
 
     // Implementation
-    std::pair<pcl::Indices, size_t> Surface::supporting_points(typename Mesh::Face_index face, const Mesh& mesh, const PointCloud::ConstPtr cloud, const pcl::Indices indices_in) {
+    std::pair<pcl::Indices, size_t> Surface::supporting_points(typename Mesh::Face_index face, const Mesh& mesh, const PointCloud::Cloud::ConstPtr cloud, const pcl::Indices indices_in) {
 
         pcl::Indices indices;
         if (face == Mesh::null_face())
@@ -245,7 +245,7 @@ namespace linkml
             return centroid;
 
     }
-    Surface::Surface(PointCloud::Ptr cloud, pcl::Indices indices){
+    Surface::Surface(PointCloud::Cloud::Ptr cloud, pcl::Indices indices){
 
 
 

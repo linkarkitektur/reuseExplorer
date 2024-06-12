@@ -33,27 +33,26 @@ private:
     std::uint8_t value_;
 };
 
-linkml::PointCloud linkml::PointCloud::clustering(
+void linkml::PointCloud::clustering(
     double cluster_tolerance,
     pcl::uindex_t min_cluster_size,
     pcl::uindex_t max_cluster_size
 ){
 
-    using Filter = pcl::experimental::advanced::FunctorFilter<PointCloud::PointType, MatchCondition<PointCloud::PointType>>;
+    using Filter = pcl::experimental::advanced::FunctorFilter<PointCloud::Cloud::PointType, MatchCondition<PointCloud::Cloud::PointType>>;
 
-    // FIXME: This is bad as it is making a full copy of the point cloud
-    auto cloud = this->makeShared();
+    auto cloud = *this;
 
     // Create a set of all labes
     std::unordered_set<uint8_t> lables;
-    for (size_t i = 0; i < this->points.size(); ++i)
-        lables.insert(this->points[i].semantic);
+    for (size_t i = 0; i < (*this)->points.size(); ++i)
+        lables.insert((*this)->points[i].semantic);
     
     lables.erase(0U); //Do not cluster the unlabeled points
 
     std::vector<int> lables_vec(lables.begin(), lables.end());
 
-    pcl::search::KdTree<PointCloud::PointType>::Ptr tree (new pcl::search::KdTree<PointCloud::PointType>);
+    pcl::search::KdTree<PointCloud::Cloud::PointType>::Ptr tree (new pcl::search::KdTree<PointCloud::Cloud::PointType>);
     tree->setInputCloud (cloud);
 
     auto bar = util::progress_bar(lables_vec.size(), "Clustering");
@@ -61,13 +60,13 @@ linkml::PointCloud linkml::PointCloud::clustering(
     for (size_t i = 0; i < lables_vec.size(); i++){
 
         pcl::PointIndices::Ptr points (new pcl::PointIndices);
-        MatchCondition<PointCloud::PointType> match_filter(lables_vec[i]);
+        MatchCondition<PointCloud::Cloud::PointType> match_filter(lables_vec[i]);
         Filter pass(match_filter);
         pass.setInputCloud(cloud);
         pass.filter(points->indices);
 
         std::vector<pcl::PointIndices> cluster_indices;
-        pcl::EuclideanClusterExtraction<PointCloud::PointType> ec;
+        pcl::EuclideanClusterExtraction<PointCloud::Cloud::PointType> ec;
         ec.setClusterTolerance (cluster_tolerance); // 2cm
         ec.setMinClusterSize (min_cluster_size);
         ec.setMaxClusterSize (max_cluster_size);
@@ -79,12 +78,10 @@ linkml::PointCloud linkml::PointCloud::clustering(
         //#pragma omp parallel // for collapse(2)
         for (size_t j = 0; j < cluster_indices.size(); j++)
             for (size_t k = 0; k < cluster_indices[j].indices.size(); k++)
-                this->points[cluster_indices[j].indices[k]].instance = j + 1;
+                (*this)->points[cluster_indices[j].indices[k]].instance = j + 1;
 
         bar.update();
     }
     bar.stop();
 
-
-    return *this;
 }

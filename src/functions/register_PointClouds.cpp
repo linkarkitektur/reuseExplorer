@@ -47,8 +47,8 @@ class MyPointRepresentation : public pcl::PointRepresentation<PointT>
 * \param final_transform the resultant transform between source and target
 */
 void pairAlign (
-    linkml::PointCloud::Ptr cloud_src, 
-    const linkml::PointCloud::Ptr cloud_tgt, 
+    linkml::PointCloud::Cloud::Ptr cloud_src, 
+    const linkml::PointCloud::Cloud::Ptr cloud_tgt, 
     Eigen::Matrix4f &pairTransform, 
     std::optional<float> grid_size = {},
     std::optional<uint8_t> confidence_filter = {}
@@ -58,14 +58,14 @@ void pairAlign (
     // \note enable this for large datasets
 
 
-    linkml::PointCloud::Ptr input_src(new linkml::PointCloud);
-    linkml::PointCloud::Ptr input_tgt(new linkml::PointCloud);
+    linkml::PointCloud::Cloud::Ptr input_src(new linkml::PointCloud::Cloud);
+    linkml::PointCloud::Cloud::Ptr input_tgt(new linkml::PointCloud::Cloud);
 
     input_src = cloud_src;
     input_tgt = cloud_tgt; 
 
-    linkml::PointCloud::Ptr src(new linkml::PointCloud);
-    linkml::PointCloud::Ptr tgt(new linkml::PointCloud);
+    linkml::PointCloud::Cloud::Ptr src(new linkml::PointCloud::Cloud);
+    linkml::PointCloud::Cloud::Ptr tgt(new linkml::PointCloud::Cloud);
     
 
     
@@ -128,7 +128,7 @@ void pairAlign (
     reg.setInputSource(src);
     reg.setInputTarget(tgt);
 
-    linkml::PointCloud::Ptr reg_result = src;
+    linkml::PointCloud::Cloud::Ptr reg_result = src;
     reg.setMaximumIterations(50);
     reg.setRANSACIterations(1000);
     reg.setRANSACOutlierRejectionThreshold(0.05);
@@ -160,8 +160,8 @@ namespace linkml{
         #pragma omp parallel for shared(transforms)
         for (std::size_t i = 1; i < data.size() ; ++i){
 
-            PointCloud::Ptr target; // = load(files[i-1]);
-            PointCloud::Ptr source; // = load(files[i]);
+            PointCloud::Cloud::Ptr target; // = load(files[i-1]);
+            PointCloud::Cloud::Ptr source; // = load(files[i]);
 
             // If the underlying type is a string, load the file
             if constexpr (std::is_same<T, std::string>::value){
@@ -203,9 +203,9 @@ namespace linkml{
 
             // If the underlying type is a string, load the file
             if constexpr (std::is_same<T, std::string>::value){
-                PointCloud::Ptr point_cloud = PointCloud::load(data[i]);
+                PointCloud point_cloud = PointCloud::load(data[i]);
                 pcl::transformPointCloudWithNormals(*point_cloud, *point_cloud, compund_transforms[i]);
-                point_cloud->save(data[i], true);
+                point_cloud.save(data[i], true);
             // Oterwise it is assumed to be a PointCloud::Ptr
             } else {
                 pcl::transformPointCloudWithNormals(*data[i], *data[i], compund_transforms[i]);

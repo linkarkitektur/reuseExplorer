@@ -36,7 +36,7 @@ void merge_sets(std::unordered_set<int>& lhs, const std::unordered_set<int>& rhs
 #pragma omp declare reduction(merge : std::unordered_set<int> : merge_sets(omp_out, omp_in)) \
     initializer(omp_priv = std::unordered_set<int>())
 
-linkml::PointCloud linkml::PointCloud::region_growing(
+void linkml::PointCloud::region_growing(
     float angle_threshold,
     float plane_dist_threshold,
     int minClusterSize, 
@@ -46,8 +46,7 @@ linkml::PointCloud linkml::PointCloud::region_growing(
     float interval_factor
     ){
 
-        // FIXME: This is bad, as makeShared will create a new copy of the point cloud
-        PointCloud::Ptr cloud = this->makeShared();
+        PointCloud cloud = *this;
 
         auto clusters = std::vector<std::unordered_set<int>>();
         auto plane_origins = std::vector<Eigen::Vector3f>();
@@ -66,7 +65,7 @@ linkml::PointCloud linkml::PointCloud::region_growing(
         
 
         // Create KDTree
-        pcl::KdTreeFLANN<PointCloud::PointType> tree;
+        pcl::KdTreeFLANN<PointCloud::Cloud::PointType> tree;
         tree.setInputCloud(cloud); // Takes some time
 
 
@@ -229,13 +228,7 @@ linkml::PointCloud linkml::PointCloud::region_growing(
         #pragma omp parallel for
         for (size_t i = 0; i < clusters.size(); ++i){
             for (auto idx: clusters[i]){
-                this->at(idx).label = i+1;
+                (*this)->at(idx).label = i+1;
             }
         }
-
-        
-        return *this;
-
-
-
 }

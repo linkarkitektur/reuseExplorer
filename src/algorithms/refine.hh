@@ -11,7 +11,7 @@ namespace linkml {
 
     
     std::vector<pcl::PointIndices> refine(
-        PointCloud::Ptr const cloud, 
+        PointCloud::Cloud::Ptr const cloud, 
         std::vector<pcl::PointIndices> const & clusters,
         tg::angle angle_threashhold = tg::degree(25),
         float distance_threshhold = 0.5

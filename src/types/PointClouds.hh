@@ -101,7 +101,7 @@ namespace linkml
 
 
 
-            PointCloud::Ptr operator[](std::size_t index) const {
+            PointCloud::Cloud::Ptr operator[](std::size_t index) const {
                 if constexpr (std::is_same<T, std::string>::value)
                     return PointCloud::load(data[index]);
                 else
@@ -126,11 +126,11 @@ namespace linkml
             
     };
 
-    template class PointClouds<PointCloud::Ptr>;
+    template class PointClouds<PointCloud::Cloud::Ptr>;
     template class PointClouds<std::string>;
 
     using PointCloudsOnDisk = PointClouds<std::string>;
-    using PointCloudsInMemory = PointClouds<PointCloud::Ptr>;
+    using PointCloudsInMemory = PointClouds<PointCloud>;
 
 } // namespace linkml
 

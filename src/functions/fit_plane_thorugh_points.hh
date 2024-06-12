@@ -29,7 +29,7 @@ namespace linkml {
 
     }
 
-    static linkml::Plane fit_plane_thorugh_points(PointCloud::ConstPtr cloud,  pcl::Indices const & indecies){
+    static linkml::Plane fit_plane_thorugh_points(PointCloud::Cloud::ConstPtr cloud,  pcl::Indices const & indecies){
 
 
         Eigen::Vector4f vp = Eigen::Vector4f::Zero ();

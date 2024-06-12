@@ -64,7 +64,7 @@ namespace linkml{
      * This map is used to store cell complex information, where each key represents a cell ID
      * and the associated vector contains the indices of points belonging to that cell.
      */
-    static std::map<size_t, std::vector<int>> make_cw(PointCloud::ConstPtr cloud,  std::vector<PlanarPointSet> const & clusters ) {
+    static std::map<size_t, std::vector<int>> make_cw(PointCloud::Cloud::ConstPtr cloud,  std::vector<PlanarPointSet> const & clusters ) {
 
         auto cell_map = std::map<size_t, std::vector<int>>();
         const std::vector<int> default_id(clusters.size()+1, 0);

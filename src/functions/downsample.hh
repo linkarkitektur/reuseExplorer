@@ -4,5 +4,5 @@
 
 namespace linkml
 {
-    void downsample(PointCloud::Ptr cloud, double leaf_size);
+    void downsample(PointCloud::Cloud::Ptr cloud, double leaf_size);
 }

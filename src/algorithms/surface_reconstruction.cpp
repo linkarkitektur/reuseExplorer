@@ -51,7 +51,7 @@ Surface_mesh linkml::surface_reconstruction( const linkml::PointCloud & cloud, c
 	Point_vector points{};
     for (size_t i = 0; i < planes.size(); i++){
         for (size_t j = 0; j < planes[i].indices.size(); j++){
-            auto pt = cloud[planes[i].indices[j]];
+            auto pt = (*cloud)[planes[i].indices[j]];
             points.push_back(PNI(Point_3(pt.x, pt.y, pt.z), Vector(pt.normal_x,pt.normal_y, pt.normal_z), i ));
         }
     }

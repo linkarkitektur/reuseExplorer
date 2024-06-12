@@ -71,8 +71,9 @@ if (False):
 name = "./3c670b035f.pcd"
 
 
-#clouds = clouds.filter()
-#cloud = clouds.merge().save(name)
+#clouds.filter()
+#cloud = clouds.merge()
+#cloud.save(name)
 #cloud.display()
 cloud = PointCloud(name)
 #cloud.downsample(0.05).save(name)

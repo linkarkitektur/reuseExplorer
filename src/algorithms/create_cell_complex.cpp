@@ -152,8 +152,8 @@ void linkml::create_cell_complex(linkml::PointCloud& cloud, std::vector<pcl::Poi
 			auto point_idx = clusters[i].indices[j];
 			auto plane_idx =  i;
 
-			auto pt = cloud.points[point_idx].getPos();
-			auto norm = cloud.points[point_idx].getNormal();
+			auto pt = cloud->points[point_idx].getPos();
+			auto norm = cloud->points[point_idx].getNormal();
 
 			points.push_back(PNI(Point(pt.x, pt.y, pt.z), Vector(norm.x, norm.y, norm.z), plane_idx ));
 		}

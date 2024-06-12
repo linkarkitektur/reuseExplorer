@@ -76,12 +76,12 @@ namespace linkml
         } else {
             #pragma omp parallel for shared(data, input_images)
             for (size_t i = 0; i < n_frames; i++){
-                PointCloud::Ptr cloud;
+                PointCloud cloud;
                 if constexpr (std::is_same<T, std::string>::value)
                     cloud = PointCloud::load(data.at(i));
                 else
                     cloud = data.at(i);
-                input_images[i] = cloud->image();
+                input_images[i] = cloud.image();
                 load_images_bar.update();
             }
         }
@@ -130,7 +130,7 @@ namespace linkml
 
             
 
-            PointCloud::Ptr cloud;
+            PointCloud cloud;
             if constexpr (std::is_same<T, std::string>::value){
                 cloud = PointCloud::load(data.at(i));
             } else {
@@ -185,7 +185,7 @@ namespace linkml
             //cv::waitKey(0);
 
             if constexpr (std::is_same<T, std::string>::value)
-                cloud->save(data.at(i));
+                cloud.save(data.at(i));
             
 
             inference_postprocessing_bar.update();

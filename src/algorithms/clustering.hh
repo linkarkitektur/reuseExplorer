@@ -98,16 +98,16 @@ namespace linkml{
 
     struct PointMap
     {
-      const Point_3& operator[](const PointCloud::PointType& k) const { 
+      const Point_3& operator[](const PointCloud::Cloud::PointType& k) const { 
         auto p = k.getVector3fMap();
         return Point_3(p[0], p[1], p[2]);
       }
 
-      friend Point_3 get(const PointMap&, const PointCloud::PointType& k) { 
+      friend Point_3 get(const PointMap&, const PointCloud::Cloud::PointType& k) { 
         auto p = k.getVector3fMap();
         return Point_3(p[0], p[1], p[2]);
     }
-      friend void put(const PointMap&, PointCloud::PointType& k, const Point_3& v) { 
+      friend void put(const PointMap&, PointCloud::Cloud::PointType& k, const Point_3& v) { 
             k.x = v[0];
             k.y = v[1];
             k.z = v[2];
@@ -115,16 +115,16 @@ namespace linkml{
     };
     struct NormalMap
     {
-      const Vector_3& operator[](const PointCloud::PointType& k) const { 
+      const Vector_3& operator[](const PointCloud::Cloud::PointType& k) const { 
         auto v = k.getNormalVector3fMap(); 
         return Vector_3(v[0], v[1], v[2]);
       }
 
-      friend Vector_3 get(const NormalMap&, const PointCloud::PointType& k) { 
+      friend Vector_3 get(const NormalMap&, const PointCloud::Cloud::PointType& k) { 
         auto v =  k.getNormalVector3fMap();
         return Vector_3(v[0], v[1], v[2]);
       }
-      friend void put(const NormalMap&, PointCloud::PointType& k, const Vector_3& v) { 
+      friend void put(const NormalMap&, PointCloud::Cloud::PointType& k, const Vector_3& v) { 
             k.normal[0] = v[0];
             k.normal[1] = v[1];
             k.normal[2] = v[2];
@@ -132,10 +132,10 @@ namespace linkml{
     };
     struct PlaneIndexMap
     {
-      const int & operator[](const PointCloud::PointType& point) const { return (int)point.label; }
+      const int & operator[](const PointCloud::Cloud::PointType& point) const { return (int)point.label; }
 
-      friend int get(const PlaneIndexMap&, const PointCloud::PointType& k) { return k.label; }
-      friend void put(const PlaneIndexMap&, PointCloud::PointType& k, const int & v) { k.label = (std::uint8_t)v;}
+      friend int get(const PlaneIndexMap&, const PointCloud::Cloud::PointType& k) { return k.label; }
+      friend void put(const PlaneIndexMap&, PointCloud::Cloud::PointType& k, const int & v) { k.label = (std::uint8_t)v;}
     };
 
     struct TriangulateVisitor : 
@@ -158,7 +158,7 @@ namespace linkml{
       std::shared_ptr<face_descriptor> ofaceindex;
     };
     
-    static std::vector<std::vector<size_t>> clustering(linkml::PointCloud::ConstPtr cloud){
+    static std::vector<std::vector<size_t>> clustering(linkml::PointCloud::Cloud::ConstPtr cloud){
 
         // Surface mesh
         Surface_mesh mesh;
@@ -258,7 +258,7 @@ namespace linkml{
         // Initialize polyscope
         polyscope::myinit();
 
-        polyscope::display(*cloud);
+        polyscope::display(cloud);
 
         // Visualize the mesh
         polyscope::display(mesh, "mesh");

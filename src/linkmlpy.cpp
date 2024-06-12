@@ -39,7 +39,7 @@ PYBIND11_MODULE(_core, m) {
 
     PYBIND11_NUMPY_DTYPE(tg::pos3, x, y, z);
     PYBIND11_NUMPY_DTYPE(tg::vec3, x, y, z);
-    PYBIND11_NUMPY_DTYPE(linkml::PointCloud::PointType, x, y, z, rgb, normal_x, normal_y, normal_z, curvature, confidence, semantic, instance, label);
+    PYBIND11_NUMPY_DTYPE(linkml::PointCloud::Cloud::PointType, x, y, z, rgb, normal_x, normal_y, normal_z, curvature, confidence, semantic, instance, label);
 
 
     /// Classes
@@ -158,8 +158,8 @@ PYBIND11_MODULE(_core, m) {
                 py::buffer_info xyz_info = xyz.request();
 
                 /* Some basic validation checks ... */
-                if (xyz_info.format != py::format_descriptor<float>::format()
-                    && xyz_info.format != py::format_descriptor<double>::format())
+                if ( xyz_info.format != py::format_descriptor<float>::format()
+                     && xyz_info.format != py::format_descriptor<double>::format())
                     throw std::runtime_error("Incompatible format: expected a float or double array!");
 
                 if (xyz_info.ndim != 2)
@@ -169,22 +169,22 @@ PYBIND11_MODULE(_core, m) {
 
 
                 linkml::PointCloud cloud;
-                cloud.points.resize(xyz.shape(0));
-                cloud.height = xyz.shape(0);
-                cloud.width = 1;
+                (*cloud).points.resize(xyz.shape(0));
+                (*cloud).height = xyz.shape(0);
+                (*cloud).width = 1;
                 
                 for (size_t i = 0; i < (size_t)xyz_.shape(0); i++){
-                    cloud.points[i].x = *xyz_.data(i, 0);
-                    cloud.points[i].y = *xyz_.data(i, 1);
-                    cloud.points[i].z = *xyz_.data(i, 2);
+                    (*cloud).points[i].x = *xyz_.data(i, 0);
+                    (*cloud).points[i].y = *xyz_.data(i, 1);
+                    (*cloud).points[i].z = *xyz_.data(i, 2);
                 }
 
                 if (rgb.has_value()){
                     auto rgb_ = rgb.value().unchecked<2>();
                     for (size_t i = 0; i < (size_t)xyz_.shape(0); i++){
-                        cloud.points[i].r = *rgb_.data(i, 2);
-                        cloud.points[i].g = *rgb_.data(i, 1);
-                        cloud.points[i].b = *rgb_.data(i, 0);
+                        (*cloud).points[i].r = *rgb_.data(i, 2);
+                        (*cloud).points[i].g = *rgb_.data(i, 1);
+                        (*cloud).points[i].b = *rgb_.data(i, 0);
                     }
                 }
                     
@@ -193,9 +193,9 @@ PYBIND11_MODULE(_core, m) {
                 if (normal.has_value()){
                     auto normal_ = normal.value().unchecked<2>();
                     for (size_t i = 0; i < (size_t)xyz_.shape(0); i++){
-                        cloud.points[i].normal_x = *normal_.data(i, 0);
-                        cloud.points[i].normal_y = *normal_.data(i, 1);
-                        cloud.points[i].normal_z = *normal_.data(i, 2);
+                        (*cloud).points[i].normal_x = *normal_.data(i, 0);
+                        (*cloud).points[i].normal_y = *normal_.data(i, 1);
+                        (*cloud).points[i].normal_z = *normal_.data(i, 2);
                     }
                 }
                 
@@ -203,7 +203,7 @@ PYBIND11_MODULE(_core, m) {
                 if (semantic.has_value()){
                     auto semantic_ = semantic.value().unchecked<2>();
                     for (size_t i = 0; i < (size_t)xyz_.shape(0); i++)
-                        cloud.points[i].semantic = *semantic_.data(i, 0);
+                        (*cloud).points[i].semantic = *semantic_.data(i, 0);
                 }
                     
                 
@@ -211,7 +211,7 @@ PYBIND11_MODULE(_core, m) {
                 if (instance.has_value()){
                     auto instance_ = instance.value().unchecked<2>();
                     for (size_t i = 0; i < (size_t)xyz_.shape(0); i++)
-                        cloud.points[i].instance = *instance_.data(i, 0);
+                        (*cloud).points[i].instance = *instance_.data(i, 0);
                 }
                     
                 
@@ -219,7 +219,7 @@ PYBIND11_MODULE(_core, m) {
                 if (label.has_value()){
                     auto label_ = label.value().unchecked<2>();
                     for (size_t i = 0; i < (size_t)xyz_.shape(0); i++)
-                        cloud.points[i].label = *label_.data(i, 0);
+                        (*cloud).points[i].label = *label_.data(i, 0);
                 }
                     
                 
@@ -287,15 +287,15 @@ PYBIND11_MODULE(_core, m) {
         .def("bbox", &linkml::PointCloud::get_bbox, 
             "Get the bounding box of the point cloud"
         )
-        .def("__len__", &linkml::PointCloud::size)
+        .def("__len__", [](linkml::PointCloud &cloud){ return cloud->size();})
         .def_buffer([](linkml::PointCloud &cloud) -> py::buffer_info {
             return py::buffer_info(
-                cloud.points.data(),
-                sizeof(linkml::PointCloud::PointType),
-                py::format_descriptor<linkml::PointCloud::PointType>::format(),
+                cloud->points.data(),
+                sizeof(linkml::PointCloud::Cloud::PointType),
+                py::format_descriptor<linkml::PointCloud::Cloud::PointType>::format(),
                 1,
-                { cloud.points.size() },
-                { sizeof(linkml::PointCloud::PointType)}
+                { cloud->points.size() },
+                { sizeof(linkml::PointCloud::Cloud::PointType)}
             );
         })
         ;
@@ -483,15 +483,6 @@ PYBIND11_MODULE(_core, m) {
         ;
 
 
-    /// @brief Speckle, class to access interopability with the Speckle API
-    py::class_<linkml::speckle>(m, "Speckle")
-        .def(py::init<std::string, std::string>())
-        .def("__repr__", [](linkml::speckle &a){
-            return a.get_status();
-        })
-        ;
-
-
 
 
    //py::class_<linkml::CellComplex>(m, "CellComplex")
@@ -535,7 +526,7 @@ PYBIND11_MODULE(_core, m) {
 
     m.def("create_cell_complex", &linkml::create_cell_complex, "point_cloud"_a, "plane_fit_results"_a );
     m.def("refine", [](
-        linkml::PointCloud::Ptr const cloud, 
+        linkml::PointCloud::Cloud::Ptr const cloud, 
         std::vector<pcl::PointIndices> const & clusters, 
         float angle, 
         float dist ){return linkml::refine(cloud, clusters, tg::degree(angle), dist);}, 

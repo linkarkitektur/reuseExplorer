@@ -34,7 +34,7 @@ linkml::PointClouds<T> linkml::PointClouds<T>::display(bool show_clouds){
     #pragma omp parallel for shared(data, path_node, path_edges)
     for (size_t i = 0; i < data.size(); ++i){
 
-        PointCloud::Ptr cloud;
+        PointCloud::Cloud::Ptr cloud;
         
         if constexpr (std::is_same<T, std::string>::value){
             cloud = PointCloud::load(data[i]);

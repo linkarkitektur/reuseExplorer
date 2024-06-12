@@ -40,10 +40,10 @@ public:
 using PointIndices = pcl::PointIndices;
 using Indices = pcl::Indices;
 using Clusters = std::vector<pcl::PointIndices>;
-using Filter = pcl::experimental::advanced::FunctorFilter<linkml::PointCloud::PointType, MatchCondition<linkml::PointCloud::PointType>>;
+using Filter = pcl::experimental::advanced::FunctorFilter<linkml::PointCloud::Cloud::PointType, MatchCondition<linkml::PointCloud::Cloud::PointType>>;
 
 
-Clusters extract_clusters(linkml::PointCloud::ConstPtr cloud){
+Clusters extract_clusters(linkml::PointCloud::Cloud::ConstPtr cloud){
 
     // Collect all cluster indices
     std::unordered_set<size_t> cluster_indices_set;
@@ -77,7 +77,7 @@ Clusters filter_clusters(Clusters clusters){
 
     return temp;
 }
-linkml::PointCloud::Ptr filter_cloud(linkml::PointCloud::Ptr cloud, Clusters & clusters){
+linkml::PointCloud::Cloud::Ptr filter_cloud(linkml::PointCloud::Cloud::Ptr cloud, Clusters & clusters){
 
     std::unordered_set<size_t> cluster_indices_set;
     for (size_t i = 0; i < clusters.size(); i++)
@@ -87,7 +87,7 @@ linkml::PointCloud::Ptr filter_cloud(linkml::PointCloud::Ptr cloud, Clusters & c
     pcl::PointIndices::Ptr selection(new pcl::PointIndices);
     selection->indices = pcl::Indices(cluster_indices_set.begin(), cluster_indices_set.end());
 
-    pcl::ExtractIndices<linkml::PointCloud::PointType> filter;
+    pcl::ExtractIndices<linkml::PointCloud::Cloud::PointType> filter;
     filter.setInputCloud(cloud);
     filter.setIndices(selection);
     filter.filter(*cloud);
@@ -241,21 +241,19 @@ class FaceIDMap{
 
 namespace linkml
 {
-    PointCloud PointCloud::solidify()
+    void PointCloud::solidify()
     {
 
-
-        //FIXME: This is bad as makeShared() will make a copy of the whole point cloud
-        auto cloud = this->makeShared();
+        auto cloud = *this;
 
         // Remove everyting that is not a surface
-        auto match_filter = MatchCondition<PointCloud::PointType>();
+        auto match_filter = MatchCondition<PointCloud::Cloud::PointType>();
         Filter pass(match_filter);
         pass.setInputCloud(cloud);
         pass.filter(*cloud);
 
 
-        pcl::RandomSample<PointCloud::PointType> sampler;
+        pcl::RandomSample<PointCloud::Cloud::PointType> sampler;
         sampler.setInputCloud(cloud);
         sampler.setSample(500000);
         sampler.setSeed(0);
@@ -451,10 +449,7 @@ namespace linkml
         clustering_bar.stop();
 
 
+        cloud.display("cloud");
 
-
-        cloud->display("cloud");
-
-        return *cloud;
     }
 } // namespace linkml
