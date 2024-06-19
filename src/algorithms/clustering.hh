@@ -258,17 +258,17 @@ namespace linkml{
         // Initialize polyscope
         polyscope::myinit();
 
-        polyscope::display(cloud);
+        polyscope::display<pcl::PointCloud<PointT> const&>(*cloud , "cloud");
 
         // Visualize the mesh
-        polyscope::display(mesh, "mesh");
+        polyscope::display<Surface_mesh const&>(mesh, "mesh");
         auto ps_mesh = polyscope::getSurfaceMesh("mesh");
         ps_mesh->addFaceScalarQuantity("face_coverage", face_coverages);
         ps_mesh->addFaceScalarQuantity("num_supporting_points", num_supporting_points_vec);
         ps_mesh->addFaceScalarQuantity("clusters", cluster_vec);
         ps_mesh->addFaceColorQuantity("cluster_colors", cluster_colors);
 
-        polyscope::display(mesh2, "mesh2");
+        polyscope::display<Surface_mesh const&>(mesh2, "mesh2");
 
         polyscope::show();
 

@@ -259,8 +259,8 @@ void linkml::create_cell_complex(linkml::PointCloud& cloud, std::vector<pcl::Poi
 	}
 
 	polyscope::myinit();
-	polyscope::display(cw);
-	polyscope::display(cloud);
+	polyscope::display<linkml::CellComplex const&>(cw, "cell complex");
+	polyscope::display<pcl::PointCloud<PointT> const&>(*cloud, "cloud");
 	polyscope::show();
 
 

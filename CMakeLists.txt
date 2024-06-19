@@ -177,7 +177,7 @@ add_subdirectory(extern/typed-geometry)
 file(GLOB_RECURSE LIB_SOURCES
     "src/*.cc"
     "src/*.cpp"
-    "src/*.cu"
+    #"src/*.cu"
 )
 
 file(GLOB_RECURSE LIB_HEADERS
@@ -186,25 +186,38 @@ file(GLOB_RECURSE LIB_HEADERS
 
 list(FILTER LIB_SOURCES EXCLUDE REGEX ".*py.cpp")
 
+file(GLOB_RECURSE  CU  "src/*.cu")
+
 # group sources according to folder structure
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${LIB_SOURCES})
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${LIB_HEADERS})
+source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${CU})
 
 
 
 ## ===============================================
-## add executable
+## add cuda library
+#set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} -gencode)
+#cuda_add_library(cuda_lib STATIC ${CU})
+
+
+
+
+## ===============================================
 include_directories( ${OpenCV_INCLUDE_DIRS} )
 
+# ===============================================
+# main libary
 add_library(${LIB_PROJECT_NAME} STATIC ${LIB_SOURCES} ${LIB_HEADERS})
 set_target_properties(${LIB_PROJECT_NAME} PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
 target_link_libraries(${LIB_PROJECT_NAME} 
-    PRIVATE 
-    pybind11::embed 
-    optimized ${GUROBI_CXX_LIBRARY}
-    debug ${GUROBI_CXX_DEBUG_LIBRARY}
-    # HDF5::HDF5
-    )
+PRIVATE 
+pybind11::embed 
+optimized ${GUROBI_CXX_LIBRARY}
+debug ${GUROBI_CXX_DEBUG_LIBRARY}
+#cuda_lib
+# HDF5::HDF5
+)
 target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     clean-core
     typed-geometry
@@ -247,8 +260,6 @@ set_property(TARGET ${TARGET_NAME} PROPERTY FOLDER "Extern")
 endforeach()
 
 
-# ===============================================
-# main libary
 target_include_directories(${LIB_PROJECT_NAME} PUBLIC "src")
 target_compile_options(${LIB_PROJECT_NAME} PUBLIC ${COMMON_COMPILER_FLAGS})
 

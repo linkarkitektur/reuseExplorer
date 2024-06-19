@@ -150,7 +150,7 @@ public:
 
 
 		// Optimize model
-    std::cout << " - " << "using the GUROBI solver (version " << GRB_VERSION_MAJOR << "." << GRB_VERSION_MINOR << ")." << std::endl;
+    //std::cout << " - " << "using the GUROBI solver (version " << GRB_VERSION_MAJOR << "." << GRB_VERSION_MINOR << ")." << std::endl;
 		model.optimize();
 
     int status = model.get(GRB_IntAttr_Status);

@@ -19,26 +19,40 @@
 #include <polyscope/curve_network.h>
 #include <polyscope/surface_mesh.h>
 
+static bool polyscope_enabled = false;
 
 
 namespace polyscope  {
 
 
     static void myinit(){
-        polyscope::init();
 
+        if (polyscope_enabled) return;
+
+        polyscope::init();
         polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::ShadowOnly;
         // polyscope::view::setUpDir(polyscope::UpDir::ZUp);
         polyscope::view::setUpDir(polyscope::UpDir::YUp);
 
+        polyscope_enabled = true;
+
 
     }
+
     static void myshow(){
         polyscope::show();
     }
 
-    static void display(linkml::CellComplex & cw){
 
+    //// Define a function to display a error message in case the display function is not defined
+    template <typename T>
+    static void display(T, const std::string &){
+        static_assert(sizeof(T) == -1, "Display function not implemented for this type.");
+    }
+
+
+    template <>
+    static void display(linkml::CellComplex const& cw, std::string const& name){
 
         auto ps_mesh = polyscope::registerSurfaceMesh("Mesh", ps_helpers::vertecies(cw, cw.pos), ps_helpers::faces(cw));
         auto face_color = ps_mesh->addFaceColorQuantity("Face Color", cw.faces().map([&](pm::face_handle h){ 
@@ -53,8 +67,11 @@ namespace polyscope  {
         ps_mesh->addFaceScalarQuantity("Coverage", cw.faces().map([&](pm::face_handle h){
             return cw.coverage[h];
         }).to_vector());
-    }
-    static void display(tg::aabb3 const & box ){
+    }        
+
+
+    template <>
+    static void display(tg::aabb3 const& box, const std::string & name){
 
         //  Drawing of cube with numbered vertecies.
         // 
@@ -90,7 +107,9 @@ namespace polyscope  {
         cn->setRadius(0.00070);
 
     }
-    static void display(linkml::Adjacency adj){
+
+    template <>
+    static void display(linkml::Adjacency const& adj, const  std::string & name ){
 
         // auto points = std::vector<tg::pos3>();
         // auto edges = std::vector<std::array<int, 2>>();
@@ -117,126 +136,172 @@ namespace polyscope  {
         cn->addEdgeColorQuantity("Identity", colors)->setEnabled(true);
 
     }
-    template <typename PointCloud>
-    static void display( PointCloud cloud, std::string const name = "Cloud"){
 
-        auto  points = std::vector<std::array<float, 3>>();
-        points.resize((*cloud).points.size());
+    enum class Field { 
+        Points,
+        RGB,
+        Normal,
+        Normal_color,
+        Confidence,
+        Confidence_color,
+        Lables,
+        Lables_color,
+        Semantic,
+        Semantic_color,
+        Instance,
+        Instance_color,
+        Importance
+    };
+    
+    template <Field F, typename Enable = void>
+    struct FieldType;
 
-        auto colors = std::vector<std::array<float, 3>>();
-        colors.resize((*cloud).points.size());
+    template <Field F>
+    struct FieldType<
+        F,
+        typename std::enable_if<
+            F == Field::Points ||
+            F == Field::RGB ||
+            F == Field::Normal ||
+            F == Field::Normal_color
+        >::type
+    > {
+        using type = std::array<float, 3>;
+    };
 
-        auto confideces = std::vector<int>();
-        confideces.resize((*cloud).points.size());
+    template <Field F>
+    struct FieldType<
+        F,
+        typename std::enable_if<
+            F == Field::Lables ||
+            F == Field::Semantic ||
+            F == Field::Instance
+        >::type
+    > {
+        using type = int;
+    };
+    template <Field F>
+    struct FieldType<
+        F,
+        typename std::enable_if<
+            F == Field::Confidence ||
+            F == Field::Importance
+        >::type> {
+        using type = float;
+    };
 
-        auto confideces_colors = std::vector<tg::color3>();
-        confideces_colors.resize((*cloud).points.size());
+    template <Field F>
+    struct FieldType<
+        F,
+        typename std::enable_if<
+            F == Field::Confidence_color ||
+            F == Field::Lables_color ||
+            F == Field::Semantic_color || 
+            F == Field::Instance_color
+        >::type> {
+        using type = tg::color3;
+    }; 
 
-        auto lables = std::vector<int>();
-        lables.resize((*cloud).points.size());
+    template <Field F>
+    class PolyscopeMap{
+        private:
+            pcl::PointCloud<PointT> const& cloud;
+        public:
+            PolyscopeMap(pcl::PointCloud<PointT> const& cloud) : cloud(cloud) {}
 
-        auto lables_colors = std::vector<tg::color3>();
-        lables_colors.resize((*cloud).points.size());
+            size_t size() const { return cloud.points.size(); }
+            typename FieldType<F>::type operator[](size_t idx) const {
 
-        auto sematic_lables = std::vector<int>();
-        sematic_lables.resize((*cloud).points.size());
-
-        auto sematic_colors = std::vector<tg::color3>();
-        sematic_colors.resize((*cloud).points.size());
-
-        auto instance_lables = std::vector<int>();
-        instance_lables.resize((*cloud).points.size());
-
-        auto instance_color = std::vector<tg::color3>();
-        instance_color.resize((*cloud).points.size());
-        
-        auto normals = std::vector<std::array<float, 3>>();
-        normals.resize((*cloud).points.size());
-
-        auto normal_colors = std::vector<std::array<float, 3>>();
-        normal_colors.resize((*cloud).points.size());
-
-        auto importance = std::vector<float>();
-        importance.resize((*cloud).points.size());
-        
-
-        #pragma omp parallel for
-        for (size_t i = 0; i < (*cloud).points.size(); i++){
-
-            points[i] = {(*cloud).points[i].x, (*cloud).points[i].y, (*cloud).points[i].z};
-
-            colors[i] = {
-                static_cast<float>((*cloud).points[i].r)/256,
-                static_cast<float>((*cloud).points[i].g)/256,
-                static_cast<float>((*cloud).points[i].b)/256};
-
-            normals[i] = {
-                (*cloud).points[i].normal_x,
-                (*cloud).points[i].normal_y,
-                (*cloud).points[i].normal_z};
-
-            // remap normals to 0-1
-            normal_colors[i] = {
-                ((*cloud).points[i].normal_x + 1.0f)/2.0f,
-                ((*cloud).points[i].normal_y + 1.0f)/2.0f,
-                ((*cloud).points[i].normal_z + 1.0f)/2.0f};
-
-            switch ((*cloud).points[i].confidence)
-            {
-            case 0:
-                confideces_colors[i] = tg::color3(1.0, 0.0, 0.0);
-                break;
-            case 1:
-                confideces_colors[i] = tg::color3(1.0, 1.0, 0.0);
-                break;
-            case 2:
-                confideces_colors[i] = tg::color3(0.0, 1.0, 0.0);
-                break;
-            
-            default:
-                break;
-            }
-
-            confideces[i] = (*cloud).points[i].confidence;
-            lables[i] = (*cloud).points[i].label;
-            lables_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle((*cloud).points[i].label));
-            sematic_lables[i] = (*cloud).points[i].semantic;
-            sematic_colors[i] = linkml::get_color_forom_angle(linkml::sample_circle((*cloud).points[i].semantic));
-            instance_lables[i] = (*cloud).points[i].instance;
-            instance_color[i] = linkml::get_color_forom_angle(linkml::sample_circle((*cloud).points[i].instance));
-
-            importance[i] = ((*cloud).points[i].confidence+0.01f)
+                if constexpr (F == Field::Points) {
+                    return std::array<float, 3>{cloud.points[idx].x, cloud.points[idx].y, cloud.points[idx].z};
+                } else if constexpr (F == Field::RGB){
+                    return std::array<float, 3>{
+                        static_cast<float>(cloud.points[idx].r)/256,
+                        static_cast<float>(cloud.points[idx].g)/256,
+                        static_cast<float>(cloud.points[idx].b)/256};
+                } else if constexpr (F == Field::Normal){
+                    return std::array<float, 3>{
+                        cloud.points[idx].normal_x,
+                        cloud.points[idx].normal_y,
+                        cloud.points[idx].normal_z};
+                } else if constexpr (F == Field::Normal_color){
+                    return std::array<float, 3>{
+                        static_cast<float>(cloud.points[idx].normal_x + 1.0f)/2.0f,
+                        static_cast<float>(cloud.points[idx].normal_y + 1.0f)/2.0f,
+                        static_cast<float>(cloud.points[idx].normal_z + 1.0f)/2.0f};
+                } else if constexpr (F == Field::Confidence){
+                    return cloud.points[idx].confidence;
+                } else if constexpr (F == Field::Confidence_color){
+                    switch (cloud.points[idx].confidence)
+                    {
+                    case 0:
+                        return tg::color3(1.0, 0.0, 0.0);
+                        break;
+                    case 1:
+                        return tg::color3(1.0, 1.0, 0.0);
+                        break;
+                    case 2:
+                        return tg::color3(0.0, 1.0, 0.0);
+                        break;
+                    default:
+                        break;
+                    }
+                } else if constexpr (F == Field::Lables){
+                    return cloud.points[idx].label;
+                } else if constexpr (F == Field::Lables_color){
+                    return linkml::get_color_forom_angle(linkml::sample_circle(cloud.points[idx].label));
+                } else if constexpr (F == Field::Semantic){
+                    return cloud.points[idx].semantic;
+                } else if constexpr (F == Field::Semantic_color){
+                    return linkml::get_color_forom_angle(linkml::sample_circle(cloud.points[idx].semantic));
+                } else if constexpr (F == Field::Instance){
+                    return static_cast<int>(cloud.points[idx].instance);
+                } else if constexpr (F == Field::Instance_color){
+                    return linkml::get_color_forom_angle(linkml::sample_circle(cloud.points[idx].instance));
+                } else if constexpr (F == Field::Importance){
+                    return (cloud.points[idx].confidence+0.01f)
                                 *
-                                ( ((*cloud).points[i].label == 0 ? 0.1f : 1.0f)
-                                + ((*cloud).points[i].semantic == 0 ? 0.1f : 2.0f)
-                                + ((*cloud).points[i].instance == 0 ? 0.1f : 3.0f));
+                                ( (cloud.points[idx].label == 0 ? 0.1f : 1.0f)
+                                + (cloud.points[idx].semantic == 0 ? 0.1f : 2.0f)
+                                + (cloud.points[idx].instance == 0 ? 0.1f : 3.0f));
+            }
         }
+    };
 
-        auto pcd = polyscope::registerPointCloud(name, points);
+
+    template <>
+    static void display( pcl::PointCloud<PointT> const& cloud, const std::string & name){
+
+
+        auto pcd = polyscope::registerPointCloud(name, PolyscopeMap<Field::Points>(cloud));
         pcd->setPointRadius(0.001);
 
-        auto normal_vectors = pcd->addVectorQuantity("Normals", normals);
+        auto normal_vectors = pcd->addVectorQuantity("Normals", PolyscopeMap<Field::Normal>(cloud));
         normal_vectors->setVectorRadius(0.00050);
         normal_vectors->setVectorLengthScale(0.0050);
 
-        pcd->addColorQuantity("RGB", colors);
-        pcd->addColorQuantity("Normal Colors", normal_colors);
-        pcd->addScalarQuantity("Confidence", confideces);
-        pcd->addScalarQuantity("Lables", lables);
-        pcd->addScalarQuantity("Sematic Lables", sematic_lables);
-        pcd->addScalarQuantity("Instance Lables", instance_lables);
-        pcd->addColorQuantity("Instance Color", instance_color);
-        pcd->addScalarQuantity("Importance", importance );
+        pcd->addColorQuantity("RGB", PolyscopeMap<Field::RGB>(cloud));
+        pcd->addColorQuantity("Normal Colors", PolyscopeMap<Field::Normal_color>(cloud));
 
-        pcd->addColorQuantity("Confidence Colors", confideces_colors);
-        pcd->addColorQuantity("Lables Colors", lables_colors);
-        pcd->addColorQuantity("Sematic Colors", sematic_colors);
+        pcd->addScalarQuantity("Confidence", PolyscopeMap<Field::Confidence>(cloud));
+        pcd->addScalarQuantity("Lables", PolyscopeMap<Field::Lables>(cloud));
+        pcd->addScalarQuantity("Sematic Lables", PolyscopeMap<Field::Semantic>(cloud));
+        pcd->addScalarQuantity("Instance Lables", PolyscopeMap<Field::Instance>(cloud));
+        pcd->addScalarQuantity("Importance", PolyscopeMap<Field::Importance>(cloud));
+
+        pcd->addColorQuantity("Confidence Colors", PolyscopeMap<Field::Confidence_color>(cloud));
+        pcd->addColorQuantity("Lables Colors", PolyscopeMap<Field::Lables_color>(cloud));
+        pcd->addColorQuantity("Sematic Colors", PolyscopeMap<Field::Semantic_color>(cloud));
+        pcd->addColorQuantity("Instance Colors", PolyscopeMap<Field::Instance_color>(cloud));
 
         pcd->setPointRadiusQuantity("Importance", true);
 
         pcd->quantities["Lables Colors"]->setEnabled(true);
+
     }
-    static void display(const Surface_mesh & mesh, std::string name = "Mesh"){
+
+    template <>
+    static void display(Surface_mesh const& mesh, const std::string & name ){
 
         std::vector<std::array<size_t,3>> faces;
         std::vector<std::array<double,  3>> vertecies;
@@ -263,9 +328,13 @@ namespace polyscope  {
 
         polyscope::registerSurfaceMesh(name, vertecies, faces);
     }
-    static void display(const tg::plane3 & plane, const tg::aabb3 & bbox, std::string name = "Plane"){
+
+
+    static void display(const tg::plane3 & plane, const tg::aabb3 & bbox, const std::string & name = "Plane"){
         Surface_mesh m;
         linkml::crop_plane_with_aabb(m, bbox, plane);
-        display(m, name);
+        display<Surface_mesh const&>(m, name);
     }
+
+
 }

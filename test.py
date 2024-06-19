@@ -75,9 +75,10 @@ name = "./3c670b035f.pcd"
 #cloud = clouds.merge()
 #cloud.save(name)
 #cloud.display()
-cloud = PointCloud(name)
-#cloud.downsample(0.05).save(name)
-cloud.display()
+#cloud = PointCloud(name)
+#cloud.downsample(0.05)
+#cloud.save(name)
+#cloud.display()
 
 #cloud = cloud.clustering().save(name)
 ##cloud.region_growing().save(name)
@@ -93,11 +94,18 @@ cloud.display()
 #cloud.display()
 
 
-#cloud.solidify()#.display()#.save(path).display()
+#cloud.solidify()
+#cloud.display()
+#cloud.save(path)
+#cloud.display()
 
 #cProfile.runctx("cloud.solidify()", globals(), locals(), "Profile.prof")
 #s = pstats.Stats("Profile.prof")
 #s.strip_dirs().sort_stats("time").print_stats()
+#cloud.display()
+
+cloud = PointCloud("/home/mephisto/server_data/test_export.pcd")
+cloud.solidify()
 #cloud.display()
 
 print("Done")

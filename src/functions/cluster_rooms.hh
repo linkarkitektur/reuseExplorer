@@ -1,3 +1,4 @@
+#pragma once
 #include "types/PointCloud.hh"
 #include "types/PlanarPointSet.hh"
 #include "algorithms/markov_clustering.hh"
@@ -20,6 +21,9 @@
 
 #include <opencv4/opencv2/core/eigen.hpp>
 
+
+
+
 template<typename PointT>
 class MatchCondition
 {
@@ -37,76 +41,10 @@ public:
 
 };
 
-using PointIndices = pcl::PointIndices;
-using Indices = pcl::Indices;
-using Clusters = std::vector<pcl::PointIndices>;
 using Filter = pcl::experimental::advanced::FunctorFilter<linkml::PointCloud::Cloud::PointType, MatchCondition<linkml::PointCloud::Cloud::PointType>>;
-
-
-Clusters extract_clusters(linkml::PointCloud::Cloud::ConstPtr cloud){
-
-    // Collect all cluster indices
-    std::unordered_set<size_t> cluster_indices_set;
-    for (size_t i = 0; i < cloud->points.size(); i++)
-        cluster_indices_set.insert(cloud->points[i].label);
-
-    cluster_indices_set.erase(0);
-
-    Indices cluster_indices(cluster_indices_set.begin(), cluster_indices_set.end());
-
-    // Create clusters
-    Clusters clusters(cluster_indices.size());
-
-    #pragma omp parallel for
-    for (size_t i = 0; i < cluster_indices.size(); i++){
-        size_t cluster_index = cluster_indices[i];
-        for (size_t j = 0; j < cloud->points.size(); j++)
-            if (cloud->points[j].label == cluster_index)
-                clusters[i].indices.push_back(j);
-    }
-
-    return clusters;
-}
-Clusters filter_clusters(Clusters clusters){
-
-    std::sort(clusters.begin(), clusters.end(), [](const auto& lhs, const auto& rhs){return lhs.indices.size() > rhs.indices.size();});
-
-    auto temp = Clusters();
-    for (int i = 0; i < std::min(30, (int)clusters.size()); i++)
-        temp.push_back(clusters[i]);
-
-    return temp;
-}
-linkml::PointCloud::Cloud::Ptr filter_cloud(linkml::PointCloud::Cloud::Ptr cloud, Clusters & clusters){
-
-    std::unordered_set<size_t> cluster_indices_set;
-    for (size_t i = 0; i < clusters.size(); i++)
-        for (size_t j = 0; j < clusters[i].indices.size(); j++)
-            cluster_indices_set.insert(clusters[i].indices[j]);
-
-    pcl::PointIndices::Ptr selection(new pcl::PointIndices);
-    selection->indices = pcl::Indices(cluster_indices_set.begin(), cluster_indices_set.end());
-
-    pcl::ExtractIndices<linkml::PointCloud::Cloud::PointType> filter;
-    filter.setInputCloud(cloud);
-    filter.setIndices(selection);
-    filter.filter(*cloud);
-
-    Clusters clusters_2 = extract_clusters(cloud);
-
-    #pragma omp parallel for
-    for (size_t i = 0; i < cloud->points.size(); i++)
-        cloud->points[i].label = -1;
-
-    #pragma omp parallel for
-    for (size_t i = 0; i < clusters_2.size(); i++)
-        for (size_t j = 0; j < clusters_2[i].indices.size(); j++)
-            cloud->points[clusters_2[i].indices[j]].label = i;
-
-    return cloud;
-}
-
+using Clusters = std::vector<pcl::PointIndices>;
 using Tiles = std::vector<std::pair<unsigned int, linkml::Surface *>>;
+using Indices = pcl::Indices;
 
 class FaceMap{
     class FaceIterator{
@@ -199,7 +137,6 @@ class VertexMap{
     Tiles & tiles;
     RTCScene & scene;
 };
-
 class FaceIDMap{
     class FaceIDIterator{
         public:
@@ -239,12 +176,38 @@ class FaceIDMap{
     Tiles & tiles;
 };
 
+
+Clusters extract_clusters(linkml::PointCloud::Cloud::ConstPtr cloud){
+
+    // Collect all cluster indices
+    std::unordered_set<size_t> cluster_indices_set;
+    for (size_t i = 0; i < cloud->points.size(); i++)
+        cluster_indices_set.insert(cloud->points[i].label);
+
+    cluster_indices_set.erase(0);
+
+    Indices cluster_indices(cluster_indices_set.begin(), cluster_indices_set.end());
+
+    // Create clusters
+    Clusters clusters(cluster_indices.size());
+
+    #pragma omp parallel for
+    for (size_t i = 0; i < cluster_indices.size(); i++){
+        size_t cluster_index = cluster_indices[i];
+        for (size_t j = 0; j < cloud->points.size(); j++)
+            if (cloud->points[j].label == cluster_index)
+                clusters[i].indices.push_back(j);
+    }
+
+    return clusters;
+}
+
 namespace linkml
 {
-    void PointCloud::solidify()
+    
+    template<typename PointT>
+    static std::vector<pcl::Indices> cluster_rooms(typename pcl::PointCloud<PointT>::Ptr cloud)
     {
-
-        auto cloud = *this;
 
         // Remove everyting that is not a surface
         auto match_filter = MatchCondition<PointCloud::Cloud::PointType>();
@@ -282,6 +245,8 @@ namespace linkml
 
         // Create scene
         RTCScene scene   = rtcNewScene(device);
+        rtcSetSceneFlags(scene, RTC_SCENE_FLAG_ROBUST);
+
         auto embree_bar = util::progress_bar(surfaces.size(), "Creating Embree Scene");
         for (size_t i = 0; i < surfaces.size(); i++)
             surfaces[i].Create_Embree_Geometry(device, scene);
@@ -374,14 +339,15 @@ namespace linkml
         #pragma omp parallel for
         for (size_t i = 0; i < rays.size(); i++){
             rtcIntersect1(scene, &context, (RTCRayHit*)&rays[i].first);
+            //rtcOccluded1(scene, &context, (RTCRayHit*)&rays[i].first);
             rays_bar.update();
         }
         rays_bar.stop();
 
 
-        polyscope::myinit();
-        auto ps_tiles = polyscope::registerSurfaceMesh("tiles", VertexMap(tiles, scene ), FaceMap(tiles));
-        ps_tiles->addFaceScalarQuantity("id", FaceIDMap(tiles));
+        //polyscope::myinit();
+        //auto ps_tiles = polyscope::registerSurfaceMesh("tiles", VertexMap(tiles, scene ), FaceMap(tiles));
+        //ps_tiles->addFaceScalarQuantity("id", FaceIDMap(tiles));
         
         // Release the scene and device
         rtcReleaseScene(scene);
@@ -430,6 +396,7 @@ namespace linkml
         cv::imwrite("matrix_rays.png", img*255);
 
 
+        std::unordered_map<size_t, pcl::Indices> cluster_map{};
 
         // // Markov Clustering
         // //// 2.5 < infaltion < 2.8  => 3.5
@@ -437,10 +404,13 @@ namespace linkml
         auto asign_cluster = [&](size_t cluster_j, size_t member_i){
             // Assigne the clusters to the point cloud
             #pragma omp parallel for
-            for(const auto & index : point_map[int_to_id[(int)member_i]])
-                        cloud->points[index].instance = cluster_j;   
+            for(const auto & index : point_map[int_to_id[(int)member_i]]){
+                cloud->points[index].instance = cluster_j;
+                #pragma omp critical
+                cluster_map[cluster_j].push_back(index);
+            }
         };
-        auto mcl = mcl_cpp::mcl_gpu(matrix, asign_cluster);
+        auto mcl = mcl_cpp::mcl(matrix, asign_cluster);
         matrix = mcl.cluster_mcl(2,2);
 
         cv::eigen2cv(matrix,img);
@@ -449,7 +419,12 @@ namespace linkml
         clustering_bar.stop();
 
 
-        cloud.display("cloud");
+
+        std::vector<pcl::Indices> clusters2{};
+        for (auto & [_, indices]: cluster_map)
+            clusters2.push_back(indices);
+        return clusters2;
+
 
     }
 } // namespace linkml

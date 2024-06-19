@@ -485,34 +485,6 @@ PYBIND11_MODULE(_core, m) {
 
 
 
-   //py::class_<linkml::CellComplex>(m, "CellComplex")
-   //     .def_property_readonly("box", [](linkml::CellComplex &c){return c.pos.aabb();})
-   //     .def_property_readonly("vertecies", [](linkml::CellComplex &c){return c.ps_vertecies();})
-   //     .def_property_readonly("faces", [](linkml::CellComplex &c){return c.faces();})
-   //     .def("__repr__", [](linkml::CellComplex &cw){
-   //         std::stringstream ss;
-   //         ss << "CellComplex :" << cw.ps_faces().size();
-   //         return ss.str();
-   //     })
-   //     ;
-
-   //py::class_<tg::mat<4,4,double>>(m, "Pos")
-   //     .def("__str__", [](const tg::mat<4,4,double> &m){
-   //         std::stringstream ss;
-   //         ss << m;
-   //         return ss.str();
-   //     })
-   //     .def("__repr__", [](const tg::mat<4,4,double> &m){
-   //         std::stringstream ss;
-   //         ss << m;
-   //         return ss.str();
-   //     })
-   //     ;
-
-
-
-
-
     // Functions
     m.def("parse_dataset", &linkml::parse_Dataset, "Parse a StrayScanner scan in to a point cloud"
         "dataset"_a,

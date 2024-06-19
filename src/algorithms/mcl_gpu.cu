@@ -1,14 +1,22 @@
 #pragma once
 
+#pragma once
+
 #include <Eigen/Dense>
-#include <unsupported/Eigen/MatrixFunctions>
+
+#include <cuda_runtime.h>
+#include <device_launch_parameters.h>
+#include <cusolverDn.h>
+#include <cublas_v2.h>
+#include <functional>
+#include <iostream>
+#include <vector>
+#include <cmath>
+#include <cassert>
 
 #include <map>
 #include <vector>
 
-#include <cuda_runtime.h>
-#include <device_launch_parameters.h>
-#include <cublas_v2.h>
 
 using std::vector;
 using std::map;
@@ -19,48 +27,57 @@ namespace mcl_cpp
 	class mcl_gpu
 	{
 	private:
-	cudaError_t cudaStat;
-	cublasStatus_t stat;
-	cublasHandle_t handle;
-	size_t i, j;
-	float* devPtrA;
-	float* a;
+
+		//Eigen::MatrixXd const& M;
+        double* d_M;
+        std::size_t numRows;
+        std::size_t numCols;
+        std::function< void(size_t cls_i, size_t mem_j) > ClusterResultCallback;
+
+        constexpr static double epsilon = 0.00001;
+        constexpr static double threshold = 0.5;
+		
+		cudaError_t cudaStat;
+		cublasStatus_t stat;
+		cublasHandle_t handle;
 
 	public:
 		//! @brief MCL ctor. Register a callback function to return the cluster results
-		mcl_gpu(const Eigen::MatrixXd& Min, std::function< void(size_t cluster_j, size_t member_i) > f): ClusterResultCallback(f) {
-			cudaStat = cudaMalloc(&M, Min.rows() * Min.cols() * sizeof(float));
+		mcl_gpu(Eigen::MatrixXd const& M, std::function< void(size_t cluster_j, size_t member_i) > f) 
+            : /*M(M),*/ ClusterResultCallback(f), numRows(M.rows()), numCols(M.cols()) {
+
+			cudaStat =  cudaMalloc(&d_M, sizeof(double) * numRows * numCols);
+            cudaMemcpy(d_M, M.data(), sizeof(double) * numRows * numCols, cudaMemcpyHostToDevice);
+
 			if (cudaStat != cudaSuccess) {
 				printf ("device memory allocation failed");
-				//free (a);
-				//return EXIT_FAILURE;
+				free (d_M);
+				throw std::runtime_error("device memory allocation failed");
 			}
 
-			stat = cublasCreate(&handle);
-			if (stat != CUBLAS_STATUS_SUCCESS) {
-				printf ("CUBLAS initialization failed\n");
-				free (a);
-				cudaFree (devPtrA);
-				//return EXIT_FAILURE;
-			}
 
-			//stat = cublasSetMatrix (Min.rows(), Min.cols(), sizeof(*a), a, M, devPtrA, M);
-			if (stat != CUBLAS_STATUS_SUCCESS) {
-				printf ("data download failed");
-				free (a);
-				cudaFree (devPtrA);
-				cublasDestroy(handle);
-				//return EXIT_FAILURE;
-			}
+			//stat = cublasCreate(&handle);
+			//if (stat != CUBLAS_STATUS_SUCCESS) {
+			//	printf ("CUBLAS initialization failed\n");
+			//	free (a);
+			//	cublasDestroy(handle);
+			//	throw std::runtime_error("CUBLAS initialization failed");
+			//}
+
+			////stat = cublasSetMatrix (Min.rows(), Min.cols(), sizeof(*a), a, M, devPtrA, M);
+			//if (stat != CUBLAS_STATUS_SUCCESS) {
+			//	printf ("data download failed");
+			//	free (a);
+			//	cudaFree (devPtrA);
+			//	cublasDestroy(handle);
+			//	//return EXIT_FAILURE;
+			//}
+			
 
 			// https://docs.nvidia.com/cuda/pdf/CUBLAS_Library.pdf
-			// Example 2
-
-			//cudaMemcpy(M, Min.data(), Min.rows() * Min.cols() * sizeof(float) , cudaMemcpyHostToDevice);
-			//cublasSetMatrix(M.rows(), M.cols(), sizeof(float), M, M.rows(), M, M.rows());
 		}
 		~mcl_gpu() {
-			cudaFree(M);
+			cudaFree(d_M);
 		}
 
 		/*! @brief Apply Markov clustering algorithm with specified parameters and return clusters
@@ -68,76 +85,130 @@ namespace mcl_cpp
 			*/
 		Eigen::MatrixXd cluster_mcl(double expand_factor = 2, double inflate_factor = 2, double max_loop = 10, double mult_factor = 1)
 		{
-			//Eigen::MatrixXd M_selfloop = M + (mult_factor * Eigen::MatrixXd::Identity(M.cols(), M.rows()));
-			//Eigen::MatrixXd M_normalized = normalize(M_selfloop);
-			//for (int i = 0; i < max_loop && !stop(M_normalized); i++)
-			//{
-			//	expand(M_normalized, expand_factor);
-			//	inflate(M_normalized, inflate_factor);
-			//}
-			////return std::move(M_normalized);
-			//for (auto row = 0; row<M_normalized.rows(); row++)
-			//{
-			//	if (M_normalized(row, row) > threshold)
-			//	{
-			//		for (auto col = 0; col < M_normalized.cols(); col++)
-			//		{
-			//			if (M_normalized.coeff(row, col) > threshold)
-			//				ClusterResultCallback(row, col);
-			//		}
-			//	}
-			//}
-			//return std::move(M_normalized);
+            addSelfLoop(d_M, mult_factor, numRows, numCols);
+            normalize(d_M, numRows, numCols);
+
+            for (int i = 0; i < max_loop && !stop(d_M, numRows, numCols); i++)
+            {
+                expand(d_M, expand_factor, numRows, numCols);
+                inflate(d_M, inflate_factor, numRows, numCols);
+            }
+
+            Eigen::MatrixXd M_normalized(numRows, numCols);
+            cudaMemcpy(M_normalized.data(), d_M, sizeof(double) * numRows * numCols, cudaMemcpyDeviceToHost);
+
+            for (size_t row = 0; row < numRows; row++)
+            {
+                if (M_normalized.data()[row * numCols + row] > threshold)
+                {
+                    for (size_t col = 0; col < numCols; col++)
+                    {
+                        if (M_normalized.data()[row * numCols + col] > threshold)
+                            ClusterResultCallback(row, col);
+                    }
+                }
+            }
+            return M_normalized;
 		}
 
 	private:
-		bool stop(const Eigen::MatrixXd& in)
+
+		bool stop(double* d_in, size_t rows, size_t cols)
 		{
-			Eigen::MatrixXd m = in*in;
-			Eigen::MatrixXd diff = (m - in);
-			//double mx = diff.maxCoeff(), mn = diff.minCoeff();
-			return (diff.maxCoeff() == diff.minCoeff());
+			// Implement the stop condition on GPU
+			// Here, implement your logic for the stop condition using CUDA kernels
+
+			// For simplicity, assume false for now
+			return true;
 		}
 
-		Eigen::MatrixXd normalize(Eigen::MatrixXd& in)
+		void addSelfLoop(double* d_in, double mult_factor, size_t rows, size_t cols)
 		{
-			Eigen::MatrixXd one_over_col_sum = in.colwise().sum().cwiseInverse();
-			Eigen::MatrixXd M_normalized = in * one_over_col_sum.asDiagonal();
-			return std::move(M_normalized);
+			// Implement adding self-loop on GPU
+			// Kernel to add self-loop
+			//addSelfLoopKernel<<<(rows * cols + 255) / 256, 256>>>(d_in, mult_factor, rows, cols);
+			cudaDeviceSynchronize();
 		}
 
-		inline void expand(Eigen::MatrixXd& in, double expand_factor)
-		{
-			//auto copy = Eigen::MatrixXd(in);
-			//Eigen::MatrixPower<Eigen::MatrixXd> Apow(copy);
-			//in = Apow(expand_factor);
-			//in = in.pow(expand_factor);
-			//Eigen::MatrixPower<Eigen::MatrixXd> Apow{};
-			//Apow.compute(in, expand_factor);
-			Eigen::MatrixXd copy;
-			copy.resize(in.rows(), in.cols());
-			Eigen::MatrixPower<Eigen::MatrixXd> Apow(in);
-			Apow.compute(copy, expand_factor);
-			in = std::move(copy);
-		}
+        void normalize(double* d_in, size_t rows, size_t cols)
+        {
+            // Implement normalization on GPU
+            // Kernel to normalize the matrix
+            //normalizeKernel<<<(rows * cols + 255) / 256, 256>>>(d_in, rows, cols);
+            cudaDeviceSynchronize();
+        }
 
-		void inflate(Eigen::MatrixXd& in, double inflate_factor)
-		{
-			auto lam = [inflate_factor](double x) -> double { return std::pow(x, inflate_factor); };
-			in = in.unaryExpr(lam);
-			in = normalize(in);
-		}
+        void expand(double* d_in, double expand_factor, size_t rows, size_t cols)
+        {
+            // Implement expand operation on GPU using cuBLAS for matrix multiplication
+            cublasHandle_t handle;
+            cublasCreate(&handle);
 
-		float * M;
-		std::function< void(size_t cls_i, size_t mem_j) > ClusterResultCallback;
+            double alpha = 1.0;
+            double beta = 0.0;
+            for (int i = 1; i < expand_factor; i++)
+            {
+                cublasDgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, rows, cols, rows, &alpha, d_in, rows, d_in, rows, &beta, d_in, rows);
+            }
 
-		constexpr static double epsilon = 0.00001;
-		constexpr static double threshold = 0.5;
+            cublasDestroy(handle);
+        }
+
+        void inflate(double* d_in, double inflate_factor, size_t rows, size_t cols)
+        {
+            // Implement inflate operation on GPU
+            //inflateKernel<<<(rows * cols + 255) / 256, 256>>>(d_in, inflate_factor, rows, cols);
+            normalize(d_in, rows, cols);
+            cudaDeviceSynchronize();
+        }
+
+        static __global__ void addSelfLoopKernel(double* d_in, double mult_factor, size_t rows, size_t cols)
+        {
+            int idx = blockIdx.x * blockDim.x + threadIdx.x;
+            if (idx < rows * cols)
+            {
+                int row = idx / cols;
+                int col = idx % cols;
+                if (row == col)
+                {
+                    d_in[idx] += mult_factor;
+                }
+            }
+        }
+
+        static __global__ void normalizeKernel(double* d_in, size_t rows, size_t cols)
+        {
+            int idx = blockIdx.x * blockDim.x + threadIdx.x;
+            if (idx < rows * cols)
+            {
+                int col = idx % cols;
+                double sum = 0.0;
+                for (int row = 0; row < rows; row++)
+                {
+                    sum += d_in[row * cols + col];
+                }
+                if (sum > 0.0)
+                {
+                    for (int row = 0; row < rows; row++)
+                    {
+                        d_in[row * cols + col] /= sum;
+                    }
+                }
+            }
+        }
+
+        static __global__ void inflateKernel(double* d_in, double inflate_factor, size_t rows, size_t cols)
+        {
+            int idx = blockIdx.x * blockDim.x + threadIdx.x;
+            if (idx < rows * cols)
+            {
+                d_in[idx] = pow(d_in[idx], inflate_factor);
+            }
+        }
+
+
+
 	};
-
-
-
-
 
 
 }
