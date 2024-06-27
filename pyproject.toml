@@ -22,7 +22,7 @@ build-backend = "scikit_build_core.build"
 
 [tool.scikit-build]
 cmake.verbose = true
-cmake.build-type = "Debug"
+cmake.build-type = "Release"
 logging.level = "ERROR"
 cmake.version = "==3.22.1"
 ninja.version = "==1.10.1"

@@ -94,7 +94,7 @@ namespace linkml
 
 
     /// @brief Cluster and solidify the point cloud.
-    void PointCloud::solidify(){
+    std::vector<Brep> PointCloud::solidify(){
         polyscope::myinit();
         // auto clusters_out = linkml::cluster_rooms<PointCloud::Cloud::PointType>(cloud);
         // std::cout << "Number of clusters: " << clusters_out.size() << "\n";
@@ -125,7 +125,14 @@ namespace linkml
         for (size_t i = 0; i < meshes.size(); i++)
             polyscope::display<Surface_mesh const&>(meshes[i], "mesh" + std::to_string(i));
 
+        std::vector<Brep> breps;
+        std::transform(meshes.begin(), meshes.end(), std::back_inserter(breps), [](Surface_mesh const& mesh){
+            return Brep(mesh);
+        });
+
         this->display("Cloud");
+
+        return breps;
     }
 
     /// @brief Cluster and solidify the point cloud.

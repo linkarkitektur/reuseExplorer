@@ -96,6 +96,26 @@ PYBIND11_MODULE(_core, m) {
         // .value("Poses", linkml::Field::POSES)
         .export_values();
 
+    py::enum_<linkml::Brep::BrepTrim::BrepTrimType>(m, "BrepTrimType")
+        .value("Unknown", linkml::Brep::BrepTrim::BrepTrimType::Unknown)
+        .value("Boundary", linkml::Brep::BrepTrim::BrepTrimType::Boundary)
+        .value("Mated", linkml::Brep::BrepTrim::BrepTrimType::Mated)
+        .value("Seam", linkml::Brep::BrepTrim::BrepTrimType::Seam)
+        .value("Singular", linkml::Brep::BrepTrim::BrepTrimType::Singular)
+        .value("CurveOnSurface", linkml::Brep::BrepTrim::BrepTrimType::CurveOnSurface)
+        .value("PointOnSurface", linkml::Brep::BrepTrim::BrepTrimType::PointOnSurface)
+        .value("Slit", linkml::Brep::BrepTrim::BrepTrimType::Slit)
+        .export_values();
+
+    py::enum_<linkml::Brep::BrepLoop::BrepLoopType>(m, "BrepLoopType")
+        .value("Unknown", linkml::Brep::BrepLoop::BrepLoopType::Unknown)
+        .value("Outer", linkml::Brep::BrepLoop::BrepLoopType::Outer)
+        .value("Inner", linkml::Brep::BrepLoop::BrepLoopType::Inner)
+        .value("Slit", linkml::Brep::BrepLoop::BrepLoopType::Slit)
+        .value("CurveOnSurface", linkml::Brep::BrepLoop::BrepLoopType::CurveOnSurface)
+        .value("PointOnSurface", linkml::Brep::BrepLoop::BrepLoopType::PointOnSurface)
+        .export_values();
+
     /// @brief CV Mat, used to hold image and Depth data
     py::class_<cv::Mat>(m, "Mat", py::buffer_protocol())
         .def_buffer([](cv::Mat &m) -> py::buffer_info {
@@ -437,6 +457,19 @@ PYBIND11_MODULE(_core, m) {
         .def_readwrite("z", &tg::pos3::z)
         ;
 
+    /// @brief Position
+    py::class_<tg::pos2>(m, "Pos2D")
+        .def(py::init<const float, const float>())
+        .def(("__repr__"), [](const tg::pos2 &p){
+            std::stringstream ss;;
+            ss << "Pos2D X=" << p.x << " y="<< p.y;
+            return ss.str();
+        })
+        .def_readwrite("x", &tg::pos2::x)
+        .def_readwrite("y", &tg::pos2::y)
+        ;
+
+
     /// @brief Vector
     py::class_<tg::vec3>(m, "Vec")
         .def(py::init<const float, const float, const float>())
@@ -481,6 +514,94 @@ PYBIND11_MODULE(_core, m) {
             return std::make_tuple(a.min.z, a.max.z);
         })
         ;
+    
+    py::class_<linkml::Brep>(m, "Brep")
+        .def("save", &linkml::Brep::save)
+        .def_static("load", &linkml::Brep::load, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
+        .def("volume", &linkml::Brep::volume)
+        .def("area", &linkml::Brep::area)
+        .def("is_closed", &linkml::Brep::is_closed)
+        .def("bbox", &linkml::Brep::get_bbox)
+
+        .def("Curves2D", &linkml::Brep::get_Curves2D)
+        .def("Curves3D", &linkml::Brep::get_Curves3D)
+
+        .def("Edges", &linkml::Brep::get_Edges)
+        .def("Faces", &linkml::Brep::get_Faces)
+        .def("Vertices", &linkml::Brep::get_Vertices)
+        .def("Surfaces", &linkml::Brep::get_Surfaces)
+
+        .def("Loops", &linkml::Brep::get_Loops)
+        .def("Trims", &linkml::Brep::get_Trims)
+        .def("Orientation", &linkml::Brep::get_Orientation)
+        .def("get_mesh", &linkml::Brep::get_Mesh)
+        ;
+
+    py::class_<linkml::Brep::Face>(m, "Face")
+        .def(py::init<>())
+        .def_readwrite("SurfaceIndex", &linkml::Brep::Face::SurfaceIndex)
+        .def_readwrite("OuterLoopIndex", &linkml::Brep::Face::OuterLoopIndex)
+        .def_readwrite("OrientationReversed", &linkml::Brep::Face::OrientationReversed)
+        .def_readwrite("LoopIndices", &linkml::Brep::Face::LoopIndices)
+        ;
+    
+    py::class_<linkml::Brep::Edge>(m, "Edge")
+        .def(py::init<>())
+        .def_readwrite("Curve3dIndex", &linkml::Brep::Edge::Curve3dIndex)
+        .def_readwrite("TrimIndices", &linkml::Brep::Edge::TrimIndices)
+        .def_readwrite("StartIndex", &linkml::Brep::Edge::StartIndex)
+        .def_readwrite("EndIndex", &linkml::Brep::Edge::EndIndex)
+        .def_readwrite("ProxyCurveIsReversed", &linkml::Brep::Edge::ProxyCurveIsReversed)
+        .def_readwrite("Domain", &linkml::Brep::Edge::Domain)
+        ;
+    py::class_<linkml::Brep::Surface>(m, "Surface")
+        .def(py::init<>())
+        .def_readwrite("degreeU", &linkml::Brep::Surface::degreeU)
+        .def_readwrite("degreeV", &linkml::Brep::Surface::degreeV)
+        .def_readwrite("rational", &linkml::Brep::Surface::rational)
+        .def_readwrite("area", &linkml::Brep::Surface::area)
+        .def_readwrite("pointData", &linkml::Brep::Surface::pointData)
+        .def_readwrite("countU", &linkml::Brep::Surface::countU)
+        .def_readwrite("countV", &linkml::Brep::Surface::countV)
+        .def_readwrite("bbox", &linkml::Brep::Surface::bbox)
+        .def_readwrite("closedU", &linkml::Brep::Surface::closedU)
+        .def_readwrite("closedV", &linkml::Brep::Surface::closedV)
+        .def_readwrite("domainU", &linkml::Brep::Surface::domainU)
+        .def_readwrite("domainV", &linkml::Brep::Surface::domainV)
+        .def_readwrite("knotsU", &linkml::Brep::Surface::knotsU)
+        .def_readwrite("knotsV", &linkml::Brep::Surface::knotsV)
+        ;
+    py::class_<linkml::Brep::BrepTrim>(m, "BrepTrim")
+        .def(py::init<>())
+        .def_readwrite("EdgeIndex", &linkml::Brep::BrepTrim::EdgeIndex)
+        .def_readwrite("StartIndex", &linkml::Brep::BrepTrim::StartIndex)
+        .def_readwrite("EndIndex", &linkml::Brep::BrepTrim::EndIndex)
+        .def_readwrite("FaceIndex", &linkml::Brep::BrepTrim::FaceIndex)
+        .def_readwrite("LoopIndex", &linkml::Brep::BrepTrim::LoopIndex)
+        .def_readwrite("CurveIndex", &linkml::Brep::BrepTrim::CurveIndex)
+        .def_readwrite("IsoStatus", &linkml::Brep::BrepTrim::IsoStatus)
+        .def_readwrite("TrimType", &linkml::Brep::BrepTrim::TrimType)
+        .def_readwrite("IsReversed", &linkml::Brep::BrepTrim::IsReversed)
+        .def_readwrite("Domain", &linkml::Brep::BrepTrim::Domain)
+        ;   
+    py::class_<linkml::Brep::BrepLoop>(m, "BrepLoop")
+        .def(py::init<>())
+        .def_readwrite("FaceIndex", &linkml::Brep::BrepLoop::FaceIndex)
+        .def_readwrite("TrimIndices", &linkml::Brep::BrepLoop::TrimIndices)
+        .def_readwrite("Type", &linkml::Brep::BrepLoop::Type)
+        ;
+
+
+    py::class_<linkml::LinkMesh>(m, "Mesh")
+        .def(py::init<>())
+        .def("volume", &linkml::LinkMesh::volume)
+        .def("area", &linkml::LinkMesh::area)
+        .def("bbox", &linkml::LinkMesh::get_bbox)
+        .def("vertices", &linkml::LinkMesh::get_vertices)
+        .def("faces", &linkml::LinkMesh::get_faces)
+        .def("colors", &linkml::LinkMesh::get_colors)
+        .def("textrueCoords", &linkml::LinkMesh::get_textrueCoords)
+        ;
 
 
 
@@ -496,13 +617,13 @@ PYBIND11_MODULE(_core, m) {
 
 
 
-    m.def("create_cell_complex", &linkml::create_cell_complex, "point_cloud"_a, "plane_fit_results"_a );
-    m.def("refine", [](
-        linkml::PointCloud::Cloud::Ptr const cloud, 
-        std::vector<pcl::PointIndices> const & clusters, 
-        float angle, 
-        float dist ){return linkml::refine(cloud, clusters, tg::degree(angle), dist);}, 
-        "cloud"_a, "clusters"_a, "angle_threashhold_degree"_a =25, "distance_threshhold"_a = 0.5);
+    // m.def("create_cell_complex", &linkml::create_cell_complex, "point_cloud"_a, "plane_fit_results"_a );
+    // m.def("refine", [](
+    //     linkml::PointCloud::Cloud::Ptr const cloud, 
+    //     std::vector<pcl::PointIndices> const & clusters, 
+    //     float angle, 
+    //     float dist ){return linkml::refine(cloud, clusters, tg::degree(angle), dist);}, 
+    //     "cloud"_a, "clusters"_a, "angle_threashhold_degree"_a =25, "distance_threshhold"_a = 0.5);
     //m.def("clustering", &linkml::clustering, "point_cloud"_a, "fit_plane_results"_a);
 
 

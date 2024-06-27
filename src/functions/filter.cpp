@@ -39,7 +39,7 @@ namespace linkml
                 auto cloud = PointCloud::load(data[i]);
                 cloud.filter();
                 cloud.save(data[i]);  
-            } else {
+            } else if constexpr (std::is_same<T, PointCloud>::value){
                 data[i].filter();
             }
             filter_bar.update();

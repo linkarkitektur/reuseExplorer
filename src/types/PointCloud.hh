@@ -28,11 +28,13 @@
 
 #include <polyscope/polyscope.h>
 #include <polyscope/point_cloud.h>
-#include <functions/color.hh>
+#include "functions/color.hh"
 
 #include <vector>
 #include <filesystem>
 #include <opencv4/opencv2/core.hpp>
+
+#include "types/Brep.hh"
 
 struct EIGEN_ALIGN16 PointT
 {
@@ -200,7 +202,7 @@ namespace linkml{
 
 
         /// @brief Solidify the point cloud.
-        void solidify();
+        std::vector<Brep> solidify();
 
 
         /// @brief Register the point cloud.

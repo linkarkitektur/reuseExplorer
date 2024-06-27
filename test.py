@@ -104,8 +104,10 @@ name = "./3c670b035f.pcd"
 #s.strip_dirs().sort_stats("time").print_stats()
 #cloud.display()
 
-cloud = PointCloud("/home/mephisto/server_data/test_export.pcd")
-cloud.solidify()
+# cloud = PointCloud("/home/mephisto/server_data/test_export.pcd")
+# breps = cloud.solidify()
 #cloud.display()
+
+Brep.load("test.off")
 
 print("Done")

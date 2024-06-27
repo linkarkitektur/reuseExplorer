@@ -23,10 +23,10 @@
 namespace linkml{
 
     template <typename T>
-    static T merge( T left, T right);
+    T merge( T left, T right);
 
     template <>
-    static std::string merge( std::string left, std::string right){
+    std::string merge( std::string left, std::string right){
 
         PointCloud cloud_1, cloud_2;
 
@@ -45,7 +45,7 @@ namespace linkml{
     }
 
     template <>
-    static PointCloud merge( PointCloud left, PointCloud right){
+    PointCloud merge( PointCloud left, PointCloud right){
 
         (*left).reserve((*left).size() + (*right).size());
         *left += *right;

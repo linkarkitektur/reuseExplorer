@@ -146,8 +146,8 @@ void linkml::create_cell_complex(linkml::PointCloud& cloud, std::vector<pcl::Poi
 	// Load point, normal and plan idx in to points
 	// apparently -1 is a vailied value if a point does not belong to any plane.
 	Point_vector points{};
-	for (int i = 0; i < clusters.size(); i++){
-		for (int j = 0; j < clusters[i].indices.size(); j++){
+	for (int i = 0; i < (int)clusters.size(); i++){
+		for (int j = 0; j < (int)clusters[i].indices.size(); j++){
 
 			auto point_idx = clusters[i].indices[j];
 			auto plane_idx =  i;
@@ -255,7 +255,7 @@ void linkml::create_cell_complex(linkml::PointCloud& cloud, std::vector<pcl::Poi
 		auto v1 = cw.vertices()[indices[1]];
 		auto v2 = cw.vertices()[indices[2]];
 
-		auto h = cw.faces().add(v0, v1, v2 );
+		// auto h = cw.faces().add(v0, v1, v2 );
 	}
 
 	polyscope::myinit();

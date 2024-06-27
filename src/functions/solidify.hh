@@ -15,6 +15,7 @@
 #include <CGAL/Polygon_mesh_processing/orient_polygon_soup_extension.h>
 #include <CGAL/Polygon_mesh_processing/polygon_soup_to_polygon_mesh.h>
 #include <CGAL/Polygon_mesh_processing/polygon_mesh_to_polygon_soup.h>
+#include <CGAL/Polygon_mesh_processing/connected_components.h>
 #include <CGAL/Polygon_mesh_processing/triangulate_faces.h>
 #include <CGAL/Polygon_mesh_processing/measure.h>
 #include <CGAL/Polygon_mesh_processing/stitch_borders.h>
@@ -135,10 +136,18 @@ namespace linkml
 
         mesh.clear();
         PMP::polygon_soup_to_polygon_mesh(points, polygons, mesh);
+        PMP::triangulate_faces(mesh);
+
+        bool is_outward_oriented = PMP::is_outward_oriented(mesh);
+
+        mesh.clear();
+        PMP::polygon_soup_to_polygon_mesh(points, polygons, mesh);
+        if (!is_outward_oriented)
+            PMP::reverse_face_orientations(mesh);
     }
 
-    template<typename PointT>
-    static void create_polysurface(typename pcl::PointCloud<PointT>::ConstPtr cloud, pcl::PointIndices::ConstPtr sellection, Surface_mesh &mesh, int i = 0)
+    template<typename PointT, typename Mesh>
+    static void create_polysurface(typename pcl::PointCloud<PointT>::ConstPtr cloud, pcl::PointIndices::ConstPtr sellection, Mesh &mesh, int i = 0)
     {
 
         // Create the extraction object
@@ -170,8 +179,8 @@ namespace linkml
             plane_index_map[*it] = index++;
 
 
-        // If there are more than 6 planes, reconstruct the surface
-        if (plane_indices_set.size() > 6){
+        // If there are more than 3 planes attempt finding a volume
+        if (plane_indices_set.size() >=4){
 
 
             #pragma omp critical(print)
@@ -185,7 +194,7 @@ namespace linkml
             
             // Create the surface reconstruction object
             CGAL::Polygonal_surface_reconstruction<Kernel> psr(cluster_cloud->points, PointMap2(), NormalMap2(), PlaneIndexMap2());
-            psr.reconstruct<MIP_Solver>(mesh, 0.30 /*fitting*/, 0.20/*coverage*/, 0.50/*complexity*/);
+            psr.reconstruct<MIP_Solver>(mesh, 0.20 /*fitting*/, 0.10/*coverage*/, 0.70/*complexity*/);
 
             repair(mesh);
         }
@@ -222,32 +231,31 @@ namespace linkml
         std::vector<Surface_mesh> meshes_temp = std::vector<Surface_mesh>();
         std::copy_if(meshes.begin(), meshes.end(), std::back_inserter(meshes_temp) , [](Surface_mesh m /*Don't pass a reference so the triangulation does't affect the final*/){
 
-                std::cout << std::endl;
-
-                std::cout << "Mesh has " << m.number_of_vertices() << " vertices." << std::endl;
-
                 // Filter out meshes with no faces
                 if (m.number_of_faces() == 0)
                     return false;
-
-                std::cout << "Mesh is closed: " << CGAL::is_closed(m) << std::endl;
 
                 // Filter out meshes with open boundaries
                 if (!CGAL::is_closed(m))
                     return false;
 
-                PMP::triangulate_faces(m);
+                using face_descriptor = Surface_mesh::Face_index;
+                auto face_map = m.add_property_map<face_descriptor, int>("f:component").first;
 
-                std::cout << "Mesh has volume " << PMP::volume(m) << std::endl;
+                if (PMP::connected_components(m, face_map) > 1)
+                    return false;
+
+                PMP::triangulate_faces(m); // Volume requiers the mesh to be triangulated
 
                 // Filter out meshes with small volumes
-                if (PMP::volume(m) < 3)
+                if (std::abs(PMP::volume(m)) < 3)
                     return false;
 
                 return true;
             });
 
         std::swap(meshes, meshes_temp);
+
 
         return meshes;
     }

@@ -377,7 +377,7 @@ namespace linkml
 
             // If we did not hit anything, there is a clear line of sight between the two points
             const double value = (ray.hit.geomID == RTC_INVALID_GEOMETRY_ID) ? 1 : 0;
-            const auto  color = (ray.hit.geomID == RTC_INVALID_GEOMETRY_ID) ? cv::Vec3b(255, 255, 255) : cv::Vec3b(0, 0, 0);
+            // const auto  color = (ray.hit.geomID == RTC_INVALID_GEOMETRY_ID) ? cv::Vec3b(255, 255, 255) : cv::Vec3b(0, 0, 0);
             
             int source_int = id_to_int[tile->first];
             int target_int = id_to_int[ray.ray.id];

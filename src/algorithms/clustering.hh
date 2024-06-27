@@ -158,132 +158,132 @@ namespace linkml{
       std::shared_ptr<face_descriptor> ofaceindex;
     };
     
-    static std::vector<std::vector<size_t>> clustering(linkml::PointCloud::Cloud::ConstPtr cloud){
+    // static std::vector<std::vector<size_t>> clustering(linkml::PointCloud::Cloud::ConstPtr cloud){
 
-        // Surface mesh
-        Surface_mesh mesh;
-        PointSet point_set(cloud->points, PointMap(), NormalMap(), PlaneIndexMap() );
+    //     // Surface mesh
+    //     Surface_mesh mesh;
+    //     PointSet point_set(cloud->points, PointMap(), NormalMap(), PlaneIndexMap() );
 
-        // Create a hypothesis/cell complex
-        CGAL::internal::Hypothesis<Kernel> hypothesis;
-        hypothesis.generate( point_set, mesh); std::cout << "Hyposis generated\n";
+    //     // Create a hypothesis/cell complex
+    //     CGAL::internal::Hypothesis<Kernel> hypothesis;
+    //     hypothesis.generate( point_set, mesh); std::cout << "Hyposis generated\n";
 
-        // Compute confidences
-        Candidate_confidences conf;
-        conf.compute(point_set, mesh); std::cout << "Confidences computed\n";
+    //     // Compute confidences
+    //     Candidate_confidences conf;
+    //     conf.compute(point_set, mesh); std::cout << "Confidences computed\n";
 
-        // Compute visibilities
-        Candidate_visibility vis;
-        vis.compute(mesh); std::cout << "Visibility computed\n";
+    //     // Compute visibilities
+    //     Candidate_visibility vis;
+    //     vis.compute(mesh); std::cout << "Visibility computed\n";
 
-        SpMat matrix = vis.get_matrix();
-        auto int_to_face = vis.get_int_to_face();
-
-
-        // Markov Clustering
-        //// 2.5 < infaltion < 2.8  => 3.5
-        matrix = markov_clustering::run_mcl(matrix, 2, 1.3);
-        auto clusters = markov_clustering::get_clusters(matrix);
-        std::printf("n_clusters sp_matrix: %d\n", (int)clusters.size());
+    //     SpMat matrix = vis.get_matrix();
+    //     auto int_to_face = vis.get_int_to_face();
 
 
-        // The number of supporting points of each face
-        typename Surface_mesh::template Property_map<Surface_mesh::Face_index, std::size_t> cluster_map =
-                mesh.template add_property_map<Surface_mesh::Face_index, std::size_t>("f:cluster_index").first;
-
-        int cluster_count = 0; 
-        for (auto & cluster: clusters) {
-            for (auto & f_idx : cluster) {
-                cluster_map[int_to_face.at(f_idx)] = cluster_count;
-            }
-            cluster_count++;
-        }
+    //     // Markov Clustering
+    //     //// 2.5 < infaltion < 2.8  => 3.5
+    //     matrix = markov_clustering::run_mcl(matrix, 2, 1.3);
+    //     auto clusters = markov_clustering::get_clusters(matrix);
+    //     std::printf("n_clusters sp_matrix: %d\n", (int)clusters.size());
 
 
-        auto face_areas = mesh.template property_map<Surface_mesh::Face_index, FT>("f:face_area").first;
-        auto face_covered_areas  = mesh.template property_map<Surface_mesh::Face_index, FT>("f:covered_area").first;
-        auto num_supporting_points  = mesh.template property_map<Surface_mesh::Face_index, size_t>("f:num_supporting_points").first;
-        cluster_map  = mesh.template property_map<Surface_mesh::Face_index, size_t>("f:cluster_index").first;
+    //     // The number of supporting points of each face
+    //     typename Surface_mesh::template Property_map<Surface_mesh::Face_index, std::size_t> cluster_map =
+    //             mesh.template add_property_map<Surface_mesh::Face_index, std::size_t>("f:cluster_index").first;
+
+    //     int cluster_count = 0; 
+    //     for (auto & cluster: clusters) {
+    //         for (auto & f_idx : cluster) {
+    //             cluster_map[int_to_face.at(f_idx)] = cluster_count;
+    //         }
+    //         cluster_count++;
+    //     }
 
 
-        // Triangulate the faces for visualization
-        TriangulateVisitor visor;
-        CGAL::Polygon_mesh_processing::triangulate_faces(mesh, CGAL::parameters::visitor(visor));
-        MapBetweenFaces fmap = *(visor.fmap);
+    //     auto face_areas = mesh.template property_map<Surface_mesh::Face_index, FT>("f:face_area").first;
+    //     auto face_covered_areas  = mesh.template property_map<Surface_mesh::Face_index, FT>("f:covered_area").first;
+    //     auto num_supporting_points  = mesh.template property_map<Surface_mesh::Face_index, size_t>("f:num_supporting_points").first;
+    //     cluster_map  = mesh.template property_map<Surface_mesh::Face_index, size_t>("f:cluster_index").first;
 
 
-
-        copy_property_map(mesh, fmap, "f:face_area", face_areas);
-        copy_property_map(mesh, fmap, "f:covered_area", face_covered_areas);
-        copy_property_map(mesh, fmap, "f:num_supporting_points", num_supporting_points);
-        copy_property_map(mesh, fmap, "f:cluster_index", cluster_map);
-
-        for (auto & f : mesh.faces()) {
-            if (cluster_map[f] == 0) {
-                CGAL::Euler::remove_face(mesh.halfedge(f), mesh);
-            }
-        }
-
-
-        face_areas = mesh.template property_map<Surface_mesh::Face_index, FT>("f:face_area").first;
-        face_covered_areas  = mesh.template property_map<Surface_mesh::Face_index, FT>("f:covered_area").first;
-        num_supporting_points  = mesh.template property_map<Surface_mesh::Face_index, size_t>("f:num_supporting_points").first;
-        cluster_map  = mesh.template property_map<Surface_mesh::Face_index, size_t>("f:cluster_index").first;
-
-
-        int index;
-        std::vector<FT> face_coverages(mesh.number_of_faces());
-        std::vector<size_t> num_supporting_points_vec(mesh.number_of_faces());
-        std::vector<size_t> cluster_vec(mesh.number_of_faces());
-        std::vector<tg::color3> cluster_colors(mesh.number_of_faces());
-
-        index = 0;
-        for (Surface_mesh::Face_index f : mesh.faces()) {
-            if (!f.is_valid()) continue;
-
-            face_coverages[index] = face_covered_areas[f] / face_areas[f];
-            num_supporting_points_vec[index] = num_supporting_points[f];
-            cluster_vec[index] = cluster_map[f];
-            cluster_colors[index] = get_color_forom_angle(sample_circle(cluster_map[f]));
-            index++;
-        }
-
-
-        Surface_mesh mesh2;
-        CGAL::Polygonal_surface_reconstruction<Kernel> psr(cloud->points, PointMap(), NormalMap(), PlaneIndexMap());
-        psr.reconstruct<MIP_Solver>(mesh2);
-        CGAL::Polygon_mesh_processing::triangulate_faces(mesh2);
-
-
-        // Initialize polyscope
-        polyscope::myinit();
-
-        polyscope::display<pcl::PointCloud<PointT> const&>(*cloud , "cloud");
-
-        // Visualize the mesh
-        polyscope::display<Surface_mesh const&>(mesh, "mesh");
-        auto ps_mesh = polyscope::getSurfaceMesh("mesh");
-        ps_mesh->addFaceScalarQuantity("face_coverage", face_coverages);
-        ps_mesh->addFaceScalarQuantity("num_supporting_points", num_supporting_points_vec);
-        ps_mesh->addFaceScalarQuantity("clusters", cluster_vec);
-        ps_mesh->addFaceColorQuantity("cluster_colors", cluster_colors);
-
-        polyscope::display<Surface_mesh const&>(mesh2, "mesh2");
-
-        polyscope::show();
-
-        return std::vector<std::vector<size_t>>();
+    //     // Triangulate the faces for visualization
+    //     TriangulateVisitor visor;
+    //     CGAL::Polygon_mesh_processing::triangulate_faces(mesh, CGAL::parameters::visitor(visor));
+    //     MapBetweenFaces fmap = *(visor.fmap);
 
 
 
+    //     copy_property_map(mesh, fmap, "f:face_area", face_areas);
+    //     copy_property_map(mesh, fmap, "f:covered_area", face_covered_areas);
+    //     copy_property_map(mesh, fmap, "f:num_supporting_points", num_supporting_points);
+    //     copy_property_map(mesh, fmap, "f:cluster_index", cluster_map);
 
-        //auto clusters_list = std::vector<std::vector<size_t>>();
-        //for (auto mk_cluster : mk_clusters)
-        //    clusters_list.push_back(mk_cluster);
+    //     for (auto & f : mesh.faces()) {
+    //         if (cluster_map[f] == 0) {
+    //             CGAL::Euler::remove_face(mesh.halfedge(f), mesh);
+    //         }
+    //     }
 
 
-        //// make list of list of indecies
-        //return clusters_list;
+    //     face_areas = mesh.template property_map<Surface_mesh::Face_index, FT>("f:face_area").first;
+    //     face_covered_areas  = mesh.template property_map<Surface_mesh::Face_index, FT>("f:covered_area").first;
+    //     num_supporting_points  = mesh.template property_map<Surface_mesh::Face_index, size_t>("f:num_supporting_points").first;
+    //     cluster_map  = mesh.template property_map<Surface_mesh::Face_index, size_t>("f:cluster_index").first;
 
-    }
+
+    //     int index;
+    //     std::vector<FT> face_coverages(mesh.number_of_faces());
+    //     std::vector<size_t> num_supporting_points_vec(mesh.number_of_faces());
+    //     std::vector<size_t> cluster_vec(mesh.number_of_faces());
+    //     std::vector<tg::color3> cluster_colors(mesh.number_of_faces());
+
+    //     index = 0;
+    //     for (Surface_mesh::Face_index f : mesh.faces()) {
+    //         if (!f.is_valid()) continue;
+
+    //         face_coverages[index] = face_covered_areas[f] / face_areas[f];
+    //         num_supporting_points_vec[index] = num_supporting_points[f];
+    //         cluster_vec[index] = cluster_map[f];
+    //         cluster_colors[index] = get_color_forom_angle(sample_circle(cluster_map[f]));
+    //         index++;
+    //     }
+
+
+    //     Surface_mesh mesh2;
+    //     CGAL::Polygonal_surface_reconstruction<Kernel> psr(cloud->points, PointMap(), NormalMap(), PlaneIndexMap());
+    //     psr.reconstruct<MIP_Solver>(mesh2);
+    //     CGAL::Polygon_mesh_processing::triangulate_faces(mesh2);
+
+
+    //     // Initialize polyscope
+    //     polyscope::myinit();
+
+    //     polyscope::display<pcl::PointCloud<PointT> const&>(*cloud , "cloud");
+
+    //     // Visualize the mesh
+    //     polyscope::display<Surface_mesh const&>(mesh, "mesh");
+    //     auto ps_mesh = polyscope::getSurfaceMesh("mesh");
+    //     ps_mesh->addFaceScalarQuantity("face_coverage", face_coverages);
+    //     ps_mesh->addFaceScalarQuantity("num_supporting_points", num_supporting_points_vec);
+    //     ps_mesh->addFaceScalarQuantity("clusters", cluster_vec);
+    //     ps_mesh->addFaceColorQuantity("cluster_colors", cluster_colors);
+
+    //     polyscope::display<Surface_mesh const&>(mesh2, "mesh2");
+
+    //     polyscope::show();
+
+    //     return std::vector<std::vector<size_t>>();
+
+
+
+
+    //     //auto clusters_list = std::vector<std::vector<size_t>>();
+    //     //for (auto mk_cluster : mk_clusters)
+    //     //    clusters_list.push_back(mk_cluster);
+
+
+    //     //// make list of list of indecies
+    //     //return clusters_list;
+
+    // }
 }

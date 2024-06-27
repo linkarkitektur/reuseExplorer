@@ -126,7 +126,7 @@ namespace linkml
             
     };
 
-    template class PointClouds<PointCloud::Cloud::Ptr>;
+    template class PointClouds<PointCloud>;
     template class PointClouds<std::string>;
 
     using PointCloudsOnDisk = PointClouds<std::string>;
