@@ -20,6 +20,9 @@
 #include "types/Plane.hh"
 #include "functions/fit_plane_thorugh_points.hh"
 
+#include <vector>
+#include <algorithm>
+
 namespace PMP = CGAL::Polygon_mesh_processing;
 
 namespace linkml
@@ -215,8 +218,8 @@ namespace linkml
             auto pt1 = plane.to_2d(mesh.point(v1)) - Ov;
             auto pt2 = plane.to_2d(mesh.point(v2)) - Ov;
 
-            curve[0] = tg::pos2(pt1.x(), pt1.y());
-            curve[1] = tg::pos2(pt2.x(), pt2.y());
+            curve[1] = tg::pos2(pt1.x(), pt1.y());
+            curve[0] = tg::pos2(pt2.x(), pt2.y());
 
             curves[h.idx()] = curve;
             
@@ -257,8 +260,8 @@ namespace linkml
             edge.TrimIndices[0] = h.idx();
             edge.TrimIndices[1] = mesh.opposite(h).idx(); 
 
-            auto v1 = mesh.vertex(e, 0);
-            auto v2 = mesh.vertex(e, 1);
+            auto v1 = mesh.vertex(e, 1);
+            auto v2 = mesh.vertex(e, 0);
             auto p1 = mesh.point(v1);
             auto p2 = mesh.point(v2);
 
@@ -334,15 +337,49 @@ namespace linkml
 
             auto bbox = CGAL::bounding_box(points_2d.begin(), points_2d.end());
 
+
             // Offset bbox
-            bbox = CGAL::Bbox_2(bbox.xmin()-0.5, bbox.ymin()-0.5, bbox.xmax()+0.5, bbox.ymax()+0.5);
+            // TODO: Find a way to calculate the correct offset.
+            // This is need for surfaces that are twisted in regards to the trum curves
+            static const double offset = 50;
+            bbox = CGAL::Bbox_2(bbox.xmin()-offset, bbox.ymin()-offset, bbox.xmax()+offset, bbox.ymax()+offset);
 
             points.clear();
             points.resize(4);
             points[0] = plane.to_3d(Kernel::Point_2(bbox.xmin(), bbox.ymin()));
-            points[1] = plane.to_3d(Kernel::Point_2(bbox.xmax(), bbox.ymin()));
-            points[2] = plane.to_3d(Kernel::Point_2(bbox.xmin(), bbox.ymax()));
+            points[2] = plane.to_3d(Kernel::Point_2(bbox.xmax(), bbox.ymin()));
+            points[1] = plane.to_3d(Kernel::Point_2(bbox.xmin(), bbox.ymax()));
             points[3] = plane.to_3d(Kernel::Point_2(bbox.xmax(), bbox.ymax()));
+
+            // 0 1 2 3 <= Open planar surface normal wrong way
+            // 0 1 3 2 <= Invalid, twisted
+            // 0 2 1 3 <= Invalid, propper size !
+            // 0 2 3 1 <= Invalid, twisted
+            // 0 3 1 2 <= Invalid, twisted 
+            // 0 3 2 1 <= Invalid, twisted
+
+            // 1 0 2 3 <= Closed, but small
+            // 1 0 3 2 <= Closed, but small
+            // 1 2 0 3 <= Invalid, twisted
+            // 1 2 3 0 <= Invalid, twisted
+            // 1 3 0 2 <= Invalid, flat disk
+            // 1 3 2 0 <= Invalid, twisted
+
+            // 2 0 1 3 <= Invalid, twisted
+            // 2 0 3 1 <= Invalid, twisted
+            // 2 1 0 3 <= Closed but twisted
+            // 2 1 3 0 <= Invalid, twisted
+            // 2 3 0 1 <= Closed, but small
+            // 2 3 1 0 <= Clused, but twisted
+
+            // 3 0 1 2 <= Invalid, twisted
+            // 3 0 2 1 <= Invalid, twisted
+            // 3 1 0 2 <= Invalid, twisted
+            // 3 1 2 0 <= Ivalid and but small
+            // 3 2 0 1 <= Invalid, twisted 
+            // 3 2 1 0 <= Invalid, prisim
+
+
 
 
             for (auto & p: points)
@@ -411,7 +448,10 @@ namespace linkml
             trim.IsoStatus = 0; //What is this? --> https://developer.rhino3d.com/api/rhinocommon/rhino.geometry.isostatus
             trim.TrimType = Brep::BrepTrim::BrepTrimType::Mated;
             
-            trim.IsReversed = false;
+            // This values needs to be set
+            auto e = mesh.edge(h);
+            trim.IsReversed =  ( mesh.vertex(e,0) == mesh.source(h) )? true : false;
+
             auto p1 = mesh.point(mesh.source(h));
             auto p2 = mesh.point(mesh.target(h));
             auto dist = tg::distance(tg::pos3(p1.x(), p1.y(), p1.z()),tg::pos3(p2.x(), p2.y(), p2.z()));
