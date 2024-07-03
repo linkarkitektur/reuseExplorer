@@ -95,7 +95,6 @@ namespace linkml
         using Trims = std::vector<BrepTrim>;
         using Loops = std::vector<BrepLoop>;
 
-        using Polyhedron = CGAL::Polyhedron_3<Kernel>;
 
     private:
         Surface_mesh mesh;
@@ -105,8 +104,8 @@ namespace linkml
         void save(std::string const& filename) const;
         static Brep load(std::string const& filename);
 
-        float volume() const;
-        float area() const;
+        double volume() const;
+        double area() const;
         bool is_closed() const;
         tg::aabb3 get_bbox() const;
         int get_Orientation() const;
@@ -122,6 +121,9 @@ namespace linkml
 
         Loops get_Loops() const;
         Trims get_Trims() const;
+
+
+        void display(std::string name = "Mesh" ) const;
         
     };
     

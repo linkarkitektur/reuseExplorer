@@ -3,8 +3,8 @@
 #include "types/PlanarPointSet.hh"
 #include "algorithms/markov_clustering.hh"
 #include "algorithms/refine.hh"
-#include "algorithms/clustering.hh"
 #include "types/surface.hh"
+#include "functions/progress_bar.hh"
 #include "functions/color.hh"
 #include "algorithms/mcl.hh"
 #include "algorithms/mcl_gpu.cu"
@@ -277,7 +277,7 @@ namespace linkml
 
         // Create rays
         using Rays = std::vector<std::pair<Ray, Tile*>>;
-        FT const constexpr offset = 0.10;
+        double const constexpr offset = 0.10;
         size_t const nrays = tiles.size()*(tiles.size()-1)/2;
         Rays rays(nrays);
         std::cout << "Number of rays: " << nrays << std::endl;
@@ -292,28 +292,28 @@ namespace linkml
                 Point_3 source = surface1->GetCentroid(id1);
                 Point_3 target = surface2->GetCentroid(id2);
 
-                Vector_3 normal1 = surface1->plane.orthogonal_vector();
-                Vector_3 normal2 = surface2->plane.orthogonal_vector();
+                auto normal1 = surface1->plane.orthogonal_vector();
+                auto normal2 = surface2->plane.orthogonal_vector();
 
-                source = source + offset*normal1;
-                target = target + offset*normal2;
+                source = source + FT(offset)*normal1;
+                target = target + FT(offset)*normal2;
 
                 // Create ray
                 Ray ray;
 
-                ray.ray.org_x = source.x();
-                ray.ray.org_y = source.y();
-                ray.ray.org_z = source.z();
+                ray.ray.org_x = CGAL::to_double(source.x());
+                ray.ray.org_y = CGAL::to_double(source.y());
+                ray.ray.org_z = CGAL::to_double(source.z());
 
                 Vector_3 dir = target - source;
-                dir = dir / CGAL::sqrt(dir.squared_length());
+                dir = dir / CGAL::sqrt(CGAL::to_double(dir.squared_length()));
 
-                ray.ray.dir_x = dir.x();
-                ray.ray.dir_y = dir.y();
-                ray.ray.dir_z = dir.z();
+                ray.ray.dir_x = CGAL::to_double(dir.x());
+                ray.ray.dir_y = CGAL::to_double(dir.y());
+                ray.ray.dir_z = CGAL::to_double(dir.z());
 
                 ray.ray.tnear = 0.0f;
-                ray.ray.tfar = std::sqrt(CGAL::squared_distance(source, target));
+                ray.ray.tfar = CGAL::sqrt(CGAL::to_double(CGAL::squared_distance(source, target)));
 
                 ray.hit.geomID = RTC_INVALID_GEOMETRY_ID; // Geometry ID, if the ray hits something, this will be the id of the geometry
 

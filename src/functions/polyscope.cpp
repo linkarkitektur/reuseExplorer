@@ -12,25 +12,6 @@ namespace polyscope  {
 
 
     template <>
-    void display(linkml::CellComplex const& cw, std::optional<const std::string> name){
-
-        auto ps_mesh = polyscope::registerSurfaceMesh( (name)? name.value() : "CellComplex" , ps_helpers::vertecies(cw, cw.pos), ps_helpers::faces(cw));
-        auto face_color = ps_mesh->addFaceColorQuantity("Face Color", cw.faces().map([&](pm::face_handle h){ 
-            auto c = cw.plane_colors[h]; 
-            return cc::array<float,3>{c.r,c.g,c.b};
-        }).to_vector());
-        auto facet_color = ps_mesh->addFaceColorQuantity("Facets Color", cw.faces().map([&](pm::face_handle h){ 
-            auto c = cw.facet_colors[h]; 
-            return cc::array<float,3>{c.r,c.g,c.b};
-        }).to_vector());
-        facet_color->setEnabled(true);
-        ps_mesh->addFaceScalarQuantity("Coverage", cw.faces().map([&](pm::face_handle h){
-            return cw.coverage[h];
-        }).to_vector());
-    }        
-
-
-    template <>
     void display(tg::aabb3 const& box, std::optional<const std::string> name){
 
         //  Drawing of cube with numbered vertecies.
@@ -68,34 +49,6 @@ namespace polyscope  {
 
     }
 
-    template <>
-    void display(linkml::Adjacency const& adj, std::optional<const std::string> name ){
-
-        // auto points = std::vector<tg::pos3>();
-        // auto edges = std::vector<std::array<int, 2>>();
-
-        std::vector<tg::pos3> points{};
-        std::vector<std::array<int, 2>> edges{};
-        std::vector<tg::color3> colors{};
-
-
-        int i = 0;
-        for (auto &super_edge : adj){
-
-            points.push_back(super_edge.s);
-            points.push_back(super_edge.t);
-
-            colors.push_back(linkml::get_color_forom_angle(linkml::sample_circle(i)));
-
-            edges.push_back({i,i+1});
-            i+=2;
-        }
-
-        auto cn = polyscope::registerCurveNetwork((name)? name.value() : "Adjacency", points, edges);
-        cn->setRadius(0.00050);
-        cn->addEdgeColorQuantity("Identity", colors)->setEnabled(true);
-
-    }
 
     template <>
     void display( pcl::PointCloud<PointT> const& cloud, std::optional<const std::string> name){
@@ -129,24 +82,24 @@ namespace polyscope  {
     }
 
     template <>
-    void display(Surface_mesh const& mesh, std::optional<const std::string> name ){
+    void display(linkml::Surface_mesh const& mesh, std::optional<const std::string> name ){
 
         std::vector<std::array<size_t,3>> faces;
         std::vector<std::array<double,  3>> vertecies;
 
-        std::unordered_map<Surface_mesh::Vertex_index, size_t> index_map;
+        std::unordered_map<linkml::Surface_mesh::Vertex_index, size_t> index_map;
 
         size_t i = 0;
-        for (auto & idx: mesh.vertices()){
+        for (auto idx: mesh.vertices()){
             auto p = mesh.point(idx);
-            vertecies.push_back({p.x(), p.y(), p.z()});
+            vertecies.push_back({CGAL::to_double(p.x()), CGAL::to_double(p.y()), CGAL::to_double(p.z())});
             index_map[idx] = i;
             i++;
         }
-        for (auto & face_index: mesh.faces()){
+        for (auto face_index: mesh.faces()){
 
-            CGAL::Vertex_around_face_circulator<Surface_mesh> vcirc(mesh.halfedge(face_index), mesh), done(vcirc);
-            std::vector<Surface_mesh::Vertex_index> indices;
+            CGAL::Vertex_around_face_circulator<linkml::Surface_mesh> vcirc(mesh.halfedge(face_index), mesh), done(vcirc);
+            std::vector<linkml::Surface_mesh::Vertex_index> indices;
             do {
                 indices.push_back(*vcirc++);
             } while (vcirc != done);
@@ -159,9 +112,9 @@ namespace polyscope  {
 
 
     static void display(const tg::plane3 & plane, const tg::aabb3 & bbox, std::optional<const std::string> name){
-        Surface_mesh m;
+        linkml::Surface_mesh m;
         linkml::crop_plane_with_aabb(m, bbox, plane);
-        display<Surface_mesh const&>(m, (name) ? name.value() : "Plane" );
+        display<linkml::Surface_mesh const&>(m, (name) ? name.value() : "Plane" );
     }
 
 

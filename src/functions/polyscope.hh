@@ -1,16 +1,13 @@
 #pragma once
-#include <types/PointCloud.hh>
-#include <types/CellComplex.hh>
-#include <types/Surface_Mesh.hh>
-#include <typed-geometry/types/objects/aabb.hh>
-#include <functions/crop_plane_with_aabb.hh>
-// #include <typed-geometry/types/objects/aabb.hh>
-// #include <typed-geometry/types/pos.hh>
+#include "types/Surface_Mesh.hh"
+#include "types/PointCloud.hh"
+#include "types/Surface_Mesh.hh"
 
-#include <functions/polyscope_helpers.hh>
-#include <functions/constuct_adjacency.hh>
-#include <functions/color.hh>
-#include <algorithms/surface_reconstruction.hh>
+#include "functions/polyscope_helpers.hh"
+#include "functions/crop_plane_with_aabb.hh"
+#include "functions/color.hh"
+
+#include <typed-geometry/types/objects/aabb.hh>
 
 #include <valarray>
 
@@ -50,20 +47,15 @@ namespace polyscope  {
     template <typename T>
     void display(T, std::optional<const std::string> );
 
-    template <>
-    void display(linkml::CellComplex const& cw, std::optional<const std::string> name);  
 
     template <>
     void display(tg::aabb3 const& box, std::optional<const std::string> name);
 
     template <>
-    void display(linkml::Adjacency const& adj, std::optional<const std::string> name); 
-
-    template <>
     void display( pcl::PointCloud<PointT> const& cloud, std::optional<const std::string> name);
 
     template <>
-    void display(Surface_mesh const& mesh, std::optional<const std::string> name); 
+    void display(linkml::Surface_mesh const& mesh, std::optional<const std::string> name); 
 
     static void display(const tg::plane3 & plane, const tg::aabb3 & bbox, std::optional<const std::string> name);
 

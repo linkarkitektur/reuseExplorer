@@ -1,7 +1,6 @@
 
 #pragma once
 #include <types/Plane.hh>
-#include <types/CellComplex.hh>
 #include <types/Surface_Mesh.hh>
 
 #include <functions/color.hh>

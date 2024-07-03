@@ -13,6 +13,12 @@ dependencies = [
     "wheel",
     ]
 
+[project.optional-dependencies]
+ml = ["pytorch"]
+
+[project.scripts]
+linkml-cli = "linkml:__main__"
+
 [project.urls]
 source = "https://github.com/linkarkitektur/linkml_cpp"
 

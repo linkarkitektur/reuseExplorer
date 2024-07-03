@@ -535,6 +535,7 @@ PYBIND11_MODULE(_core, m) {
         .def("Trims", &linkml::Brep::get_Trims)
         .def("Orientation", &linkml::Brep::get_Orientation)
         .def("get_mesh", &linkml::Brep::get_Mesh)
+        .def("display", &linkml::Brep::display)
         ;
 
     py::class_<linkml::Brep::Face>(m, "Face")

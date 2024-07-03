@@ -1,4 +1,7 @@
 # CGAL and its components
+
+find_package(MPI REQUIRED)
+find_package(MPFR REQUIRED)
 find_package(CGAL REQUIRED)
 if(CGAL_FOUND)
     message(NOTICE "CGAL found")
@@ -34,6 +37,14 @@ if(CGAL_FOUND)
     else()
         message(FATAL_ERROR "CGAL TBB not found")
     endif()
+
+    if (OPENCV_FOUND)
+        message(STATUS "CGAL adding Support for OpenCV")
+        include(CGAL_OpenCV_support)
+    else()
+        message(FATAL_ERROR "CGAL OpneCV not found")
+    endif()
+
 
 
 else()

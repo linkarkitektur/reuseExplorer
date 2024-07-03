@@ -108,6 +108,16 @@ name = "./3c670b035f.pcd"
 # breps = cloud.solidify()
 #cloud.display()
 
-Brep.load("test.off")
+# cloud = PointCloud("/home/mephisto/server_data/test_export.pcd")
+# breps = cloud.solidify()
+# [breps[idx].save(f"brep_new_{idx}.off") for idx in range(len(breps))]
+
+breps = [Brep.load(f"brep_new_{idx}.off") for idx in range(1)]
+for idx, b in enumerate(breps):
+    b.display(f"Brep {idx}")
+
+# files = [f"brep_{idx}.off" for idx in range(4)]
+# [Brep.load(f) for f in files]
+# Brep.load("test.off")
 
 print("Done")

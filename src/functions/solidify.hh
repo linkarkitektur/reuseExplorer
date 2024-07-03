@@ -1,6 +1,10 @@
 #pragma once
 
 #include "types/PointCloud.hh"
+#include "types/Surface_Mesh.hh"
+
+#include "functions/progress_bar.hh"
+
 #include <pcl/point_types.h>
 #include <pcl/filters/extract_indices.h>
 
@@ -25,16 +29,6 @@
 
 namespace PMP = CGAL::Polygon_mesh_processing;
 
-//using Kernel                = CGAL::Exact_predicates_inexact_constructions_kernel;
-//using FT                    = Kernel::FT;
-using Point_3               = Kernel::Point_3;
-using Vector_3              = Kernel::Vector_3;
-//using PointSet              = CGAL::internal::Point_set_with_planes<linkml::Kernel>;
-//using Candidate_confidences = CGAL::internal::Candidate_confidences_custom<Kernel>;
-//using Candidate_visibility  = CGAL::internal::Candidate_visibility<Kernel>;
-//using Surface_mesh          = CGAL::Surface_mesh<Kernel::Point_3>;
-//using face_descriptor       = Surface_mesh::Face_index;
-//using MapBetweenFaces       = std::map<face_descriptor, face_descriptor>;
 
 //#if defined(GUROBI_FOUND)
 #include "types/GUROBI_mixed_integer_program_traits.hh"
@@ -61,48 +55,53 @@ inline void merge_sets(std::unordered_set<int> &lhs, const std::unordered_set<in
 
 namespace linkml
 {
-
-    struct PointMap2
+    template<typename PointT>
+    struct PointMap
     {
-        const Point_3& operator[](const PointCloud::Cloud::PointType& k) const { 
+
+        const PointT& operator[](const PointCloud::Cloud::PointType& k) const { 
             auto p = k.getVector3fMap();
-            return Point_3(p[0], p[1], p[2]);
+            return PointT(p[0], p[1], p[2]);
         }
 
-        friend Point_3 get(const PointMap2&, const PointCloud::Cloud::PointType& k) { 
+        friend PointT get(const PointMap&, const PointCloud::Cloud::PointType& k) { 
             auto p = k.getVector3fMap();
-            return Point_3(p[0], p[1], p[2]);
+            return PointT(p[0], p[1], p[2]);
     }
-        friend void put(const PointMap2&, PointCloud::Cloud::PointType& k, const Point_3& v) { 
-                    k.x = v[0];
-                    k.y = v[1];
-                    k.z = v[2];
+        friend void put(const PointMap&, PointCloud::Cloud::PointType& k, const PointT& v) { 
+                    k.x = CGAL::to_double(v[0]);
+                    k.y = CGAL::to_double(v[1]);
+                    k.z = CGAL::to_double(v[2]);
             }
     };
-    struct NormalMap2
-    {
-      const Vector_3& operator[](const PointCloud::Cloud::PointType& k) const { 
-        auto v = k.getNormalVector3fMap(); 
-        return Vector_3(v[0], v[1], v[2]);
-      }
 
-      friend Vector_3 get(const NormalMap2&, const PointCloud::Cloud::PointType& k) { 
-        auto v =  k.getNormalVector3fMap();
-        return Vector_3(v[0], v[1], v[2]);
-      }
-      friend void put(const NormalMap2&, PointCloud::Cloud::PointType& k, const Vector_3& v) { 
-            k.normal[0] = v[0];
-            k.normal[1] = v[1];
-            k.normal[2] = v[2];
+    template<typename VectorT>
+    struct NormalMap
+    {
+
+        const VectorT& operator[](const PointCloud::Cloud::PointType& k) const { 
+            auto v = k.getNormalVector3fMap(); 
+            return VectorT(v[0], v[1], v[2]);
         }
+
+        friend VectorT get(const NormalMap&, const PointCloud::Cloud::PointType& k) { 
+            auto v =  k.getNormalVector3fMap();
+            return VectorT(v[0], v[1], v[2]);
+        }
+        friend void put(const NormalMap&, PointCloud::Cloud::PointType& k, const VectorT& v) { 
+                k.normal[0] = CGAL::to_double(v[0]);
+                k.normal[1] = CGAL::to_double(v[1]);
+                k.normal[2] = CGAL::to_double(v[2]);
+            }
     };
-    struct PlaneIndexMap2
+
+    struct PlaneIndexMap
     {
 
         const int & operator[](const PointCloud::Cloud::PointType& point) const { return (int)point.label;}
 
-        friend int get(const PlaneIndexMap2&, const PointCloud::Cloud::PointType& k) { return (int)k.label; }
-        friend void put(const PlaneIndexMap2&, PointCloud::Cloud::PointType& k, const int & v) { k.label = (std::uint8_t)v;}
+        friend int get(const PlaneIndexMap&, const PointCloud::Cloud::PointType& k) { return (int)k.label; }
+        friend void put(const PlaneIndexMap&, PointCloud::Cloud::PointType& k, const int & v) { k.label = (std::uint8_t)v;}
 
 
     };
@@ -118,7 +117,7 @@ namespace linkml
     }
 
     template<typename Mesh>
-    static void repair(Mesh & mesh){
+    void repair(Mesh & mesh){
 
         using Point = typename Mesh::Point;
         // TODO: Check what the correct index type is
@@ -146,9 +145,57 @@ namespace linkml
             PMP::reverse_face_orientations(mesh);
     }
 
+    template<typename Mesh>
+    bool is_vaild(Mesh mesh /*Don't pass a reference so the triangulation does't affect the final*/){
+
+        using Point = typename Mesh::Point;
+        using Kernel = typename CGAL::Kernel_traits<Point>::Kernel;
+        using FT = typename Kernel::FT;
+
+
+        if (!mesh.is_valid())
+            return false;
+
+        if (mesh.is_empty())
+            return false;
+
+        if (mesh.number_of_vertices() == 0)
+            return false;
+
+        // Filter out meshes with no faces
+        if (mesh.number_of_faces() == 0)
+            return false;
+
+        // Filter out meshes with open boundaries
+        if (!CGAL::is_closed(mesh))
+            return false;
+
+        auto face_map = mesh.template add_property_map<typename Mesh::Face_index, int>("f:component").first;
+
+        if (PMP::connected_components(mesh, face_map) > 1)
+            return false;
+
+
+        PMP::triangulate_faces(mesh); // Volume requiers the mesh to be triangulated
+
+        // Filter out meshes with small volumes
+        if (CGAL::abs(PMP::volume(mesh)) < FT(3))
+            return false;
+
+        return true;
+    }
+
     template<typename PointT, typename Mesh>
-    static void create_polysurface(typename pcl::PointCloud<PointT>::ConstPtr cloud, pcl::PointIndices::ConstPtr sellection, Mesh &mesh, int i = 0)
+    void create_polysurface(typename pcl::PointCloud<PointT>::ConstPtr cloud, pcl::PointIndices::ConstPtr sellection, Mesh & mesh, size_t i = 0)
     {
+        // using Kernel_inexact = CGAL::Exact_predicates_inexact_constructions_kernel;
+
+        using Point = typename Mesh::Point;
+        using Kernel = typename CGAL::Kernel_traits<Point>::Kernel;
+        using Vector = typename Kernel::Vector_3;
+
+        // #pragma omp critical(print)
+        // printf("Task %d\n", i);
 
         // Create the extraction object
         pcl::ExtractIndices<PointT> extract;
@@ -173,33 +220,34 @@ namespace linkml
             plane_indices_set.insert(cluster_cloud->points[i].label);
 
 
-        int index = 0;
-        std::unordered_map<int, int> plane_index_map = std::unordered_map<int, int>();
-        for (auto it = plane_indices_set.begin(); it != plane_indices_set.end(); it++)
-            plane_index_map[*it] = index++;
-
-
         // If there are more than 3 planes attempt finding a volume
         if (plane_indices_set.size() >=4){
 
 
-            #pragma omp critical(print)
-            std::cout << "Computing poly surface for cluster " << i << " with " << plane_indices_set.size() << " planes." << std::endl;
+            // #pragma omp critical(print)
+            // printf("Computing poly surface for Task %d with %d planes.\n", i, plane_indices_set.size());
+
+
+            int index = 0;
+            std::unordered_map<int, int> plane_index_map = std::unordered_map<int, int>();
+            for (auto it = plane_indices_set.begin(); it != plane_indices_set.end(); it++)
+                plane_index_map[*it] = index++;
 
             // Renumber the plane indices
             #pragma omp parallel for
             for (size_t i = 0; i < cluster_cloud->points.size(); i++)
                 cluster_cloud->points[i].label = plane_index_map[cluster_cloud->points[i].label];
 
-            
-            // Create the surface reconstruction object
-            CGAL::Polygonal_surface_reconstruction<Kernel> psr(cluster_cloud->points, PointMap2(), NormalMap2(), PlaneIndexMap2());
-            psr.reconstruct<MIP_Solver>(mesh, 0.20 /*fitting*/, 0.10/*coverage*/, 0.70/*complexity*/);
+            CGAL::Polygonal_surface_reconstruction<Kernel> psr(cluster_cloud->points, PointMap<Point>(), NormalMap<Vector>(), PlaneIndexMap());
+            psr.template reconstruct<MIP_Solver>(mesh, 0.20 /*fitting*/, 0.10/*coverage*/, 0.70/*complexity*/);
 
-            repair(mesh);
+            // repair(mesh);
         }
-    }
 
+        // #pragma omp critical(print)
+        // printf("Task %d done!\n", i);
+    }
+    
 
     template<typename PointT>
     static std::vector<Surface_mesh> solidify(typename pcl::PointCloud<PointT>::ConstPtr cloud, std::optional<std::vector<pcl::PointIndices::Ptr>> clusters_in = std::nullopt)
@@ -212,49 +260,32 @@ namespace linkml
 
 
         std::vector<Surface_mesh> meshes = std::vector<Surface_mesh>(clusters.size());
-        
-        // #pragma omp parallel
-        // #pragma omp single nowait
-        for (size_t i = 0; i < clusters.size(); i++)
-            // #pragma omp task shared(cloud, clusters, meshes)
-                create_polysurface<PointT>(cloud, clusters[i], meshes[i], i);
-        
-        // #pragma omp taskwait
-        
+        auto solidification_bar = util::progress_bar(clusters.size(), "Solidification");
+        #pragma omp parallel
+        {
+            #pragma omp single
+            {
+                for (size_t i = 0; i < clusters.size(); i++){
+                
+                    #pragma omp task
+                        create_polysurface<PointT, Surface_mesh>(cloud, clusters[i], meshes[i], i);
+                }
+            }
+            #pragma omp taskwait
+        }
+        solidification_bar.stop();
 
-        std::cout << "Solidification complete." << std::endl;
         
-    
-       
 
         // Filter meshes with no faces and too small volumes
         std::vector<Surface_mesh> meshes_temp = std::vector<Surface_mesh>();
-        std::copy_if(meshes.begin(), meshes.end(), std::back_inserter(meshes_temp) , [](Surface_mesh m /*Don't pass a reference so the triangulation does't affect the final*/){
-
-                // Filter out meshes with no faces
-                if (m.number_of_faces() == 0)
-                    return false;
-
-                // Filter out meshes with open boundaries
-                if (!CGAL::is_closed(m))
-                    return false;
-
-                using face_descriptor = Surface_mesh::Face_index;
-                auto face_map = m.add_property_map<face_descriptor, int>("f:component").first;
-
-                if (PMP::connected_components(m, face_map) > 1)
-                    return false;
-
-                PMP::triangulate_faces(m); // Volume requiers the mesh to be triangulated
-
-                // Filter out meshes with small volumes
-                if (std::abs(PMP::volume(m)) < 3)
-                    return false;
-
-                return true;
-            });
-
+        std::copy_if(meshes.begin(), meshes.end(), std::back_inserter(meshes_temp) , is_vaild<Surface_mesh>);
         std::swap(meshes, meshes_temp);
+
+        for (size_t i = 0; i < meshes.size(); i++)
+            PMP::reverse_face_orientations(meshes[i]);
+    
+        printf("Number of meshes: %d\n", meshes.size());
 
 
         return meshes;

@@ -156,6 +156,9 @@ include(cmake/Python.cmake)
 
 
 
+
+
+
 # ===============================================
 # add submodules
 
@@ -238,6 +241,8 @@ target_link_libraries(${LIB_PROJECT_NAME} PUBLIC
     ${PCL_COMMON_LIBRARIES}
     fmt
     nexus
+    mpfr
+    MPI::MPI_CXX
 
     ${OpenCV_LIBS}
 

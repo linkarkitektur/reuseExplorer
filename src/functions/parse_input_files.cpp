@@ -37,7 +37,6 @@
 #include "parse_input_files.hh"
 #include <types/Dataset.hh>
 #include <functions/progress_bar.hh>
-#include <algorithms/surface_reconstruction.hh>
 
 #include <Eigen/Dense>
 #include <opencv4/opencv2/opencv.hpp>

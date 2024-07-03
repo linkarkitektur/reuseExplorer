@@ -122,13 +122,16 @@ namespace linkml
         
         auto meshes = linkml::solidify<PointCloud::Cloud::PointType>(cloud, clusters);
 
-        for (size_t i = 0; i < meshes.size(); i++)
-            polyscope::display<Surface_mesh const&>(meshes[i], "mesh" + std::to_string(i));
-
         std::vector<Brep> breps;
         std::transform(meshes.begin(), meshes.end(), std::back_inserter(breps), [](Surface_mesh const& mesh){
             return Brep(mesh);
         });
+
+        fmt::print("Number of breps: {}\n", breps.size());
+
+        for (size_t i = 0; i < breps.size(); i++)
+            breps[i].display("Mesh" + std::to_string(i));
+
 
         this->display("Cloud");
 

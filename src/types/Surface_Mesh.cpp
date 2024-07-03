@@ -11,12 +11,21 @@ namespace PMP = CGAL::Polygon_mesh_processing;
 
 namespace linkml
 {
-   float LinkMesh::volume() const { return PMP::volume((Base)*this); }
-   float LinkMesh::area() const { return PMP::area((Base)*this); }
+   double LinkMesh::volume() const { return CGAL::to_double(PMP::volume((Base)*this)); }
+   double LinkMesh::area() const { return CGAL::to_double(PMP::area((Base)*this)); }
    tg::aabb3 LinkMesh::get_bbox() const
    {
       auto box = CGAL::bounding_box(mesh.points().begin(), mesh.points().end());
-      return tg::aabb3(tg::pos3(box.xmin(), box.ymin(), box.zmin()), tg::pos3(box.xmax(), box.ymax(), box.zmax()));
+      return tg::aabb3(
+         tg::pos3(
+            CGAL::to_double(box.xmin()), 
+            CGAL::to_double(box.ymin()), 
+            CGAL::to_double(box.zmin())
+         ), 
+         tg::pos3(
+            CGAL::to_double(box.xmax()), 
+            CGAL::to_double(box.ymax()), 
+            CGAL::to_double(box.zmax())));
    }
    std::vector<tg::pos3> LinkMesh::get_vertices() const { 
 
@@ -28,7 +37,7 @@ namespace linkml
       for (auto v : mesh.vertices())
       {
          PointT p = mesh.point(v);
-         points[v.idx()] = tg::pos3(p.x(), p.y(), p.z());
+         points[v.idx()] = tg::pos3(CGAL::to_double(p.x()), CGAL::to_double(p.y()), CGAL::to_double(p.z()));
       }
 
       return points;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "types/PointCloud.hh"
+#include "types/Surface_Mesh.hh"
 
 #include <pcl/point_types.h>
 #include <pcl/common/centroid.h>
@@ -23,11 +24,11 @@
 
 namespace PMP = CGAL::Polygon_mesh_processing;
 
-using Kernel = CGAL::Exact_predicates_inexact_constructions_kernel;
 
+using Kernel = linkml::Kernel;
+using Plane_3 = Kernel::Plane_3;
 using Point_2 = Kernel::Point_2;
 using Point_3 = Kernel::Point_3;
-using Plane_3 = Kernel::Plane_3;
 using Vector_2 = Kernel::Vector_2;
 using Vector_3 = Kernel::Vector_3;
 
@@ -76,8 +77,8 @@ namespace linkml
 
 
         private:
-            static constexpr FT tile_x_size = 0.4;
-            static constexpr FT tile_y_size = 0.4;
+            static constexpr double tile_x_size = 0.4;
+            static constexpr double tile_y_size = 0.4;
 
             static constexpr auto coords_name = "v:coords";
             static constexpr auto centeroids_name = "f:centeroids";
@@ -96,11 +97,11 @@ namespace linkml
         void Create_Embree_Geometry(RTCDevice & device, RTCScene & scene);
 
         inline Point_3 GetCentroid(unsigned int id) { 
-            return mesh.property_map<Mesh::Face_index, Point_3>(centeroids_name).first[valid[id]]; }
+            return mesh.property_map<Mesh::Face_index, Point_3>(centeroids_name).value()[valid[id]]; }
         inline pcl::Indices GetPoints(unsigned int id) { 
-            return mesh.property_map<Mesh::Face_index, pcl::Indices>(indecies_name).first[valid[id]]; }
+            return mesh.property_map<Mesh::Face_index, pcl::Indices>(indecies_name).value()[valid[id]]; }
         inline pcl::Indices GetPoints(Mesh::Face_index f) { 
-            return mesh.property_map<Mesh::Face_index, pcl::Indices>(indecies_name).first[f]; }
+            return mesh.property_map<Mesh::Face_index, pcl::Indices>(indecies_name).value()[f]; }
         inline size_t size() const { return valid.size(); }
 
         auto begin() { return IndciesIterator(valid.begin(), this); }
@@ -124,7 +125,7 @@ namespace linkml
         if (face == Mesh::null_face())
                 return std::make_pair(indices,0);
 
-        auto coords = mesh.property_map<Mesh::Vertex_index, Point_3>(coords_name).first;
+        auto coords = mesh.property_map<Mesh::Vertex_index, Point_3>(coords_name).value();
 
         
         typename Mesh::Vertex_around_face_circulator cir(mesh.halfedge(face), mesh);
@@ -158,8 +159,8 @@ namespace linkml
     }
     void Surface::Create_Embree_Geometry(RTCDevice & device, RTCScene & scene){
 
-        auto num_supporting_points = mesh.property_map<Mesh::Face_index, size_t>(num_supporting_points_name).first;
-        auto coords = mesh.property_map<Mesh::Vertex_index, Point_3>(coords_name).first;
+        auto num_supporting_points = mesh.property_map<Mesh::Face_index, size_t>(num_supporting_points_name).value();
+        auto coords = mesh.property_map<Mesh::Vertex_index, Point_3>(coords_name).value();
 
         for (auto f : mesh.faces()){
             
@@ -187,10 +188,10 @@ namespace linkml
 
            
             // Add the points to the vertex buffer
-            vb[0] = points[0].x(); vb[1]  = points[0].y(); vb[2]  = points[0].z();
-            vb[3] = points[1].x(); vb[4]  = points[1].y(); vb[5]  = points[1].z();
-            vb[6] = points[2].x(); vb[7]  = points[2].y(); vb[8]  = points[2].z();
-            vb[9] = points[3].x(); vb[10] = points[3].y(); vb[11] = points[3].z();
+            vb[0] = CGAL::to_double(points[0].x()); vb[1]  = CGAL::to_double(points[0].y()); vb[2]  = CGAL::to_double(points[0].z());
+            vb[3] = CGAL::to_double(points[1].x()); vb[4]  = CGAL::to_double(points[1].y()); vb[5]  = CGAL::to_double(points[1].z());
+            vb[6] = CGAL::to_double(points[2].x()); vb[7]  = CGAL::to_double(points[2].y()); vb[8]  = CGAL::to_double(points[2].z());
+            vb[9] = CGAL::to_double(points[3].x()); vb[10] = CGAL::to_double(points[3].y()); vb[11] = CGAL::to_double(points[3].z());
             
 
             // Add the faces to the index buffer
@@ -222,7 +223,7 @@ namespace linkml
             // Get the vertex buffer
             typename Mesh::Vertex_around_face_circulator cir(mesh.halfedge(f), mesh), done_v(cir);
 
-            auto coords = mesh.property_map<Mesh::Vertex_index, Point_3>(coords_name).first;
+            auto coords = mesh.property_map<Mesh::Vertex_index, Point_3>(coords_name).value();
 
             // Get the vertex coordinates
             Point_3 points[4];
@@ -310,11 +311,15 @@ namespace linkml
         // Ofthen there is a gap between surfaces, allowing stray rays to escape
         // muddeling the results
         FT offset = 0.15;
-        bbox = CGAL::Bbox_2(bbox.xmin() - offset, bbox.ymin() - offset, bbox.xmax() + offset, bbox.ymax() + offset);
+        bbox = CGAL::Bbox_2(
+            CGAL::to_double(bbox.xmin() - offset),
+            CGAL::to_double(bbox.ymin() - offset),
+            CGAL::to_double(bbox.xmax() + offset),
+            CGAL::to_double(bbox.ymax() + offset));
 
         // Subdivide Bounding Box
-        auto dx  = bbox.xmax() - bbox.xmin();
-        auto dy  = bbox.ymax() - bbox.ymin();
+        double dx  = CGAL::to_double(bbox.xmax() - bbox.xmin());
+        double dy  = CGAL::to_double(bbox.ymax() - bbox.ymin());
         int nx = dx / tile_x_size;
         int ny = dy / tile_y_size;
         
