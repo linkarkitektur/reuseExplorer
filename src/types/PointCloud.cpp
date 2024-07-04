@@ -3,6 +3,7 @@
 #include "functions/polyscope.hh"
 #include "functions/solidify.hh"
 #include "functions/cluster_rooms.hh"
+#include "functions/downsample.hh"
 
 
 namespace linkml
@@ -90,7 +91,14 @@ namespace linkml
 
         return tg::aabb3(tg::pos3(x_min, y_min, z_min), tg::pos3(x_max, y_max, z_max));
 
-    }   
+    }
+
+
+    void PointCloud::downsample(double leaf_size){
+        auto bar = util::progress_bar(1, "Downsampling");
+        linkml::downsample(*this, leaf_size);
+        bar.stop();
+    }
 
 
     /// @brief Cluster and solidify the point cloud.
