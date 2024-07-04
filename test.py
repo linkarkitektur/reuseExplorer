@@ -24,13 +24,15 @@ def chunks(lst, n):
     for i in range(0, len(lst), n):
         yield lst[i:i + n]
 
-#dataset_path = "/home/mephisto/server_data/stray_scans/0ba33d855b/" # CPC Office
-#dataset_path = "/home/mephisto/server_data/stray_scans/7092626a22/"
-#dataset_path = "/home/mephisto/server_data/stray_scans/665518e46a/"
-#dataset_path = "/home/mephisto/server_data/stray_scans/8c0e3c381c/" # New scan small room
-dataset_path = "/home/mephisto/server_data/stray_scans/3c670b035f" # New scan 
+dataset_path = "/home/mephisto/server_data/stray_scans/0ba33d855b/" # CPC Office
+# dataset_path = "/home/mephisto/server_data/stray_scans/7092626a22/" # Aarhus Office
+# dataset_path = "/home/mephisto/server_data/stray_scans/665518e46a/" # Lobby
+# dataset_path = "/home/mephisto/server_data/stray_scans/8c0e3c381c/" # New scan small room
+# dataset_path = "/home/mephisto/server_data/stray_scans/3c670b035f" # New scan 
 
 dataset = Dataset(dataset_path)
+name = f"./{dataset.name}.pcd"
+
 
 
 
@@ -58,39 +60,50 @@ if (False):
     
     #clouds.annotate("./yolov8x-seg.onnx", dataset)
 
-#clouds.register()
+# Registration
+if (False):
+    clouds.register()
 
-#name = "./0ba33d855b.pcd"
-#name = "./CPH_office_downsampled.pcd"
-#name = "./Aarhus_office_downsampled.pcd"
-#name = "./one_room_downsampled.pcd"
-#name = "/home/mephisto/server_data/test_cloud_boxes.pcd"
-#name = "/home/mephisto/server_data/test_cloud_boxes_simple.pcd"
-#name = "/home/mephisto/server_data/test_cloud_boxes_two.pcd"
-#name = "./8c0e3c381c.pcd"
-name = "./3c670b035f.pcd"
+# Filter
+if (False):
+    clouds.filter()
+
+if (True):
+    cloud = clouds.merge()
+    cloud.save(name)
+
+# cloud.display()
+
+print(f"Loading \"{name}\" ...")
+cloud = PointCloud(name)
+print("Done loading!")
+
+# Clustering
+if (False):
+    cloud.clustering()
+    cloud.save(name)
 
 
-#clouds.filter()
-#cloud = clouds.merge()
-#cloud.save(name)
+if (True):
+    cloud.downsample(0.05)
+    cloud.save(name)
+
 #cloud.display()
-#cloud = PointCloud(name)
-#cloud.downsample(0.05)
-#cloud.save(name)
-#cloud.display()
 
-#cloud = cloud.clustering().save(name)
-##cloud.region_growing().save(name)
-#cloud.region_growing(
-#    #angle_threshold = float(0.96592583),
-#    #plane_dist_threshold = float(0.1),
-#    minClusterSize = 500,
-#    #early_stop = float(0.3),
-#    radius = float(0.3),
-#    #interval_0 = float(16),
-#    #interval_factor = float(1.5),
-#    ).save(name)
+
+# Region growing
+if (True):
+    cloud.region_growing(
+        #angle_threshold = float(0.96592583),
+        #plane_dist_threshold = float(0.1),
+        minClusterSize = 500,
+        #early_stop = float(0.3),
+        radius = float(0.3),
+        #interval_0 = float(16),
+        #interval_factor = float(1.5),
+        )
+    cloud.save(name)
+
 #cloud.display()
 
 
@@ -112,9 +125,9 @@ name = "./3c670b035f.pcd"
 # breps = cloud.solidify()
 # [breps[idx].save(f"brep_new_{idx}.off") for idx in range(len(breps))]
 
-breps = [Brep.load(f"brep_new_{idx}.off") for idx in range(1)]
-for idx, b in enumerate(breps):
-    b.display(f"Brep {idx}")
+# breps = [Brep.load(f"brep_new_{idx}.off") for idx in range(1)]
+# for idx, b in enumerate(breps):
+#     b.display(f"Brep {idx}")
 
 # files = [f"brep_{idx}.off" for idx in range(4)]
 # [Brep.load(f) for f in files]
