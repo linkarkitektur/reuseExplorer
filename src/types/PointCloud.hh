@@ -38,15 +38,16 @@
 
 struct EIGEN_ALIGN16 PointT
 {
+    using LableT = std::int32_t;
     PCL_ADD_POINT4D; // This adds the members x,y,z which can also be accessed using the point (which is float[4])
     PCL_ADD_NORMAL4D; // This adds the member normal[3] which can also be accessed using the point (which is float[4])
     union EIGEN_ALIGN16 {
-        std::uint8_t data_i[4];
+        LableT data_i[4];
         struct{
-            std::uint8_t confidence;
-            std::uint8_t semantic;
-            std::uint8_t instance;
-            std::uint8_t label;
+            LableT confidence;
+            LableT semantic;
+            LableT instance;
+            LableT label;
         };
     };
     union
@@ -113,10 +114,10 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(PointT,
     (float, normal_y, normal_y)
     (float, normal_z, normal_z)
     (float, curvature, curvature)
-    (std::uint8_t, confidence, confidence)
-    (std::uint8_t, semantic, semantic)
-    (std::uint8_t, instance, instance)
-    (std::uint8_t, label, label)
+    (PointT::LableT, confidence, confidence)
+    (PointT::LableT, semantic, semantic)
+    (PointT::LableT, instance, instance)
+    (PointT::LableT, label, label)
 )
 
 
