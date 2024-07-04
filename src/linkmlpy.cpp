@@ -66,6 +66,7 @@ PYBIND11_MODULE(_core, m) {
         .def_property_readonly("size", &linkml::Dataset::size)
         .def_property_readonly("color_size", &linkml::Dataset::color_size)
         .def_property_readonly("depth_size", &linkml::Dataset::depth_size)
+        .def_property_readonly("name", &linkml::Dataset::name)
         ;
 
     /// @brief Data is the indevidual frames that the dataset provieds.

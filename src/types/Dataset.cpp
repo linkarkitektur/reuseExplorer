@@ -216,6 +216,7 @@ Dataset::Dataset(const std::filesystem::path & path, const std::initializer_list
 
     _n_frames = get_number_of_frames(_path / "rgb.mp4");
 
+    // TODO: Rather implement this as lazy loading.
 
     // Load data
     for (auto field : fields) {
