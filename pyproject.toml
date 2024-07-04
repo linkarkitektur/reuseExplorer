@@ -27,6 +27,7 @@ requires = ["scikit-build-core>=0.3.3", "pybind11"]
 build-backend = "scikit_build_core.build"
 
 [tool.scikit-build]
+wheel.py-api = "cp39" # https://scikit-build-core.readthedocs.io/en/latest/cmakelists.html
 cmake.verbose = true
 cmake.build-type = "Release"
 logging.level = "ERROR"
