@@ -162,6 +162,7 @@ namespace linkml{
         }
         merge_bar.stop();
 
+        return cloud;
         
     }
 
