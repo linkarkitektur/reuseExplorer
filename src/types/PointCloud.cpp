@@ -1,13 +1,14 @@
-#include "PointCloud.hh"
+#include "types/PointCloud.hh"
 
+#include "functions/progress_bar.hh"
 #include "functions/polyscope.hh"
+#include "functions/downsample.hh"
 #include "functions/solidify.hh"
 #include "functions/cluster_rooms.hh"
-#include "functions/downsample.hh"
 
+// #include <fmt/printf.h>
 
-namespace linkml
-{
+namespace linkml {
 
     /// Constructors
     /// @brief Load the point cloud from a file.
@@ -16,7 +17,6 @@ namespace linkml
         //Cloud::Ptr cloud = *this;
         pcl::io::loadPCDFile(filename, *cloud);
     }
-
 
     /// Load helper functions
     /// @brief Load the point cloud from a file.
@@ -93,40 +93,45 @@ namespace linkml
 
     }
 
-
+    /// @brief Transform the point cloud.
     void PointCloud::downsample(double leaf_size){
         auto bar = util::progress_bar(1, "Downsampling");
         linkml::downsample(*this, leaf_size);
         bar.stop();
     }
 
-
     /// @brief Cluster and solidify the point cloud.
     std::vector<Brep> PointCloud::solidify(){
-        polyscope::myinit();
-        // auto clusters_out = linkml::cluster_rooms<PointCloud::Cloud::PointType>(cloud);
-        // std::cout << "Number of clusters: " << clusters_out.size() << "\n";
 
 
-        // this->save("output.pcd", true);
+        auto clusters = linkml::cluster_rooms<PointCloud::Cloud::PointType>(cloud);
+        std::cout << "Number of clusters: " << clusters.size() << "\n";
 
-        pcl::io::loadPCDFile("output.pcd", *cloud);
 
-        auto clusters = std::vector<pcl::PointIndices::Ptr>();
-        auto cluster_map = std::unordered_map<int, pcl::PointIndices::Ptr>();
-
-        for (size_t i = 0; i < cloud->points.size(); i++){
-            int instance = cloud->points[i].instance;
-            if (cluster_map.find(instance) == cluster_map.end())
-                cluster_map[instance] = pcl::PointIndices::Ptr(new pcl::PointIndices());
-            
-            cluster_map[instance]->indices.push_back(i);
+        std::ofstream file_out("clusters.txt");
+        for (size_t i = 0; i < clusters.size(); i++){
+            for (size_t j = 0; j < clusters[i]->indices.size(); j++)
+                file_out << clusters[i]->indices[j] << " ";
+            file_out << std::endl;
         }
-
-        for (auto it = cluster_map.begin(); it != cluster_map.end(); it++)
-            clusters.push_back(it->second);
+        file_out.close();
 
 
+        // std::ifstream file_in("clusters.txt");
+        // std::vector<pcl::PointIndices::Ptr> clusters;
+        // std::string line;
+        // while (std::getline(file_in, line)){
+        //     std::istringstream iss(line);
+        //     pcl::PointIndices::Ptr cluster(new pcl::PointIndices());
+        //     int index;
+        //     while (iss >> index)
+        //         cluster->indices.push_back(index);
+        //     clusters.push_back(cluster);
+        // }
+        // file_in.close();
+
+
+        polyscope::myinit();
         
         auto meshes = linkml::solidify<PointCloud::Cloud::PointType>(cloud, clusters);
 
@@ -135,7 +140,7 @@ namespace linkml
             return Brep(mesh);
         });
 
-        fmt::print("Number of breps: {}\n", breps.size());
+        printf("Number of breps: {}\n", breps.size());
 
         for (size_t i = 0; i < breps.size(); i++)
             breps[i].display("Mesh" + std::to_string(i));
@@ -185,7 +190,6 @@ namespace linkml
 
         return img;
     }
-
 
     /// @brief Display the point cloud.
     void PointCloud::display(std::string name) const {

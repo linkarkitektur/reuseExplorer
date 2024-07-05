@@ -61,7 +61,8 @@ imgui.ini
 *.pcd
 *.off
 *.head
-
+rays.in
+rays.out
 
 # Ignore logging
 *.log

@@ -1,13 +1,13 @@
 #pragma once
 #include "types/PointCloud.hh"
 #include "types/PlanarPointSet.hh"
-#include "algorithms/markov_clustering.hh"
 #include "algorithms/refine.hh"
 #include "types/surface.hh"
 #include "functions/progress_bar.hh"
 #include "functions/color.hh"
 #include "algorithms/mcl.hh"
-#include "algorithms/mcl_gpu.cu"
+
+#include <functions/polyscope.hh>
 
 #include <pcl/filters/random_sample.h>
 #include <pcl/filters/experimental/functor_filter.h>
@@ -177,7 +177,7 @@ class FaceIDMap{
 };
 
 
-Clusters extract_clusters(linkml::PointCloud::Cloud::ConstPtr cloud){
+static Clusters extract_clusters(linkml::PointCloud::Cloud::ConstPtr cloud){
 
     // Collect all cluster indices
     std::unordered_set<size_t> cluster_indices_set;
@@ -206,7 +206,7 @@ namespace linkml
 {
     
     template<typename PointT>
-    static std::vector<pcl::Indices> cluster_rooms(typename pcl::PointCloud<PointT>::Ptr cloud)
+    std::vector<pcl::PointIndices::Ptr> cluster_rooms(typename pcl::PointCloud<PointT>::Ptr cloud)
     {
 
         // Remove everyting that is not a surface
@@ -218,7 +218,7 @@ namespace linkml
 
         pcl::RandomSample<PointCloud::Cloud::PointType> sampler;
         sampler.setInputCloud(cloud);
-        sampler.setSample(500000);
+        sampler.setSample(5000000);
         sampler.setSeed(0);
         sampler.filter(*cloud);
 
@@ -227,15 +227,23 @@ namespace linkml
 
         std::cout << "Number of planes: " << clusters.size() << std::endl;
 
+        // 202 236
 
         // Create surfaces
         std::vector<Surface> surfaces(clusters.size());
         auto surface_bar = util::progress_bar(surfaces.size(), "Creating surfaces");
-        for (size_t i = 0; i < clusters.size(); i++){
+        for (size_t i = 0; i < d.size(); i++){
             surfaces[i] = Surface(cloud, clusters[i].indices);
             surface_bar.update();
         }
         surface_bar.stop();
+
+
+        // polyscope::myinit();
+        // for (int i = 0; i< 202 /*surfaces.size()*/; i++)
+        //     polyscope::display< linkml::Surface const& >(surfaces[i], "Surface " + std::to_string(i));
+        // polyscope::myshow();
+            
 
 
 
@@ -265,6 +273,9 @@ namespace linkml
 
 
         using Tile = std::pair<unsigned int, Surface *>;
+
+
+
 
         auto tile_bar = util::progress_bar(surfaces.size(), "Creating tiles");
         std::vector<Tile> tiles;
@@ -369,6 +380,34 @@ namespace linkml
         Eigen::MatrixXd matrix = Eigen::MatrixXd::Zero(point_map.size(), point_map.size());
 
 
+        // // Write output file
+        // auto output_file_bar = util::progress_bar(1, "Writing output file");
+        // std::ofstream file("./rays");
+        // if (file.is_open()){
+
+        //     for (size_t i = 0; i < rays.size(); i++){
+
+        //         auto & [ray, tile] = rays[i];
+
+        //         // If we did not hit anything, there is a clear line of sight between the two points
+        //         const double value = (ray.hit.geomID == RTC_INVALID_GEOMETRY_ID) ? 1 : 0;
+                
+        //         if (value == 0)
+        //             continue;
+        
+        //         int source_int = id_to_int[tile->first];
+        //         int target_int = id_to_int[ray.ray.id];
+
+        //         file << source_int << " " << target_int << "  " << value << std::endl;
+        //     }
+        //     file.close();
+        // }
+        // else 
+        //     std::cerr << "Unable to open file" << std::endl;
+        
+        // output_file_bar.stop();
+
+
         auto matrix_bar = util::progress_bar(rays.size(), "Creating matrix");
         #pragma omp parallel for
         for (size_t i = 0; i < rays.size(); i++){
@@ -391,9 +430,9 @@ namespace linkml
         }
         matrix_bar.stop();
 
-        cv::Mat img;
-        cv::eigen2cv(matrix,img);
-        cv::imwrite("matrix_rays.png", img*255);
+        // cv::Mat img;
+        // cv::eigen2cv(matrix,img);
+        // cv::imwrite("matrix_rays.png", img*255);
 
 
         std::unordered_map<size_t, pcl::Indices> cluster_map{};
@@ -410,19 +449,22 @@ namespace linkml
                 cluster_map[cluster_j].push_back(index);
             }
         };
-        auto mcl = mcl_cpp::mcl(matrix, asign_cluster);
-        matrix = mcl.cluster_mcl(2,2);
+        auto mcl = mcl::mcl<mcl::MCLAlgorithm::CLI, Eigen::MatrixXd>(matrix, asign_cluster);
+        mcl.cluster_mcl(2,1.2);
 
-        cv::eigen2cv(matrix,img);
-        cv::imwrite("matrix_mcl.png", img*255);
+        // cv::eigen2cv(matrix,img);
+        // cv::imwrite("matrix_mcl.png", img*255);
 
         clustering_bar.stop();
 
 
 
-        std::vector<pcl::Indices> clusters2{};
-        for (auto & [_, indices]: cluster_map)
-            clusters2.push_back(indices);
+        std::vector<pcl::PointIndices::Ptr> clusters2 = std::vector<pcl::PointIndices::Ptr>();
+        for (auto & [_, indices]: cluster_map){
+            pcl::PointIndices::Ptr cluster = pcl::PointIndices::Ptr(new pcl::PointIndices());
+            cluster->indices = indices;
+            clusters2.push_back(cluster);
+        }
         return clusters2;
 
 

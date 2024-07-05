@@ -2,6 +2,7 @@
 #include "types/Surface_Mesh.hh"
 #include "types/PointCloud.hh"
 #include "types/Surface_Mesh.hh"
+#include "types/surface.hh"
 
 #include "functions/polyscope_helpers.hh"
 #include "functions/crop_plane_with_aabb.hh"
@@ -45,20 +46,22 @@ namespace polyscope  {
 
     //// Define a function to display a error message in case the display function is not defined
     template <typename T>
-    void display(T, std::optional<const std::string> );
+    void display(T, std::optional<const std::string> = std::nullopt);
 
 
-    template <>
-    void display(tg::aabb3 const& box, std::optional<const std::string> name);
+    // template <>
+    // void display(tg::aabb3 const& box, std::optional<const std::string> name);
 
-    template <>
-    void display( pcl::PointCloud<PointT> const& cloud, std::optional<const std::string> name);
+    // template <>
+    // void display( pcl::PointCloud<PointT> const& cloud, std::optional<const std::string> name);
 
-    template <>
-    void display(linkml::Surface_mesh const& mesh, std::optional<const std::string> name); 
+    // template <>
+    // void display(linkml::Surface_mesh const& mesh, std::optional<const std::string> name); 
 
-    static void display(const tg::plane3 & plane, const tg::aabb3 & bbox, std::optional<const std::string> name);
+    // static void display(const tg::plane3 & plane, const tg::aabb3 & bbox, std::optional<const std::string> name);
 
+    // template <>
+    // static void display(const linkml::surface& surface, std::optional<const std::string> name);
 
 
     enum class Field { 

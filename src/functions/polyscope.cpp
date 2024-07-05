@@ -107,9 +107,50 @@ namespace polyscope  {
             faces.push_back({index_map[indices[0]], index_map[indices[1]], index_map[indices[2]]});
         }
 
+        std::cout << "Mesh: " << vertecies.size() << " " << faces.size() << std::endl;
+
         polyscope::registerSurfaceMesh((name)? name.value() : "Mesh", vertecies, faces);
     }
 
+    template <>
+    void display( linkml::Surface const& surface, std::optional<const std::string> name){
+
+        auto mesh = surface.GetMesh();
+        mesh.collect_garbage();
+
+        std::vector<std::array<size_t,4>> faces;
+        std::vector<std::array<double,  3>> vertecies;
+
+
+        for (auto v: mesh.vertices()){
+            auto p = mesh.point(v);
+            vertecies.push_back({CGAL::to_double(p.x()), CGAL::to_double(p.y()), CGAL::to_double(p.z())});
+        }
+
+        for (auto f: mesh.faces()){
+            std::vector<size_t> face;
+            for (auto v: mesh.vertices_around_face(mesh.halfedge(f)))
+                face.push_back(v.id());
+
+            faces.push_back({face[0], face[1], face[2], face[3]});
+        }
+
+        auto ps_mesh = polyscope::registerSurfaceMesh((name)? name.value() : "Surface", vertecies, faces);
+        ps_mesh->setBackFacePolicy(BackFacePolicy::Cull);
+
+        // PMP::triangle_topology(mesh);
+        // display<linkml::Surface_mesh const&>(mesh , (name) ? name.value() : "Surface" );
+        // auto ps_mesh = polyscope::getSurfaceMesh((name) ? name.value() : "Surface");
+
+        std::vector<double> num_supporting_points = std::vector<double>(mesh.num_faces(), 0.0);
+        for (auto f: mesh.faces())
+            num_supporting_points[f.id()] = surface.GetPoints(f).size();
+        auto quantity = ps_mesh->addFaceScalarQuantity("Number of Supporting Points", num_supporting_points );
+        quantity->setEnabled(true);
+        quantity->setColorMap("coolwarm");
+        quantity->setMapRange({0, 50});
+
+    }
 
     static void display(const tg::plane3 & plane, const tg::aabb3 & bbox, std::optional<const std::string> name){
         linkml::Surface_mesh m;

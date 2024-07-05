@@ -15,6 +15,19 @@ import _core
 from _core import *
 
 
+# Actions
+PARSE_DATASET: bool      = False
+ANNOTATE: bool          = False
+REGISTER: bool          = False
+FILTER: bool            = False
+MERGE: bool             = False
+CLUSTER: bool           = False
+DOWNSAMPLE: bool        = False
+REGION_GROWING: bool    = False
+SOLIDIFY: bool          = True
+
+
+
 print("LinkML-Py loaded")
 
 
@@ -24,8 +37,8 @@ def chunks(lst, n):
     for i in range(0, len(lst), n):
         yield lst[i:i + n]
 
-dataset_path = "/home/mephisto/server_data/stray_scans/0ba33d855b/" # CPC Office
-# dataset_path = "/home/mephisto/server_data/stray_scans/7092626a22/" # Aarhus Office
+# dataset_path = "/home/mephisto/server_data/stray_scans/0ba33d855b/" # CPC Office
+dataset_path = "/home/mephisto/server_data/stray_scans/7092626a22/" # Aarhus Office
 # dataset_path = "/home/mephisto/server_data/stray_scans/665518e46a/" # Lobby
 # dataset_path = "/home/mephisto/server_data/stray_scans/8c0e3c381c/" # New scan small room
 # dataset_path = "/home/mephisto/server_data/stray_scans/3c670b035f" # New scan 
@@ -36,10 +49,10 @@ name = f"./{dataset.name}.pcd"
 
 
 
-tmp_folder = "./clouds/"
+tmp_folder = f"./{dataset.name}/"
 
 # Parse dataset
-if (False):
+if (PARSE_DATASET):
     # Remove temp data
     if not os.path.exists(tmp_folder):
         os.makedirs(tmp_folder)
@@ -53,7 +66,7 @@ if os.path.exists(tmp_folder):
     #clouds = PointCloudsInMemory(tmp_folder)
 
 # Annotate
-if (False):
+if (ANNOTATE):
     for idx, subset in enumerate(chunks(clouds, 1000)):
         subset.annotate("./yolov8x-seg.onnx", dataset)
         print(f"Annotated {idx+1}th subset of {len(clouds)/1000} subsets")
@@ -61,14 +74,15 @@ if (False):
     #clouds.annotate("./yolov8x-seg.onnx", dataset)
 
 # Registration
-if (False):
+if (REGISTER):
     clouds.register()
 
 # Filter
-if (False):
+if (FILTER):
     clouds.filter()
 
-if (True):
+# Merge
+if (MERGE):
     cloud = clouds.merge()
     cloud.save(name)
 
@@ -79,20 +93,20 @@ cloud = PointCloud(name)
 print("Done loading!")
 
 # Clustering
-if (False):
+if (CLUSTER):
     cloud.clustering()
     cloud.save(name)
 
-
-if (True):
+# Downsample
+if (DOWNSAMPLE):
     cloud.downsample(0.05)
     cloud.save(name)
 
-#cloud.display()
+# cloud.display()
 
 
 # Region growing
-if (True):
+if (REGION_GROWING):
     cloud.region_growing(
         #angle_threshold = float(0.96592583),
         #plane_dist_threshold = float(0.1),
@@ -104,13 +118,28 @@ if (True):
         )
     cloud.save(name)
 
-#cloud.display()
+# cloud.display()
 
 
-#cloud.solidify()
-#cloud.display()
-#cloud.save(path)
-#cloud.display()
+# Solidify
+if (SOLIDIFY):
+    breps = cloud.solidify()
+
+    brep_folder = "./Breps/"
+
+    # Remove existing breps
+    if not os.path.exists(brep_folder):
+        os.makedirs(brep_folder)
+    else:
+        for file in os.listdir(brep_folder):
+            os.remove(os.path.join(brep_folder, file))
+
+    # Save breps
+    for idx, brep in enumerate(breps):
+        brep.save(brep_folder + f"{dataset.name}_{idx}.off")
+
+cloud.display()
+
 
 #cProfile.runctx("cloud.solidify()", globals(), locals(), "Profile.prof")
 #s = pstats.Stats("Profile.prof")
@@ -122,7 +151,6 @@ if (True):
 #cloud.display()
 
 # cloud = PointCloud("/home/mephisto/server_data/test_export.pcd")
-# breps = cloud.solidify()
 # [breps[idx].save(f"brep_new_{idx}.off") for idx in range(len(breps))]
 
 # breps = [Brep.load(f"brep_new_{idx}.off") for idx in range(1)]

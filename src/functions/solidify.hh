@@ -285,7 +285,7 @@ namespace linkml
         for (size_t i = 0; i < meshes.size(); i++)
             PMP::reverse_face_orientations(meshes[i]);
     
-        printf("Number of meshes: %d\n", meshes.size());
+        printf("Number of meshes: %d\n", (int)meshes.size());
 
 
         return meshes;

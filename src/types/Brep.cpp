@@ -18,11 +18,18 @@
 #include <CGAL/Surface_mesh/IO/OFF.h>
 #include <CGAL/Optimal_bounding_box/oriented_bounding_box.h>
 
+
 #include "types/Plane.hh"
 #include "functions/fit_plane_thorugh_points.hh"
 
 #include <vector>
 #include <algorithm>
+
+// defining OPENNURBS_PUBLIC_INSTALL_DIR enables automatic linking using pragmas
+#define OPENNURBS_PUBLIC_INSTALL_DIR "../extern/opennurbs"
+// uncomment the next line if you want to use opennurbs as a DLL
+//#define OPENNURBS_IMPORTS
+#include "../extern/opennurbs/opennurbs_public.h"
 
 namespace PMP = CGAL::Polygon_mesh_processing;
 
@@ -61,6 +68,21 @@ namespace linkml
 
     Brep::Brep(Surface_mesh const& mesh) : mesh(mesh){
         this->mesh.add_property_map<Surface_mesh::Face_index, Kernel::Point_2>("f:origin", Kernel::Point_2(0,0));
+
+        // ON_Mesh ONmesh = ON_Mesh();
+        // for (auto v: mesh.vertices())
+        //     ONmesh.SetVertex(v.idx(), ON_3dPoint(mesh.point(v).x(), mesh.point(v).y(), mesh.point(v).z()));
+
+
+        // for (auto f: mesh.faces()){
+        //     ON_SimpleArray<unsigned int> face;
+        //     for (auto v : mesh.vertices_around_face(mesh.halfedge(f)))
+        //         face.Append(v.idx());
+        //     ONmesh.AddNgon(face);
+        // }
+        
+        // ON_Brep* pBrep = ON_BrepFromMeshWithNgons(ONmesh.Topology(), false, true, 0.000001);
+
     }
 
     void Brep::save(std::string const& filename) const { 

@@ -172,6 +172,7 @@ add_subdirectory(extern/pybind11)
 add_subdirectory(extern/reflector)
 add_subdirectory(extern/rich-log)
 add_subdirectory(extern/typed-geometry)
+add_subdirectory(extern/opennurbs)
 
 # ===============================================
 # configure executable

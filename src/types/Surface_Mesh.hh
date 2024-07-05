@@ -8,9 +8,7 @@
 
 namespace linkml {
     using Kernel =  CGAL::Exact_predicates_inexact_constructions_kernel;
-    // using Kernel =  CGAL::Exact_predicates_exact_constructions_kernel;
-    // using Kernel_exact =  CGAL::Exact_predicates_exact_constructions_kernel;
-    // using Surface_mesh_exact = CGAL::Surface_mesh<Kernel_exact::Point_3>;
+    
     using Point_3 = Kernel::Point_3;
     using Vector_3 = Kernel::Vector_3;
     using Direction_3 = Kernel::Direction_3;

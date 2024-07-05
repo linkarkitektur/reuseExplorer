@@ -1,6 +1,4 @@
-#pragma once
-
-#pragma once
+#include "algorithms/mcl.hh"
 
 #include <Eigen/Dense>
 
@@ -22,9 +20,10 @@ using std::vector;
 using std::map;
 
 
-namespace mcl_cpp
+namespace mcl
 {
-	class mcl_gpu
+	template<>
+	class mcl<MCLAlgorithm::GPU>
 	{
 	private:
 

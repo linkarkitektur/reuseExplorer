@@ -13,5 +13,6 @@ from .speckle import brep
 # from .speckle.mesh import *
 # from .speckle.polyline import *
 
+from .cli import run
 
-__all__ = ["__doc__", "__version__", "speckle", "export"]
+__all__ = ["__doc__", "__version__", "speckle", "export", "run"]
