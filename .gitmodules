@@ -27,4 +27,7 @@
 	url = git@github.com:fmtlib/fmt.git
 [submodule "extern/nexus"]
 	path = extern/nexus
-	url = git@github.com:project-arcana/nexus.git
+  url = git@github.com:project-arcana/nexus.git
+[submodule "extern/opennurbs"]
+	path = extern/opennurbs
+	url = git@github.com:mcneel/opennurbs.git
