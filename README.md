@@ -1,5 +1,4 @@
-# Linkm ML 
-**Aka. _ReuseExplorer_**
+# ReuseExplorer
 
 ### TODO:
 - [x] Add instructions for installing Dependencies
