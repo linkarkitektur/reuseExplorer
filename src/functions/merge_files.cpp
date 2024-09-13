@@ -138,7 +138,7 @@ namespace linkml{
                 // Downsample
                 auto downsample_bar = util::progress_bar(data.size(), "Downsampling");
                 static const size_t MAX_THREADS = 10;
-                size_t reduction = loop_count * 2;
+                size_t reduction = loop_count * 5;
 
                 threads = (reduction < MAX_THREADS)? MAX_THREADS-reduction:1;
                 omp_set_num_threads(threads);

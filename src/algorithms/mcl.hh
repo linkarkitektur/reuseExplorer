@@ -32,5 +32,6 @@ namespace mcl
 
 
     template class mcl<MCLAlgorithm::CLI, Eigen::MatrixXd>;
+    template class mcl<MCLAlgorithm::CPP, Eigen::MatrixXd>;
 
 }

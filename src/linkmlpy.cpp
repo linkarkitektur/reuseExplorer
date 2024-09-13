@@ -67,6 +67,9 @@ PYBIND11_MODULE(_core, m) {
         .def_property_readonly("color_size", &linkml::Dataset::color_size)
         .def_property_readonly("depth_size", &linkml::Dataset::depth_size)
         .def_property_readonly("name", &linkml::Dataset::name)
+        .def("display", &linkml::Dataset::display, "Display the dataset",
+            "name"_a,
+            "show"_a = true )
         ;
 
     /// @brief Data is the indevidual frames that the dataset provieds.
@@ -171,9 +174,9 @@ PYBIND11_MODULE(_core, m) {
             const py::array_t<float> xyz, 
             std::optional<const py::array_t<uint8_t>> rgb, 
             std::optional<const py::array_t<float>> normal, 
-            std::optional<const py::array_t<uint8_t>> semantic, 
-            std::optional<const py::array_t<uint8_t>> instance, 
-            std::optional<const py::array_t<uint8_t>> label) {
+            std::optional<const py::array_t<int32_t>> semantic, 
+            std::optional<const py::array_t<int32_t>> instance, 
+            std::optional<const py::array_t<int32_t>> label) {
 
                 /* Request a buffer descriptor from Python */
                 py::buffer_info xyz_info = xyz.request();
@@ -268,6 +271,7 @@ PYBIND11_MODULE(_core, m) {
         )
         .def("filter", &linkml::PointCloud::filter, 
             "Filter the point cloud", 
+            "value"_a = 2,
             py::return_value_policy::reference_internal,
             py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
         )
@@ -297,6 +301,16 @@ PYBIND11_MODULE(_core, m) {
         )
         .def("solidify", &linkml::PointCloud::solidify, 
             "Solidify the point cloud",
+            "downsample_size"_a = 5000000,
+            "sx"_a = 0.4,
+            "sy"_a = 0.4,
+            "expand_factor"_a = 2,
+            "inflate_factor"_a = 1.2,
+            "max_loop"_a = 10.0,
+            "mult_factor"_a = 1.0,
+            "fitting"_a = 0.20,
+            "coverage"_a = 0.10,
+            "complexity"_a = 0.70,
             py::return_value_policy::reference_internal,
             py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
         )
@@ -334,7 +348,8 @@ PYBIND11_MODULE(_core, m) {
             py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
         )
         .def("filter", &linkml::PointCloudsInMemory::filter, 
-            "Filter the point cloud", 
+            "Filter the point cloud",
+            "value"_a = 2,
             py::return_value_policy::reference_internal,
             py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
         )
@@ -389,7 +404,8 @@ PYBIND11_MODULE(_core, m) {
             py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
         )
         .def("filter", &linkml::PointCloudsOnDisk::filter, 
-            "Filter the point cloud", 
+            "Filter the point cloud",
+            "value"_a = 2,
             py::return_value_policy::reference_internal,
             py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>()
         )
@@ -536,7 +552,10 @@ PYBIND11_MODULE(_core, m) {
         .def("Trims", &linkml::Brep::get_Trims)
         .def("Orientation", &linkml::Brep::get_Orientation)
         .def("get_mesh", &linkml::Brep::get_Mesh)
-        .def("display", &linkml::Brep::display)
+        .def("display", &linkml::Brep::display, 
+            "Display the Brep", 
+            "name"_a = "Brep", 
+            "show_mesh"_a = true)
         ;
 
     py::class_<linkml::Brep::Face>(m, "Face")
@@ -608,6 +627,7 @@ PYBIND11_MODULE(_core, m) {
 
 
 
+    // TODO: Those should be moved to their respecive classes
     // Functions
     m.def("parse_dataset", &linkml::parse_Dataset, "Parse a StrayScanner scan in to a point cloud"
         "dataset"_a,
@@ -617,16 +637,9 @@ PYBIND11_MODULE(_core, m) {
         "step"_a = 5
     );
 
+    m.def("extract_instances", &linkml::extract_instances, "Extract the instance for a point cloud"
+        "point_cloud"_a);
 
-
-    // m.def("create_cell_complex", &linkml::create_cell_complex, "point_cloud"_a, "plane_fit_results"_a );
-    // m.def("refine", [](
-    //     linkml::PointCloud::Cloud::Ptr const cloud, 
-    //     std::vector<pcl::PointIndices> const & clusters, 
-    //     float angle, 
-    //     float dist ){return linkml::refine(cloud, clusters, tg::degree(angle), dist);}, 
-    //     "cloud"_a, "clusters"_a, "angle_threashhold_degree"_a =25, "distance_threshhold"_a = 0.5);
-    //m.def("clustering", &linkml::clustering, "point_cloud"_a, "fit_plane_results"_a);
 
 
 

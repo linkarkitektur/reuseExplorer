@@ -1,18 +1,18 @@
 from __future__ import annotations
 
+import logging
+
+
 
 from ._core import *
 from ._core import __doc__, __version__
 
-from .speckle import brep
-#from .speckle import *
-
-# from .speckle.WORLDXY import *
-# from .speckle.brep import *
-# from .speckle.aabb import *
-# from .speckle.mesh import *
-# from .speckle.polyline import *
+# Define the logger format
+log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+logging.basicConfig(level=logging.INFO, format=log_format)
 
 from .cli import run
 
 __all__ = ["__doc__", "__version__", "speckle", "export", "run"]
+
+

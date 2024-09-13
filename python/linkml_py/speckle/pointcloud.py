@@ -5,7 +5,7 @@ from specklepy.objects.units import Units
 
 from .aabb import AABBToBase
 
-from ._core import PointCloud
+from .._core import PointCloud
 
 import numpy as np
 from numpy.lib.recfunctions import structured_to_unstructured

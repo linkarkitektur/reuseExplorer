@@ -1,5 +1,6 @@
 #include "./Dataset.hh"
 #include <functions/lodepng.hh>
+#include <functions/polyscope.hh>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -323,6 +324,14 @@ Data Dataset::operator[] (int idx) const {
     }
     return data;
 }
+
+
+void Dataset::display(std::string name, bool show) const {
+    polyscope::myinit();
+    polyscope::display<const Dataset &>(*this, name);
+    if (show) polyscope::myshow();
+}
+    
 
 } // namespace linkml
 

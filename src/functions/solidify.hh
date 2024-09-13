@@ -60,13 +60,11 @@ namespace linkml
     {
 
         const PointT& operator[](const PointCloud::Cloud::PointType& k) const { 
-            auto p = k.getVector3fMap();
-            return PointT(p[0], p[1], p[2]);
+            return PointT(k.x, k.y, k.z);
         }
 
         friend PointT get(const PointMap&, const PointCloud::Cloud::PointType& k) { 
-            auto p = k.getVector3fMap();
-            return PointT(p[0], p[1], p[2]);
+            return PointT(k.x, k.y, k.z);
     }
         friend void put(const PointMap&, PointCloud::Cloud::PointType& k, const PointT& v) { 
                     k.x = CGAL::to_double(v[0]);
@@ -80,28 +78,26 @@ namespace linkml
     {
 
         const VectorT& operator[](const PointCloud::Cloud::PointType& k) const { 
-            auto v = k.getNormalVector3fMap(); 
-            return VectorT(v[0], v[1], v[2]);
+            return VectorT(k.normal_x, k.normal_y, k.normal_z);
         }
 
         friend VectorT get(const NormalMap&, const PointCloud::Cloud::PointType& k) { 
-            auto v =  k.getNormalVector3fMap();
-            return VectorT(v[0], v[1], v[2]);
+            return VectorT(k.normal_x, k.normal_y, k.normal_z);
         }
         friend void put(const NormalMap&, PointCloud::Cloud::PointType& k, const VectorT& v) { 
-                k.normal[0] = CGAL::to_double(v[0]);
-                k.normal[1] = CGAL::to_double(v[1]);
-                k.normal[2] = CGAL::to_double(v[2]);
+                k.normal_x = CGAL::to_double(v[0]);
+                k.normal_y = CGAL::to_double(v[1]);
+                k.normal_z = CGAL::to_double(v[2]);
             }
     };
 
     struct PlaneIndexMap
     {
 
-        const int & operator[](const PointCloud::Cloud::PointType& point) const { return (int)point.label;}
+        const int & operator[](const PointCloud::Cloud::PointType& point) const { return point.label;}
 
-        friend int get(const PlaneIndexMap&, const PointCloud::Cloud::PointType& k) { return (int)k.label; }
-        friend void put(const PlaneIndexMap&, PointCloud::Cloud::PointType& k, const int & v) { k.label = (std::uint8_t)v;}
+        friend int get(const PlaneIndexMap&, const PointCloud::Cloud::PointType& k) { return k.label; }
+        friend void put(const PlaneIndexMap&, PointCloud::Cloud::PointType& k, const int & v) { k.label = (std::int32_t)v;}
 
 
     };
@@ -186,7 +182,15 @@ namespace linkml
     }
 
     template<typename PointT, typename Mesh>
-    void create_polysurface(typename pcl::PointCloud<PointT>::ConstPtr cloud, pcl::PointIndices::ConstPtr sellection, Mesh & mesh, size_t i = 0)
+    void create_polysurface(
+        typename pcl::PointCloud<PointT>::ConstPtr cloud, 
+        pcl::PointIndices::ConstPtr sellection, 
+        Mesh & mesh,
+        size_t i = 0,
+        double fitting =  0.20,
+        double coverage = 0.10,
+        double complexity = 0.70
+    )
     {
         // using Kernel_inexact = CGAL::Exact_predicates_inexact_constructions_kernel;
 
@@ -215,7 +219,7 @@ namespace linkml
 
         // Get the unique plane indices
         std::unordered_set<int> plane_indices_set = std::unordered_set<int>();
-        #pragma omp parallel for reduction(merge:plane_indices_set)
+        // #pragma omp parallel for reduction(merge:plane_indices_set)
         for (size_t i = 0; i < cluster_cloud->points.size(); i++)
             plane_indices_set.insert(cluster_cloud->points[i].label);
 
@@ -224,20 +228,20 @@ namespace linkml
         if (plane_indices_set.size() >=4){
 
 
-            // #pragma omp critical(print)
-            // printf("Computing poly surface for Task %d with %d planes.\n", i, plane_indices_set.size());
+            #pragma omp critical(print)
 
 
-            int index = 0;
+            int i = 0;
             std::unordered_map<int, int> plane_index_map = std::unordered_map<int, int>();
             for (auto it = plane_indices_set.begin(); it != plane_indices_set.end(); it++)
-                plane_index_map[*it] = index++;
+                plane_index_map[*it] = i++;
 
             // Renumber the plane indices
             #pragma omp parallel for
             for (size_t i = 0; i < cluster_cloud->points.size(); i++)
                 cluster_cloud->points[i].label = plane_index_map[cluster_cloud->points[i].label];
 
+            printf("Computing poly surface for Task %d with %d planes.\n", i, plane_indices_set.size());
             CGAL::Polygonal_surface_reconstruction<Kernel> psr(cluster_cloud->points, PointMap<Point>(), NormalMap<Vector>(), PlaneIndexMap());
             psr.template reconstruct<MIP_Solver>(mesh, 0.20 /*fitting*/, 0.10/*coverage*/, 0.70/*complexity*/);
 
@@ -250,7 +254,13 @@ namespace linkml
     
 
     template<typename PointT>
-    static std::vector<Surface_mesh> solidify(typename pcl::PointCloud<PointT>::ConstPtr cloud, std::optional<std::vector<pcl::PointIndices::Ptr>> clusters_in = std::nullopt)
+    static std::vector<Surface_mesh> solidify(
+        typename pcl::PointCloud<PointT>::ConstPtr cloud, 
+        std::optional<std::vector<pcl::PointIndices::Ptr>> clusters_in = std::nullopt,
+        double fitting =  0.20,
+        double coverage = 0.10,
+        double complexity = 0.70
+    )
     {
         std::cout << "Solidifying..." << std::endl;
         // If clusters are not provided treat the whole cloud as a single cluster
@@ -261,18 +271,26 @@ namespace linkml
 
         std::vector<Surface_mesh> meshes = std::vector<Surface_mesh>(clusters.size());
         auto solidification_bar = util::progress_bar(clusters.size(), "Solidification");
+
+#if 0 //Parallelize the solidification
         #pragma omp parallel
         {
             #pragma omp single
             {
                 for (size_t i = 0; i < clusters.size(); i++){
                 
-                    #pragma omp task
-                        create_polysurface<PointT, Surface_mesh>(cloud, clusters[i], meshes[i], i);
+                    #pragma omp task private(i, fitting, coverage, complexity)
+                        create_polysurface<PointT, Surface_mesh>(cloud, clusters[i], meshes[i], i, fitting, coverage, complexity);
                 }
             }
             #pragma omp taskwait
         }
+#else
+        for (size_t i = 0; i < clusters.size(); i++){
+            create_polysurface<PointT, Surface_mesh>(cloud, clusters[i], meshes[i], i, fitting, coverage, complexity);
+            solidification_bar.update();
+        }
+#endif
         solidification_bar.stop();
 
         

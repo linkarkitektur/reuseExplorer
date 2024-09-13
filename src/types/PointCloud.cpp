@@ -101,20 +101,42 @@ namespace linkml {
     }
 
     /// @brief Cluster and solidify the point cloud.
-    std::vector<Brep> PointCloud::solidify(){
+    std::vector<Brep> PointCloud::solidify(
+        unsigned int downsample_size,
+        double sx,
+        double sy,
+        double expand_factor, 
+        double inflate_factor, 
+        double max_loop, 
+        double mult_factor,
+        double fitting,
+        double coverage,
+        double complexity
+    ){
 
 
-        auto clusters = linkml::cluster_rooms<PointCloud::Cloud::PointType>(cloud);
+        auto cloud_copy = PointCloud::Cloud::Ptr(new PointCloud::Cloud(*cloud));
+
+        auto clusters = linkml::cluster_rooms<PointCloud::Cloud::PointType>(
+            cloud_copy, 
+            downsample_size, 
+            sx, 
+            sy,
+            expand_factor, 
+            inflate_factor, 
+            max_loop, 
+            mult_factor
+        );
         std::cout << "Number of clusters: " << clusters.size() << "\n";
 
 
-        std::ofstream file_out("clusters.txt");
-        for (size_t i = 0; i < clusters.size(); i++){
-            for (size_t j = 0; j < clusters[i]->indices.size(); j++)
-                file_out << clusters[i]->indices[j] << " ";
-            file_out << std::endl;
-        }
-        file_out.close();
+        // std::ofstream file_out("clusters.txt");
+        // for (size_t i = 0; i < clusters.size(); i++){
+        //     for (size_t j = 0; j < clusters[i]->indices.size(); j++)
+        //         file_out << clusters[i]->indices[j] << " ";
+        //     file_out << std::endl;
+        // }
+        // file_out.close();
 
 
         // std::ifstream file_in("clusters.txt");
@@ -131,9 +153,11 @@ namespace linkml {
         // file_in.close();
 
 
-        polyscope::myinit();
+
+        // polyscope::myinit();
+        // this->display("Cloud");
         
-        auto meshes = linkml::solidify<PointCloud::Cloud::PointType>(cloud, clusters);
+        auto meshes = linkml::solidify<PointCloud::Cloud::PointType>(cloud, clusters, fitting, coverage, complexity);
 
         std::vector<Brep> breps;
         std::transform(meshes.begin(), meshes.end(), std::back_inserter(breps), [](Surface_mesh const& mesh){
@@ -142,11 +166,12 @@ namespace linkml {
 
         printf("Number of breps: {}\n", breps.size());
 
-        for (size_t i = 0; i < breps.size(); i++)
-            breps[i].display("Mesh" + std::to_string(i));
+        // for (size_t i = 0; i < breps.size(); i++)
+        //     breps[i].display("Mesh" + std::to_string(i));
 
+        // std::cout << "Displaying cloud\n";
 
-        this->display("Cloud");
+        // this->display("Cloud");
 
         return breps;
     }

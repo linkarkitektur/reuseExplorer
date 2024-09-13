@@ -3,6 +3,7 @@
 #include "types/PointCloud.hh"
 #include "types/Surface_Mesh.hh"
 #include "types/surface.hh"
+#include "types/Dataset.hh"
 
 #include "functions/polyscope_helpers.hh"
 #include "functions/crop_plane_with_aabb.hh"

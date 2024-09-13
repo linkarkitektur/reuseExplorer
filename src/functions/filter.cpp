@@ -8,13 +8,13 @@
 
 namespace linkml
 {
-    void PointCloud::filter(){
+    void PointCloud::filter(typename PointCloud::Cloud::PointType::LableT value){
 
         // Only keep highest confidence
         ///////////////////////////////////////////////////////////////////////////////
         size_t j = 0;
         for (size_t k = 0; k < (*this)->size(); k++){
-            if ((*this)->at(k).confidence >= 2U){
+            if ((*this)->at(k).confidence >= value){
                 (*this)->at(j) = (*this)->at(k);
                 j++;
             }
@@ -28,7 +28,9 @@ namespace linkml
     }
 
     template <typename T>
-    PointClouds<T> PointClouds<T>::filter(){
+    PointClouds<T> PointClouds<T>::filter(
+        typename PointCloud::Cloud::PointType::LableT value
+    ){
 
         // Only keep highest confidence
         ///////////////////////////////////////////////////////////////////////////////
@@ -37,10 +39,10 @@ namespace linkml
         for (size_t i = 0; i < data.size(); i++){
             if constexpr (std::is_same<T, std::string>::value){
                 auto cloud = PointCloud::load(data[i]);
-                cloud.filter();
+                cloud.filter(value);
                 cloud.save(data[i]);  
             } else if constexpr (std::is_same<T, PointCloud>::value){
-                data[i].filter();
+                data[i].filter(value);
             }
             filter_bar.update();
         }
@@ -50,7 +52,7 @@ namespace linkml
 
     }
 
-    template PointCloudsInMemory  PointCloudsInMemory::filter();
-    template PointCloudsOnDisk  PointCloudsOnDisk::filter();
+    template PointCloudsInMemory  PointCloudsInMemory::filter( PointCloud::Cloud::PointType::LableT value);
+    template PointCloudsOnDisk  PointCloudsOnDisk::filter( PointCloud::Cloud::PointType::LableT value);
 
 } // namespace linkml

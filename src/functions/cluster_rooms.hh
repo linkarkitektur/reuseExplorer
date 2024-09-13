@@ -22,6 +22,8 @@
 #include <opencv4/opencv2/core/eigen.hpp>
 
 
+#define UseIntersection 0
+#define SaveMatrix 0
 
 
 template<typename PointT>
@@ -184,7 +186,7 @@ static Clusters extract_clusters(linkml::PointCloud::Cloud::ConstPtr cloud){
     for (size_t i = 0; i < cloud->points.size(); i++)
         cluster_indices_set.insert(cloud->points[i].label);
 
-    cluster_indices_set.erase(0);
+    cluster_indices_set.erase(-1);
 
     Indices cluster_indices(cluster_indices_set.begin(), cluster_indices_set.end());
 
@@ -206,7 +208,16 @@ namespace linkml
 {
     
     template<typename PointT>
-    std::vector<pcl::PointIndices::Ptr> cluster_rooms(typename pcl::PointCloud<PointT>::Ptr cloud)
+    std::vector<pcl::PointIndices::Ptr> cluster_rooms(
+        typename pcl::PointCloud<PointT>::Ptr cloud,
+        unsigned int downsample_size = 5000000,
+        double sx = 0.4,
+        double sy = 0.4,
+        double expand_factor = 2, 
+        double inflate_factor = 2, 
+        double max_loop = 10.0, 
+        double mult_factor = 1.0
+    )
     {
 
         // Remove everyting that is not a surface
@@ -218,7 +229,7 @@ namespace linkml
 
         pcl::RandomSample<PointCloud::Cloud::PointType> sampler;
         sampler.setInputCloud(cloud);
-        sampler.setSample(5000000);
+        sampler.setSample(downsample_size);
         sampler.setSeed(0);
         sampler.filter(*cloud);
 
@@ -227,16 +238,34 @@ namespace linkml
 
         std::cout << "Number of planes: " << clusters.size() << std::endl;
 
-        // 202 236
-
         // Create surfaces
         std::vector<Surface> surfaces(clusters.size());
         auto surface_bar = util::progress_bar(surfaces.size(), "Creating surfaces");
-        for (size_t i = 0; i < d.size(); i++){
-            surfaces[i] = Surface(cloud, clusters[i].indices);
+#if 1
+        for (size_t i = 0; i < clusters.size(); i++){
+            surfaces[i] = Surface(cloud, clusters[i].indices, sx, sy);
             surface_bar.update();
         }
+#else
+        #pragma omp parallel
+        {
+            #pragma omp single
+            {
+                for (size_t i = 0; i < clusters.size(); i++){
+                
+                    #pragma omp task
+                    {
+                        surfaces[i] = Surface(cloud, clusters[i].indices);
+                        surface_bar.update();
+                    }
+                }
+            }
+            #pragma omp taskwait
+        }
+#endif
         surface_bar.stop();
+
+
 
 
         // polyscope::myinit();
@@ -290,8 +319,14 @@ namespace linkml
         using Rays = std::vector<std::pair<Ray, Tile*>>;
         double const constexpr offset = 0.10;
         size_t const nrays = tiles.size()*(tiles.size()-1)/2;
-        Rays rays(nrays);
         std::cout << "Number of rays: " << nrays << std::endl;
+        std::cout << "Size of Ray: " << sizeof(std::pair<Ray, Tile *>) << std::endl;
+        std::cout << "Total size of rays: " << sizeof(std::pair<Ray, Tile *>)*nrays << std::endl;
+        std::cout << "Size of RTCRayHit"  << sizeof(RTCRayHit) << std::endl;
+        std::cout << "Size of RTCRay" << sizeof(RTCRay) << std::endl;
+        
+
+        Rays rays(nrays);
         auto creating_rays_bar = util::progress_bar(nrays, "Creating rays");
         #pragma omp parallel for collapse(2)
         for (size_t i = 0; i < tiles.size(); i++){
@@ -349,8 +384,11 @@ namespace linkml
         //rtcIntersect1M(scene, &context, (RTCRayHit*)&rays[0], rays.size(), sizeof(std::pair<Ray, Tile*>));
         #pragma omp parallel for
         for (size_t i = 0; i < rays.size(); i++){
+#if UseIntersection
             rtcIntersect1(scene, &context, (RTCRayHit*)&rays[i].first);
-            //rtcOccluded1(scene, &context, (RTCRayHit*)&rays[i].first);
+#else
+            rtcOccluded1(scene, &context, (RTCRay*)&rays[i].first.ray);
+#endif
             rays_bar.update();
         }
         rays_bar.stop();
@@ -364,6 +402,8 @@ namespace linkml
         rtcReleaseScene(scene);
         rtcReleaseDevice(device);
 
+
+        // TODO Write out tab file.
 
         std::unordered_map<size_t, unsigned int> id_to_int;
         std::unordered_map<unsigned int, size_t> int_to_id;
@@ -415,7 +455,12 @@ namespace linkml
             auto & [ray, tile] = rays[i];
 
             // If we did not hit anything, there is a clear line of sight between the two points
+#if UseIntersection
             const double value = (ray.hit.geomID == RTC_INVALID_GEOMETRY_ID) ? 1 : 0;
+#else
+            const double value = (ray.ray.tfar == -INFINITY) ? 0 : 1;
+#endif
+
             // const auto  color = (ray.hit.geomID == RTC_INVALID_GEOMETRY_ID) ? cv::Vec3b(255, 255, 255) : cv::Vec3b(0, 0, 0);
             
             int source_int = id_to_int[tile->first];
@@ -430,9 +475,42 @@ namespace linkml
         }
         matrix_bar.stop();
 
-        // cv::Mat img;
-        // cv::eigen2cv(matrix,img);
-        // cv::imwrite("matrix_rays.png", img*255);
+
+        //Check for blank (white) rows
+        for (size_t i = 0; i < matrix.rows(); i++){
+            bool all_white = true;
+            for (size_t j = i+1; j < matrix.cols(); j++){
+                if (matrix(i, j) < 0.5){
+                    all_white = false;
+                    break;
+                }
+            }
+            if (all_white){
+                for (size_t j = 0; j < matrix.cols(); j++){
+                    matrix(i, j) = 0;
+                    matrix(j, i) = 0;
+                }
+            }
+        }
+
+
+        
+#if SaveMatrix
+        cv::Mat img;
+        cv::eigen2cv(matrix,img);
+        cv::imwrite("matrix_rays.png", img*255);
+        cv::Mat colorImage(matrix.rows(), matrix.cols(), CV_8UC3, cv::Scalar(0, 0, 0));
+
+        #pragma omp parallel for collapse(2)
+        for (size_t i = 0; i < matrix.rows(); i++){
+            for (size_t j = 0; j < matrix.cols(); j++){
+                if (matrix(i, j) > 0.000001){
+                    colorImage.at<cv::Vec3b>(i, j) = cv::Vec3d(255, 255,255);
+                }
+            }
+        }
+#endif
+
 
 
         std::unordered_map<size_t, pcl::Indices> cluster_map{};
@@ -442,6 +520,19 @@ namespace linkml
         auto clustering_bar = util::progress_bar(1, "Markov Clustering");
         auto asign_cluster = [&](size_t cluster_j, size_t member_i){
             // Assigne the clusters to the point cloud
+            // printf("Cluster %d: %d\n", cluster_j, member_i);
+  
+  #if SaveMatrix
+            auto color = get_color_forom_angle(sample_circle(cluster_j));
+            auto color_vec = cv::Vec3d(color.r * 255, color.g * 255, color.b * 255);
+            for (size_t i = 0; i < matrix.rows(); i++){
+                if (matrix(member_i, i) > 0.000001){
+                    colorImage.at<cv::Vec3b>(member_i, i) = color_vec;
+                    colorImage.at<cv::Vec3b>(i, member_i) = color_vec;
+                }
+            }
+#endif
+
             #pragma omp parallel for
             for(const auto & index : point_map[int_to_id[(int)member_i]]){
                 cloud->points[index].instance = cluster_j;
@@ -450,11 +541,11 @@ namespace linkml
             }
         };
         auto mcl = mcl::mcl<mcl::MCLAlgorithm::CLI, Eigen::MatrixXd>(matrix, asign_cluster);
-        mcl.cluster_mcl(2,1.2);
+        mcl.cluster_mcl(expand_factor, inflate_factor, max_loop, mult_factor);
 
-        // cv::eigen2cv(matrix,img);
-        // cv::imwrite("matrix_mcl.png", img*255);
-
+#if SaveMatrix
+        cv::imwrite("matrix_mcl.png", colorImage);
+#endif
         clustering_bar.stop();
 
 

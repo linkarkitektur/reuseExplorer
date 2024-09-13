@@ -78,9 +78,11 @@ static void read_results(const std::string& filename, std::function< void(size_t
         {
             std::istringstream iss(line);
             int mem_j;
-            if (!(iss >> mem_j))
-                break;
-            f(cls_i, mem_j);
+            
+            while (iss >> mem_j) {
+                f(cls_i, mem_j);
+            }
+
             cls_i++;
         }
         file.close();

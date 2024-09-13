@@ -123,7 +123,7 @@ namespace linkml
         Trims get_Trims() const;
 
 
-        void display(std::string name = "Mesh" ) const;
+        void display(std::string name = "Mesh", bool show = true) const;
         
     };
     

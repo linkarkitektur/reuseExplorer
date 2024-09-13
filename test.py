@@ -1,6 +1,8 @@
 import os
 import sys
 import datetime
+import configparser
+
 # import scipy
 
 
@@ -16,7 +18,7 @@ from _core import *
 
 
 # Actions
-PARSE_DATASET: bool      = False
+PARSE_DATASET: bool     = False
 ANNOTATE: bool          = False
 REGISTER: bool          = False
 FILTER: bool            = False
@@ -37,19 +39,38 @@ def chunks(lst, n):
     for i in range(0, len(lst), n):
         yield lst[i:i + n]
 
+
+
 # dataset_path = "/home/mephisto/server_data/stray_scans/0ba33d855b/" # CPC Office
-dataset_path = "/home/mephisto/server_data/stray_scans/7092626a22/" # Aarhus Office
-# dataset_path = "/home/mephisto/server_data/stray_scans/665518e46a/" # Lobby
-# dataset_path = "/home/mephisto/server_data/stray_scans/8c0e3c381c/" # New scan small room
-# dataset_path = "/home/mephisto/server_data/stray_scans/3c670b035f" # New scan 
+# dataset_path = "/home/mephisto/server_data/stray_scans/7092626a22/" # Aarhus Office
+# dataset_path = "/home/mephisto/server_data/stray_scans/665518e46a/" # Lobby (School)
+
+# Aarhus
+dataset_path = "/home/mephisto/server_data/stray_scans/8c0e3c381c/" # New scan small Basement <- Selected (Needs compleate rerun)
+# dataset_path = "/home/mephisto/server_data/stray_scans/3c670b035f/" # Amtssygehus
+
+# Roskilde
+# dataset_path = "/home/mephisto/server_data/stray_scans/fc5fa7fa4e/" # Skate hall
+# dataset_path = "/home/mephisto/server_data/stray_scans/088a8f84be/" # Stadium
+# dataset_path = "/home/mephisto/server_data/stray_scans/73b319729d/" # Library <- Selected
+
+# Soagerskole
+# dataset_path = "/home/mephisto/server_data/stray_scans/b6b9b53142/" # School gym
+# dataset_path = "/home/mephisto/server_data/stray_scans/88d7ea3e5f/" # School 1
+# dataset_path = "/home/mephisto/server_data/stray_scans/bc53387047/" # School 2
+
 
 dataset = Dataset(dataset_path)
 name = f"./{dataset.name}.pcd"
 
 
 
-
 tmp_folder = f"./{dataset.name}/"
+
+
+print(f"Dataset: {dataset.name} at {dataset_path}")
+print(f"temp folder: {tmp_folder}")
+
 
 # Parse dataset
 if (PARSE_DATASET):
@@ -88,19 +109,30 @@ if (MERGE):
 
 # cloud.display()
 
+# name = "/home/mephisto/server_data/Soagerskole.pcd"
+
+if (not os.path.exists(name)):
+    print(f"File \"{name}\" not found")
+    exit(1)
+
 print(f"Loading \"{name}\" ...")
 cloud = PointCloud(name)
 print("Done loading!")
 
-# Clustering
-if (CLUSTER):
-    cloud.clustering()
-    cloud.save(name)
 
 # Downsample
 if (DOWNSAMPLE):
     cloud.downsample(0.05)
     cloud.save(name)
+
+# Clustering
+if (CLUSTER):
+    cloud.clustering(
+        cluster_tolerance = 0.1, # 0.02,
+        min_cluster_size = 100
+    )
+    cloud.save(name)
+
 
 # cloud.display()
 
@@ -122,10 +154,11 @@ if (REGION_GROWING):
 
 
 # Solidify
+brep_folder = f"./{dataset.name}_breps/"
+# brep_folder = f"./soagerskole_breps/"
 if (SOLIDIFY):
     breps = cloud.solidify()
 
-    brep_folder = "./Breps/"
 
     # Remove existing breps
     if not os.path.exists(brep_folder):
@@ -138,27 +171,41 @@ if (SOLIDIFY):
     for idx, brep in enumerate(breps):
         brep.save(brep_folder + f"{dataset.name}_{idx}.off")
 
+
+
+
+dataset.display(dataset.name, False)
+
+if os.path.exists(brep_folder):
+    for file in os.listdir(brep_folder):
+        brep = Brep.load(brep_folder + file)
+        brep.display(file, False)
+
 cloud.display()
 
 
-#cProfile.runctx("cloud.solidify()", globals(), locals(), "Profile.prof")
-#s = pstats.Stats("Profile.prof")
-#s.strip_dirs().sort_stats("time").print_stats()
-#cloud.display()
 
-# cloud = PointCloud("/home/mephisto/server_data/test_export.pcd")
+
+
+
+
+# cloud = PointCloud("/home/mephisto/server_data/test_export 2.pcd")
+# # cloud = PointCloud("/home/mephisto/server_data/test_4_rooms.pcd")
+
+# print("Loading cloud ...")
+
 # breps = cloud.solidify()
-#cloud.display()
+# cloud.display()
 
-# cloud = PointCloud("/home/mephisto/server_data/test_export.pcd")
+# # cloud = PointCloud("/home/mephisto/server_data/test_export 2.pcd")
 # [breps[idx].save(f"brep_new_{idx}.off") for idx in range(len(breps))]
 
-# breps = [Brep.load(f"brep_new_{idx}.off") for idx in range(1)]
-# for idx, b in enumerate(breps):
-#     b.display(f"Brep {idx}")
+# # breps = [Brep.load(f"brep_new_{idx}.off") for idx in range(1)]
+# # for idx, b in enumerate(breps):
+# #     b.display(f"Brep {idx}")
 
-# files = [f"brep_{idx}.off" for idx in range(4)]
-# [Brep.load(f) for f in files]
-# Brep.load("test.off")
+# # files = [f"brep_{idx}.off" for idx in range(4)]
+# # [Brep.load(f) for f in files]
+# # Brep.load("test.off")
 
 print("Done")

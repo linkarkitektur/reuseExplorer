@@ -176,7 +176,7 @@ namespace linkml{
         tg::aabb3 get_bbox() const; 
 
         /// @brief Transform the point cloud.
-        void filter(); 
+        void filter( PointCloud::Cloud::PointType::LableT value = 2); 
 
         /// @brief Register the point cloud.
         void downsample(double leaf_size = 0.02f);
@@ -203,7 +203,18 @@ namespace linkml{
 
 
         /// @brief Solidify the point cloud.
-        std::vector<Brep> solidify();
+        std::vector<Brep> solidify(
+          unsigned int downsample_size = 5000000,
+          double sx = 0.4,
+          double sy = 0.4,
+          double expand_factor = 2, 
+          double inflate_factor = 2, 
+          double max_loop = 10.0, 
+          double mult_factor = 1.0,
+          double fitting =  0.20,
+          double coverage = 0.10,
+          double complexity = 0.70
+        );
 
 
         /// @brief Register the point cloud.

@@ -67,7 +67,7 @@ namespace linkml
             }
 
             // Modify the point clouds
-            PointClouds filter();
+            PointClouds filter( typename PointCloud::Cloud::PointType::LableT value = 2);
             PointClouds register_clouds();
             PointClouds annotate(std::string yolo_path, std::optional<Dataset> & dataset);
 

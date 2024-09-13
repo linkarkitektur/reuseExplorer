@@ -51,11 +51,15 @@ namespace linkml {
         // Operators
         operator bool() const {return !_fields.empty();};
         Data operator[] (int idx) const;
+        void display(std::string name, bool show = true) const;
 
         inline size_t size() const {return _n_frames;};
         inline cv::Size color_size() const {return cv::Size(_rgb_width, _rgb_hight);};
         inline cv::Size depth_size() const {return cv::Size(_depth_width, _depth_hight);};
         inline std::string name() const {return _path.parent_path().filename();};
+
+        inline auto get_odometry() const {return _odometry_data;};
+    
     };
 
 } // namespace linkml

@@ -129,7 +129,12 @@ namespace linkml
             return centroid;
 
     }
-    Surface::Surface(PointCloud::Cloud::Ptr cloud, pcl::Indices indices){
+    Surface::Surface(
+        PointCloud::Cloud::Ptr cloud,
+        pcl::Indices indices,
+        double tile_x_size,
+        double tile_y_size
+    ) : mesh() {
 
 
 

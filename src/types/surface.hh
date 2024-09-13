@@ -43,9 +43,6 @@ namespace linkml
 
 
         private:
-            static constexpr double tile_x_size = 0.4;
-            static constexpr double tile_y_size = 0.4;
-
             // static constexpr auto coords_name = "v:coords";
             static constexpr auto centeroids_name = "f:centeroids";
             static constexpr auto indecies_name = "f:indecies";
@@ -58,7 +55,7 @@ namespace linkml
 
     public:
         Surface() = default;
-        Surface(PointCloud::Cloud::Ptr cloud, pcl::Indices indices);
+        Surface(PointCloud::Cloud::Ptr cloud, pcl::Indices indices, double tile_x_size = 0.4, double tile_y_size = 0.4);
         
         void Create_Embree_Geometry(RTCDevice & device, RTCScene & scene);
 

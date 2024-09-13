@@ -152,6 +152,83 @@ namespace polyscope  {
 
     }
 
+
+    template <>
+    void display( linkml::Dataset const& dataset, std::optional<const std::string> name){
+
+
+        std::vector<Eigen::Vector4f> path_node;
+        std::vector<Eigen::Vector3f> x_axis;
+        std::vector<Eigen::Vector3f> y_axis;
+        std::vector<Eigen::Vector3f> z_axis;
+        std::vector<int> seq;
+        std::vector<std::array<size_t, 2>> path_edges;
+
+        path_node.resize(dataset.size());
+        x_axis.resize(dataset.size());
+        y_axis.resize(dataset.size());
+        z_axis.resize(dataset.size());
+        seq.resize(dataset.size());
+        path_edges.resize(dataset.size()-1);
+
+        auto odometry =  dataset.get_odometry();
+
+        #pragma omp parallel for shared(odometry, path_node, path_edges)
+        for (size_t i = 0; i < dataset.size(); i++){
+
+
+            auto pos = odometry.block<1,3>(i,2);
+            auto quat = odometry.block<1,4>(i,5);
+
+            path_node[i] = Eigen::Vector4f(pos(0), pos(1), pos(2), 1);
+
+            tg::pos3 p(pos(0), pos(1), pos(2));
+            tg::dquat q(quat(0), quat(1), quat(2), quat(3));
+            auto mat = static_cast<tg::dmat3x3>(q);
+            // mat.set_col(3, tg::dvec4(p, 1));
+
+            auto x_vec = mat.col(0);
+            auto y_vec = mat.col(1);
+            auto z_vec = mat.col(2);
+
+
+            x_axis[i] = Eigen::Vector3f(x_vec.x, x_vec.y, x_vec.z);
+            y_axis[i] = Eigen::Vector3f(y_vec.x, y_vec.y, y_vec.z);
+            z_axis[i] = Eigen::Vector3f(z_vec.x, z_vec.y, z_vec.z);
+
+            seq[i] = i;
+
+            if(i > 0){
+                path_edges[i-1] = {i-1, i};
+            }
+        }
+
+        auto ps_path = polyscope::registerCurveNetwork("Path", path_node, path_edges);
+        ps_path->addNodeScalarQuantity("Sequence", seq);
+        
+        auto ps_Xaxis = ps_path->addNodeVectorQuantity("XAxis", x_axis);
+        auto ps_Yaxis = ps_path->addNodeVectorQuantity("YAxis", y_axis);
+        auto ps_Zaxis = ps_path->addNodeVectorQuantity("ZAxis", z_axis);
+
+        ps_Xaxis->setVectorColor({1, 0, 0});
+        ps_Yaxis->setVectorColor({0, 1, 0});
+        ps_Zaxis->setVectorColor({0, 0, 1});
+
+        ps_Xaxis->setVectorRadius(0.001);
+        ps_Yaxis->setVectorRadius(0.001);
+        ps_Zaxis->setVectorRadius(0.001);
+
+        ps_Xaxis->setVectorLengthScale(0.02);
+        ps_Yaxis->setVectorLengthScale(0.02);
+        ps_Zaxis->setVectorLengthScale(0.02);
+
+        ps_Xaxis->setEnabled(true);
+        ps_Yaxis->setEnabled(true);
+        ps_Zaxis->setEnabled(true);
+
+
+    }
+
     static void display(const tg::plane3 & plane, const tg::aabb3 & bbox, std::optional<const std::string> name){
         linkml::Surface_mesh m;
         linkml::crop_plane_with_aabb(m, bbox, plane);

@@ -21,7 +21,7 @@ template<typename PointT>
 class MatchCondition
 {
 public:
-    MatchCondition(std::uint8_t value) : value_(value) {}
+    MatchCondition(std::int32_t value) : value_(value) {}
 
     // Overloaded function operator to be used as a functor
     bool operator()(const pcl::PointCloud<PointT> & cloud, pcl::index_t index)
@@ -30,7 +30,7 @@ public:
     }
 
 private:
-    std::uint8_t value_;
+    std::int32_t value_;
 };
 
 void linkml::PointCloud::clustering(
@@ -44,7 +44,7 @@ void linkml::PointCloud::clustering(
     auto cloud = *this;
 
     // Create a set of all labes
-    std::unordered_set<uint8_t> lables;
+    std::unordered_set<int32_t> lables;
     for (size_t i = 0; i < (*this)->points.size(); ++i)
         lables.insert((*this)->points[i].semantic);
     

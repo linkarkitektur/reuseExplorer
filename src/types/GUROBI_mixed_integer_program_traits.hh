@@ -148,10 +148,34 @@ public:
 		model.setObjective(obj, minimize ? GRB_MINIMIZE : GRB_MAXIMIZE);
 
 
-
+#if 0 //Switched to async optimization
 		// Optimize model
     //std::cout << " - " << "using the GUROBI solver (version " << GRB_VERSION_MAJOR << "." << GRB_VERSION_MINOR << ")." << std::endl;
 		model.optimize();
+#else
+
+    std::cout << "Optimization started: " << std::this_thread::get_id() << std::endl;
+
+    // timer that check if the model is still running and cnacels it if it takes too long
+    model.optimizeasync();
+    auto start = std::chrono::high_resolution_clock::now();
+
+    while (model.get(GRB_IntAttr_Status) == GRB_INPROGRESS && std::chrono::duration_cast<std::chrono::seconds>(std::chrono::high_resolution_clock::now() - start).count() < 30){
+      // std::cout << "Optimization is running: " << std::this_thread::get_id() << std::endl;
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+    
+    if (model.get(GRB_IntAttr_Status) != GRB_OPTIMAL){
+      std::cout << "Optimization took too long, cancelling: " << std::this_thread::get_id() << std::endl;
+      model.terminate();
+    }
+
+
+    std::cout << "Optimization finished: " << std::this_thread::get_id() << std::endl;
+    model.sync();
+    std::cout << "Optimization synced: " << std::this_thread::get_id() << std::endl;
+#endif
+
 
     int status = model.get(GRB_IntAttr_Status);
     switch (status) {
@@ -176,6 +200,10 @@ public:
 
       case GRB_UNBOUNDED:
         std::cerr << "model is unbounded" << std::endl;
+        break;
+
+      case GRB_INTERRUPTED:
+        std::cerr << "optimization was interrupted" << std::endl;
         break;
 
       default:

@@ -87,7 +87,7 @@ namespace linkml{
         const PointCloud::Cloud::Ptr cloud_tgt, 
         Eigen::Matrix4f &pairTransform, 
         std::optional<float> grid_size = {},
-        std::optional<uint8_t> confidence_filter = {}
+        std::optional<int32_t> confidence_filter = {}
         ){
         //
         // Downsample for consistency and speed

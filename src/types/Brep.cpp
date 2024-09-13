@@ -383,10 +383,10 @@ namespace linkml
         return trims;
     }
 
-    void Brep::display(std::string name ) const{
+    void Brep::display(std::string name, bool show ) const{
         polyscope::myinit();
         polyscope::display<linkml::Surface_mesh const&>(this->get_Mesh(), name);
-        polyscope::show();
+        if (show) polyscope::show();
     }
 
 } // namespace linkml
