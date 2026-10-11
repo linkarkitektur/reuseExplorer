@@ -98,6 +98,17 @@ int run_app(int argc, char **argv, const AppOptions &options) {
   // workspace, Q3) needs this default format, and it cannot be set later.
   QSurfaceFormat::setDefaultFormat(QVTKOpenGLNativeWidget::defaultFormat());
 
+  // Also before the QApplication: QFileDialog::Options::DontUseNativeDialog
+  // passed to a single call is too late to help, since QFileDialogPrivate::
+  // init() decides whether to build the native (here: GTK3) helper before
+  // the dialog's own setOptions(args.options) ever runs. This attribute is
+  // consulted by canBeNativeDialog() from the very first dialog onward, so
+  // native file dialogs are off for the whole process from the start. Needed
+  // because the nix devshell/package never puts GTK3's own GSettings schemas
+  // on XDG_DATA_DIRS, and constructing the native GTK3 file chooser aborts
+  // the process (g_error) the instant it looks one up.
+  QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+
   int qt_argc = 1; // rux's own flags are not Qt's to parse
   char *qt_argv[] = {argv[0], nullptr};
   (void)argc;
