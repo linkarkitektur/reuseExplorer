@@ -55,7 +55,9 @@ ReUseX/
 server) and the web frontend each moved into their own repo — `ruxd` and
 `rux-frontend` under the `ReUse-X` org. `ruxd` consumes this repo through its
 installed CMake package (`find_package(ReUseX CONFIG REQUIRED)`). See
-`docs/DIRECTION.md` for the changelog entry.
+`docs/DIRECTION.md` for the changelog entry. A fourth repo, `reusex-fleet`,
+holds the deployment (Docker Compose, Supabase auth, Caddy); deployment
+questions belong there, not in this repo.
 
 ## Modules and layering
 

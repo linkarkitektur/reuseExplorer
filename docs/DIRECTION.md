@@ -190,6 +190,39 @@ changelog — that history is the point of keeping it in the repo.
 
 ## Direction changelog
 
+- **2026-10-12** — **Deployment: Supabase auth, Docker/GHCR fleet, CPU only.**
+  `ruxd`'s own username/password accounts (argon2id, `ruxd admin create-user`
+  / `set-password` / `disable-user`, `POST /auth/login`) are gone. Accounts
+  now live in a self-hosted Supabase (GoTrue); the browser signs in with
+  supabase-js and bridges to ruxd's existing HttpOnly session cookie via
+  `POST /api/v1/auth/session`. ruxd verifies the Supabase JWT (ES256 via
+  JWKS; HS256 still accepted) and holds no password or minting secret. Roles
+  stay owner/editor/viewer per case; admin comes from `app_metadata.role`,
+  granted with `ruxd admin grant-admin <email>` / revoked with
+  `revoke-admin`. `ruxd --local` remains the no-auth single-user mode,
+  unchanged. None of this lives in this repo — see `ruxd`'s own CLAUDE.md
+  and API docs.
+  - **New org, four repos.** `ReUse-X` on GitHub now holds this repo
+    (library + `rux` CLI + Qt client, installs a CMake package), `ruxd`
+    (HTTP server), `rux-frontend` (the React web GUI) and `reusex-fleet`
+    (deployment). **Deployment questions belong in `reusex-fleet`, not
+    here.**
+  - **Docker/GHCR, nix-free for operators.** `ruxd` and `rux-frontend` are
+    each built and pushed to `ghcr.io/reuse-x/{ruxd,rux-frontend}` by their
+    own repo's CI (`ruxd`'s image is still a nix `dockerTools` build; the
+    frontend's is a plain Dockerfile served by Caddy on :8080). A colleague
+    deploys with `docker login ghcr.io`, `reusex-fleet/docker/scripts/gen-supabase-keys.sh`,
+    then `docker compose pull && up -d` — no nix required on the target
+    machine. Runbook: `reusex-fleet/docker/README.md`.
+  - **CPU only, for now.** The deployed stack runs CPU inference only. A GPU
+    worker design — pull workers on a Tailscale-reachable host polling
+    Postgres with `SKIP LOCKED` — is written up in `ruxd`'s
+    `docs/design/gpu-worker.md`, not implemented.
+  - **Speckle dropped from the fleet, not from this repo.**
+    `reusex-fleet`'s self-hosted Speckle deployment is removed (unused,
+    Penpot and the base infra stay). `rux export speckle` and
+    `io/speckle.hpp` here are unaffected — they push to any Speckle
+    server/cloud instance, not to one this project hosts.
 - **2026-10-09** — **Repo split: `ruxd` and the web frontend move out**
   ([design](superpowers/specs/2026-10-09-repo-split-design.md)). `ruxd` (the
   HTTP service worker) and the React/Vite web GUI (`apps/rux/frontend`) now
