@@ -304,9 +304,8 @@ const std::vector<ParameterDescriptor> &annotate_parameters() {
   // design, docs/design/gpu-worker.md §3, ruxd repo).
   static const std::vector<ParameterDescriptor> table{
       optional_of(ParameterType::string_list, "prompts", "Prompts",
-                  "Text prompts (concept/class names) to detect, e.g. "
-                  "[\"wall\",\"window\"]. Empty means the model's default "
-                  "class set."),
+                  "The prompts to segment — text concept/class names, e.g. "
+                  "[\"wall\",\"window\"]."),
       optional_of(ParameterType::integer_list, "frames", "Frames",
                   "Sensor frame ids to annotate. A {\"from\":n,\"to\":m} "
                   "range object is also accepted in place of an explicit "
