@@ -254,11 +254,15 @@ TEST_CASE("StageParameters_Annotate_DescribesWireContract",
       *parameter_of(JobStage::annotate, "prompts");
   CHECK(prompts.type == ParameterType::string_list);
   CHECK(std::holds_alternative<std::monostate>(prompts.default_value));
+  // ruxd refuses a job without prompts (or with none): there is no default
+  // class set, and the descriptor says so (gpu-worker re-review N8).
+  CHECK(prompts.required);
 
   const ParameterDescriptor &frames =
       *parameter_of(JobStage::annotate, "frames");
   CHECK(frames.type == ParameterType::integer_list);
   CHECK(std::holds_alternative<std::monostate>(frames.default_value));
+  CHECK_FALSE(frames.required);
 
   CHECK(number_default(JobStage::annotate, "confidence") == 0.5);
   const ParameterDescriptor &confidence =
@@ -288,4 +292,15 @@ TEST_CASE("StageParameters_FloatDefault_RoundTripsShortestDecimal",
   CHECK(resolution == 0.05);
   CHECK(number_default(JobStage::rooms, "beta") == 0.01);
   CHECK(number_default(JobStage::planes, "plane_dist_threshold") == 0.07);
+}
+
+TEST_CASE("StageParameters_OnlyAnnotatePromptsAreRequired",
+          "[pipeline][params]") {
+  // `required` means "no job without it": so far only annotate's prompts.
+  for (const auto &name : job_stage_names()) {
+    const auto stage = parse_job_stage(name);
+    REQUIRE(stage);
+    for (const auto &d : stage_parameters(*stage))
+      CHECK(d.required == (*stage == JobStage::annotate && d.key == "prompts"));
+  }
 }

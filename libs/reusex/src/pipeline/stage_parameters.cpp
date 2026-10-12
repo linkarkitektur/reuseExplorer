@@ -87,6 +87,15 @@ ParameterDescriptor optional_of(ParameterType type, std::string key,
       std::monostate{}, std::nullopt, std::nullopt,     false};
 }
 
+/// A parameter with no default that a job must give (non-empty for a list).
+ParameterDescriptor required_of(ParameterType type, std::string key,
+                                std::string label, std::string description) {
+  ParameterDescriptor d = optional_of(type, std::move(key), std::move(label),
+                                      std::move(description));
+  d.required = true;
+  return d;
+}
+
 const std::vector<ParameterDescriptor> &clouds_parameters() {
   static const std::vector<ParameterDescriptor> table = [] {
     const geometry::ReconstructionParams d{};
@@ -303,9 +312,10 @@ const std::vector<ParameterDescriptor> &annotate_parameters() {
   // the rest to vision::annotate() for the frames it selected (the gpu-worker
   // design, docs/design/gpu-worker.md §3, ruxd repo).
   static const std::vector<ParameterDescriptor> table{
-      optional_of(ParameterType::string_list, "prompts", "Prompts",
+      required_of(ParameterType::string_list, "prompts", "Prompts",
                   "The prompts to segment — text concept/class names, e.g. "
-                  "[\"wall\",\"window\"]."),
+                  "[\"wall\",\"window\"]. Required and non-empty: SAM3 has "
+                  "no default class set to fall back on."),
       optional_of(ParameterType::integer_list, "frames", "Frames",
                   "Sensor frame ids to annotate. A {\"from\":n,\"to\":m} "
                   "range object is also accepted in place of an explicit "

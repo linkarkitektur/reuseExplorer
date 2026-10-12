@@ -76,6 +76,10 @@ struct ParameterDescriptor {
   /// therefore omit an untouched key rather than helpfully echoing its
   /// default back — that would silently disable adaptivity.
   bool presence_sensitive = false;
+  /// True when a job without this key (or, for a list, with an empty one)
+  /// is refused as invalid: there is no default to fall back on. A form
+  /// must ask for it (annotate's `prompts`).
+  bool required = false;
 };
 
 /// Every parameter @p stage recognises, in form-display order.
