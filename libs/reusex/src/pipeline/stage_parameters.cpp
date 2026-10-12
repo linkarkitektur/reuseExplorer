@@ -289,6 +289,45 @@ const std::vector<ParameterDescriptor> &optimize_parameters() {
   return table;
 }
 
+const std::vector<ParameterDescriptor> &annotate_parameters() {
+  // No option-struct home: vision::AnnotationConfig (vision/annotate.hpp)
+  // owns prompts/confidence/skip_annotated, but reusex_pipeline must not link
+  // reusex_vision (STANDARDS §1) — the same reasoning dispatch() in
+  // stages.cpp gives for refusing to run the stage by default. So, like
+  // optimize_parameters() above for reusex_slam, the defaults are hard-coded
+  // here rather than read from the struct; keep them in sync with
+  // AnnotationConfig by hand.
+  //
+  // "frames" and "placement" are not AnnotationConfig fields at all — they
+  // are job-routing parameters a caller's own executor reads before handing
+  // the rest to vision::annotate() for the frames it selected (the gpu-worker
+  // design, docs/design/gpu-worker.md §3, ruxd repo).
+  static const std::vector<ParameterDescriptor> table{
+      optional_of(ParameterType::string_list, "prompts", "Prompts",
+                  "Text prompts (concept/class names) to detect, e.g. "
+                  "[\"wall\",\"window\"]. Empty means the model's default "
+                  "class set."),
+      optional_of(ParameterType::integer_list, "frames", "Frames",
+                  "Sensor frame ids to annotate. A {\"from\":n,\"to\":m} "
+                  "range object is also accepted in place of an explicit "
+                  "id list. Absent means every stored frame."),
+      num("confidence", "Confidence threshold",
+          "Minimum detection confidence kept in the output label map.", 0.5F,
+          0.0, 1.0),
+      boolean("skip_annotated", "Skip already-annotated frames",
+              "Leave frames that already have a stored segmentation image "
+              "untouched instead of re-running inference on them.",
+              false),
+      text("placement", "Placement",
+           "Where inference runs: 'auto' uses a capable worker when one is "
+           "online and falls back to the local backend otherwise, 'worker' "
+           "requires a worker and fails without one, 'local' always runs "
+           "in-process.",
+           "auto"),
+  };
+  return table;
+}
+
 } // namespace
 
 std::string_view to_string(ParameterType type) {
@@ -303,6 +342,8 @@ std::string_view to_string(ParameterType type) {
     return "string";
   case ParameterType::integer_list:
     return "integer_list";
+  case ParameterType::string_list:
+    return "string_list";
   }
   throw std::logic_error("unhandled ParameterType");
 }
@@ -321,6 +362,8 @@ const std::vector<ParameterDescriptor> &stage_parameters(JobStage stage) {
     return mesh_parameters();
   case JobStage::optimize:
     return optimize_parameters();
+  case JobStage::annotate:
+    return annotate_parameters();
   }
   throw std::logic_error("unhandled JobStage in stage_parameters()");
 }

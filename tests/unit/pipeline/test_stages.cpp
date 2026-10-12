@@ -17,6 +17,8 @@
 #include <pipeline/stages.hpp>
 #include <types/point_types.hpp>
 
+#include <opencv2/core.hpp>
+
 #include "../../support/temp_path.hpp"
 
 #include <atomic>
@@ -172,6 +174,27 @@ TEST_CASE("PipelineLogName_RunnableStages_MatchesCliNames",
 
   // The wire token stays short and is deliberately NOT the log name.
   CHECK(to_string(JobStage::rooms) == "rooms");
+
+  // annotate is new (gpu-worker W0): wire token and log name are the same
+  // literal, since no front end has written a different one into
+  // pipeline_log before now (batch `rux create annotate` never logged there).
+  CHECK(pipeline_log_name(JobStage::annotate) == "annotate");
+  CHECK(to_string(JobStage::annotate) == "annotate");
+}
+
+TEST_CASE("JobStage_NameRoundTrip_CoversEveryRunnableStage",
+          "[pipeline][stages]") {
+  // Every token job_stage_names() hands out must parse back to the stage that
+  // produced it, including whatever was most recently appended (annotate,
+  // gpu-worker W0) — a name present in one direction but not the other would
+  // silently break a client that only exercises one of to_string/parse.
+  for (const auto &name : job_stage_names()) {
+    INFO("name: " << name);
+    const auto stage = parse_job_stage(name);
+    REQUIRE(stage.has_value());
+    CHECK(to_string(*stage) == name);
+  }
+  CHECK(parse_job_stage("not-a-stage") == std::nullopt);
 }
 
 TEST_CASE("RunStage_JobRun_RecordsCliNameAndJobId", "[pipeline][stages]") {
@@ -533,6 +556,84 @@ TEST_CASE("RunStage_MeshStage_InvalidSolverRefused", "[pipeline][stages]") {
   // invalid_input (missing inputs) rather than the solver error — the important
   // thing is that it does not crash and does not claim success.
   const auto result = run_stage(db, ctx);
+  CHECK_FALSE(result.ok);
+  CHECK(result.invalid_input);
+}
+
+// ===========================================================================
+// annotate stage (gpu-worker design, W0)
+//
+// Unlike every other runnable stage, the default executor can never actually
+// RUN this one: reusex_pipeline must not link reusex_vision (STANDARDS §1),
+// so dispatch() always refuses it. These tests cover the two distinct
+// refusal paths: the ordinary "inputs not satisfied" refusal from
+// check_inputs() (reached when sensor_frames is empty), and dispatch()'s own
+// "no vision backend" refusal (reached once the contract IS satisfied).
+// ===========================================================================
+
+TEST_CASE("RunStage_AnnotateStage_RefusedWithoutSensorFrames",
+          "[pipeline][stages]") {
+  TempPath project("test_pipeline_stages_annotate");
+  reusex::ProjectDB db(project.path);
+
+  StageContext ctx;
+  ctx.project = project.path;
+  ctx.stage = JobStage::annotate;
+
+  const auto result = run_stage(db, ctx);
+
+  CHECK_FALSE(result.ok);
+  CHECK(result.invalid_input);
+  // missing_message() (core/validate.cpp) writes "sensor frames" with a
+  // space, not the artifact name's underscore, for this specific artifact.
+  CHECK(result.message.find("sensor frames") != std::string::npos);
+
+  const auto log = db.pipeline_log();
+  REQUIRE(log.size() == 1);
+  CHECK(log.front().stage == "annotate");
+  CHECK(log.front().status == "failed");
+}
+
+TEST_CASE("RunStage_AnnotateStage_ContractSatisfied_RefusedByDefaultExecutor",
+          "[pipeline][stages]") {
+  TempPath project("test_pipeline_stages_annotate");
+  reusex::ProjectDB db(project.path);
+  // One sensor frame satisfies the core::PipelineStage::annotate contract
+  // (any_of {"sensor_frames"}, min_rows = 1), so check_inputs() passes and
+  // dispatch() is reached.
+  db.save_sensor_frame(1, cv::Mat::zeros(4, 4, CV_8UC3));
+
+  StageContext ctx;
+  ctx.project = project.path;
+  ctx.stage = JobStage::annotate;
+
+  const auto result = run_stage(db, ctx);
+
+  CHECK_FALSE(result.ok);
+  CHECK_FALSE(result.cancelled);
+  CHECK(result.invalid_input);
+  CHECK(result.message.find("vision backend") != std::string::npos);
+
+  const auto log = db.pipeline_log();
+  REQUIRE(log.size() == 1);
+  CHECK(log.front().stage == "annotate");
+  CHECK(log.front().status == "failed");
+}
+
+TEST_CASE("DefaultStageExecutor_AnnotateStage_ReturnsInvalidNotFailure",
+          "[pipeline][stages]") {
+  TempPath project("test_pipeline_stages_annotate");
+  reusex::ProjectDB db(project.path);
+  db.save_sensor_frame(1, cv::Mat::zeros(4, 4, CV_8UC3));
+
+  auto executor = default_stage_executor();
+  REQUIRE(static_cast<bool>(executor));
+
+  StageContext ctx;
+  ctx.project = project.path;
+  ctx.stage = JobStage::annotate;
+
+  const auto result = executor(ctx);
   CHECK_FALSE(result.ok);
   CHECK(result.invalid_input);
 }

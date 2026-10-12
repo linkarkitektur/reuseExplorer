@@ -466,6 +466,11 @@ TEST_CASE("StageSupportsCancellation_KnownStages_MatchesRealPlumbing",
   CHECK(stage_supports_cancellation(JobStage::rooms));
   CHECK(stage_supports_cancellation(JobStage::instances));
   CHECK_FALSE(stage_supports_cancellation(JobStage::clouds));
+  // A batch annotate run iterates frames, so a cancel request can take effect
+  // between frames the way it does for planes/rooms/instances (#gpu-worker
+  // W0) — even though the default executor never gets that far (see
+  // stages.cpp's dispatch()).
+  CHECK(stage_supports_cancellation(JobStage::annotate));
 }
 
 TEST_CASE("StageContext_IsCancelled_ReadsTokenSafely", "[pipeline][jobs]") {

@@ -168,6 +168,13 @@ std::string default_text(const pl::ParameterDescriptor &d) {
 TEST_CASE("CliCommandRoundTrip_EveryParameter_ReachesTheStageUnchanged",
           "[rux_app][cli][qt]") {
   for (const std::string &stage : pl::job_stage_names()) {
+    // annotate (gpu-worker W0) has no `rux create` subcommand mapping at
+    // all yet — it is a job-only stage, like core::PipelineStage::gsplat is
+    // for pipeline::JobStage as a whole (CliCommand_UnknownStage_IsUnsupported,
+    // tests/unit/rux_qt/test_workspace_logic.cpp). Nothing below this point
+    // in the loop is meaningful for a stage with no CLI mapping at all.
+    if (!rux::qt::build_cli_command(stage, "p.rux", {}).supported)
+      continue;
     const auto parsed = pl::parse_job_stage(stage);
     REQUIRE(parsed);
     for (const auto &d : pl::stage_parameters(*parsed)) {
@@ -196,6 +203,13 @@ TEST_CASE("CliCommandRoundTrip_AllParametersAtOnce_AndTheShellLine",
           "[rux_app][cli][qt]") {
   for (const std::string &stage : pl::job_stage_names()) {
     INFO(stage);
+    // See the comment in
+    // CliCommandRoundTrip_EveryParameter_ReachesTheStageUnchanged: a stage with
+    // no CLI mapping at all (annotate, gpu-worker W0) has nothing to round-trip
+    // — build_cli_command() hands back an unsupported, empty command, which
+    // split_shell_words()/words.front() below is not meant to parse.
+    if (!rux::qt::build_cli_command(stage, "p.rux", {}).supported)
+      continue;
     std::vector<CliParam> params;
     for (const auto &d : pl::stage_parameters(*pl::parse_job_stage(stage)))
       if (!rux::qt::cli_flag_for(stage, d.key).empty())
@@ -226,6 +240,10 @@ TEST_CASE("CliCommandRoundTrip_NoParameters_MeansTheStageDefaults",
   // must not send a presence-sensitive key (#214) that would pin it.
   for (const std::string &stage : pl::job_stage_names()) {
     const auto cmd = rux::qt::build_cli_command(stage, "p.rux", {});
+    // See the comment in
+    // CliCommandRoundTrip_EveryParameter_ReachesTheStageUnchanged.
+    if (!cmd.supported)
+      continue;
     const Captured got = parse_through_cli(cmd.args);
     for (const auto &d : pl::stage_parameters(*pl::parse_job_stage(stage))) {
       const std::string id = stage + "." + d.key;

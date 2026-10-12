@@ -126,6 +126,7 @@ TEST_CASE("StageParameters_EveryRunnableStage_DescribesWellFormedParameters",
              std::holds_alternative<std::monostate>(parameter.default_value)));
         break;
       case ParameterType::integer_list:
+      case ParameterType::string_list:
         // A list has no scalar default; absent means "no restriction".
         CHECK(std::holds_alternative<std::monostate>(parameter.default_value));
         break;
@@ -242,6 +243,40 @@ TEST_CASE("StageParameters_Mesh_MirrorMeshOptionsDefaults",
       *parameter_of(JobStage::mesh, "output_name");
   REQUIRE(std::holds_alternative<std::string>(output_name.default_value));
   CHECK(std::get<std::string>(output_name.default_value) == "mesh");
+}
+
+TEST_CASE("StageParameters_Annotate_DescribesWireContract",
+          "[pipeline][params]") {
+  // No option-struct home for this one (annotate_parameters() is hard-coded,
+  // like optimize_parameters()), so this asserts the literal wire contract
+  // from docs/design/gpu-worker.md §3 (ruxd repo) instead of a struct.
+  const ParameterDescriptor &prompts =
+      *parameter_of(JobStage::annotate, "prompts");
+  CHECK(prompts.type == ParameterType::string_list);
+  CHECK(std::holds_alternative<std::monostate>(prompts.default_value));
+
+  const ParameterDescriptor &frames =
+      *parameter_of(JobStage::annotate, "frames");
+  CHECK(frames.type == ParameterType::integer_list);
+  CHECK(std::holds_alternative<std::monostate>(frames.default_value));
+
+  CHECK(number_default(JobStage::annotate, "confidence") == 0.5);
+  const ParameterDescriptor &confidence =
+      *parameter_of(JobStage::annotate, "confidence");
+  REQUIRE(confidence.minimum);
+  REQUIRE(confidence.maximum);
+  CHECK(*confidence.minimum == 0.0);
+  CHECK(*confidence.maximum == 1.0);
+
+  const ParameterDescriptor &skip_annotated =
+      *parameter_of(JobStage::annotate, "skip_annotated");
+  REQUIRE(std::holds_alternative<bool>(skip_annotated.default_value));
+  CHECK_FALSE(std::get<bool>(skip_annotated.default_value));
+
+  const ParameterDescriptor &placement =
+      *parameter_of(JobStage::annotate, "placement");
+  REQUIRE(std::holds_alternative<std::string>(placement.default_value));
+  CHECK(std::get<std::string>(placement.default_value) == "auto");
 }
 
 TEST_CASE("StageParameters_FloatDefault_RoundTripsShortestDecimal",

@@ -41,6 +41,7 @@ enum class ParameterType {
   boolean,      ///< JSON true/false
   string,       ///< JSON string
   integer_list, ///< JSON array of non-negative integers
+  string_list,  ///< JSON array of strings
 };
 
 /// Canonical lower-case token for @p type, as it appears on the wire.
