@@ -92,7 +92,8 @@ ReUseX/
 
 `ruxd` (the HTTP service worker / web GUI server) and the web frontend each
 live in their own repo — `ruxd` and `rux-frontend` — not in this tree
-(repo split, 2026-10-09; see `docs/DIRECTION.md`).
+(repo split, 2026-10-09; see `docs/DIRECTION.md`). Deploying them (Docker
+images, Supabase auth, Caddy) is covered by the `reusex-fleet` repo.
 
 ## Quick Links
 

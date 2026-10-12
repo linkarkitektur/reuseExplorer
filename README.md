@@ -212,6 +212,8 @@ prerequisites are documented in [docs/CONTRACTS.md](docs/CONTRACTS.md).
 
 `ruxd` (the HTTP service worker serving the web GUI) and the web frontend
 live in their own repos — `ruxd` and `rux-frontend` — not in this one.
+Deploying them (Docker images, Supabase auth, Caddy, the compose stack) is
+covered by the `reusex-fleet` repo, not here.
 
 > **Note:** the Python bindings in `bindings/python/` are built by default
 > (`BUILD_PYTHON_BINDINGS=ON`) and currently expose **read-only** `.rux`
