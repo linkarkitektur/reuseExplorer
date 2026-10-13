@@ -31,6 +31,7 @@
 
 #include <Eigen/Geometry>
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <random>
@@ -351,4 +352,84 @@ TEST_CASE("DetectLoopEdges_DegenerateInputs_ReturnsEmptyWithoutCrash",
     REQUIRE(stats.edges == 0);
     REQUIRE(stats.total_inliers == 0);
   }
+}
+
+// ---------------------------------------------------------------------------
+// PCM with fixed inliers (consistent_loop_edge_indices)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ConsistentLoopEdgeIndices_FixedEdge_OverridesALargerAliasingClique",
+          "[loop_closure][slam][pcm]") {
+  // Six frames 1 m apart on x. True loops (0,4), (1,5) agree with the seed;
+  // three aliasing edges (0,3), (1,4), (2,5) are each 2 m off in the same
+  // way, so they agree with EACH OTHER and outvote the true pair — unless a
+  // true edge is fixed (a user-confirmed stored edge, spec §4.3).
+  std::vector<Eigen::Matrix4d> seed;
+  for (int k = 0; k < 6; ++k)
+    seed.push_back(planar_pose(1.0 * k, 0.0, 0.0));
+  auto rel = [&](int i, int j) {
+    return Eigen::Matrix4d(seed[i].inverse() * seed[j]);
+  };
+  Eigen::Matrix4d off = Eigen::Matrix4d::Identity();
+  off(0, 3) = 2.0;
+  const std::vector<LoopEdge> edges = {make_edge(0, 4, rel(0, 4), 100),
+                                       make_edge(1, 5, rel(1, 5), 100),
+                                       make_edge(0, 3, rel(0, 3) * off, 100),
+                                       make_edge(1, 4, rel(1, 4) * off, 100),
+                                       make_edge(2, 5, rel(2, 5) * off, 100)};
+  const LoopClosureOptions opt;
+
+  const auto free = consistent_loop_edge_indices(edges, seed, opt, {});
+  CHECK(free == std::vector<size_t>{2, 3, 4});
+
+  const auto fixed = consistent_loop_edge_indices(
+      edges, seed, opt, {true, false, false, false, false});
+  CHECK(fixed == std::vector<size_t>{0, 1});
+}
+
+TEST_CASE("ConsistentLoopEdgeIndices_FixedEdgesSurviveTheCap",
+          "[loop_closure][slam][pcm]") {
+  std::vector<Eigen::Matrix4d> seed;
+  for (int k = 0; k < 6; ++k)
+    seed.push_back(planar_pose(1.0 * k, 0.0, 0.0));
+  auto rel = [&](int i, int j) {
+    return Eigen::Matrix4d(seed[i].inverse() * seed[j]);
+  };
+  const std::vector<LoopEdge> edges = {make_edge(0, 4, rel(0, 4), 1),
+                                       make_edge(1, 5, rel(1, 5), 500),
+                                       make_edge(0, 5, rel(0, 5), 400)};
+  LoopClosureOptions opt;
+  opt.pcm_max_edges = 1; // would keep only the 500-inlier edge
+  const auto kept =
+      consistent_loop_edge_indices(edges, seed, opt, {true, false, false});
+  CHECK(std::find(kept.begin(), kept.end(), size_t{0}) != kept.end());
+}
+
+TEST_CASE("ConsistentLoopEdgeIndices_SingleCandidateInconsistentWithFixed_"
+          "IsRejected",
+          "[loop_closure][slam][pcm]") {
+  // Two edges only: without a fixed edge the "a pair cannot outvote itself"
+  // rule keeps both, but a candidate that contradicts a fixed (confirmed)
+  // edge is rejected even below the clique-search threshold (ruling R9).
+  std::vector<Eigen::Matrix4d> seed;
+  for (int k = 0; k < 6; ++k)
+    seed.push_back(planar_pose(1.0 * k, 0.0, 0.0));
+  auto rel = [&](int i, int j) {
+    return Eigen::Matrix4d(seed[i].inverse() * seed[j]);
+  };
+  Eigen::Matrix4d off = Eigen::Matrix4d::Identity();
+  off(0, 3) = 2.0;
+  const std::vector<LoopEdge> edges = {make_edge(0, 4, rel(0, 4), 100),
+                                       make_edge(0, 3, rel(0, 3) * off, 100)};
+  const LoopClosureOptions opt;
+
+  CHECK(consistent_loop_edge_indices(edges, seed, opt, {}) ==
+        std::vector<size_t>{0, 1});
+  CHECK(consistent_loop_edge_indices(edges, seed, opt, {true, false}) ==
+        std::vector<size_t>{0});
+  // A consistent single candidate is still kept alongside the fixed edge.
+  const std::vector<LoopEdge> agree = {make_edge(0, 4, rel(0, 4), 100),
+                                       make_edge(1, 5, rel(1, 5), 100)};
+  CHECK(consistent_loop_edge_indices(agree, seed, opt, {true, false}) ==
+        std::vector<size_t>{0, 1});
 }

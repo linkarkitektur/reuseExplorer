@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <numeric>
 #include <random>
 #include <set>
 #include <utility>
@@ -349,6 +350,22 @@ bow_histograms(const std::vector<FrameFeatures> &feats, const cv::Mat &vocab) {
 
 namespace detail {
 
+/// Two loop edges are consistent when chaining them through the seed
+/// odometry closes a near-identity cycle (Mangelson et al., PCM).
+static bool pcm_consistent(const LoopEdge &a, const LoopEdge &b,
+                           const std::vector<Eigen::Matrix4d> &seed,
+                           const LoopClosureOptions &opt) {
+  // Cycle: pose(a.i) --T_a--> pose(a.j) --seed odom--> pose(b.j) --T_b^-1-->
+  //        pose(b.i) --seed odom--> pose(a.i). Identity if consistent.
+  const Eigen::Matrix4d C = a.T_ij * (seed[a.j].inverse() * seed[b.j]) *
+                            b.T_ij.inverse() *
+                            (seed[b.i].inverse() * seed[a.i]);
+  const double t = C.block<3, 1>(0, 3).norm();
+  const double c = (C.block<3, 3>(0, 0).trace() - 1.0) / 2.0;
+  const double r = std::acos(std::clamp(c, -1.0, 1.0));
+  return t < opt.pcm_trans_threshold && r < opt.pcm_rot_threshold;
+}
+
 /// Pairwise Consistency Maximization (Mangelson et al. 2018). Two loop edges
 /// are "consistent" if chaining edge A, the seed odometry between the two
 /// edges' endpoints, edge B (inverse), and the odometry back forms a
@@ -373,15 +390,7 @@ std::vector<LoopEdge> pcm_filter(std::vector<LoopEdge> edges,
     return edges;
 
   auto consistent = [&](const LoopEdge &a, const LoopEdge &b) {
-    // Cycle: pose(a.i) --T_a--> pose(a.j) --seed odom--> pose(b.j) --T_b^-1-->
-    //        pose(b.i) --seed odom--> pose(a.i). Identity if consistent.
-    const Eigen::Matrix4d C = a.T_ij * (seed[a.j].inverse() * seed[b.j]) *
-                              b.T_ij.inverse() *
-                              (seed[b.i].inverse() * seed[a.i]);
-    const double t = C.block<3, 1>(0, 3).norm();
-    const double c = (C.block<3, 3>(0, 0).trace() - 1.0) / 2.0;
-    const double r = std::acos(std::clamp(c, -1.0, 1.0));
-    return t < opt.pcm_trans_threshold && r < opt.pcm_rot_threshold;
+    return pcm_consistent(a, b, seed, opt);
   };
 
   std::vector<std::vector<char>> adj(M, std::vector<char>(M, 0));
@@ -437,6 +446,98 @@ filter_consistent_loop_edges(std::vector<LoopEdge> edges,
                              const std::vector<Eigen::Matrix4d> &seed,
                              const LoopClosureOptions &options) {
   return detail::pcm_filter(std::move(edges), seed, options);
+}
+
+std::vector<size_t>
+consistent_loop_edge_indices(const std::vector<LoopEdge> &edges,
+                             const std::vector<Eigen::Matrix4d> &seed,
+                             const LoopClosureOptions &opt,
+                             const std::vector<bool> &fixed_in) {
+  std::vector<bool> fixed = fixed_in;
+  fixed.resize(edges.size(), false);
+
+  // Fixed first, then by inlier support; stable so ties keep input order.
+  std::vector<size_t> order(edges.size());
+  std::iota(order.begin(), order.end(), size_t{0});
+  std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+    if (fixed[a] != fixed[b])
+      return static_cast<bool>(fixed[a]);
+    return edges[a].inliers > edges[b].inliers;
+  });
+  const size_t n_fixed =
+      static_cast<size_t>(std::count(fixed.begin(), fixed.end(), true));
+  if (opt.pcm_max_edges > 0) {
+    // The cap never drops a fixed edge.
+    const size_t cap =
+        std::max(static_cast<size_t>(opt.pcm_max_edges), n_fixed);
+    if (order.size() > cap)
+      order.resize(cap);
+  }
+  const int M = static_cast<int>(order.size());
+
+  std::vector<std::vector<char>> adj(M, std::vector<char>(M, 0));
+  for (int a = 0; a < M; ++a)
+    for (int b = a + 1; b < M; ++b)
+      if (detail::pcm_consistent(edges[order[a]], edges[order[b]], seed, opt))
+        adj[a][b] = adj[b][a] = 1;
+
+  // Fixed-edge filter BEFORE the small-set shortcut (ruling R9): a single
+  // candidate that contradicts a confirmed edge must still be rejected.
+  std::vector<int> fixed_v, cand;
+  for (int v = 0; v < M; ++v) {
+    if (fixed[order[v]]) {
+      fixed_v.push_back(v);
+      continue;
+    }
+    // fixed_v is complete here: fixed edges sort first.
+    bool ok = true;
+    for (int f : fixed_v)
+      ok = ok && adj[v][f];
+    if (ok)
+      cand.push_back(v);
+  }
+
+  std::vector<int> best;
+  if (M <= 2) {
+    // A pair cannot outvote itself: keep every surviving candidate.
+    best = cand;
+  } else {
+    std::vector<int> deg(M, 0);
+    for (int a : cand)
+      for (int b : cand)
+        if (a != b && adj[a][b])
+          ++deg[a];
+    std::stable_sort(cand.begin(), cand.end(),
+                     [&](int a, int b) { return deg[a] > deg[b]; });
+
+    const int seeds = std::min(static_cast<int>(cand.size()), 64);
+    for (int s = 0; s < seeds; ++s) {
+      std::vector<int> clique{cand[static_cast<size_t>(s)]};
+      for (int v : cand) {
+        if (v == clique.front())
+          continue;
+        bool ok = true;
+        for (int u : clique)
+          if (!adj[v][u]) {
+            ok = false;
+            break;
+          }
+        if (ok)
+          clique.push_back(v);
+      }
+      if (clique.size() > best.size())
+        best = std::move(clique);
+    }
+  }
+
+  std::vector<size_t> out;
+  out.reserve(fixed_v.size() + best.size());
+  for (int v : fixed_v)
+    out.push_back(order[static_cast<size_t>(v)]);
+  for (int v : best)
+    out.push_back(order[static_cast<size_t>(v)]);
+  std::sort(out.begin(), out.end());
+  return out;
 }
 
 double trajectory_extent(const std::vector<Eigen::Matrix4d> &poses) {
