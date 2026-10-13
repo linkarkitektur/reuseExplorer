@@ -9,6 +9,7 @@
 // are forward-declared here (cv::Mat by value/reference, mesh types via
 // std::shared_ptr) to keep DB clients from transitively compiling them.
 #include "reusex/core/component_record.hpp"
+#include "reusex/core/resource_view.hpp"
 #include "reusex/core/survey.hpp"
 #include "reusex/types/point_types.hpp"
 
@@ -273,6 +274,8 @@ class ProjectDB {
   cv::Mat panoramic_image(int id) const;
   cv::Mat panoramic_image(std::string_view filename) const;
   bool has_panoramic_image(std::string_view filename) const;
+  /// True when a panoramic_images row with this id exists.
+  bool has_panoramic_image(int id) const;
   void delete_panoramic_image(int id);
   void delete_panoramic_image(std::string_view filename);
   std::vector<PanoramicImage> list_panoramic_images() const;
@@ -1141,6 +1144,8 @@ class ProjectDB {
   bool delete_resource_template(int64_t id); // false when absent
 
   // --- Survey (Ressourcekortlægning, schema v22) ---
+  /// The chosen image of a resource (schema v27, core/resource_view.hpp).
+  using ResourceView = core::ResourceView;
   struct SurveyTypeRecord {
     int64_t id = 0;
     std::string name;
@@ -1189,8 +1194,15 @@ class ProjectDB {
     /// instances` re-runs because instance identity is reconciled on guid,
     /// not (cloud_id, instance_id). Nullable: a manually added part needs no
     /// instance. Read-only on a patch; set via cloud_name/instance_id on add.
-    /// Kept LAST so existing positional aggregate initializers still compile.
+    /// Kept before view so existing positional aggregate initializers still
+    /// compile.
     std::optional<std::string> instance_guid{};
+    /// The resource's chosen image (schema v27: survey_parts.view_*).
+    /// nullopt when none was chosen, before v27, or when the frame/panorama
+    /// it names no longer exists (logged at warn). Read-only on add/patch:
+    /// set through set_survey_part_view. Kept LAST so positional aggregate
+    /// initializers still compile.
+    std::optional<core::ResourceView> view{};
   };
   struct SurveyPartPatch {
     std::optional<int64_t> type_id;
@@ -1227,6 +1239,17 @@ class ProjectDB {
   std::string ensure_resource_passport(std::string_view code);
   /// @throws std::out_of_range when @p code is unknown.
   void delete_survey_part(std::string_view code);
+  /// Set, change, or clear (nullopt) a part's view record (schema v27).
+  /// Validates the shape (core::validate_view_shape) and that the frame /
+  /// panorama exists. A resource keeps its image once it has one: clearing
+  /// (nullopt) a part whose view is already set is refused
+  /// (core::KeyValueError, which derives from std::invalid_argument);
+  /// clearing an already-absent view is a no-op success. Does not open a
+  /// transaction (one UPDATE); call inside one to batch.
+  /// @throws std::invalid_argument (shape, or clearing a set view),
+  ///         std::out_of_range (no part, no sensor frame, no panorama).
+  void set_survey_part_view(std::string_view code,
+                            const std::optional<core::ResourceView> &view);
   /// Deletes a survey type; its parts and sample links cascade. Storage only:
   /// tombstones and passports are core::delete_survey_type's job.
   /// @throws std::out_of_range when @p id is unknown.

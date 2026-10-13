@@ -49,13 +49,20 @@ view as null and log at `warn` (STANDARDS §5); nothing cascades.
   `SurveyPartRecord::view` (`std::optional<ResourceView>`);
   `set_survey_part_view(code, std::optional<ResourceView>)` — validates the
   invariant and that the frame/panorama exists, throws
-  `std::invalid_argument` / `std::out_of_range`.
+  `std::invalid_argument` / `std::out_of_range`. A resource always has an
+  image once one is chosen: clearing (nullopt) a part whose view is already
+  set is refused (`KeyValueError`, a `std::invalid_argument`); clearing an
+  already-absent view is a no-op success. Only changing a set view is
+  allowed, and that check lives in the setter and in `patch_resource`
+  (not `normalise_value`, which has no notion of the part's current value).
 - Resource key `sys:view` (part-scoped, built-in), value = compact JSON
   `{"kind":"frame","id":123,"region":[x,y,w,h]}` or unset. It travels
   through `list_resources` / `patch_resource` / templates like every other
   key, so ruxd and the CSV get it for free. `display_value` renders it as
   `Foto #123` / `360° #4` (CSV, not the report). `normalise_value` parses
-  and validates it via the same checks as the setter.
+  and validates its shape via the same checks as the setter; the
+  cannot-clear-once-set rule is enforced a level up (`patch_resource`),
+  which knows the part's current view.
 
 ### Automatic attachment
 
@@ -86,7 +93,10 @@ copies.
   already serialises every key, so mostly verify + document in
   `docs/gui/` (the API contract).
 - `PATCH /resources/<code>` accepts `sys:view` like any key (validation
-  errors → 400/422 via the existing `KeyValueError` mapping).
+  errors → 400/422 via the existing `KeyValueError` mapping). Clearing a
+  part's `sys:view` with `null` is one such validation error once the part
+  has a view — a resource always has an image once one is chosen, so the
+  only way to change it is to PATCH a new value, never to unset it.
 - Mask → resource endpoint: nothing to add beyond passing `frame_id`
   (already done); its response includes the new view.
 - `/survey/photos` and `/instances/.../frames` stay — they are now the
@@ -107,11 +117,14 @@ copies.
   strip below and a one-line hint.
 - **Choosing**: each `PhotoStrip` thumbnail and the 360° strip get a
   "Brug som ressourcebillede" action → `PATCH sys:view` with the
-  instance's region for that frame (frames: from the existing
-  `/instances/.../frames` data if it carries a bbox, else add it there in
-  ruxd; panorama: a fixed ~60° × 45° window centred on the instance's
-  `u,v`). The current view is marked in the strip ("Valgt").
-- "Fjern billede" clears it (PATCH null).
+  instance's region for that frame (frames: send `{kind:"frame",id}` and
+  the library fills in the instance's padded region on PATCH,
+  `core::complete_view_region` — changed 2026-10-13, user-approved: avoids
+  loading two clouds per frames request; panorama: a fixed ~60° × 45°
+  window centred on the instance's `u,v`). The current view is marked in the strip ("Valgt").
+- A resource always has an image once one is chosen, so there is no "Fjern
+  billede" / remove action — only "Brug som ressourcebillede" to change it
+  via the photo/360° strip.
 - Tests per the repo's conventions (vitest for the region/crop maths and
   the fallback-free selection; component test for the action).
 

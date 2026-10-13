@@ -134,6 +134,31 @@ TEST_CASE("ResourceExport_Tables_ChunkedLedByBetegnelse", "[resources][pdf]") {
   CHECK(only_name[0].headers == std::vector<std::string>{"Betegnelse"});
 }
 
+TEST_CASE("ResourceExport_ViewKey_DisplayedInCsvLeftOutOfReportTables",
+          "[resources][csv][pdf]") {
+  const auto cat = key_catalogue({});
+  const auto &view = *find_key(cat, "sys:view");
+  CHECK(display_value(
+            view, std::string(R"({"kind":"frame","id":12,"region":null})")) ==
+        "Foto #12");
+  CHECK(display_value(
+            view, std::string(R"({"kind":"panorama","id":4,"region":null})")) ==
+        "360° #4");
+  CHECK(display_value(view, std::string("garbage")) == "garbage");
+  CHECK(display_value(view, std::nullopt).empty());
+  std::vector<ResourceKey> cols{*find_key(cat, "sys:name"), view,
+                                *find_key(cat, "sys:note")};
+  Resource r{"RX-007",
+             1,
+             false,
+             {{"sys:name", "Døre"},
+              {"sys:view", R"({"kind":"frame","id":12,"region":null})"},
+              {"sys:note", "n"}}};
+  const auto tables = resource_tables(cols, {r});
+  REQUIRE(tables.size() == 1);
+  CHECK(tables[0].headers == std::vector<std::string>{"Betegnelse", "Note"});
+}
+
 TEST_CASE("ResourceExport_ThroughATemplate", "[resources][csv][pdf]") {
   TempDB tmp;
   ProjectDB db(tmp.path);

@@ -41,6 +41,13 @@ std::string display_value(const ResourceKey &key,
     if (*value == "false")
       return "Nej";
   }
+  if (key.id == kViewKey) {
+    try {
+      return view_display(parse_view(*value));
+    } catch (const std::invalid_argument &) {
+      return *value; // not ours to hide; show what is stored
+    }
+  }
   return *value;
 }
 
@@ -111,7 +118,9 @@ resource_tables(const std::vector<ResourceKey> &columns,
     return {};
   std::vector<const ResourceKey *> others;
   for (const auto &k : columns)
-    if (k.id != "sys:name")
+    // sys:name leads every table; sys:view is an image — the report shows
+    // the picture (sub-project C), never "Foto #12" in a table cell.
+    if (k.id != "sys:name" && k.id != kViewKey)
       others.push_back(&k);
   const std::size_t per = max_columns - 1;
   std::vector<ResourceTable> out;

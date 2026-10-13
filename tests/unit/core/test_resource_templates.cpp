@@ -37,11 +37,12 @@ TEST_CASE("ResourceTemplates_Resolve_ExpandsDedupsAndReportsMissing",
       resolve_template({key("sys:note"), cat("Kortlægning"), key("col:a"),
                         key("col:gone"), cat("Ingen"), key("sys:name")},
                        catalogue);
-  REQUIRE(r.keys.size() == 12);
+  REQUIRE(r.keys.size() == 13);
   CHECK(r.keys[0] == "sys:note"); // first position wins
   CHECK(r.keys[1] == "sys:name");
   CHECK(r.keys[10] == "sys:starred");
-  CHECK(r.keys[11] == "col:a");
+  CHECK(r.keys[11] == "sys:view");
+  CHECK(r.keys[12] == "col:a");
   CHECK(r.missing ==
         std::vector<TemplateMember>{key("col:gone"), cat("Ingen")});
 }
@@ -88,7 +89,8 @@ TEST_CASE("ResourceTemplates_Seeds_MaterialepasAndScreening",
   CHECK(seeds[1].name == "Hurtig genbrugsscreening");
   std::vector<TemplateMember> screening;
   for (const auto &k : builtin_keys())
-    screening.push_back(key(k.id));
+    if (k.id != kViewKey)
+      screening.push_back(key(k.id));
   CHECK(seeds[1].members == screening);
   // Every leksikon key resolves through the full seed.
   const auto catalogue = key_catalogue({});

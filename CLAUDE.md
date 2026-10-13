@@ -531,7 +531,12 @@ tree — if a doc mentions `RTABMapDatabase`, that doc is stale.
   category or individually, read via `resource_templates()`
   (`core/resource_templates.hpp`). Schema v26 adds the tombstone table
   `survey_dismissed_instances`: a deleted scan-backed survey part's instance
-  guid, which `sync_survey` skips so the part is not re-created
+  guid, which `sync_survey` skips so the part is not re-created. Schema v27
+  adds the resource view record (`survey_parts.view_*`, key `sys:view`,
+  `core/resource_view.hpp`): the one chosen image (sensor frame or panorama +
+  normalised region) a resource is shown by, set by `sync_survey` / mask →
+  resource and read with no fallback ranking; PATCHing a frame's `sys:view`
+  without a region fills in the instance's region (`core::complete_view_region`)
 - Migrating schema; `LATEST_SCHEMA_VERSION` is defined in
   `src/core/ProjectDB.cpp` — read it there rather than trusting a doc (it moves
   most releases)

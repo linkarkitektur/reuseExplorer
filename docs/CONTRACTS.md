@@ -240,8 +240,8 @@ instance.
 
 | | |
 |---|---|
-| Consumes | `instances`, `survey_dismissed_instances` (schema v26 tombstones) |
-| Produces | `survey_types`, `survey_parts` |
+| Consumes | `instances`, `survey_dismissed_instances` (schema v26 tombstones), cloud positions and posed sensor frames (for views, optional) |
+| Produces | `survey_types`, `survey_parts`, `survey_parts.view_*` (schema v27) |
 | Options  | `rux create survey` CLI options (`--instances`, `--semantic`, `--rooms`) |
 | Checks   | `instances` cloud present |
 
@@ -284,6 +284,13 @@ the count and codes (`SurveySyncReport::parts_orphaned` /
 orphaned part — re-file it under a new instance, or drop it — is a Phase 3
 product decision.
 
+Then every instance-backed part without a view (new or pre-existing — the
+backfill for old projects) gets the best-ranked frame (`instance_evidence`)
+as its view, region = the instance's bbox in that frame padded 15 % per side.
+A view is never overwritten. No sensor frames: skipped with one `info` line;
+no positions cloud or misaligned clouds: `warn`, no views; parts no frame
+sees keep none (`views_unavailable`).
+
 ### Editor write: segment resource (web GUI, POST /frames/{id}/segment/resource)
 
 <!-- No backticks in this heading: test_stage_contract parses backticked
@@ -297,7 +304,7 @@ in `pipeline_log` as `segment_resource` but is not a `Stage` and has no
 | | |
 |---|---|
 | Consumes | `cloud`, the frame's `segmentation_images` row, its stored pose, intrinsics and depth image |
-| Produces | `labels` and `instances` (created all-zero when absent, cloud-sized), one `instances` row, label definitions for both, one `survey_parts` row (and a `survey_types` row when needed) |
+| Produces | `labels` and `instances` (created all-zero when absent, cloud-sized), one `instances` row, label definitions for both, one `survey_parts` row (and a `survey_types` row when needed), that part's view (`survey_parts.view_*`, schema v27: the mask's bbox in this frame, padded 15 %) |
 | Options  | `MaskProjectionOptions`, `MaskSelectionOptions` (`libs/reusex/include/core/mask_selection.hpp`) |
 | Checks   | frame posed with depth; `labels`/`instances`, when present, index-aligned with `cloud`; an explicit `type_id` is not a rejected survey type; an echoed `mask_revision` still matches the saved segmentation |
 
