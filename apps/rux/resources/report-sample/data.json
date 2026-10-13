@@ -1,0 +1,698 @@
+{
+  "project_name": "Prøvegade 12, København Ø — nedrivning af baghus",
+  "generated_at": "2026-10-13T09:30:00Z",
+  "columns": [
+    {
+      "id": "col-betegnelse",
+      "name": "Betegnelse",
+      "type": "text"
+    },
+    {
+      "id": "col-materiale",
+      "name": "Materiale",
+      "type": "text"
+    },
+    {
+      "id": "col-maengde",
+      "name": "Mængde",
+      "type": "number"
+    },
+    {
+      "id": "col-tilstand",
+      "name": "Tilstand",
+      "type": "text"
+    },
+    {
+      "id": "col-placering",
+      "name": "Placering",
+      "type": "text"
+    },
+    {
+      "id": "col-bemaerkning",
+      "name": "Bemærkning",
+      "type": "text"
+    }
+  ],
+  "materials": [
+    {
+      "guid": "sample-01",
+      "has_thumbnail": true,
+      "thumbnail_path": "images/sample-01.jpg",
+      "properties": {
+        "Betegnelse": "Mursten, gule blødstrøgne",
+        "Materiale": "Tegl",
+        "Mængde": "1240 m²",
+        "Tilstand": "God",
+        "Placering": "Facade mod gård",
+        "Bemærkning": "Kalkmørtel, let at nedbryde"
+      }
+    },
+    {
+      "guid": "sample-02",
+      "has_thumbnail": true,
+      "thumbnail_path": "images/sample-02.jpg",
+      "properties": {
+        "Betegnelse": "Tagspær, fyr",
+        "Materiale": "Træ",
+        "Mængde": "86 stk",
+        "Tilstand": "Middel",
+        "Placering": "Tagetage",
+        "Bemærkning": "Enkelte spær med råd i fodremmen"
+      }
+    },
+    {
+      "guid": "sample-03",
+      "has_thumbnail": true,
+      "thumbnail_path": "images/sample-03.jpg",
+      "properties": {
+        "Betegnelse": "Indvendige døre, massiv eg",
+        "Materiale": "Træ",
+        "Mængde": "42 stk",
+        "Tilstand": "God",
+        "Placering": "1.–3. sal",
+        "Bemærkning": "Originale greb bevaret"
+      }
+    },
+    {
+      "guid": "sample-04",
+      "has_thumbnail": true,
+      "thumbnail_path": "images/sample-04.jpg",
+      "properties": {
+        "Betegnelse": "Gulvbrædder, bøg",
+        "Materiale": "Træ",
+        "Mængde": "310 m²",
+        "Tilstand": "Middel",
+        "Placering": "Stuer, 2. sal",
+        "Bemærkning": "Slidte ved dørtrin"
+      }
+    },
+    {
+      "guid": "sample-05",
+      "has_thumbnail": true,
+      "thumbnail_path": "images/sample-05.jpg",
+      "properties": {
+        "Betegnelse": "Radiatorer, støbejern",
+        "Materiale": "Jern og stål",
+        "Mængde": "38 stk",
+        "Tilstand": "God",
+        "Placering": "Alle etager",
+        "Bemærkning": "Trykprøves før genbrug"
+      }
+    },
+    {
+      "guid": "sample-06",
+      "has_thumbnail": true,
+      "thumbnail_path": "images/sample-06.jpg",
+      "properties": {
+        "Betegnelse": "Vinduer, trærammer med koblede rammer",
+        "Materiale": "Træ og glas",
+        "Mængde": "22 stk",
+        "Tilstand": "Dårlig",
+        "Placering": "Gadefacade",
+        "Bemærkning": "Kitfalse skal prøvetages"
+      }
+    },
+    {
+      "guid": "sample-07",
+      "has_thumbnail": true,
+      "thumbnail_path": "images/sample-07.jpg",
+      "properties": {
+        "Betegnelse": "Facadeelementer, sandwich",
+        "Materiale": "Beton",
+        "Mængde": "64 stk",
+        "Tilstand": "God",
+        "Placering": "Gavl øst",
+        "Bemærkning": "Løftebeslag intakte"
+      }
+    },
+    {
+      "guid": "sample-08",
+      "has_thumbnail": true,
+      "thumbnail_path": "images/sample-08.jpg",
+      "properties": {
+        "Betegnelse": "Køkkenlåger, hvidlakerede",
+        "Materiale": "Træ",
+        "Mængde": "57 stk",
+        "Tilstand": "God",
+        "Placering": "Køkkener, 1.–4. sal",
+        "Bemærkning": "Hængsler genbruges ikke"
+      }
+    },
+    {
+      "guid": "sample-09",
+      "has_thumbnail": false,
+      "thumbnail_path": "",
+      "properties": {
+        "Betegnelse": "Betonhuldæk",
+        "Materiale": "Beton",
+        "Mængde": "412 m²",
+        "Tilstand": "God",
+        "Placering": "Etagedæk",
+        "Bemærkning": "Skæres i fulde elementer"
+      }
+    },
+    {
+      "guid": "sample-10",
+      "has_thumbnail": false,
+      "thumbnail_path": "",
+      "properties": {
+        "Betegnelse": "Stålbjælker, HE200B",
+        "Materiale": "Jern og stål",
+        "Mængde": "18 stk",
+        "Tilstand": "God",
+        "Placering": "Kælder",
+        "Bemærkning": "Brandmaling skal fjernes"
+      }
+    },
+    {
+      "guid": "sample-11",
+      "has_thumbnail": false,
+      "thumbnail_path": "",
+      "properties": {
+        "Betegnelse": "Gipsvægge på stålskelet",
+        "Materiale": "Gips",
+        "Mængde": "260 m²",
+        "Tilstand": "Middel",
+        "Placering": "Kontorer, stueetage",
+        "Bemærkning": "Kun skelet genbruges"
+      }
+    },
+    {
+      "guid": "sample-12",
+      "has_thumbnail": false,
+      "thumbnail_path": "",
+      "properties": {
+        "Betegnelse": "Ældre loftsplader af træuld med maling, formodet indhold af PCB og bly i overfladebehandlingen — skal prøvetages før genbrug",
+        "Materiale": "Træuld",
+        "Mængde": "145 m²",
+        "Tilstand": "Dårlig",
+        "Placering": "Trappeopgang",
+        "Bemærkning": "Afventer prøvesvar fra laboratoriet"
+      }
+    },
+    {
+      "guid": "sample-13",
+      "has_thumbnail": false,
+      "thumbnail_path": "",
+      "properties": {
+        "Betegnelse": "Fliser, glaserede (badeværelser på 1.–3. sal)",
+        "Materiale": "Tegl og keramik",
+        "Mængde": "96 m²",
+        "Tilstand": "Middel",
+        "Placering": "Badeværelser",
+        "Bemærkning": "Fuger med mulig asbest"
+      }
+    },
+    {
+      "guid": "sample-14",
+      "has_thumbnail": false,
+      "thumbnail_path": "",
+      "properties": {
+        "Betegnelse": "Trappeløb, terrazzo",
+        "Materiale": "Beton",
+        "Mængde": "6 stk",
+        "Tilstand": "God",
+        "Placering": "Hovedtrappe",
+        "Bemærkning": "Løftes som hele løb"
+      }
+    },
+    {
+      "guid": "sample-15",
+      "has_thumbnail": false,
+      "thumbnail_path": "",
+      "properties": {
+        "Betegnelse": "Brandmandsdøre, stål",
+        "Materiale": "Jern og stål",
+        "Mængde": "9 stk",
+        "Tilstand": "God",
+        "Placering": "Bagtrappe",
+        "Bemærkning": "Godkendelse skal fornyes"
+      }
+    }
+  ],
+  "survey": {
+    "rows": [
+      {
+        "name": "Mursten og fliser",
+        "bim7aa": "211 Ydervægge",
+        "eak": "17.01.02",
+        "quantity": "1336 m²",
+        "mass": "148,8 t",
+        "treatment": "Genbrug",
+        "environment": "Ren (prøvesvar)"
+      },
+      {
+        "name": "Træ, konstruktivt og gulve",
+        "bim7aa": "251 Etagedæk",
+        "eak": "17.02.01",
+        "quantity": "86 m³",
+        "mass": "43 t",
+        "treatment": "Genanvendelse",
+        "environment": "Ren"
+      },
+      {
+        "name": "Døre, vinduer og låger",
+        "bim7aa": "231 Vinduer, døre",
+        "eak": "17.02.02",
+        "quantity": "121 stk",
+        "mass": "5,1 t",
+        "treatment": "Genbrug",
+        "environment": "Ren"
+      },
+      {
+        "name": "Stål og radiatorer",
+        "bim7aa": "223 Bjælker",
+        "eak": "17.04.05",
+        "quantity": "65 stk",
+        "mass": "12,6 t",
+        "treatment": "Genanvendelse",
+        "environment": "Ren"
+      },
+      {
+        "name": "Beton, huldæk og trapper",
+        "bim7aa": "251 Etagedæk",
+        "eak": "17.01.01",
+        "quantity": "412 m²",
+        "mass": "196,8 t",
+        "treatment": "Nyttiggørelse",
+        "environment": "Ren (prøvesvar)"
+      }
+    ],
+    "circularity": [
+      {
+        "label": "Genbrug",
+        "tonnes": "153,9 t"
+      },
+      {
+        "label": "Genanvendelse",
+        "tonnes": "55,6 t"
+      },
+      {
+        "label": "Nyttiggørelse",
+        "tonnes": "196,8 t"
+      }
+    ],
+    "blocking": 2
+  },
+  "resources": {
+    "name": "Fuld registrering (alle felter)",
+    "tables": [
+      {
+        "headers": [
+          "Betegnelse",
+          "Kode",
+          "Type",
+          "BIM7AA",
+          "EAK",
+          "Mængde",
+          "Enhed",
+          "Tons"
+        ],
+        "rows": [
+          [
+            "Mursten, gule blødstrøgne",
+            "RX-001",
+            "Mursten og fliser",
+            "211 Ydervægge",
+            "17.01.02",
+            "1240",
+            "m²",
+            "0,4"
+          ],
+          [
+            "Tagspær, fyr",
+            "RX-002",
+            "Træ, konstruktivt og gulve",
+            "251 Etagedæk",
+            "17.02.01",
+            "86",
+            "stk",
+            "4,1"
+          ],
+          [
+            "Indvendige døre, massiv eg",
+            "RX-003",
+            "Døre, vinduer og låger",
+            "231 Vinduer, døre",
+            "17.02.02",
+            "42",
+            "stk",
+            "7,8"
+          ],
+          [
+            "Gulvbrædder, bøg",
+            "RX-004",
+            "Træ, konstruktivt og gulve",
+            "251 Etagedæk",
+            "17.02.01",
+            "310",
+            "m²",
+            "2,5"
+          ],
+          [
+            "Radiatorer, støbejern",
+            "RX-005",
+            "Stål og radiatorer",
+            "223 Bjælker",
+            "17.04.05",
+            "38",
+            "stk",
+            "6,2"
+          ],
+          [
+            "Vinduer, trærammer med koblede rammer",
+            "RX-006",
+            "Døre, vinduer og låger",
+            "231 Vinduer, døre",
+            "17.02.02",
+            "22",
+            "stk",
+            "0,9"
+          ],
+          [
+            "Facadeelementer, sandwich",
+            "RX-007",
+            "Beton, huldæk og trapper",
+            "251 Etagedæk",
+            "17.01.01",
+            "64",
+            "stk",
+            "4,6"
+          ],
+          [
+            "Køkkenlåger, hvidlakerede",
+            "RX-008",
+            "Døre, vinduer og låger",
+            "231 Vinduer, døre",
+            "17.02.02",
+            "57",
+            "stk",
+            "8,3"
+          ],
+          [
+            "Betonhuldæk",
+            "RX-009",
+            "Beton, huldæk og trapper",
+            "251 Etagedæk",
+            "17.01.01",
+            "412",
+            "m²",
+            "3,0"
+          ],
+          [
+            "Stålbjælker, HE200B",
+            "RX-010",
+            "Stål og radiatorer",
+            "223 Bjælker",
+            "17.04.05",
+            "18",
+            "stk",
+            "6,7"
+          ],
+          [
+            "Gipsvægge på stålskelet",
+            "RX-011",
+            "Træ, konstruktivt og gulve",
+            "251 Etagedæk",
+            "17.02.01",
+            "260",
+            "m²",
+            "1,4"
+          ],
+          [
+            "Ældre loftsplader af træuld med maling, formodet indhold af PCB og bly i overfladebehandlingen — skal prøvetages før genbrug",
+            "RX-012",
+            "Træ, konstruktivt og gulve",
+            "251 Etagedæk",
+            "17.02.01",
+            "145",
+            "m²",
+            "5,1"
+          ],
+          [
+            "Fliser, glaserede (badeværelser på 1.–3. sal)",
+            "RX-013",
+            "Mursten og fliser",
+            "211 Ydervægge",
+            "17.01.02",
+            "96",
+            "m²",
+            "8,8"
+          ],
+          [
+            "Trappeløb, terrazzo",
+            "RX-014",
+            "Beton, huldæk og trapper",
+            "251 Etagedæk",
+            "17.01.01",
+            "6",
+            "stk",
+            "3,5"
+          ],
+          [
+            "Brandmandsdøre, stål",
+            "RX-015",
+            "Stål og radiatorer",
+            "223 Bjælker",
+            "17.04.05",
+            "9",
+            "stk",
+            "7,2"
+          ]
+        ]
+      },
+      {
+        "headers": [
+          "Betegnelse",
+          "Tilstand",
+          "Placering",
+          "Etage",
+          "Behandling",
+          "Miljø",
+          "Producent",
+          "Produktionsår"
+        ],
+        "rows": [
+          [
+            "Mursten, gule blødstrøgne",
+            "God",
+            "Facade mod gård",
+            "Kælder",
+            "Genbrug",
+            "Ren (prøvesvar)",
+            "Ukendt",
+            "1931"
+          ],
+          [
+            "Tagspær, fyr",
+            "Middel",
+            "Tagetage",
+            "Stue",
+            "Genanvendelse",
+            "Ren",
+            "Hasle Klinker",
+            "1934"
+          ],
+          [
+            "Indvendige døre, massiv eg",
+            "God",
+            "1.–3. sal",
+            "1. sal",
+            "Genbrug",
+            "Ren",
+            "Junckers",
+            "1937"
+          ],
+          [
+            "Gulvbrædder, bøg",
+            "Middel",
+            "Stuer, 2. sal",
+            "2. sal",
+            "Genanvendelse",
+            "Ren",
+            "Dansk Stål A/S",
+            "1940"
+          ],
+          [
+            "Radiatorer, støbejern",
+            "God",
+            "Alle etager",
+            "3. sal",
+            "Genanvendelse",
+            "Ren",
+            "Spæncom",
+            "1943"
+          ],
+          [
+            "Vinduer, trærammer med koblede rammer",
+            "Dårlig",
+            "Gadefacade",
+            "Kælder",
+            "Genbrug",
+            "Ren",
+            "Ukendt",
+            "1946"
+          ],
+          [
+            "Facadeelementer, sandwich",
+            "God",
+            "Gavl øst",
+            "Stue",
+            "Nyttiggørelse",
+            "Ren (prøvesvar)",
+            "Hasle Klinker",
+            "1949"
+          ],
+          [
+            "Køkkenlåger, hvidlakerede",
+            "God",
+            "Køkkener, 1.–4. sal",
+            "1. sal",
+            "Genbrug",
+            "Ren",
+            "Junckers",
+            "1952"
+          ],
+          [
+            "Betonhuldæk",
+            "God",
+            "Etagedæk",
+            "2. sal",
+            "Nyttiggørelse",
+            "Ren (prøvesvar)",
+            "Dansk Stål A/S",
+            "1955"
+          ],
+          [
+            "Stålbjælker, HE200B",
+            "God",
+            "Kælder",
+            "3. sal",
+            "Genanvendelse",
+            "Ren",
+            "Spæncom",
+            "1958"
+          ],
+          [
+            "Gipsvægge på stålskelet",
+            "Middel",
+            "Kontorer, stueetage",
+            "Kælder",
+            "Genanvendelse",
+            "Ren",
+            "Ukendt",
+            "1961"
+          ],
+          [
+            "Ældre loftsplader af træuld med maling, formodet indhold af PCB og bly i overfladebehandlingen — skal prøvetages før genbrug",
+            "Dårlig",
+            "Trappeopgang",
+            "Stue",
+            "Genanvendelse",
+            "Ren",
+            "Hasle Klinker",
+            "1964"
+          ],
+          [
+            "Fliser, glaserede (badeværelser på 1.–3. sal)",
+            "Middel",
+            "Badeværelser",
+            "1. sal",
+            "Genbrug",
+            "Ren (prøvesvar)",
+            "Junckers",
+            "1967"
+          ],
+          [
+            "Trappeløb, terrazzo",
+            "God",
+            "Hovedtrappe",
+            "2. sal",
+            "Nyttiggørelse",
+            "Ren (prøvesvar)",
+            "Dansk Stål A/S",
+            "1970"
+          ],
+          [
+            "Brandmandsdøre, stål",
+            "God",
+            "Bagtrappe",
+            "3. sal",
+            "Genanvendelse",
+            "Ren",
+            "Spæncom",
+            "1973"
+          ]
+        ]
+      },
+      {
+        "headers": [
+          "Betegnelse",
+          "Dimensioner"
+        ],
+        "rows": [
+          [
+            "Mursten, gule blødstrøgne",
+            "600 × 300 mm"
+          ],
+          [
+            "Tagspær, fyr",
+            "620 × 310 mm"
+          ],
+          [
+            "Indvendige døre, massiv eg",
+            "640 × 320 mm"
+          ],
+          [
+            "Gulvbrædder, bøg",
+            "660 × 330 mm"
+          ],
+          [
+            "Radiatorer, støbejern",
+            "680 × 340 mm"
+          ],
+          [
+            "Vinduer, trærammer med koblede rammer",
+            "700 × 350 mm"
+          ],
+          [
+            "Facadeelementer, sandwich",
+            "720 × 360 mm"
+          ],
+          [
+            "Køkkenlåger, hvidlakerede",
+            "740 × 370 mm"
+          ],
+          [
+            "Betonhuldæk",
+            "760 × 380 mm"
+          ],
+          [
+            "Stålbjælker, HE200B",
+            "780 × 390 mm"
+          ],
+          [
+            "Gipsvægge på stålskelet",
+            "800 × 400 mm"
+          ],
+          [
+            "Ældre loftsplader af træuld med maling, formodet indhold af PCB og bly i overfladebehandlingen — skal prøvetages før genbrug",
+            "820 × 410 mm"
+          ],
+          [
+            "Fliser, glaserede (badeværelser på 1.–3. sal)",
+            "840 × 420 mm"
+          ],
+          [
+            "Trappeløb, terrazzo",
+            "860 × 430 mm"
+          ],
+          [
+            "Brandmandsdøre, stål",
+            "880 × 440 mm"
+          ]
+        ]
+      }
+    ]
+  }
+}

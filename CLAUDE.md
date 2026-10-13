@@ -271,6 +271,11 @@ cmake --build build --target docs
 xdg-open docs/api/html/index.html
 ```
 
+The Ressourcekortlægning PDF template (`apps/rux/resources/report.typ`, the
+only copy — CMake embeds it) has its own light shell, `nix develop .#report`
+(`report-watch` / `report-build` / `report-shots`); data contract and loop:
+[`docs/guides/report-template.md`](docs/guides/report-template.md).
+
 ## Architecture
 
 **Repo split (2026-10-09, see `docs/DIRECTION.md`):** this repo is the
@@ -596,7 +601,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 |---|---|---|
 | `import` | `rtabmap`, `mushroom`, `arkitscenes`, `e57`, `ply`, `gsplat`, `materialepas`, `csv`, `360`, `photos` | `src/import/` |
 | `create` | `clouds`, `dense`, `annotate`, `annotate-360`, `material`, `project`, `planes`, `rooms`, `instances`, `materials`, `survey`, `mesh`, `texture`, `windows` | `src/create/` |
-| `export` | `ply`, `e57`, `materialepas`, `csv`, `rhino`, `semantic-images`, `speckle`, `colmap` | `src/export/` |
+| `export` | `ply`, `e57`, `materialepas`, `csv`, `rhino`, `semantic-images`, `speckle`, `colmap`, `pdf` | `src/export/` |
 | `align` | `360` (content-based panorama pose refinement) | `src/align/` |
 | `edit` | `downsample`, `perturb-poses` (drift synthesis, #338) | `src/edit/` |
 | `analyze` | `quality`, `accuracy` | `src/analyze/` |

@@ -1,6 +1,6 @@
 ---
 name: design-studio
-description: The design workflow for the native Qt client of the rux GUI (apps/rux/qt, in progress: QSS generated from tokens.css, screenshot loop via qt_shot.sh). Use this whenever you design, build, restyle, redesign, or "make it look better/more polished" for any Qt client page or workspace (Database, 3D/Viewer, Posegraf, Pipeline, Log, the app shell); whenever you touch styles/app.qss or a Qt widget/page; and whenever you work from docs/Design Review.md for a Qt page. Also use when matching the existing rux GUI look, or when a token in apps/rux/qt/theme/tokens.css needs refreshing from rux-frontend. The web half of the rux GUI (React/Vite/TS, apps/rux/frontend) moved to the standalone rux-frontend repo — its design-studio skill lives there now, not here.
+description: The design workflow for the native Qt client of the rux GUI (apps/rux/qt, in progress: QSS generated from tokens.css, screenshot loop via qt_shot.sh) and for the Ressourcekortlægning PDF report (Typst template apps/rux/resources/report.typ, page-screenshot loop via `nix develop .#report` / report-shots). Use this whenever you design, build, restyle, redesign, or "make it look better/more polished" for any Qt client page or workspace (Database, 3D/Viewer, Posegraf, Pipeline, Log, the app shell); whenever you touch styles/app.qss or a Qt widget/page; whenever you work on the PDF report, its Typst template, its layout, its sample data or print quality; and whenever you work from docs/Design Review.md for a Qt page. Also use when matching the existing rux GUI look, or when a token in apps/rux/qt/theme/tokens.css needs refreshing from rux-frontend. The web half of the rux GUI (React/Vite/TS, apps/rux/frontend) moved to the standalone rux-frontend repo — its design-studio skill lives there now, not here.
 ---
 
 # Design Studio — the Qt client (rux GUI)
@@ -178,3 +178,25 @@ Directory map, every widget/workspace file, the token-mapping table
 (CSS → QSS units), the full gotcha list (mnemonics, locale, VTK offscreen,
 QSS specificity, …), and how to build a new page end to end:
 `references/qt-client.md`.
+
+## PDF report (Typst)
+
+The Ressourcekortlægning report is an official document (it is attached to
+a demolition-permit application), so print quality is correctness, not taste.
+`apps/rux/resources/report.typ` is the only copy of the template; CMake
+embeds it, so no C++ build is needed to see a change.
+
+The loop, in `nix develop .#report`:
+
+1. `report-shots [DATA_DIR]` — compile and render every page to
+   `shots/report/page-NN.png` (default data: the committed
+   `apps/rux/resources/report-sample/`).
+2. **Read every PNG** — all pages, not the first one.
+3. Critique against the checklist in `references/pdf-report.md`.
+4. Fix `report.typ`, repeat. Keep `report-watch` running in another pane
+   when the user wants to watch.
+
+Real data: `rux -p x.rux export pdf --dump-data shots/report-data`, then
+`report-shots shots/report-data`. Never commit a real project's dump.
+Data contract: `docs/guides/report-template.md`. Read
+`references/pdf-report.md` before the first change.

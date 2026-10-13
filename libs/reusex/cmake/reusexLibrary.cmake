@@ -194,6 +194,31 @@ configure_file(
     @ONLY
 )
 
+# -----------------------------------------------
+# Embed the PDF report's Typst template
+# -----------------------------------------------
+# apps/rux/resources/report.typ is the only copy of the Ressourcekortlægning
+# template (report-template-workflow spec). Listing it in
+# CMAKE_CONFIGURE_DEPENDS re-runs configure when it is edited, so the
+# generated header — and report_generator.cpp — rebuild with it.
+set(REUSEX_REPORT_TEMPLATE_TYP
+    ${CMAKE_SOURCE_DIR}/apps/rux/resources/report.typ)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    ${REUSEX_REPORT_TEMPLATE_TYP})
+file(READ ${REUSEX_REPORT_TEMPLATE_TYP} REUSEX_REPORT_TEMPLATE_TEXT)
+string(FIND "${REUSEX_REPORT_TEMPLATE_TEXT}" ")reusextypst\"" _report_delim)
+if(NOT _report_delim EQUAL -1)
+    message(FATAL_ERROR
+        "${REUSEX_REPORT_TEMPLATE_TYP} contains the raw-string delimiter "
+        "')reusextypst\"' used to embed it; rename the delimiter in "
+        "report_template_default.hpp.in")
+endif()
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/core/report_template_default.hpp.in
+    ${CMAKE_BINARY_DIR}/generated/reusex/core/report_template_default.hpp
+    @ONLY
+)
+
 # ===============================================
 # Shared usage requirements (include dirs, flags, external deps)
 # ===============================================
