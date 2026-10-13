@@ -261,10 +261,12 @@ void PairStrip::rebuild() {
     h->addWidget(dir);
     h->addStretch(1);
     // One eliding label: a stored edge with a staged change carries two
-    // pills, and fixed-width figures beside them widened the window.
-    auto *r = new ElidedLabel(QString("Vægt %1   Residual %2")
-                                  .arg(weight_text(v.edge.weight))
-                                  .arg(residual_text(v.edge.residual)),
+    // pills, and fixed-width figures beside them widened the window. The
+    // residual first, so a narrow column cuts the weight, not the number
+    // the colour modes and the list sort by.
+    auto *r = new ElidedLabel(QString("Residual %1   Vægt %2")
+                                  .arg(residual_text(v.edge.residual))
+                                  .arg(weight_text(v.edge.weight)),
                               Qt::ElideRight);
     r->setObjectName("edgeMeta");
     r->setToolTip(r->full_text() +

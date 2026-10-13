@@ -58,6 +58,9 @@ class PoseGraphView : public QGraphicsView {
   void fit();
   /// What fit() frames (the nodes; screen-sized markers would skew it).
   void set_content_rect(const QRectF &r);
+  /// The lower-left corner an overlay covers (the legend card): fit() keeps
+  /// the graph out of it. Refits when the view is not the user's.
+  void set_corner_reserve(QSize px);
   /// Zoom by @p factor and centre on @p scene_pos, as the user would (the
   /// gallery): a resize or a yaw change then keeps the view.
   void zoom_on(const QPointF &scene_pos, double factor);
@@ -81,6 +84,7 @@ class PoseGraphView : public QGraphicsView {
   /// Zoomed or panned by the user: a resize keeps their view.
   bool user_view_ = false;
   QRectF content_;
+  QSize reserve_;
 };
 
 class GraphPanel : public QWidget {
@@ -104,9 +108,12 @@ class GraphPanel : public QWidget {
     const auto &n = nodes_[static_cast<std::size_t>(index)];
     return {n.x, -n.y};
   }
-  /// Click programmatically at a node / an edge (the gallery).
+  /// Click programmatically at a node (the gallery).
   void click_node(int id, bool as_b = false);
-  void click_edge(int from, int to);
+  /// Select edge @p key as a click would (the edge list, the gallery):
+  /// inspector, highlight, A and B. No edge_clicked. False when there is no
+  /// such edge.
+  bool click_edge(const EdgeKey &key);
   void set_plane(ViewPlane plane);
   const ViewProjection &projection() const { return projection_; }
   void set_colour_mode(EdgeColourMode mode);
@@ -148,8 +155,9 @@ class GraphPanel : public QWidget {
   void place_legend();
   void place_markers();
   void on_click(const QPointF &pos, Qt::KeyboardModifiers mods);
-  /// Inspect, highlight and pair the drawn edge @p key.
-  void select_edge(const EdgeKey &key);
+  /// Inspect, highlight and pair edge @p key (drawn or not: the list can
+  /// show rejected edges the canvas hides).
+  bool select_edge(const EdgeKey &key);
   void update_meta();
 
   ProjectSession &session_;

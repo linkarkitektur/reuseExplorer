@@ -10,6 +10,7 @@
 #include <rux_qt/AppShell.hpp>
 #include <rux_qt/DatabaseWorkspace.hpp>
 #include <rux_qt/EdgeEditor.hpp>
+#include <rux_qt/EdgeListPanel.hpp>
 #include <rux_qt/EditWorkspace.hpp>
 #include <rux_qt/FrameBrowser.hpp>
 #include <rux_qt/GraphPanel.hpp>
@@ -36,6 +37,7 @@
 #include <QGraphicsView>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QTableView>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QTimer>
@@ -595,9 +597,20 @@ QWidget *make_rediger_click(const PageContext &ctx) {
   settle();
   for (const auto &e : shell->database()->editor().edits().base())
     if (e.key.type == "loop_closure" && e.status != "rejected") {
-      shell->edit()->graph()->click_edge(e.key.from, e.key.to);
+      shell->edit()->graph()->click_edge(e.key);
       break;
     }
+  return shell;
+}
+
+/// The edge list sorted by residual with its first row selected: the graph
+/// highlights that edge and A/B follow.
+QWidget *make_rediger_list(const PageContext &ctx) {
+  auto *shell = static_cast<AppShell *>(
+      make_rediger_colour(ctx, EdgeColourMode::residual));
+  EdgeListPanel *list = shell->edit()->edges();
+  if (list->row_count() > 0)
+    list->view()->selectRow(0); // -> edge_activated
   return shell;
 }
 
@@ -884,6 +897,10 @@ void register_shell_pages() {
                  "Rediger: kanter farvet efter frøafvigelse, seedet graf "
                  "(skriver til projektkopien)",
                  make_rediger_seed});
+  register_page({"rediger-list",
+                 "Rediger: kantlisten sorteret efter residual med første "
+                 "række valgt, seedet graf (skriver til projektkopien)",
+                 make_rediger_list});
   register_page({"rediger-zoom",
                  "Rediger: zoomer ind på én node og tæller dens pixels "
                  "(reproduktion af forsvindende noder)",

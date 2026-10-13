@@ -375,6 +375,30 @@ class RampBar : public QWidget {
 
 QString da_text(const std::string &s) { return QString::fromStdString(s); }
 
+/// A legend key for a dashed stroke (staged, rejected): the pattern the
+/// canvas draws, not a filled chip — a chip reads as a colour of its own.
+class DashSwatch : public QWidget {
+    public:
+  explicit DashSwatch(QString token) : token_(std::move(token)) {
+    const int s = theme().px("--space-3");
+    setFixedSize(s, s);
+  }
+
+    protected:
+  void paintEvent(QPaintEvent *) override {
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    QPen pen(theme().color(token_), 2.0);
+    pen.setDashPattern({2.0, 1.5});
+    p.setPen(pen);
+    const double y = height() / 2.0;
+    p.drawLine(QPointF(0, y), QPointF(width(), y));
+  }
+
+    private:
+  QString token_;
+};
+
 } // namespace
 
 // ----------------------------------------------------------- PoseGraphView --
@@ -414,8 +438,22 @@ void PoseGraphView::set_content_rect(const QRectF &r) {
 void PoseGraphView::fit() {
   if (!scene() || content_.isNull())
     return;
-  fitInView(padded(content_), Qt::KeepAspectRatio);
+  const QRectF r = padded(content_);
+  const QRect vp = viewport()->rect();
+  const FitFrame f = fit_avoiding_corner(
+      {r.center().x(), r.center().y(), r.width(), r.height()}, vp.width(),
+      vp.height(), reserve_.width(), reserve_.height());
+  setTransform(QTransform::fromScale(f.scale, f.scale));
+  centerOn(f.cx, f.cy);
   user_view_ = false;
+}
+
+void PoseGraphView::set_corner_reserve(QSize px) {
+  if (px == reserve_)
+    return;
+  reserve_ = px;
+  if (!user_view_)
+    fit();
 }
 
 void PoseGraphView::resizeEvent(QResizeEvent *e) {
@@ -606,6 +644,8 @@ GraphPanel::GraphPanel(ProjectSession &session, EdgeEditor &editor,
                                      t.px("--space-3"), t.px("--space-2"));
   legend_layout_->setSizeConstraint(QLayout::SetFixedSize);
   legend_->hide();
+  // Clicks go through to the canvas: the card is a key, not a control.
+  legend_->setAttribute(Qt::WA_TransparentForMouseEvents);
   view_->installEventFilter(this);
   legend_->installEventFilter(this); // its size settles after a rebuild
   empty_ = new QLabel;
@@ -990,8 +1030,11 @@ void GraphPanel::rebuild_legend(const std::vector<EdgeView> &all) {
                                     : QString("5.–95. percentil af de viste")),
                  row++, 0, 1, 3);
   }
-  const auto entry = [&](const QString &token, const QString &label, int n) {
-    g->addWidget(new Swatch(token), row, 0, Qt::AlignVCenter);
+  const auto entry = [&](const QString &token, const QString &label, int n,
+                         bool dashed = false) {
+    g->addWidget(dashed ? static_cast<QWidget *>(new DashSwatch(token))
+                        : new Swatch(token),
+                 row, 0, Qt::AlignVCenter);
     g->addWidget(text(label), row, 1);
     auto *c = text(format_count(n), "legendCount");
     c->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -1003,7 +1046,7 @@ void GraphPanel::rebuild_legend(const std::vector<EdgeView> &all) {
   for (const auto &e : l.entries)
     entry(da_text(e.token),
           da_text(e.label) + (e.dashed ? QString(" (stiplet)") : QString()),
-          e.count);
+          e.count, e.dashed);
   if (l.hidden_rejected > 0)
     g->addWidget(
         text(QString("%1 afviste skjult").arg(format_count(l.hidden_rejected)),
@@ -1022,6 +1065,10 @@ void GraphPanel::place_legend() {
   const QRect vp = view_->viewport()->geometry();
   legend_->move(vp.left() + m, vp.bottom() - legend_->height() - m + 1);
   legend_->raise();
+  // The fit zoom keeps the graph clear of the card (it used to cover the
+  // lower-left nodes and take their clicks).
+  view_->set_corner_reserve(
+      legend_->isHidden() ? QSize() : legend_->size() + QSize(2 * m, 2 * m));
 }
 
 bool GraphPanel::eventFilter(QObject *watched, QEvent *event) {
@@ -1119,33 +1166,35 @@ void GraphPanel::click_node(int id, bool as_b) {
   s.subtitle = QString("Billede i posegrafen");
   // World coordinates, not the projected ones: the yaw is display only.
   const NodeData &n = data_[static_cast<std::size_t>(it - nodes_.begin())];
-  SelectionSection p{"Pose", {}, {}};
-  p.rows.push_back({"X", da().toString(n.t[0], 'f', 2) + " m"});
-  p.rows.push_back({"Y", da().toString(n.t[1], 'f', 2) + " m"});
-  p.rows.push_back({"Z", da().toString(n.t[2], 'f', 2) + " m"});
-  p.rows.push_back({"Scanning", QString::number(n.scan)});
-  p.rows.push_back({"Kanter", QString::number(editor_.edits().degree(id))});
+  SelectionSection p;
+  p.title = "Pose";
+  const auto row = [&p](const char *key, const QString &value) {
+    SelectionRow r;
+    r.key = key;
+    r.value = value;
+    p.rows.push_back(r);
+  };
+  row("X", da().toString(n.t[0], 'f', 2) + " m");
+  row("Y", da().toString(n.t[1], 'f', 2) + " m");
+  row("Z", da().toString(n.t[2], 'f', 2) + " m");
+  row("Scanning", QString::number(n.scan));
+  row("Kanter", QString::number(editor_.edits().degree(id)));
   s.sections.push_back(p);
   selection_ = s;
   emit selection_changed(selection_);
   emit frame_requested(id, as_b);
 }
 
-void GraphPanel::click_edge(int from, int to) {
-  for (const auto &v : drawn_)
-    if (v.edge.key.from == from && v.edge.key.to == to) {
-      select_edge(v.edge.key);
-      return;
-    }
-}
+bool GraphPanel::click_edge(const EdgeKey &key) { return select_edge(key); }
 
-void GraphPanel::select_edge(const EdgeKey &key) {
+bool GraphPanel::select_edge(const EdgeKey &key) {
+  const auto all = editor_.edits().effective();
   const auto it =
-      std::find_if(drawn_.begin(), drawn_.end(),
+      std::find_if(all.begin(), all.end(),
                    [&key](const EdgeView &v) { return v.edge.key == key; });
-  if (it == drawn_.end())
-    return;
-  const EdgeView v = *it; // set_highlight rebuilds drawn_
+  if (it == all.end())
+    return false;
+  const EdgeView v = *it;
   Selection s;
   s.kind = "Kant";
   s.title = QString("%1 → %2").arg(key.from).arg(key.to);
@@ -1158,7 +1207,8 @@ void GraphPanel::select_edge(const EdgeKey &key) {
     s.pill += " · ikke gemt";
     s.pill_tone = "warn";
   }
-  SelectionSection p{"Kant", {}, {}};
+  SelectionSection p;
+  p.title = "Kant";
   const auto cell = [&v](EdgeColumn c) {
     return da_text(edge_cell_text(v, c));
   };
@@ -1187,6 +1237,7 @@ void GraphPanel::select_edge(const EdgeKey &key) {
   set_highlight(key);
   emit selection_changed(selection_);
   emit pair_requested(key.from, key.to);
+  return true;
 }
 
 void GraphPanel::update_meta() {

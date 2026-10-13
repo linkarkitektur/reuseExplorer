@@ -1208,6 +1208,14 @@ QDoubleSpinBox#yawSpin {
   padding: var(--space-1) var(--space-2);
 }
 
+/* ---- Rediger's edge list: nine columns in the left pane at 1440 px */
+QWidget#edgeList QTableView#dataTable::item {
+  padding: 0 var(--space-2);
+}
+QWidget#edgeList QHeaderView::section {
+  padding: var(--space-2);
+}
+
 /* ---- log filter bar */
 QFrame#filterBar {
   background: var(--color-surface);

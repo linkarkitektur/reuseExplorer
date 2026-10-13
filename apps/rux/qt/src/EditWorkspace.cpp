@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <rux_qt/EdgeEditor.hpp>
+#include <rux_qt/EdgeListPanel.hpp>
 #include <rux_qt/EditWorkspace.hpp>
 #include <rux_qt/GraphPanel.hpp>
 #include <rux_qt/PairStrip.hpp>
@@ -56,7 +57,8 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   panes_[0] = new PaneFrame("Graf");
   panes_[0]->set_content(graph_);
   panes_[1] = new PaneFrame("Kanter");
-  panes_[1]->set_content(empty_state("Kantlisten vises her."));
+  edges_ = new EdgeListPanel(editor_);
+  panes_[1]->set_content(edges_);
   panes_[2] = new PaneFrame("Billeder");
   panes_[2]->set_content(
       empty_state("Klik på en node for A, og en til for B."));
@@ -67,7 +69,7 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   left_->addWidget(panes_[0]);
   left_->addWidget(panes_[1]);
   left_->setStretchFactor(0, 3);
-  left_->setStretchFactor(1, 1);
+  left_->setStretchFactor(1, 2);
   right_ = new QSplitter(Qt::Vertical);
   right_->addWidget(panes_[2]);
   right_->addWidget(panes_[3]);
@@ -120,7 +122,8 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   // let a stored layout override them.
   constexpr int kUnit = 1000;
   main_->setSizes({3 * kUnit, 2 * kUnit});
-  left_->setSizes({3 * kUnit, kUnit});
+  // The edge list gets room for a screenful of suspicious rows.
+  left_->setSizes({3 * kUnit, 2 * kUnit});
   right_->setSizes({kUnit, kUnit});
 
   for (int i = 0; i < kEditPaneCount; ++i)
@@ -136,6 +139,19 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   connect(graph_, &GraphPanel::frame_requested, this,
           &EditWorkspace::node_clicked);
   connect(graph_, &GraphPanel::pair_requested, this, &EditWorkspace::set_pair);
+  // The list and the graph select each other's edge: a row highlights and
+  // inspects the edge and makes its ends A and B (click_edge, which does not
+  // emit edge_clicked); an edge clicked on the canvas selects its row
+  // (select_edge, which does not emit edge_activated).
+  connect(edges_, &EdgeListPanel::edge_activated, this,
+          [this](const EdgeKey &k) { graph_->click_edge(k); });
+  connect(graph_, &GraphPanel::edge_clicked, edges_,
+          &EdgeListPanel::select_edge);
+  connect(graph_, &GraphPanel::colour_mode_changed, edges_,
+          [this](EdgeColourMode m) {
+            edges_->set_sort(default_sort_column(m), true);
+          });
+  edges_->set_sort(default_sort_column(graph_->colour_mode()), true);
   connect(strip_, &PairStrip::edge_selected, this, [this](const Selection &s) {
     selection_ = s;
     emit selection_changed(s);

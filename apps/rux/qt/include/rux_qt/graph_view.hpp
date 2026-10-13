@@ -39,6 +39,27 @@ ZoomLimits zoom_limits(double content_extent, int viewport_px);
 double clamp_zoom_factor(double units_per_px, double factor,
                          const ZoomLimits &limits);
 
+/// A content rect in scene units: centre and size (scene y points down).
+struct FitRect {
+  double cx = 0.0;
+  double cy = 0.0;
+  double w = 0.0;
+  double h = 0.0;
+};
+/// What fit() applies: pixels per scene unit and the scene point to centre.
+struct FitFrame {
+  double scale = 1.0;
+  double cx = 0.0;
+  double cy = 0.0;
+};
+/// Fit @p content into a @p vw x @p vh px viewport whose lower-left
+/// @p rw x @p rh px corner is taken (the legend card): the content goes
+/// above the corner or right of it, whichever keeps the larger scale (above
+/// on a tie), centred in what is left. A corner that leaves no room on
+/// either side is ignored.
+FitFrame fit_avoiding_corner(const FitRect &content, double vw, double vh,
+                             double rw, double rh);
+
 // ----------------------------------------------------------- projection --
 
 /// Which two axes the canvas shows: xy = plan, xz = seen from -y (x right,

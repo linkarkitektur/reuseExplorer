@@ -167,6 +167,9 @@ TEST_CASE("EdgeColour_Legend_CountsStagedEdges", "[rux_qt][colour]") {
   CHECK(legend.staged == 1);
   CHECK(legend.entries.back().label == "Ikke gemt");
   CHECK(legend.entries.back().dashed);
+  // Staged edges keep their mode colour (dashed): the legend shows the
+  // pattern in a neutral ink, never the selected-edge highlight's colour.
+  CHECK(legend.entries.back().token == "--color-on-chrome-muted");
 }
 
 TEST_CASE("ColourMode_KeysRoundTrip", "[rux_qt][colour]") {

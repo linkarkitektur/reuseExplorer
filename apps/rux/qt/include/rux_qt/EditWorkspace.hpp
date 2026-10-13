@@ -27,6 +27,7 @@ class QSplitter;
 namespace rux::qt {
 
 class EdgeEditor;
+class EdgeListPanel;
 class PairStrip;
 class PaneFrame;
 class PendingBanner;
@@ -45,6 +46,7 @@ class EditWorkspace : public QWidget {
   /// The page is on screen: load what is not loaded yet.
   void activate();
   GraphPanel *graph() const { return graph_; }
+  EdgeListPanel *edges() const { return edges_; }
   EdgeEditor &editor() const { return editor_; }
   PaneFrame *pane(EditPane p) const { return panes_[static_cast<int>(p)]; }
   /// The user's choice for @p p (the overlay also needs a complete pair).
@@ -97,6 +99,7 @@ class EditWorkspace : public QWidget {
   std::array<bool, kEditPaneCount> wanted_{true, true, true, true};
   std::array<QAction *, kEditPaneCount> pane_actions_{};
   GraphPanel *graph_ = nullptr;
+  EdgeListPanel *edges_ = nullptr;
   QLabel *meta_ = nullptr;
   Selection selection_;
   SlotPicker slots_;

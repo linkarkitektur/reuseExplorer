@@ -235,8 +235,11 @@ EdgeLegend build_legend(EdgeColourMode mode, const std::vector<EdgeView> &all,
       return !m || !std::isfinite(*m);
     });
   }
+  // Staged edges keep their mode colour and are dashed: the entry is the
+  // pattern in a neutral ink, distinct from the selected edge's highlight.
   if (l.staged > 0)
-    l.entries.push_back({"--color-on-chrome", "Ikke gemt", l.staged, true});
+    l.entries.push_back(
+        {"--color-on-chrome-muted", "Ikke gemt", l.staged, true});
   return l;
 }
 

@@ -31,6 +31,26 @@ double clamp_zoom_factor(double units_per_px, double factor,
   return units_per_px / std::clamp(units_per_px / factor, lo, hi);
 }
 
+FitFrame fit_avoiding_corner(const FitRect &c, double vw, double vh, double rw,
+                             double rh) {
+  const auto fit = [&c](double w, double h) {
+    return w > 0.0 && h > 0.0 && c.w > 0.0 && c.h > 0.0
+               ? std::min(w / c.w, h / c.h)
+               : 0.0;
+  };
+  const double above = rh > 0.0 ? fit(vw, vh - rh) : 0.0;
+  const double right = rw > 0.0 ? fit(vw - rw, vh) : 0.0;
+  if (above <= 0.0 && right <= 0.0) {
+    const double s = fit(vw, vh);
+    return {s > 0.0 ? s : 1.0, c.cx, c.cy};
+  }
+  // Centred in what is left: the viewport's centre is half the corner away
+  // from the content's.
+  if (above >= right)
+    return {above, c.cx, c.cy + rh / 2.0 / above};
+  return {right, c.cx - rw / 2.0 / right, c.cy};
+}
+
 namespace {
 constexpr double kDeg = std::numbers::pi / 180.0;
 

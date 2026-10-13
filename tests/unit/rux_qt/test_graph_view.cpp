@@ -251,3 +251,42 @@ TEST_CASE("HeadingTicks_OnlyOnceNodesAreATickApart",
   CHECK(heading_ticks_visible(0.0, 0.01, 7.0)); // one node, or all in one spot
   CHECK(heading_ticks_visible(0.05, 0.0, 7.0)); // degenerate zoom
 }
+
+TEST_CASE("FitAvoidingCorner_NoReserve_CentresAndFits",
+          "[rux_qt][graphview][fit]") {
+  // 10 x 5 content centred at (2, 3) in a 200 x 200 viewport: width binds.
+  const FitFrame f = fit_avoiding_corner({2.0, 3.0, 10.0, 5.0}, 200, 200, 0, 0);
+  CHECK(f.scale == Catch::Approx(20.0));
+  CHECK(f.cx == Catch::Approx(2.0));
+  CHECK(f.cy == Catch::Approx(3.0));
+}
+
+TEST_CASE("FitAvoidingCorner_LegendBelow_ContentMovesUp",
+          "[rux_qt][graphview][fit]") {
+  // A square graph in a wide viewport with a tall legend in the lower left:
+  // beside it costs less scale than above it.
+  const FitFrame side =
+      fit_avoiding_corner({0.0, 0.0, 10.0, 10.0}, 400, 200, 100, 150);
+  CHECK(side.scale == Catch::Approx(20.0)); // height still binds
+  // The content's centre sits at the middle of the free 300 px on the
+  // right: the view's centre is 50 px (2.5 units) left of it.
+  CHECK(side.cx == Catch::Approx(-2.5));
+  CHECK(side.cy == Catch::Approx(0.0));
+
+  // A wide graph in a square viewport with a short wide legend: above it.
+  const FitFrame above =
+      fit_avoiding_corner({0.0, 0.0, 20.0, 10.0}, 200, 200, 150, 40);
+  CHECK(above.scale == Catch::Approx(10.0)); // width binds, nothing lost
+  CHECK(above.cx == Catch::Approx(0.0));
+  // Centred in the top 160 px: the view's centre is 20 px (2 units) below.
+  CHECK(above.cy == Catch::Approx(2.0));
+}
+
+TEST_CASE("FitAvoidingCorner_ReserveFillsViewport_IgnoresIt",
+          "[rux_qt][graphview][fit]") {
+  const FitFrame f =
+      fit_avoiding_corner({0.0, 0.0, 10.0, 10.0}, 100, 100, 100, 100);
+  CHECK(f.scale == Catch::Approx(10.0));
+  CHECK(f.cx == Catch::Approx(0.0));
+  CHECK(f.cy == Catch::Approx(0.0));
+}
