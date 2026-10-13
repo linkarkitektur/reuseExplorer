@@ -16,10 +16,10 @@
 # This script keeps them entirely OUT of the shipped product: it runs a matcher
 # in Python, lifts the 2D matches to metric 3D using the scan's own stored depth,
 # estimates a robust relative pose per pair, and writes a plain-DATA JSON file
-# (schema "reusex.loop_edges.v1") that `rux graph discover --loop-edges` ingests. The
-# C++ never links the matcher. A non-commercial model can therefore serve as an
-# offline accuracy-CEILING ORACLE, while a commercial-safe matcher writes the
-# identical file for the production path.
+# (schema "reusex.loop_edges.v1") that `rux graph discover --loop-edges`
+# ingests. The C++ never links the matcher. A non-commercial model can
+# therefore serve as an offline accuracy-CEILING ORACLE, while a
+# commercial-safe matcher writes the identical file for the production path.
 #
 # Matcher backends (see matchers/):
 #   COMMERCIAL-SAFE (Apache-2.0 / MIT — shippable path):

@@ -9,8 +9,9 @@
 # https://github.com/pfmephisto/ReUseX/issues/221#issuecomment-5620619174):
 #
 #   XFeat loop edges + `rux graph discover --no-loop-closure --loop-edges <f>`
-#   + `rux optimize --loop-trust --odometry-sigma-trans 0.05` is the ONLY tested configuration in this
-#   workstream that produced a real, visually-confirmed drift correction:
+#   + `rux optimize --loop-trust --odometry-sigma-trans 0.05` is the ONLY
+#   tested configuration in this workstream that produced a real,
+#   visually-confirmed drift correction:
 #   NewOffice's start<->end gap closed 23.44 m -> 16.05 m (max pose shift
 #   9.80 m). Bare `--loop-trust` alone, at the default
 #   `--odometry-sigma-trans 0.01`, saturates at a correction indistinguishable

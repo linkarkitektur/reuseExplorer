@@ -19,6 +19,7 @@
 #include "../../support/temp_path.hpp"
 
 #include <CLI/CLI.hpp>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <memory>
@@ -124,4 +125,33 @@ TEST_CASE("GraphCli_Prune_RequiresACriterionAndRejects",
   reusex::ProjectDB db(tmp.path, /*readOnly=*/true);
   CHECK(db.pose_graph_edge(2, 3, "odometry")->status == "rejected");
   CHECK_FALSE(run_rux(tmp.path, {"graph", "prune", "--pair", "nonsense"}));
+}
+
+TEST_CASE("GraphCli_Prune_RejectsUnknownTypeOrSource_AndLogsTheFilter",
+          "[rux_app][cli][graph]") {
+  TempPath tmp("test_graph_cli_prune_vocab");
+  make_frames(tmp.path, 4);
+  CHECK(run_rux(tmp.path, {"graph", "init"}));
+  CHECK_THROWS_AS(run_rux(tmp.path, {"graph", "prune", "--type", "odometri"}),
+                  CLI::ValidationError);
+  CHECK_THROWS_AS(run_rux(tmp.path, {"graph", "prune", "--source", "magic"}),
+                  CLI::ValidationError);
+  CHECK(run_rux(tmp.path, {"graph", "prune", "--type", "odometry", "--source",
+                           "odometry_init", "--pair", "2,3", "--residual-above",
+                           "0.5", "--dry-run"}));
+  reusex::ProjectDB db(tmp.path, /*readOnly=*/true);
+  const auto log = db.pipeline_log();
+  const auto it = std::find_if(log.rbegin(), log.rend(), [](const auto &e) {
+    return e.stage == "graph_prune";
+  });
+  REQUIRE(it != log.rend());
+  const auto p = nlohmann::json::parse(it->parameters);
+  CHECK(p.at("type") == "odometry");
+  CHECK(p.at("source") == "odometry_init");
+  CHECK(p.at("pair") == nlohmann::json::array({2, 3}));
+  CHECK(p.at("residual_above") == 0.5);
+  CHECK(p.at("deviation_above_m").is_null());
+  CHECK(p.at("deviation_above_deg").is_null());
+  CHECK(p.at("include_confirmed") == false);
+  CHECK(p.at("dry_run") == true);
 }

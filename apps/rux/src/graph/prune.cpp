@@ -6,6 +6,7 @@
 #include "exit_status.hpp"
 
 #include <reusex/core/ProjectDB.hpp>
+#include <reusex/core/pose_graph.hpp>
 #include <reusex/slam/graph_prune.hpp>
 
 #include <fmt/format.h>
@@ -14,8 +15,10 @@
 
 #include <cmath>
 #include <exception>
+#include <optional>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -29,6 +32,10 @@ std::pair<int, int> parse_pair(const std::string &text) {
   } catch (const std::exception &) {
     throw std::invalid_argument("--pair expects 'A,B', got '" + text + "'");
   }
+}
+
+template <typename T> nlohmann::json json_or_null(const std::optional<T> &v) {
+  return v ? nlohmann::json(*v) : nlohmann::json(nullptr);
 }
 
 std::string fmt_metric(double v) {
@@ -60,11 +67,17 @@ EXAMPLES:
                   "Deviation from the solved poses greater than this (m)");
   sub->add_option("--deviation-deg-above", opt->deviation_deg_above,
                   "Rotational deviation greater than this (deg)");
-  sub->add_option("--type", opt->type,
-                  "Edge type: odometry, loop_closure or panorama");
-  sub->add_option("--source", opt->source,
-                  "Edge source: rtabmap, odometry_init, orb, panorama, file, "
-                  "icp, manual or legacy");
+  namespace pg = reusex::core::pose_graph;
+  sub->add_option("--type", opt->type, "Edge type")
+      ->check(CLI::IsMember(std::vector<std::string>{
+          std::string(pg::kTypeOdometry), std::string(pg::kTypeLoopClosure),
+          std::string(pg::kTypePanorama)}));
+  sub->add_option("--source", opt->source, "Edge source")
+      ->check(CLI::IsMember(std::vector<std::string>{
+          std::string(pg::kSourceRtabmap), std::string(pg::kSourceOdometryInit),
+          std::string(pg::kSourceOrb), std::string(pg::kSourcePanorama),
+          std::string(pg::kSourceFile), std::string(pg::kSourceIcp),
+          std::string(pg::kSourceManual), std::string(pg::kSourceLegacy)}));
   sub->add_option("--pair", opt->pair, "Frame pair 'A,B' (either order)");
   sub->add_flag("--include-confirmed", opt->include_confirmed,
                 "Also reject confirmed edges");
@@ -92,8 +105,17 @@ int run_subcommand_graph_prune(const SubcommandGraphPruneOptions &opt,
     f.dry_run = opt.dry_run;
 
     reusex::ProjectDB db(global_opt.project_db);
-    nlohmann::json params = {{"dry_run", opt.dry_run},
-                             {"include_confirmed", opt.include_confirmed}};
+    // The filter as run, for the pipeline log (null = criterion not set).
+    const nlohmann::json params = {
+        {"residual_above", json_or_null(f.residual_above)},
+        {"deviation_above_m", json_or_null(f.deviation_above_m)},
+        {"deviation_above_deg", json_or_null(f.deviation_above_deg)},
+        {"type", json_or_null(f.edge_type)},
+        {"source", json_or_null(f.source)},
+        {"pair", f.pair ? nlohmann::json::array({f.pair->first, f.pair->second})
+                        : nlohmann::json(nullptr)},
+        {"include_confirmed", f.include_confirmed},
+        {"dry_run", f.dry_run}};
     const int logId = db.log_pipeline_start("graph_prune", params.dump());
     try {
       const auto r = reusex::slam::prune_pose_graph(db, f);
