@@ -38,8 +38,7 @@ Eigen::Matrix<double, 6, 1> small_log(const Eigen::Matrix4d &M) {
 // An iPad-like local transform: base -> optical rotation plus a lever arm.
 const Eigen::Matrix4d kLi =
     make_pose(M_PI / 2, {1, -1, 1}, {0.02, -0.05, 0.01});
-const Eigen::Matrix4d kLj =
-    make_pose(M_PI / 2, {1, -1, 1}, {0.02, -0.05, 0.01});
+const Eigen::Matrix4d kLj = make_pose(M_PI / 3, {0, 1, 1}, {-0.03, 0.04, 0.02});
 
 } // namespace
 
