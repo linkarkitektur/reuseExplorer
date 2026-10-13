@@ -71,4 +71,19 @@ std::vector<std::uint8_t> generate_ressourcekortlaegning_pdf(
 /// tell a complete version from a draft.
 int report_blocking_types(const ProjectDB &db);
 
+/// Write data.json + images/ into dir exactly as the PDF run sees them.
+///
+/// The result is what `report-watch DIR` (nix develop .#report) and
+/// `rux export pdf --dump-data DIR` work with; the format is documented in
+/// docs/guides/report-template.md. ReportOptions::template_path is ignored.
+///
+/// @p dir may be missing (it is created), empty, or a previous dump (it
+/// holds a data.json; its images/ is replaced, never merged).
+/// @throws std::out_of_range when resource_template_id names no template
+///         (nothing is written, @p dir is not created).
+/// @throws std::runtime_error when @p dir is a file, or a non-empty
+///         directory without a data.json (left untouched), or on I/O errors.
+void dump_report_data(ProjectDB &db, const ReportOptions &options,
+                      const std::filesystem::path &dir);
+
 } // namespace reusex

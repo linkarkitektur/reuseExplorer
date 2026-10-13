@@ -129,8 +129,13 @@ nlohmann::json resources_json(const core::ResourceReportSection &s) {
 
 // ── data assembly ─────────────────────────────────────────────────────────
 
-nlohmann::json assemble_report_data(ProjectDB &db,
-                                    const std::filesystem::path &tmpdir) {
+/// Write the report's data directory: data.json plus images/<guid><ext> for
+/// every material with a thumbnail. Shared by the PDF run (into a temp dir)
+/// and dump_report_data, so both see byte-identical input.
+nlohmann::json
+write_report_data(ProjectDB &db,
+                  const std::optional<core::ResourceReportSection> &resources,
+                  const std::filesystem::path &dir) {
   const auto summary = db.project_summary();
   const auto defs = db.list_property_definitions();
 
@@ -149,8 +154,8 @@ nlohmann::json assemble_report_data(ProjectDB &db,
     cols.push_back({{"id", d.id}, {"name", d.name}, {"type", d.type}});
   data["columns"] = std::move(cols);
 
-  const auto thumb_dir = tmpdir / "thumbnails";
-  std::filesystem::create_directories(thumb_dir);
+  const auto image_dir = dir / "images";
+  std::filesystem::create_directories(image_dir);
 
   nlohmann::json mats = nlohmann::json::array();
   for (const auto &info : summary.materials) {
@@ -162,8 +167,8 @@ nlohmann::json assemble_report_data(ProjectDB &db,
 
     if (has_thumb) {
       const auto &[blob, mime] = *thumb_opt;
-      const std::string fname = "thumbnails/" + guid + ext_for_mime(mime);
-      std::ofstream f(tmpdir / fname, std::ios::binary);
+      const std::string fname = "images/" + guid + ext_for_mime(mime);
+      std::ofstream f(dir / fname, std::ios::binary);
       f.write(reinterpret_cast<const char *>(blob.data()),
               static_cast<std::streamsize>(blob.size()));
       if (f.good())
@@ -213,6 +218,16 @@ nlohmann::json assemble_report_data(ProjectDB &db,
   data["survey"] = {{"rows", std::move(rows)},
                     {"circularity", std::move(circ)},
                     {"blocking", report_blocking_types(db)}};
+
+  data["resources"] =
+      resources ? resources_json(*resources) : nlohmann::json(nullptr);
+  {
+    std::ofstream f(dir / "data.json");
+    f << data.dump(2);
+    if (!f.good())
+      throw std::runtime_error("report_generator: failed to write " +
+                               (dir / "data.json").string());
+  }
   return data;
 }
 
@@ -283,15 +298,7 @@ generate_ressourcekortlaegning_pdf(ProjectDB &db,
 
   TempDir tmpdir;
 
-  auto data = assemble_report_data(db, tmpdir.path);
-  data["resources"] =
-      resources ? resources_json(*resources) : nlohmann::json(nullptr);
-  {
-    std::ofstream f(tmpdir.path / "data.json");
-    f << data.dump();
-    if (!f.good())
-      throw std::runtime_error("report_generator: failed to write data.json");
-  }
+  const auto data = write_report_data(db, resources, tmpdir.path);
 
   reusex::info(
       "generate_ressourcekortlaegning_pdf: invoking typst ({} materials, "
@@ -311,6 +318,42 @@ generate_ressourcekortlaegning_pdf(ProjectDB &db,
   ReportOptions options;
   options.resource_template_id = template_id;
   return generate_ressourcekortlaegning_pdf(db, options);
+}
+
+void dump_report_data(ProjectDB &db, const ReportOptions &options,
+                      const std::filesystem::path &dir) {
+  namespace fs = std::filesystem;
+  // An unknown template fails before anything touches the disk.
+  std::optional<core::ResourceReportSection> resources;
+  if (options.resource_template_id)
+    resources =
+        core::resource_report_section(db, *options.resource_template_id);
+
+  std::error_code ec;
+  if (fs::exists(dir, ec)) {
+    if (!fs::is_directory(dir, ec))
+      throw std::runtime_error(fmt::format(
+          "dump_report_data: {} exists and is not a directory", dir.string()));
+    const bool previous_dump = fs::is_regular_file(dir / "data.json", ec);
+    if (!previous_dump && !fs::is_empty(dir, ec))
+      throw std::runtime_error(fmt::format(
+          "dump_report_data: {} is not empty and holds no data.json; refusing "
+          "to write a report dump into it",
+          dir.string()));
+    // A previous dump's images: replace, never mix in stale files.
+    fs::remove_all(dir / "images", ec);
+    if (ec)
+      throw std::runtime_error(
+          fmt::format("dump_report_data: cannot clear {}: {}",
+                      (dir / "images").string(), ec.message()));
+  }
+  fs::create_directories(dir);
+
+  const auto data = write_report_data(db, resources, dir);
+  reusex::info("dump_report_data: wrote {} ({} materials, {} resource "
+               "table(s))",
+               dir.string(), data.at("materials").size(),
+               resources ? resources->tables.size() : 0);
 }
 
 } // namespace reusex

@@ -4,35 +4,21 @@
 
 // Ressourcekortlægning (Material Resource Mapping) report template.
 //
-// Invoked by ruxd via:
-//   typst compile report.typ out.pdf --root <tmpdir>
+// Data contract (data.json + images/): docs/guides/report-template.md.
 //
-// data.json must be present in <tmpdir> with the structure:
-//   {
-//     "project_name": "...",
-//     "generated_at": "...",
-//     "columns": [{"id": "...", "name": "...", "type": "..."}],
-//     "materials": [{
-//       "guid": "...",
-//       "has_thumbnail": true,
-//       "thumbnail_path": "thumbnails/guid.jpg",
-//       "properties": {"col-name": "value"}
-//     }],
-//     "survey": {
-//       "rows": [{"name", "bim7aa", "eak", "quantity", "mass", "treatment", "environment"}],
-//       "circularity": [{"label": "Genanvendelse", "tonnes": "196,8 t"}],
-//       "blocking": 7
-//     }
-//     "resources": null | {
-//       "name": "template name",
-//       "tables": [{"headers": ["Betegnelse", ...], "rows": [["...", ...]]}]
-//     }
-//   }
+// The data directory comes from `--input data-dir=DIR`; it defaults to the
+// directory holding this file, which is how the generator runs it:
+//   typst compile report.typ out.pdf --root <tmpdir>                    (generator)
+//   typst compile report.typ out.pdf --root / --input data-dir=<dir>    (report-build)
+// Typst refuses a source file outside --root (symlinks are resolved first),
+// so the preview scripts use --root / rather than linking this file into
+// the data directory.
 //
 // This file is the only copy: CMake embeds it into the generated header
 // reusex/core/report_template_default.hpp at build time.
 
-#let data = json("data.json")
+#let data_dir = sys.inputs.at("data-dir", default: ".")
+#let data = json(data_dir + "/data.json")
 #let cols = data.columns
 #let mats = data.materials
 
@@ -144,7 +130,7 @@
   for mat in mats {
     let thumb_cell = if mat.has_thumbnail {
       table.cell(align: center)[
-        #image(mat.thumbnail_path, width: 2.8cm, height: 2.2cm, fit: "contain")
+        #image(data_dir + "/" + mat.thumbnail_path, width: 2.8cm, height: 2.2cm, fit: "contain")
       ]
     } else {
       table.cell(fill: luma(245), align: center)[—]

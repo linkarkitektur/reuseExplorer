@@ -14,8 +14,12 @@
 #include <core/ProjectDB.hpp>
 #include <core/report_generator.hpp>
 
+#include "../../support/survey_fixture.hpp"
 #include "../../support/temp_path.hpp"
 
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -60,6 +64,34 @@ fs::path write_marker_template(const fs::path &dir, const std::string &marker) {
   const auto path = dir / (marker + ".typ");
   std::ofstream(path) << "#panic(\"" << marker << "\")\n";
   return path;
+}
+
+/// Two passports (one with a JPEG thumbnail), one survey type, two parts.
+void seed_report_project(ProjectDB &db) {
+  using namespace reusex::test_support;
+  make_passport(db, "guid-with-thumb");
+  make_passport(db, "guid-without-thumb");
+  db.set_material_thumbnail("guid-with-thumb", {0xFF, 0xD8, 0xFF, 0xD9},
+                            "image/jpeg");
+  const auto type = make_type(db, "Døre, massiv eg");
+  make_part(db, "RX-001", type);
+  make_part(db, "RX-002", type);
+}
+
+std::int64_t screening_template(const ProjectDB &db) {
+  for (const auto &rec : db.resource_templates())
+    if (rec.seed == std::optional<std::string>("screening"))
+      return rec.id;
+  FAIL("no seeded screening template");
+  return 0;
+}
+
+std::vector<std::string> entries(const fs::path &dir) {
+  std::vector<std::string> names;
+  for (const auto &e : fs::directory_iterator(dir))
+    names.push_back(e.path().filename().string());
+  std::sort(names.begin(), names.end());
+  return names;
 }
 } // namespace
 
@@ -161,4 +193,117 @@ TEST_CASE("ReportPdf_OptionAndEnvVar_OptionWins", "[report][typst]") {
   opt.template_path = write_marker_template(dir.path, "option-marker");
   CHECK_THROWS_WITH(reusex::generate_ressourcekortlaegning_pdf(db, opt),
                     ContainsSubstring("option-marker"));
+}
+
+TEST_CASE("ReportDump_ProjectWithThumbnail_WritesDataReferencingExistingFiles",
+          "[report][dump]") {
+  TempPath tmp("test_report_dump");
+  ProjectDB db(tmp.path);
+  seed_report_project(db);
+  TempDir out("test_report_dump_dir");
+  const auto dir = out.path / "dump"; // missing: the dump creates it
+
+  reusex::dump_report_data(db, {}, dir);
+
+  CHECK(entries(dir) == std::vector<std::string>{"data.json", "images"});
+  const auto data = nlohmann::json::parse(slurp(dir / "data.json"));
+  REQUIRE(data.at("materials").size() == 2);
+  int with_image = 0;
+  for (const auto &m : data.at("materials")) {
+    if (!m.at("has_thumbnail").get<bool>())
+      continue;
+    ++with_image;
+    const auto rel = m.at("thumbnail_path").get<std::string>();
+    CHECK(rel.rfind("images/", 0) == 0);
+    CHECK(fs::is_regular_file(dir / rel));
+  }
+  CHECK(with_image == 1);
+  CHECK(data.at("resources").is_null());
+  CHECK(data.at("survey").contains("rows"));
+  CHECK(data.at("survey").contains("blocking"));
+}
+
+TEST_CASE("ReportDump_WithResourceTemplate_WritesItsTables", "[report][dump]") {
+  TempPath tmp("test_report_dump");
+  ProjectDB db(tmp.path);
+  seed_report_project(db);
+  TempDir out("test_report_dump_dir");
+  reusex::ReportOptions opt;
+  opt.resource_template_id = screening_template(db);
+
+  reusex::dump_report_data(db, opt, out.path);
+
+  const auto data = nlohmann::json::parse(slurp(out.path / "data.json"));
+  const auto &tables = data.at("resources").at("tables");
+  // 11 screening keys: Betegnelse + 10 others -> two stacked tables.
+  REQUIRE(tables.size() == 2);
+  CHECK(tables[0].at("headers")[0] == "Betegnelse");
+}
+
+TEST_CASE("ReportDump_UnknownResourceTemplate_ThrowsAndWritesNothing",
+          "[report][dump]") {
+  TempPath tmp("test_report_dump");
+  ProjectDB db(tmp.path);
+  TempDir out("test_report_dump_dir");
+  const auto dir = out.path / "dump";
+  reusex::ReportOptions opt;
+  opt.resource_template_id = 999;
+  CHECK_THROWS_AS(reusex::dump_report_data(db, opt, dir), std::out_of_range);
+  CHECK_FALSE(fs::exists(dir));
+}
+
+TEST_CASE("ReportDump_ForeignNonEmptyDirectory_RefusedAndUntouched",
+          "[report][dump]") {
+  TempPath tmp("test_report_dump");
+  ProjectDB db(tmp.path);
+  TempDir out("test_report_dump_dir");
+  std::ofstream(out.path / "notes.txt") << "mine";
+  CHECK_THROWS_WITH(reusex::dump_report_data(db, {}, out.path),
+                    ContainsSubstring(out.path.string()));
+  CHECK(entries(out.path) == std::vector<std::string>{"notes.txt"});
+}
+
+TEST_CASE("ReportDump_IntoPreviousDump_ReplacesItsImages", "[report][dump]") {
+  TempPath tmp("test_report_dump");
+  ProjectDB db(tmp.path);
+  seed_report_project(db);
+  TempDir out("test_report_dump_dir");
+  reusex::dump_report_data(db, {}, out.path);
+  std::ofstream(out.path / "images" / "stale.jpg") << "old";
+
+  reusex::dump_report_data(db, {}, out.path);
+
+  CHECK_FALSE(fs::exists(out.path / "images" / "stale.jpg"));
+  CHECK(fs::is_regular_file(out.path / "images" / "guid-with-thumb.jpg"));
+}
+
+TEST_CASE("ReportPdf_ProjectWithThumbnail_Compiles", "[report][typst]") {
+  // The PDF run uses the same images/ layout and the template's default
+  // data-dir "." — an image reference that resolves wrongly fails here.
+  if (!have_typst_on_path())
+    SKIP("typst is not on PATH (the nix devshell provides it)");
+  TempPath tmp("test_report_dump");
+  ProjectDB db(tmp.path);
+  // A real 1x1 baseline greyscale JPEG (159 bytes, made with ImageMagick):
+  // typst decodes images, so marker bytes alone would fail the compile.
+  reusex::test_support::make_passport(db, "guid-real-jpeg");
+  const std::vector<std::uint8_t> jpeg = {
+      0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01,
+      0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xFF, 0xDB, 0x00, 0x43,
+      0x00, 0x10, 0x0B, 0x0C, 0x0E, 0x0C, 0x0A, 0x10, 0x0E, 0x0D, 0x0E, 0x12,
+      0x11, 0x10, 0x13, 0x18, 0x28, 0x1A, 0x18, 0x16, 0x16, 0x18, 0x31, 0x23,
+      0x25, 0x1D, 0x28, 0x3A, 0x33, 0x3D, 0x3C, 0x39, 0x33, 0x38, 0x37, 0x40,
+      0x48, 0x5C, 0x4E, 0x40, 0x44, 0x57, 0x45, 0x37, 0x38, 0x50, 0x6D, 0x51,
+      0x57, 0x5F, 0x62, 0x67, 0x68, 0x67, 0x3E, 0x4D, 0x71, 0x79, 0x70, 0x64,
+      0x78, 0x5C, 0x65, 0x67, 0x63, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x01,
+      0x00, 0x01, 0x01, 0x01, 0x11, 0x00, 0xFF, 0xC4, 0x00, 0x14, 0x00, 0x01,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x03, 0xFF, 0xC4, 0x00, 0x14, 0x10, 0x01, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00,
+      0x77, 0xFF, 0xD9};
+  db.set_material_thumbnail("guid-real-jpeg", jpeg, "image/jpeg");
+  const auto pdf = reusex::generate_ressourcekortlaegning_pdf(db);
+  REQUIRE(pdf.size() > 4);
+  CHECK(std::string(pdf.begin(), pdf.begin() + 4) == "%PDF");
 }
