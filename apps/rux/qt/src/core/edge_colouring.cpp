@@ -192,6 +192,10 @@ EdgeStyle edge_style(const EdgeView &v, EdgeColourMode mode,
   return s;
 }
 
+EdgeDrawOrder edge_draw_order(const EdgeStyle &s) {
+  return {s.wide, s.dashed, s.ramp, s.ramp >= 0 ? std::string() : s.token};
+}
+
 EdgeLegend build_legend(EdgeColourMode mode, const std::vector<EdgeView> &all,
                         bool show_rejected, int slots) {
   EdgeLegend l;

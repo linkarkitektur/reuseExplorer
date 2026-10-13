@@ -7,15 +7,20 @@
 // translation, turned by the project's view yaw and projected onto the
 // chosen view plane (XY plan, XZ / YZ elevations), with a fixed-length tick
 // for the camera's heading; the capture path through the nodes; and the
-// pose-graph edges — stored ones by type, pending ones (staged edits)
-// dashed. A click on a node is handed to Rediger's A/B picker; a click on an
-// edge sets both. Wheel zooms about the cursor, a drag pans, "Tilpas" (or F)
-// fits. The yaw is display only (ViewSettings); the plane is a per-user
-// QSettings choice (rediger/plane).
+// pose-graph edges, coloured by type, status, residual, deviation or seed
+// disagreement (edge_colouring.hpp) with a legend generated from what is
+// drawn; staged and (when "Vis afviste" shows them) rejected edges dashed,
+// the clicked edge highlighted. A click on a node is handed to Rediger's A/B
+// picker; a click on an edge sets both. Wheel zooms about the cursor, a drag
+// pans, "Tilpas" (or F) fits. The yaw is display only (ViewSettings); the plane
+// is a per-user QSettings choice (rediger/plane), as are the colour mode and
+// the rejected toggle (rediger/colour, rediger/show_rejected).
 //
 // Positions are read off the GUI thread with a read-only ProjectDB of its
 // own, like every other bulk read of the client.
 
+#include <rux_qt/database_logic.hpp>
+#include <rux_qt/edge_colouring.hpp>
 #include <rux_qt/graph_view.hpp>
 #include <rux_qt/selection.hpp>
 #include <rux_qt/workspace_logic.hpp>
@@ -24,9 +29,14 @@
 #include <QWidget>
 
 #include <array>
+#include <optional>
 #include <vector>
 
 class QButtonGroup;
+class QCheckBox;
+class QComboBox;
+class QFrame;
+class QVBoxLayout;
 class QDoubleSpinBox;
 class QLabel;
 class QSlider;
@@ -99,6 +109,12 @@ class GraphPanel : public QWidget {
   void click_edge(int from, int to);
   void set_plane(ViewPlane plane);
   const ViewProjection &projection() const { return projection_; }
+  void set_colour_mode(EdgeColourMode mode);
+  EdgeColourMode colour_mode() const { return mode_; }
+  /// Draw rejected edges (dashed); hidden by default.
+  void set_show_rejected(bool on);
+  /// Paint @p key over the rest (the clicked / listed edge); nullopt: none.
+  void set_highlight(std::optional<EdgeKey> key);
 
     signals:
   /// A node was clicked (@p as_b: Shift held); Rediger picks the slot.
@@ -106,6 +122,12 @@ class GraphPanel : public QWidget {
   /// An edge was clicked: A and B become its ends.
   void pair_requested(int a_id, int b_id);
   void selection_changed(const rux::qt::Selection &selection);
+  void colour_mode_changed(rux::qt::EdgeColourMode mode);
+  /// An edge was clicked on the canvas.
+  void edge_clicked(const rux::qt::EdgeKey &key);
+
+    protected:
+  bool eventFilter(QObject *watched, QEvent *event) override;
 
     private:
   struct Loaded;
@@ -122,8 +144,12 @@ class GraphPanel : public QWidget {
   void loaded(std::shared_ptr<Loaded> data);
   void rebuild_scene();
   void rebuild_edges();
+  void rebuild_legend(const std::vector<EdgeView> &all);
+  void place_legend();
   void place_markers();
   void on_click(const QPointF &pos, Qt::KeyboardModifiers mods);
+  /// Inspect, highlight and pair the drawn edge @p key.
+  void select_edge(const EdgeKey &key);
   void update_meta();
 
   ProjectSession &session_;
@@ -145,13 +171,16 @@ class GraphPanel : public QWidget {
   QLabel *empty_ = nullptr;
 
   std::vector<GraphNode> nodes_; ///< data_ projected, same order
-  struct DrawnEdge {
-    GraphEdge edge;
-    std::string type;
-    bool pending_add = false; ///< anything staged on it (not saved)
-    double residual = 0, weight = 0;
-  };
-  std::vector<DrawnEdge> edges_;
+  EdgeColourMode mode_ = EdgeColourMode::type;
+  bool show_rejected_ = false;
+  std::optional<EdgeKey> highlight_;
+  std::vector<EdgeView> drawn_; ///< the edges on the canvas, effective
+  QComboBox *colour_ = nullptr;
+  QCheckBox *rejected_ = nullptr;
+  /// The legend: an overlay in the canvas's lower-left corner, one row per
+  /// entry, so it never widens Rediger's column.
+  QFrame *legend_ = nullptr;
+  QVBoxLayout *legend_layout_ = nullptr;
   std::vector<QGraphicsItem *> edge_items_;
   QGraphicsItem *nodes_item_ = nullptr;
   QGraphicsItem *marker_a_ = nullptr;

@@ -7,6 +7,8 @@
 #include <rux_qt/Theme.hpp>
 #include <rux_qt/ViewSettings.hpp>
 #include <rux_qt/background.hpp>
+#include <rux_qt/edge_colouring.hpp>
+#include <rux_qt/edge_table.hpp>
 #include <rux_qt/graph_view.hpp>
 #include <rux_qt/widgets.hpp>
 
@@ -15,11 +17,14 @@
 
 #include <QApplication>
 #include <QButtonGroup>
+#include <QCheckBox>
+#include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QGraphicsItem>
 #include <QGraphicsLineItem>
 #include <QGraphicsPathItem>
 #include <QGraphicsScene>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -252,7 +257,7 @@ class NodesItem : public QGraphicsItem {
 class EdgesItem : public QGraphicsItem {
     public:
   struct Batch {
-    QString token;
+    QColor colour;
     double width = 1.0;
     bool dashed = false;
     std::vector<QLineF> lines;
@@ -274,7 +279,7 @@ class EdgesItem : public QGraphicsItem {
     // few thousand edges the difference is not visible, the frame rate is.
     p->setRenderHint(QPainter::Antialiasing, count_ < kAntialiasedEdges);
     for (const auto &b : batches_) {
-      QPen pen(theme().color(b.token), b.width);
+      QPen pen(b.colour, b.width);
       pen.setCosmetic(true);
       if (b.dashed)
         pen.setStyle(Qt::DashLine);
@@ -335,15 +340,40 @@ class MarkerItem : public QGraphicsItem {
   QString text_token_;
 };
 
-QString edge_type_da(const std::string &type) {
-  if (type == "odometry")
-    return "Odometri";
-  if (type == "loop_closure")
-    return "Løkkelukning";
-  if (type == "panorama")
-    return "Panorama";
-  return QString::fromStdString(type);
+/// Continuous modes: mix the three ramp tokens (good -> middle -> bad).
+QColor ramp_colour(int bucket) {
+  const double t = (bucket + 0.5) / kRampBuckets;
+  auto token = [](std::size_t i) {
+    return theme().color(QString::fromLatin1(
+        kRampTokens[i].data(), static_cast<int>(kRampTokens[i].size())));
+  };
+  const QColor a = token(0), m = token(1), b = token(2);
+  auto mix = [](const QColor &x, const QColor &y, double u) {
+    return QColor::fromRgbF(
+        static_cast<float>(x.redF() + (y.redF() - x.redF()) * u),
+        static_cast<float>(x.greenF() + (y.greenF() - x.greenF()) * u),
+        static_cast<float>(x.blueF() + (y.blueF() - x.blueF()) * u));
+  };
+  return t < 0.5 ? mix(a, m, t * 2.0) : mix(m, b, t * 2.0 - 1.0);
 }
+
+/// The legend's colour bar: the ramp's buckets side by side.
+class RampBar : public QWidget {
+    public:
+  RampBar() {
+    setFixedSize(theme().px("--space-7") * 2, theme().px("--space-2"));
+  }
+
+    protected:
+  void paintEvent(QPaintEvent *) override {
+    QPainter p(this);
+    const double w = static_cast<double>(width()) / kRampBuckets;
+    for (int i = 0; i < kRampBuckets; ++i)
+      p.fillRect(QRectF(i * w, 0, w + 0.5, height()), ramp_colour(i));
+  }
+};
+
+QString da_text(const std::string &s) { return QString::fromStdString(s); }
 
 } // namespace
 
@@ -464,6 +494,7 @@ GraphPanel::GraphPanel(ProjectSession &session, EdgeEditor &editor,
 
   auto *bar = new QFrame;
   bar->setObjectName("dbToolbar");
+  bar->setProperty("row", "first"); // the second row carries the hairline
   auto *bl = new QHBoxLayout(bar);
   bl->setContentsMargins(t.px("--space-4"), t.px("--space-2"),
                          t.px("--space-4"), t.px("--space-2"));
@@ -532,6 +563,34 @@ GraphPanel::GraphPanel(ProjectSession &session, EdgeEditor &editor,
   bl->addWidget(fit);
   v->addWidget(bar);
 
+  // A second, compact row: the first is full at 1440 px.
+  auto *bar2 = new QFrame;
+  bar2->setObjectName("dbToolbar");
+  auto *b2 = new QHBoxLayout(bar2);
+  b2->setContentsMargins(t.px("--space-4"), 0, t.px("--space-4"),
+                         t.px("--space-2"));
+  b2->setSpacing(t.px("--space-3"));
+  auto *farv = new CapsLabel("Farv efter", "fieldLabel");
+  farv->ensurePolished();
+  farv->setMinimumWidth(farv->sizeHint().width());
+  b2->addWidget(farv);
+  colour_ = new QComboBox;
+  colour_->setObjectName("edgeColour");
+  for (auto m : colour_modes())
+    colour_->addItem(
+        da_text(colour_mode_da(m)),
+        QString::fromLatin1(colour_mode_key(m).data(),
+                            static_cast<int>(colour_mode_key(m).size())));
+  colour_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+  b2->addWidget(colour_);
+  rejected_ = new QCheckBox(NavItem::escape_mnemonic("Vis afviste"));
+  rejected_->setCursor(Qt::PointingHandCursor);
+  rejected_->setToolTip("Afviste kanter bruges ikke af optimeringen; vist "
+                        "stiplet");
+  b2->addWidget(rejected_);
+  b2->addStretch(1);
+  v->addWidget(bar2);
+
   auto *stack_host = new QWidget;
   auto *stack = new QStackedLayout(stack_host);
   view_ = new PoseGraphView;
@@ -540,6 +599,15 @@ GraphPanel::GraphPanel(ProjectSession &session, EdgeEditor &editor,
   view_->scene()->setItemIndexMethod(QGraphicsScene::NoIndex);
   view_->setBackgroundBrush(t.color("--color-canvas"));
   stack->addWidget(view_);
+  legend_ = new QFrame(view_);
+  legend_->setObjectName("graphLegend");
+  legend_layout_ = new QVBoxLayout(legend_);
+  legend_layout_->setContentsMargins(t.px("--space-3"), t.px("--space-2"),
+                                     t.px("--space-3"), t.px("--space-2"));
+  legend_layout_->setSizeConstraint(QLayout::SetFixedSize);
+  legend_->hide();
+  view_->installEventFilter(this);
+  legend_->installEventFilter(this); // its size settles after a rebuild
   empty_ = new QLabel;
   empty_->setObjectName("viewportEmpty");
   empty_->setAlignment(Qt::AlignCenter);
@@ -581,6 +649,11 @@ GraphPanel::GraphPanel(ProjectSession &session, EdgeEditor &editor,
     rebuild_scene();
   });
 
+  connect(colour_, &QComboBox::currentIndexChanged, this, [this](int i) {
+    if (i >= 0 && i < static_cast<int>(colour_modes().size()))
+      set_colour_mode(colour_modes()[static_cast<std::size_t>(i)]);
+  });
+  connect(rejected_, &QCheckBox::toggled, this, &GraphPanel::set_show_rejected);
   connect(planes_, &QButtonGroup::idClicked, this,
           [this](int id) { set_plane(static_cast<ViewPlane>(id)); });
   connect(yaw_slider_, &QSlider::valueChanged, this,
@@ -604,6 +677,20 @@ GraphPanel::GraphPanel(ProjectSession &session, EdgeEditor &editor,
             .value_or(ViewPlane::xy);
   projection_.plane = plane;
   planes_->button(static_cast<int>(plane))->setChecked(true);
+  if (persist_) {
+    QSettings st;
+    mode_ = parse_colour_mode(
+                st.value("rediger/colour", "type").toString().toStdString())
+                .value_or(EdgeColourMode::type);
+    show_rejected_ = st.value("rediger/show_rejected", false).toBool();
+  }
+  {
+    const QSignalBlocker b1(colour_), b2(rejected_);
+    colour_->setCurrentIndex(static_cast<int>(
+        std::find(colour_modes().begin(), colour_modes().end(), mode_) -
+        colour_modes().begin()));
+    rejected_->setChecked(show_rejected_);
+  }
   reset();
   set_yaw(view_settings_.yaw_deg());
 }
@@ -808,43 +895,174 @@ void GraphPanel::rebuild_edges() {
     delete it;
   }
   edge_items_.clear();
-  edges_.clear();
-  const auto &edits = editor_.edits();
-  for (const auto &v : edits.effective()) {
-    if (v.edge.status == "rejected")
-      continue; // Task 10 adds the "Vis afviste" toggle
-    DrawnEdge d;
-    d.edge = {v.edge.key.from, v.edge.key.to};
-    d.type = v.edge.key.type;
-    d.pending_add = v.pending != EdgeView::Pending::none;
-    d.residual = v.edge.residual;
-    d.weight = v.edge.weight;
-    edges_.push_back(d);
-  }
+  drawn_.clear();
+  const auto all = editor_.edits().effective();
+  for (const auto &v : all)
+    if (edge_drawn(v, show_rejected_))
+      drawn_.push_back(v);
+  rebuild_legend(all);
   if (nodes_.empty())
     return;
-  std::map<int, QPointF> at;
-  for (const auto &n : nodes_)
-    at[n.id] = QPointF(n.x, -n.y);
-  // Batches in draw order: odometry under the rest, staged edits on top.
-  std::vector<EdgesItem::Batch> batches = {
-      {"--color-text-faint", 1.0, false, {}}, // odometry
-      {"--color-accent", 2.0, false, {}},     // loop closure
-      {"--color-star", 2.0, false, {}},       // panorama
-      {"--color-accent", 2.0, true, {}}};     // staged (not saved)
-  for (const auto &d : edges_) {
-    const auto a = at.find(d.edge.from), b = at.find(d.edge.to);
-    if (a == at.end() || b == at.end())
+  // nodes_ is in id order (as loaded): a binary search, not a map per edge.
+  const auto at = [this](int id) -> const GraphNode * {
+    const auto it =
+        std::lower_bound(nodes_.begin(), nodes_.end(), id,
+                         [](const GraphNode &n, int i) { return n.id < i; });
+    return it != nodes_.end() && it->id == id ? &*it : nullptr;
+  };
+  const ColourScale scale = colour_scale(mode_, drawn_);
+  const auto unknown = unknown_edge_types(drawn_);
+  const int nslots = label_slots(); // `slots` is a Qt macro
+  // Batched in paint order (edge_draw_order): hairlines under wide strokes,
+  // dashed (staged / rejected) on top, the ramp good to bad so the worst
+  // edge reads, and the highlighted edge last of all.
+  std::map<EdgeDrawOrder, EdgesItem::Batch> batches;
+  EdgesItem::Batch highlight{
+      theme().color("--color-on-chrome"), 4.0, false, {}};
+  for (const auto &v : drawn_) {
+    const GraphNode *a = at(v.edge.key.from), *b = at(v.edge.key.to);
+    if (!a || !b)
       continue;
-    const std::size_t k = d.pending_add              ? 3
-                          : d.type == "loop_closure" ? 1
-                          : d.type == "panorama"     ? 2
-                                                     : 0;
-    batches[k].lines.emplace_back(a->second, b->second);
+    const QLineF line(a->x, -a->y, b->x, -b->y);
+    const EdgeStyle st = edge_style(v, mode_, scale, unknown, nslots);
+    auto &batch = batches[edge_draw_order(st)];
+    if (batch.lines.empty()) {
+      batch.colour = st.ramp >= 0 ? ramp_colour(st.ramp)
+                                  : theme().color(da_text(st.token));
+      // The reddest bucket (at or past the scale's bad end) a stroke wider:
+      // one bogus loop closure among hundreds must catch the eye, and the
+      // ramp's top and middle tokens are close at 2 px.
+      batch.width = !st.wide ? 1.0 : st.ramp == kRampBuckets - 1 ? 3.0 : 2.0;
+      batch.dashed = st.dashed;
+    }
+    batch.lines.push_back(line);
+    if (highlight_ && v.edge.key == *highlight_)
+      highlight.lines.push_back(line);
   }
-  auto *item = new EdgesItem(std::move(batches));
-  view_->scene()->addItem(item);
+  std::vector<EdgesItem::Batch> ordered;
+  ordered.reserve(batches.size() + 1);
+  for (auto &[k, b] : batches)
+    ordered.push_back(std::move(b));
+  if (!highlight.lines.empty())
+    ordered.push_back(std::move(highlight));
+  auto *item = new EdgesItem(std::move(ordered));
+  sc->addItem(item);
   edge_items_.push_back(item);
+}
+
+void GraphPanel::rebuild_legend(const std::vector<EdgeView> &all) {
+  // One body widget per build: hide the old one first, or it paints through
+  // the new one until its deleteLater runs.
+  while (QLayoutItem *it = legend_layout_->takeAt(0)) {
+    if (QWidget *w = it->widget()) {
+      w->hide();
+      w->deleteLater();
+    }
+    delete it;
+  }
+  const Theme &t = theme();
+  const EdgeLegend l = build_legend(mode_, all, show_rejected_, label_slots());
+  auto *body = new QWidget;
+  body->setObjectName("legendHost");
+  auto *g = new QGridLayout(body);
+  g->setContentsMargins(0, 0, 0, 0);
+  g->setHorizontalSpacing(t.px("--space-2"));
+  g->setVerticalSpacing(t.px("--space-1"));
+  auto text = [](const QString &s, const char *name = "legendText") {
+    auto *q = new QLabel(s);
+    q->setObjectName(name);
+    return q;
+  };
+  int row = 0;
+  if (l.continuous && l.scale.valid) {
+    const auto num = [&](double v) {
+      return da_text(format_decimal_da(v, 2)) +
+             (l.unit.empty() ? QString() : " " + da_text(l.unit));
+    };
+    auto *bar = new QHBoxLayout;
+    bar->setSpacing(t.px("--space-2"));
+    bar->addWidget(text(num(l.scale.lo), "legendCount"));
+    bar->addWidget(new RampBar, 0, Qt::AlignVCenter);
+    bar->addWidget(text(num(l.scale.hi), "legendCount"));
+    bar->addStretch(1);
+    g->addLayout(bar, row++, 0, 1, 3);
+    g->addWidget(text(l.scale.fixed ? QString("χ²₆ 95 % → 5×, grøn til rød")
+                                    : QString("5.–95. percentil af de viste")),
+                 row++, 0, 1, 3);
+  }
+  const auto entry = [&](const QString &token, const QString &label, int n) {
+    g->addWidget(new Swatch(token), row, 0, Qt::AlignVCenter);
+    g->addWidget(text(label), row, 1);
+    auto *c = text(format_count(n), "legendCount");
+    c->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    g->addWidget(c, row, 2);
+    ++row;
+  };
+  if (l.continuous && l.missing > 0)
+    entry("--color-text-faint", "Ingen måling", l.missing);
+  for (const auto &e : l.entries)
+    entry(da_text(e.token),
+          da_text(e.label) + (e.dashed ? QString(" (stiplet)") : QString()),
+          e.count);
+  if (l.hidden_rejected > 0)
+    g->addWidget(
+        text(QString("%1 afviste skjult").arg(format_count(l.hidden_rejected)),
+             "legendNote"),
+        row++, 0, 1, 3);
+  legend_layout_->addWidget(body);
+  legend_->setVisible(row > 0 && !nodes_.empty());
+  legend_->adjustSize();
+  place_legend();
+}
+
+void GraphPanel::place_legend() {
+  if (!legend_)
+    return;
+  const int m = theme().px("--space-3");
+  const QRect vp = view_->viewport()->geometry();
+  legend_->move(vp.left() + m, vp.bottom() - legend_->height() - m + 1);
+  legend_->raise();
+}
+
+bool GraphPanel::eventFilter(QObject *watched, QEvent *event) {
+  if ((watched == view_ || watched == legend_) &&
+      event->type() == QEvent::Resize)
+    place_legend();
+  return QWidget::eventFilter(watched, event);
+}
+
+void GraphPanel::set_colour_mode(EdgeColourMode m) {
+  mode_ = m;
+  {
+    const QSignalBlocker b(colour_);
+    colour_->setCurrentIndex(static_cast<int>(
+        std::find(colour_modes().begin(), colour_modes().end(), m) -
+        colour_modes().begin()));
+  }
+  if (persist_)
+    QSettings().setValue(
+        "rediger/colour",
+        QString::fromLatin1(colour_mode_key(m).data(),
+                            static_cast<int>(colour_mode_key(m).size())));
+  rebuild_edges();
+  emit colour_mode_changed(m);
+}
+
+void GraphPanel::set_show_rejected(bool on) {
+  show_rejected_ = on;
+  {
+    const QSignalBlocker b(rejected_);
+    rejected_->setChecked(on);
+  }
+  if (persist_)
+    QSettings().setValue("rediger/show_rejected", on);
+  rebuild_edges();
+  update_meta();
+}
+
+void GraphPanel::set_highlight(std::optional<EdgeKey> key) {
+  highlight_ = std::move(key);
+  rebuild_edges();
 }
 
 void GraphPanel::place_markers() {
@@ -877,12 +1095,14 @@ void GraphPanel::on_click(const QPointF &pos, Qt::KeyboardModifiers mods) {
     return;
   }
   std::vector<GraphEdge> plain;
-  for (const auto &d : edges_)
-    plain.push_back(d.edge);
-  const int e = nearest_edge(nodes_, plain, pos.x(), -pos.y(), tol);
-  if (e >= 0) {
-    const auto &d = edges_[static_cast<std::size_t>(e)];
-    click_edge(d.edge.from, d.edge.to);
+  plain.reserve(drawn_.size());
+  for (const auto &v : drawn_)
+    plain.push_back({v.edge.key.from, v.edge.key.to});
+  if (const int e = nearest_edge(nodes_, plain, pos.x(), -pos.y(), tol);
+      e >= 0) {
+    const EdgeKey key = drawn_[static_cast<std::size_t>(e)].edge.key;
+    select_edge(key);
+    emit edge_clicked(key);
   }
 }
 
@@ -891,6 +1111,8 @@ void GraphPanel::click_node(int id, bool as_b) {
                                [id](const GraphNode &n) { return n.id == id; });
   if (it == nodes_.end())
     return;
+  if (highlight_)
+    set_highlight(std::nullopt); // the inspector now shows the node
   Selection s;
   s.kind = "Node";
   s.title = QString("Billede %1").arg(id);
@@ -910,32 +1132,61 @@ void GraphPanel::click_node(int id, bool as_b) {
 }
 
 void GraphPanel::click_edge(int from, int to) {
-  for (const auto &d : edges_) {
-    if (d.edge.from != from || d.edge.to != to)
-      continue;
-    Selection s;
-    s.kind = "Kant";
-    s.title = QString("%1 → %2").arg(from).arg(to);
-    s.subtitle = edge_type_da(d.type);
-    if (d.pending_add) {
-      s.pill = "Ikke gemt";
-      s.pill_tone = "warn";
+  for (const auto &v : drawn_)
+    if (v.edge.key.from == from && v.edge.key.to == to) {
+      select_edge(v.edge.key);
+      return;
     }
-    SelectionSection p{"Kant", {}, {}};
-    p.rows.push_back(
-        {"Type", edge_type_da(d.type), SelectionRow::Style::value});
-    p.rows.push_back({"Residual", std::isnan(d.residual)
-                                      ? QString("—")
-                                      : da().toString(d.residual, 'g', 4)});
-    p.rows.push_back({"Vægt", std::isnan(d.weight)
-                                  ? QString("—")
-                                  : da().toString(d.weight, 'g', 4)});
-    s.sections.push_back(p);
-    selection_ = s;
-    emit selection_changed(selection_);
-    emit pair_requested(from, to);
+}
+
+void GraphPanel::select_edge(const EdgeKey &key) {
+  const auto it =
+      std::find_if(drawn_.begin(), drawn_.end(),
+                   [&key](const EdgeView &v) { return v.edge.key == key; });
+  if (it == drawn_.end())
     return;
+  const EdgeView v = *it; // set_highlight rebuilds drawn_
+  Selection s;
+  s.kind = "Kant";
+  s.title = QString("%1 → %2").arg(key.from).arg(key.to);
+  s.subtitle = da_text(edge_type_da(key.type));
+  s.pill = da_text(edge_status_da(v.edge.status));
+  s.pill_tone = v.edge.status == "confirmed"  ? "good"
+                : v.edge.status == "rejected" ? "crit"
+                                              : "outline";
+  if (v.pending != EdgeView::Pending::none) {
+    s.pill += " · ikke gemt";
+    s.pill_tone = "warn";
   }
+  SelectionSection p{"Kant", {}, {}};
+  const auto cell = [&v](EdgeColumn c) {
+    return da_text(edge_cell_text(v, c));
+  };
+  // "0,12 m / 3,4 °", or one dash when the edge has no such metric.
+  const auto pair = [&cell](EdgeColumn m, EdgeColumn deg) {
+    const QString a = cell(m), b = cell(deg);
+    return a == "—" && b == "—" ? QString("—") : a + " m / " + b + " °";
+  };
+  const auto row = [&p](const char *key, const QString &value,
+                        SelectionRow::Style style = SelectionRow::Style::mono) {
+    SelectionRow r;
+    r.key = key;
+    r.value = value;
+    r.style = style;
+    p.rows.push_back(r);
+  };
+  row("Type", cell(EdgeColumn::type), SelectionRow::Style::value);
+  row("Kilde", cell(EdgeColumn::source), SelectionRow::Style::value);
+  row("Residual", cell(EdgeColumn::residual));
+  row("Afvigelse", pair(EdgeColumn::deviation_m, EdgeColumn::deviation_deg));
+  row("Frøafvigelse", pair(EdgeColumn::seed_m, EdgeColumn::seed_deg));
+  row("Vægt", std::isnan(v.edge.weight) ? QString("—")
+                                        : da().toString(v.edge.weight, 'g', 4));
+  s.sections.push_back(p);
+  selection_ = s;
+  set_highlight(key);
+  emit selection_changed(selection_);
+  emit pair_requested(key.from, key.to);
 }
 
 void GraphPanel::update_meta() {
@@ -949,7 +1200,7 @@ void GraphPanel::update_meta() {
   }
   QString m = QString("%1 billeder · %2 kanter")
                   .arg(format_count(nodes_.size()))
-                  .arg(format_count(static_cast<qulonglong>(edges_.size())));
+                  .arg(format_count(static_cast<qulonglong>(drawn_.size())));
   if (const int n = editor_.pending())
     m += QString(" · %1 ikke gemt").arg(n);
   meta_->set_full_text(m);

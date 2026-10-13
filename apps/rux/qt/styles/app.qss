@@ -893,6 +893,10 @@ QFrame#dbToolbar {
 QFrame#dbToolbar QLabel {
   background: transparent;
 }
+/* Rediger's graph toolbar is two rows: one hairline, under the second. */
+QFrame#dbToolbar[row="first"] {
+  border-bottom: none;
+}
 
 /* Rediger: splitter panes (PaneFrame) */
 QFrame#paneFrame {
@@ -1162,6 +1166,32 @@ QLabel#layerCount {
 QLabel#legendText {
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
+  background: transparent;
+}
+/* Rediger's edge legend: a chrome card in the canvas's lower-left corner
+   (chrome is dark in both themes, like the canvas under it). */
+QFrame#graphLegend {
+  background: var(--color-chrome);
+  border: 1px solid var(--color-chrome-border);
+  border-radius: var(--radius-sm);
+}
+QFrame#graphLegend QWidget#legendHost {
+  background: transparent;
+}
+QFrame#graphLegend QLabel#legendText {
+  color: var(--color-on-chrome);
+  font-size: var(--font-size-xs);
+  background: transparent;
+}
+QFrame#graphLegend QLabel#legendCount {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-on-chrome-muted);
+  background: transparent;
+}
+QFrame#graphLegend QLabel#legendNote {
+  font-size: var(--font-size-xs);
+  color: var(--color-on-chrome-muted);
   background: transparent;
 }
 QGraphicsView#poseGraphView {

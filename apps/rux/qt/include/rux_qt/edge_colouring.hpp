@@ -15,6 +15,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 namespace rux::qt {
@@ -73,15 +74,22 @@ EdgeStyle edge_style(const EdgeView &v, EdgeColourMode mode,
                      const std::vector<std::string> &unknown_types,
                      int label_slots);
 
-struct LegendEntry {
+/// The canvas's batch key for @p style, in paint order: hairlines under
+/// wide strokes, solid under dashed, categorical colours under the ramp,
+/// and the ramp from good to bad — so the worst edge is painted on top.
+/// Equal styles give equal keys (one batch).
+using EdgeDrawOrder = std::tuple<bool, bool, int, std::string>;
+EdgeDrawOrder edge_draw_order(const EdgeStyle &style);
+
+struct EdgeLegendEntry {
   std::string token;
   std::string label;
   int count = 0;
   bool dashed = false;
 };
 struct EdgeLegend {
-  std::vector<LegendEntry> entries; ///< categorical buckets (+ "Ikke gemt")
-  bool continuous = false;          ///< a colour bar from scale.lo to hi
+  std::vector<EdgeLegendEntry> entries; ///< categorical buckets (+ "Ikke gemt")
+  bool continuous = false;              ///< a colour bar from scale.lo to hi
   ColourScale scale;
   std::string unit; ///< "m", or "" for the residual
   int missing = 0;  ///< drawn edges without the metric

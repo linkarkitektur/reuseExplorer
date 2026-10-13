@@ -37,7 +37,7 @@ QString dec(double v, int decimals) {
 }
 
 QString residual_text(double r) {
-  return std::isfinite(r) ? dec(r, 4) : QString("—");
+  return std::isfinite(r) ? dec(r, 2) : QString("—");
 }
 
 QString status_da(const std::string &status) {
@@ -260,15 +260,17 @@ void PairStrip::rebuild() {
     dir->setObjectName("edgeMono");
     h->addWidget(dir);
     h->addStretch(1);
-    auto *w = new QLabel(QString("Vægt %1").arg(weight_text(v.edge.weight)));
-    w->setObjectName("edgeMeta");
-    h2->addWidget(w);
-    auto *r =
-        new QLabel(QString("Residual %1").arg(residual_text(v.edge.residual)));
+    // One eliding label: a stored edge with a staged change carries two
+    // pills, and fixed-width figures beside them widened the window.
+    auto *r = new ElidedLabel(QString("Vægt %1   Residual %2")
+                                  .arg(weight_text(v.edge.weight))
+                                  .arg(residual_text(v.edge.residual)),
+                              Qt::ElideRight);
     r->setObjectName("edgeMeta");
-    r->setToolTip("½ · hvidet kvadratfejl efter seneste optimering");
-    h2->addWidget(r);
-    h2->addStretch(1);
+    r->setToolTip(r->full_text() +
+                  "\nResidual: ½ · hvidet kvadratfejl efter seneste "
+                  "optimering");
+    h2->addWidget(r, 1);
     h2->addWidget(
         new Pill(status_da(v.edge.status), status_tone(v.edge.status)));
     if (v.pending != EdgeView::Pending::none)

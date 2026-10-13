@@ -175,3 +175,19 @@ TEST_CASE("ColourMode_KeysRoundTrip", "[rux_qt][colour]") {
   CHECK(colour_mode_da(EdgeColourMode::seed) == "Frøafvigelse (m)");
   CHECK_FALSE(parse_colour_mode("rainbow").has_value());
 }
+
+TEST_CASE("EdgeColour_DrawOrder_WorstOnTop", "[rux_qt][colour]") {
+  // A bogus loop closure (the reddest bucket) must be painted over the
+  // normal ones, and odometry hairlines under every wide stroke.
+  EdgeStyle hair{"--color-text-faint", -1, false, false};
+  EdgeStyle missing{"--color-text-faint", -1, false, true};
+  EdgeStyle good{"", 2, false, true};
+  EdgeStyle bad{"", kRampBuckets - 1, false, true};
+  EdgeStyle dashed{"--color-accent", -1, true, true};
+  CHECK(edge_draw_order(hair) < edge_draw_order(missing));
+  CHECK(edge_draw_order(missing) < edge_draw_order(good));
+  CHECK(edge_draw_order(good) < edge_draw_order(bad));
+  CHECK(edge_draw_order(bad) < edge_draw_order(dashed));
+  CHECK(edge_draw_order(good) ==
+        edge_draw_order(EdgeStyle{"", 2, false, true}));
+}

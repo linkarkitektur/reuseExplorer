@@ -40,11 +40,15 @@
 #include <QThread>
 #include <QTimer>
 
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace rux::qt::gallery {
 namespace {
@@ -454,14 +458,144 @@ QWidget *make_rediger_stress(const PageContext &ctx) {
   return shell;
 }
 
-/// A click on a staged edge: A and B move to its ends.
-QWidget *make_rediger_click(const PageContext &ctx) {
+/// Writes a deterministic pose graph to the project COPY: odometry along
+/// the capture plus @p loops loop closures / panorama edges with residuals
+/// spanning the χ² scale, metrics, every status, and legacy rows without
+/// metrics — so every colour mode has something to show. One loop closure
+/// is bogus (the motivating case): it jumps across the capture with a
+/// residual far past the scale, and must pop out of the normal ones.
+void seed_graph(const QString &path, std::size_t loops) {
+  if (path.isEmpty())
+    return;
+  reusex::ProjectDB db(path.toStdString());
+  const auto ids = db.sensor_frame_ids();
+  std::uint64_t x = 0x9E3779B97F4A7C15ULL; // fixed seed: the same shot
+  auto next = [&x] {
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    return x;
+  };
+  const auto unit = [&next](double hi) {
+    return static_cast<double>(next() % 1000) / 1000.0 * hi;
+  };
+  reusex::ProjectDB::Transaction tx(db);
+  for (std::size_t i = 1; i < ids.size(); ++i) {
+    reusex::ProjectDB::PoseGraphEdge e;
+    e.from_node_id = ids[i - 1];
+    e.to_node_id = ids[i];
+    e.edge_type = "odometry";
+    e.source = "odometry_init";
+    e.status = "auto";
+    e.weight = 100.0;
+    e.residual = 0.2 + unit(2.0);
+    e.deviation_m = unit(0.05);
+    e.deviation_deg = unit(2.0);
+    e.seed_disagreement_m = unit(0.1);
+    e.seed_disagreement_deg = unit(2.5);
+    db.upsert_pose_graph_edge(e, /*overwrite_rejected=*/true);
+  }
+  for (std::size_t k = 0; k < loops && ids.size() > 2; ++k) {
+    const int a = ids[next() % ids.size()];
+    const int b = ids[next() % ids.size()];
+    if (a == b)
+      continue;
+    reusex::ProjectDB::PoseGraphEdge e;
+    e.from_node_id = a;
+    e.to_node_id = b;
+    e.edge_type = k % 9 == 0 ? "panorama" : "loop_closure";
+    e.status = k % 7 == 0 ? "rejected" : k % 5 == 0 ? "confirmed" : "auto";
+    e.weight = 25.0;
+    if (k % 11 == 0) {
+      e.source = "legacy"; // no measurement, no metrics
+    } else {
+      e.source = "orb";
+      // Mostly inside the χ² gate, some across the ramp: a sound graph.
+      e.residual = k % 6 == 0 ? unit(30.0) : unit(7.0);
+      e.deviation_m = unit(0.4);
+      e.deviation_deg = unit(6.0);
+      e.seed_disagreement_m = unit(0.8);
+      e.seed_disagreement_deg = unit(12.0);
+    }
+    db.upsert_pose_graph_edge(e, /*overwrite_rejected=*/true);
+  }
+  if (ids.size() > 4) {
+    // Across the building: the two of 16 frames along the capture that lie
+    // farthest apart.
+    std::vector<std::pair<int, std::array<double, 3>>> at;
+    for (std::size_t i = 0; i < 16; ++i) {
+      const int id = ids[i * ids.size() / 16];
+      if (db.has_sensor_frame_pose(id)) {
+        const auto p = db.sensor_frame_pose(id);
+        at.push_back({id, {p[3], p[7], p[11]}});
+      }
+    }
+    int from = ids[ids.size() / 8], to = ids[ids.size() * 3 / 4];
+    double best = -1.0;
+    for (std::size_t i = 0; i < at.size(); ++i)
+      for (std::size_t j = i + 1; j < at.size(); ++j) {
+        const auto &p = at[i].second, &q = at[j].second;
+        const double d = std::hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+        if (d > best) {
+          best = d;
+          from = at[i].first;
+          to = at[j].first;
+        }
+      }
+    reusex::ProjectDB::PoseGraphEdge e;
+    e.from_node_id = from;
+    e.to_node_id = to;
+    e.edge_type = "loop_closure";
+    e.source = "orb";
+    e.status = "auto";
+    e.weight = 25.0;
+    e.residual = 412.0; // 0.5·χ² — sixty-five times the gate
+    e.deviation_m = 2.4;
+    e.deviation_deg = 38.0;
+    e.seed_disagreement_m = 3.1;
+    e.seed_disagreement_deg = 41.0;
+    db.upsert_pose_graph_edge(e, /*overwrite_rejected=*/true);
+    std::fprintf(stderr,
+                 "seed-graph: bogus loop closure %d -> %d, residual %g\n",
+                 e.from_node_id, e.to_node_id, e.residual);
+  }
+  tx.commit();
+}
+
+QWidget *make_rediger_colour(const PageContext &ctx, EdgeColourMode mode,
+                             bool rejected = false) {
+  seed_graph(ctx.project_path, 40);
   auto *shell = make_pg(ctx);
   settle();
-  // A staged edge that is drawn: a staged rejection is not.
-  for (const auto &op : shell->database()->editor().edits().ops())
-    if (op.edge.status != "rejected") {
-      shell->edit()->graph()->click_edge(op.edge.key.from, op.edge.key.to);
+  shell->edit()->graph()->set_show_rejected(rejected);
+  shell->edit()->graph()->set_colour_mode(mode);
+  return shell;
+}
+QWidget *make_rediger_type(const PageContext &ctx) {
+  return make_rediger_colour(ctx, EdgeColourMode::type);
+}
+QWidget *make_rediger_status(const PageContext &ctx) {
+  return make_rediger_colour(ctx, EdgeColourMode::status, true);
+}
+QWidget *make_rediger_residual(const PageContext &ctx) {
+  return make_rediger_colour(ctx, EdgeColourMode::residual);
+}
+QWidget *make_rediger_deviation(const PageContext &ctx) {
+  return make_rediger_colour(ctx, EdgeColourMode::deviation);
+}
+QWidget *make_rediger_seed(const PageContext &ctx) {
+  return make_rediger_colour(ctx, EdgeColourMode::seed);
+}
+
+/// A click on the first drawn stored loop closure of the seeded graph: it
+/// is highlighted, the inspector shows it and A and B move to its ends.
+QWidget *make_rediger_click(const PageContext &ctx) {
+  seed_graph(ctx.project_path, 40);
+  auto *shell = make_pg(ctx);
+  settle();
+  for (const auto &e : shell->database()->editor().edits().base())
+    if (e.key.type == "loop_closure" && e.status != "rejected") {
+      shell->edit()->graph()->click_edge(e.key.from, e.key.to);
       break;
     }
   return shell;
@@ -726,8 +860,30 @@ void register_shell_pages() {
                  "Rediger: 10.000 kanter (skriver til projektkopien), måler "
                  "tegnetid",
                  make_rediger_stress});
-  register_page({"rediger-click", "Rediger: klik på en kant sætter A og B",
+  register_page({"rediger-click",
+                 "Rediger: klik på en kant fremhæver den og sætter A og B, "
+                 "seedet graf (skriver til projektkopien)",
                  make_rediger_click});
+  register_page({"rediger-type",
+                 "Rediger: kanter farvet efter type, seedet graf (skriver "
+                 "til projektkopien)",
+                 make_rediger_type});
+  register_page({"rediger-status",
+                 "Rediger: kanter farvet efter status med afviste vist, "
+                 "seedet graf (skriver til projektkopien)",
+                 make_rediger_status});
+  register_page({"rediger-residual",
+                 "Rediger: kanter farvet efter residual, seedet graf (skriver "
+                 "til projektkopien)",
+                 make_rediger_residual});
+  register_page({"rediger-deviation",
+                 "Rediger: kanter farvet efter afvigelse, seedet graf "
+                 "(skriver til projektkopien)",
+                 make_rediger_deviation});
+  register_page({"rediger-seed",
+                 "Rediger: kanter farvet efter frøafvigelse, seedet graf "
+                 "(skriver til projektkopien)",
+                 make_rediger_seed});
   register_page({"rediger-zoom",
                  "Rediger: zoomer ind på én node og tæller dens pixels "
                  "(reproduktion af forsvindende noder)",
