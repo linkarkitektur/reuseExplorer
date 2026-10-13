@@ -4,10 +4,11 @@
 
 // Pose-graph edge storage in ProjectDB (schema v15, #265).
 //
-// Three properties are pinned:
-//  1. A pre-v15 fixture migrates cleanly: the table appears and is empty.
-//  2. Edges survive a round trip (save → list) with correct field values.
-//  3. Running save a second time atomically replaces the first write.
+// Two properties are pinned:
+//  1. migration: a pre-v15 fixture migrates cleanly (the table appears and
+//     is empty);
+//  2. upsert/status/metrics API: edges round-trip through upsert, status,
+//     metric and purge calls.
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -161,65 +162,6 @@ TEST_CASE("pose_graph migration v14->v15: table created, initially empty",
   buildV14Fixture(tmp.path);
 
   ProjectDB db(tmp.path); // triggers migration
-  CHECK(db.list_pose_graph_edges().empty());
-  CHECK_FALSE(db.has_pose_graph());
-}
-
-TEST_CASE("pose_graph round trip: save and list", "[projectdb][pose_graph]") {
-  TempPath tmp("test_pose_graph_roundtrip");
-  ProjectDB db(tmp.path);
-
-  const std::vector<ProjectDB::PoseGraphEdge> edges = {
-      legacy_edge(1, 2, "odometry", 0.012, 1000.0),
-      legacy_edge(2, 3, "odometry", 0.015, 1000.0),
-      legacy_edge(1, 10, "loop_closure", 0.45, 400.0),
-      legacy_edge(5, 20, "panorama", 0.23,
-                  std::numeric_limits<double>::quiet_NaN()),
-  };
-
-  db.save_pose_graph_edges(edges);
-
-  REQUIRE(db.has_pose_graph());
-  const auto out = db.list_pose_graph_edges();
-  REQUIRE(out.size() == 4);
-
-  CHECK(out[0].from_node_id == 1);
-  CHECK(out[0].to_node_id == 2);
-  CHECK(out[0].edge_type == "odometry");
-  CHECK(out[0].residual == Approx(0.012));
-  CHECK(out[0].weight == Approx(1000.0));
-
-  CHECK(out[2].edge_type == "loop_closure");
-  CHECK(out[2].residual == Approx(0.45));
-
-  CHECK(out[3].edge_type == "panorama");
-  CHECK(std::isnan(out[3].weight)); // NaN → NULL → NaN on read-back
-}
-
-TEST_CASE("pose_graph save replaces previous run atomically",
-          "[projectdb][pose_graph]") {
-  TempPath tmp("test_pose_graph_replace");
-  ProjectDB db(tmp.path);
-
-  // First optimize run: 3 edges
-  db.save_pose_graph_edges({
-      legacy_edge(1, 2, "odometry", 0.01, 1000.0),
-      legacy_edge(2, 3, "odometry", 0.02, 1000.0),
-      legacy_edge(1, 5, "loop_closure", 0.5, 200.0),
-  });
-  REQUIRE(db.list_pose_graph_edges().size() == 3);
-
-  // Second optimize run: 2 edges (e.g., loop edge was rejected this time)
-  db.save_pose_graph_edges({
-      legacy_edge(1, 2, "odometry", 0.008, 1000.0),
-      legacy_edge(2, 3, "odometry", 0.011, 1000.0),
-  });
-  const auto out = db.list_pose_graph_edges();
-  REQUIRE(out.size() == 2);
-  CHECK(out[0].residual == Approx(0.008));
-
-  // Clear: save empty vector
-  db.save_pose_graph_edges({});
   CHECK(db.list_pose_graph_edges().empty());
   CHECK_FALSE(db.has_pose_graph());
 }

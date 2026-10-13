@@ -451,6 +451,16 @@ int run_subcommand_optimize(SubcommandOptimizeOptions const &opt,
     spdlog::info("Factor-graph error {:.4f} -> {:.4f}, max pose shift {:.4f} m",
                  result.initial_error, result.final_error,
                  result.max_pose_shift);
+    spdlog::info("Pose graph: {} stored edges in the solve{}{}",
+                 result.graph_edges,
+                 result.bridge_edges > 0
+                     ? fmt::format(", {} bridging edges from the initial "
+                                   "poses",
+                                   result.bridge_edges)
+                     : std::string(),
+                 result.graph_initialised
+                     ? " (odometry initialised from the current poses)"
+                     : "");
     if (result.median_fit_sigma_normal > 0.0)
       spdlog::info(
           "Plane measurement noise: median fit sigma {:.5f} rad / {:.5f} m; "

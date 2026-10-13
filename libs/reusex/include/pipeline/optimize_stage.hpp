@@ -64,8 +64,11 @@ inline StageResult run_optimize_stage(ProjectDB &db, const StageContext &ctx) {
                     "shift {:.4f} m",
                     result.frames, result.landmarks, result.initial_error,
                     result.final_error, result.max_pose_shift),
-        // `sensor_frames` is the artifact optimized poses are written into.
-        {{"table", "sensor_frames", static_cast<int64_t>(result.frames)}});
+        // `sensor_frames` holds the optimized poses; `pose_graph_edges` the
+        // per-edge metrics (and the odometry, when this run initialised it).
+        {{"table", "sensor_frames", static_cast<int64_t>(result.frames)},
+         {"table", "pose_graph_edges",
+          static_cast<int64_t>(result.edges_with_metrics)}});
   } catch (const std::exception &e) {
     return StageResult::failure(
         fmt::format("pose optimization failed: {}", e.what()));

@@ -646,10 +646,6 @@ class ProjectDB {
     int64_t id = 0;
   };
 
-  /// Transitional (removed in Task 10 together with its only caller, the
-  /// pre-v27 optimize): delete every row and insert @p edges as legacy rows.
-  void save_pose_graph_edges(const std::vector<PoseGraphEdge> &edges);
-
   /// All stored edges (every status), ordered by id. Empty when the table
   /// does not exist. On a pre-v27 project opened read-only the rows carry
   /// source "legacy", status "auto" and no measurement.

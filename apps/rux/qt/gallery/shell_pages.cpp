@@ -335,7 +335,12 @@ QWidget *make_posegraf_stress(const PageContext &ctx) {
         edges.push_back(
             edge(a, b, (x & 15) == 0 ? "panorama" : "loop_closure", 0.5, 25.0));
     }
-    db.save_pose_graph_edges(edges);
+    reusex::ProjectDB::Transaction tx(db);
+    for (auto &e : edges) {
+      e.source = "manual";
+      db.upsert_pose_graph_edge(e, /*overwrite_rejected=*/true);
+    }
+    tx.commit();
   }
   auto *shell = make_pg(ctx);
   // Measure once the graph is on screen at its shot size: poll until the

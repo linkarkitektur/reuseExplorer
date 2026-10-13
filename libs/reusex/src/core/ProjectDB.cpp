@@ -1613,46 +1613,6 @@ class ProjectDB::Impl {
 
   // ── Pose-graph helpers ───────────────────────────────────────────────────
 
-  void savePoseGraphEdges(const std::vector<ProjectDB::PoseGraphEdge> &edges) {
-    checkWritable();
-    execOrThrow("BEGIN TRANSACTION;");
-    try {
-      execOrThrow("DELETE FROM pose_graph_edges;");
-      const char *ins = R"(
-        INSERT INTO pose_graph_edges
-          (from_node_id, to_node_id, edge_type, residual, weight, source,
-           status)
-        VALUES (MIN(?1, ?2), MAX(?1, ?2), ?3, ?4, ?5, 'legacy', 'auto')
-        ON CONFLICT (from_node_id, to_node_id, edge_type) DO NOTHING;
-      )";
-      sqlite3_stmt *stmt = prepare_or_throw(db, ins, "save_pose_graph_edges");
-      StmtGuard guard(stmt);
-      for (const auto &e : edges) {
-        if (e.from_node_id == e.to_node_id)
-          continue; // the v27 CHECK (from < to) forbids self-loops
-        sqlite3_reset(stmt);
-        sqlite3_bind_int(stmt, 1, e.from_node_id);
-        sqlite3_bind_int(stmt, 2, e.to_node_id);
-        sqlite3_bind_text(stmt, 3, e.edge_type.c_str(), -1, SQLITE_TRANSIENT);
-        if (std::isfinite(e.residual))
-          sqlite3_bind_double(stmt, 4, e.residual);
-        else
-          sqlite3_bind_null(stmt, 4);
-        if (std::isfinite(e.weight))
-          sqlite3_bind_double(stmt, 5, e.weight);
-        else
-          sqlite3_bind_null(stmt, 5);
-        if (sqlite3_step(stmt) != SQLITE_DONE)
-          throw std::runtime_error("pose_graph_edges insert failed: " +
-                                   std::string(sqlite3_errmsg(db)));
-      }
-      execOrThrow("COMMIT;");
-    } catch (...) {
-      sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr);
-      throw;
-    }
-  }
-
   static std::optional<double> optionalDouble(sqlite3_stmt *s, int col) {
     if (sqlite3_column_type(s, col) == SQLITE_NULL)
       return std::nullopt;
@@ -8786,10 +8746,6 @@ ProjectDB::table_rows(std::string_view table, std::int64_t offset,
 }
 
 // --- Pose Graph ---
-
-void ProjectDB::save_pose_graph_edges(const std::vector<PoseGraphEdge> &edges) {
-  impl_->savePoseGraphEdges(edges);
-}
 
 std::vector<ProjectDB::PoseGraphEdge> ProjectDB::list_pose_graph_edges() const {
   return impl_->listPoseGraphEdges();

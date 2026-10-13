@@ -503,15 +503,17 @@ std::vector<GraphEdge>
 legacy_graph_edges(const std::vector<FrameSurfels> &frames,
                    const std::vector<LoopEdge> &loop_edges);
 
-/// High-level entry point: extract surfels for every sensor frame in @p db,
-/// globally optimize their poses via the plane-landmark graph, and (unless
-/// @p dry_run) write the optimized world poses back into the sensor_frames
-/// table.
-///
-/// The optimizer works on the combined optical->world pose; on write-back the
-/// constant local (optical->sensor) transform is removed so the stored
-/// `transform` column keeps its worldTf meaning (identical to
-/// refine_sensor_poses).
+/// High-level entry point: solve the STORED pose graph of @p db
+/// (pose_graph_edges, schema v27). Seeds every frame from
+/// sensor_frames.initial_transform (falling back to `transform` with a
+/// warning), adds one factor per active stored edge (auto + confirmed, with a
+/// measurement; confirmed loop edges are GNC known inliers), bridges a
+/// disconnected graph from the initial poses, and — unless @p dry_run —
+/// writes the optimized world poses to `transform` (never to
+/// initial_transform) and residual / deviation / seed-disagreement back to
+/// every stored edge. The edge set is never replaced. When the graph has no
+/// usable odometry, slam::init_pose_graph() runs first (in memory only under
+/// @p dry_run).
 ///
 /// @param db       Project database (read/write).
 /// @param options  Optimization parameters.
