@@ -8,6 +8,12 @@
 // the heading tick, the "Auto" yaw, the yaw's text in project_settings, and
 // which of A/B a node click fills. Standard library only (rux_qt_core).
 
+#include <array>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
 namespace rux::qt {
 
 // ----------------------------------------------------------------- zoom --
@@ -30,5 +36,65 @@ ZoomLimits zoom_limits(double content_extent, int viewport_px);
 /// either input is not positive.
 double clamp_zoom_factor(double units_per_px, double factor,
                          const ZoomLimits &limits);
+
+// ----------------------------------------------------------- projection --
+
+/// Which two axes the canvas shows: xy = plan, xz = seen from -y (x right,
+/// z up), yz = seen from +x (y right, z up).
+enum class ViewPlane { xy, xz, yz };
+std::string_view view_plane_key(ViewPlane plane); ///< "xy" | "xz" | "yz"
+std::optional<ViewPlane> parse_view_plane(std::string_view key);
+
+struct ViewProjection {
+  ViewPlane plane = ViewPlane::xy;
+  /// Display rotation of the model about world z, degrees, counter-clockwise
+  /// seen from above (project_settings view.yaw_deg).
+  double yaw_deg = 0.0;
+};
+
+struct Vec2 {
+  double x = 0.0;
+  double y = 0.0; ///< up (the canvas negates it for the screen)
+};
+
+/// World point -> canvas coordinates: rotate by the yaw, then pick the plane.
+Vec2 project_point(const ViewProjection &view, double x, double y, double z);
+
+/// The camera's forward (optical +z) axis in world coordinates: the rotation
+/// of @p world_pose (sensor_frames.transform) times that of
+/// @p local_transform (the optical frame in the pose frame), applied to z.
+std::array<double, 3>
+camera_forward(const std::array<double, 16> &world_pose,
+               const std::array<double, 16> &local_transform);
+
+struct Heading {
+  Vec2 dir;             ///< unit length when visible
+  bool visible = false; ///< false when the camera looks along the view axis
+};
+
+/// Direction of @p forward on the canvas. Hidden when less than a quarter of
+/// it lies in the view plane (it would be a meaningless stub).
+Heading heading_in_view(const ViewProjection &view,
+                        const std::array<double, 3> &forward);
+
+// ------------------------------------------------------------------ yaw --
+
+/// The yaw (degrees, in (-45, 45]) that turns the dominant horizontal
+/// direction of @p forwards onto the screen's x axis. Directions are folded
+/// mod 90° (perpendicular corridors are one axis system) and weighted by how
+/// horizontal they are; ones more than 60° off horizontal are ignored. 0
+/// when nothing is horizontal.
+double auto_yaw_deg(const std::vector<std::array<double, 3>> &forwards);
+
+/// @p deg wrapped into (-180, 180]; 0 for a non-finite value.
+double normalize_yaw_deg(double deg);
+
+/// project_settings key of the view yaw (spec D7).
+inline constexpr std::string_view kViewYawSetting = "view.yaw_deg";
+/// Locale-independent parse of a stored yaw ('.' decimal), normalised;
+/// nullopt for anything that is not exactly one finite number.
+std::optional<double> parse_yaw_setting(std::string_view text);
+/// The stored text: normalised, one decimal, '.' separator ("-12.5").
+std::string format_yaw_setting(double deg);
 
 } // namespace rux::qt
