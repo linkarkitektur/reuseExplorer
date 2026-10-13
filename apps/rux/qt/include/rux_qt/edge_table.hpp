@@ -36,6 +36,13 @@ bool edge_column_numeric(EdgeColumn c);
 /// The sort value of a numeric column; nullopt when missing.
 std::optional<double> edge_column_value(const EdgeView &v, EdgeColumn c);
 std::string edge_cell_text(const EdgeView &v, EdgeColumn c);
+/// The edge list's cell: as edge_cell_text, but STATUS without the
+/// " · ikke gemt" suffix (the widest prose column) and PAR prefixed "• "
+/// for a staged edge, a cue that does not rely on the row's colour.
+std::string edge_list_cell_text(const EdgeView &v, EdgeColumn c);
+/// Hidden until the user shows them (the list's header menu): the angle
+/// columns, so the rest fits Rediger's left pane at 1440 px.
+std::vector<EdgeColumn> default_hidden_edge_columns();
 std::string edge_status_da(std::string_view status);
 std::string edge_source_da(std::string_view source);
 

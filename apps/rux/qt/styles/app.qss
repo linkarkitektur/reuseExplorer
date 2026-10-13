@@ -1214,6 +1214,9 @@ QWidget#edgeList QTableView#dataTable::item {
 }
 QWidget#edgeList QHeaderView::section {
   padding: var(--space-2);
+  /* the sort arrow's room (SortHeader reserves none), so it never
+     overprints a right-aligned figure column's label */
+  padding-right: var(--space-4);
 }
 
 /* ---- log filter bar */

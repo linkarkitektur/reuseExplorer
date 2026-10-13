@@ -261,7 +261,7 @@ TEST_CASE("FitAvoidingCorner_NoReserve_CentresAndFits",
   CHECK(f.cy == Catch::Approx(3.0));
 }
 
-TEST_CASE("FitAvoidingCorner_LegendBelow_ContentMovesUp",
+TEST_CASE("FitAvoidingCorner_TallCorner_ContentGoesBeside",
           "[rux_qt][graphview][fit]") {
   // A square graph in a wide viewport with a tall legend in the lower left:
   // beside it costs less scale than above it.
@@ -272,7 +272,10 @@ TEST_CASE("FitAvoidingCorner_LegendBelow_ContentMovesUp",
   // right: the view's centre is 50 px (2.5 units) left of it.
   CHECK(side.cx == Catch::Approx(-2.5));
   CHECK(side.cy == Catch::Approx(0.0));
+}
 
+TEST_CASE("FitAvoidingCorner_WideShortCorner_ContentGoesAbove",
+          "[rux_qt][graphview][fit]") {
   // A wide graph in a square viewport with a short wide legend: above it.
   const FitFrame above =
       fit_avoiding_corner({0.0, 0.0, 20.0, 10.0}, 200, 200, 150, 40);
@@ -280,6 +283,18 @@ TEST_CASE("FitAvoidingCorner_LegendBelow_ContentMovesUp",
   CHECK(above.cx == Catch::Approx(0.0));
   // Centred in the top 160 px: the view's centre is 20 px (2 units) below.
   CHECK(above.cy == Catch::Approx(2.0));
+}
+
+TEST_CASE("FitAvoidingCorner_CornerCostsOverHalfTheScale_PlainFit",
+          "[rux_qt][graphview][fit]") {
+  // A large legend in a small pane: avoiding it would shrink the graph to a
+  // quarter (5 vs 20 px/unit); a plain fit, partly under the card, is
+  // better than a speck.
+  const FitFrame f =
+      fit_avoiding_corner({1.0, 2.0, 10.0, 10.0}, 200, 200, 150, 150);
+  CHECK(f.scale == Catch::Approx(20.0));
+  CHECK(f.cx == Catch::Approx(1.0));
+  CHECK(f.cy == Catch::Approx(2.0));
 }
 
 TEST_CASE("FitAvoidingCorner_ReserveFillsViewport_IgnoresIt",

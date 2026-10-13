@@ -57,7 +57,7 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   panes_[0] = new PaneFrame("Graf");
   panes_[0]->set_content(graph_);
   panes_[1] = new PaneFrame("Kanter");
-  edges_ = new EdgeListPanel(editor_);
+  edges_ = new EdgeListPanel(editor_, persist_);
   panes_[1]->set_content(edges_);
   panes_[2] = new PaneFrame("Billeder");
   panes_[2]->set_content(

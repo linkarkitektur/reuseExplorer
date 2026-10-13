@@ -94,3 +94,24 @@ TEST_CASE("EdgeTable_DefaultSortFollowsTheColourMode", "[rux_qt][edgetable]") {
   CHECK(default_sort_column(EdgeColourMode::seed) == EdgeColumn::seed_m);
   CHECK(default_sort_column(EdgeColourMode::type) == EdgeColumn::residual);
 }
+
+TEST_CASE("EdgeTable_ListCells_StagedIsAPrefixNotAStatusSuffix",
+          "[rux_qt][edgetable]") {
+  auto v = row(3, 9, "loop_closure", "auto");
+  v.pending = EdgeView::Pending::added;
+  // The inspector keeps the suffix; the list's STATUS stays one word (the
+  // column was the widest) and PAR carries a non-colour cue instead.
+  CHECK(edge_cell_text(v, EdgeColumn::status) == "Auto · ikke gemt");
+  CHECK(edge_list_cell_text(v, EdgeColumn::status) == "Auto");
+  CHECK(edge_list_cell_text(v, EdgeColumn::pair) == "• 3 → 9");
+  const auto stored = row(3, 9, "loop_closure", "confirmed");
+  CHECK(edge_list_cell_text(stored, EdgeColumn::pair) == "3 → 9");
+  CHECK(edge_list_cell_text(stored, EdgeColumn::status) == "Bekræftet");
+}
+
+TEST_CASE("EdgeTable_DefaultHiddenColumns_AreTheAngles",
+          "[rux_qt][edgetable]") {
+  CHECK(
+      default_hidden_edge_columns() ==
+      std::vector<EdgeColumn>{EdgeColumn::deviation_deg, EdgeColumn::seed_deg});
+}

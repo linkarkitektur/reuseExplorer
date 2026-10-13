@@ -10,14 +10,17 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
-#include <QEvent>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QMenu>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QSettings>
 #include <QSignalBlocker>
+#include <QStyle>
+#include <QStyleOptionHeader>
 #include <QTableView>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -29,7 +32,58 @@
 
 namespace rux::qt {
 
+namespace {
+
+/// Qt draws SortUp (▲) for a descending sort; the list shows the arrow the
+/// way the rows run: ▼ when the largest is on top. And no section reserves
+/// QHeaderView's room for the arrow (a section's height plus a margin,
+/// added to EVERY section's width while the indicator is shown, which put
+/// the columns ~35 px each past the pane): the QSS right padding of
+/// QWidget#edgeList's header holds the arrow instead.
+class SortHeader : public QHeaderView {
+    public:
+  using QHeaderView::QHeaderView;
+
+    protected:
+  QSize sectionSizeFromContents(int logical) const override {
+    QSize s = QHeaderView::sectionSizeFromContents(logical);
+    if (isSortIndicatorShown()) {
+      QStyleOptionHeader opt;
+      initStyleOption(&opt);
+      const int margin =
+          style()->pixelMetric(QStyle::PM_HeaderMargin, &opt, this);
+      s.rwidth() -= s.height() + margin;
+    }
+    return s;
+  }
+  void initStyleOptionForIndex(QStyleOptionHeader *option,
+                               int logical) const override {
+    QHeaderView::initStyleOptionForIndex(option, logical);
+    if (option->sortIndicator == QStyleOptionHeader::SortUp)
+      option->sortIndicator = QStyleOptionHeader::SortDown;
+    else if (option->sortIndicator == QStyleOptionHeader::SortDown)
+      option->sortIndicator = QStyleOptionHeader::SortUp;
+  }
+};
+
+} // namespace
+
 // ----------------------------------------------------------- EdgeListModel --
+
+EdgeListModel::EdgeListModel(QObject *parent) : QAbstractTableModel(parent) {
+  refresh_font();
+  connect(&theme(), &Theme::changed, this, [this] {
+    refresh_font();
+    if (!rows_.empty())
+      emit dataChanged(index(0, 0),
+                       index(rowCount() - 1, kEdgeColumnCount - 1));
+  });
+}
+
+void EdgeListModel::refresh_font() {
+  mono_ =
+      theme().font(FontRole::mono, "--font-size-sm", "--font-weight-regular");
+}
 
 void EdgeListModel::set_rows(std::vector<EdgeView> rows) {
   beginResetModel();
@@ -65,7 +119,7 @@ QVariant EdgeListModel::data(const QModelIndex &index, int role) const {
   const auto c = static_cast<EdgeColumn>(index.column());
   switch (role) {
   case Qt::DisplayRole:
-    return QString::fromStdString(edge_cell_text(*v, c));
+    return QString::fromStdString(edge_list_cell_text(*v, c));
   case Qt::TextAlignmentRole:
     return QVariant::fromValue(
         Qt::AlignVCenter |
@@ -73,8 +127,11 @@ QVariant EdgeListModel::data(const QModelIndex &index, int role) const {
   case Qt::FontRole:
     // Figures and ids in mono; prose (type, source, status) in the body face.
     if (edge_column_numeric(c) || c == EdgeColumn::pair)
-      return theme().font(FontRole::mono, "--font-size-sm",
-                          "--font-weight-regular");
+      return mono_;
+    return {};
+  case Qt::ToolTipRole:
+    if (v->pending != EdgeView::Pending::none)
+      return QString("Ikke gemt");
     return {};
   case Qt::ForegroundRole:
     if (v->edge.status == "rejected")
@@ -103,8 +160,8 @@ QVariant EdgeListModel::headerData(int section, Qt::Orientation o,
 
 // ----------------------------------------------------------- EdgeListPanel --
 
-EdgeListPanel::EdgeListPanel(EdgeEditor &editor, QWidget *parent)
-    : QWidget(parent), editor_(editor) {
+EdgeListPanel::EdgeListPanel(EdgeEditor &editor, bool persist, QWidget *parent)
+    : QWidget(parent), editor_(editor), persist_(persist) {
   setObjectName("edgeList");
   const Theme &t = theme();
   auto *v = new QVBoxLayout(this);
@@ -158,25 +215,36 @@ EdgeListPanel::EdgeListPanel(EdgeEditor &editor, QWidget *parent)
   model_ = new EdgeListModel(this);
   view_ = new QTableView;
   style_table(view_);
+  auto *h = new SortHeader(Qt::Horizontal, view_);
+  view_->setHorizontalHeader(h);
   view_->setModel(model_);
-  auto *h = view_->horizontalHeader();
   h->setHighlightSections(false);
   h->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   h->setSectionsClickable(true);
   h->setSortIndicatorShown(true);
   h->setSortIndicator(static_cast<int>(sort_), Qt::DescendingOrder);
-  // Every column as wide as its content (the default width put the metric
-  // columns past the pane's edge); the last takes what is left. Sample a few
-  // hundred rows, not every one of a 10 000-edge graph, per rebuild.
+  // Every column as wide as its content (sampling a few hundred rows, not
+  // every one of a 10 000-edge graph), but KILDE: it takes what is left and
+  // elides ("Odometri (init)"), so the figures fit Rediger's left pane at
+  // 1440 px without a horizontal scroll.
   h->setResizeContentsPrecision(200);
   h->setSectionResizeMode(QHeaderView::ResizeToContents);
-  h->setStretchLastSection(true);
+  h->setSectionResizeMode(static_cast<int>(EdgeColumn::source),
+                          QHeaderView::Stretch);
+  h->setStretchLastSection(false);
+  h->setContextMenuPolicy(Qt::CustomContextMenu);
+  h->setToolTip("Højreklik for at vise eller skjule kolonner");
+  connect(h, &QHeaderView::customContextMenuRequested, this,
+          &EdgeListPanel::column_menu);
+  restore_hidden();
   v->addWidget(view_, 1);
 
   connect(h, &QHeaderView::sortIndicatorChanged, this,
           [this](int section, Qt::SortOrder order) {
             sort_ = static_cast<EdgeColumn>(section);
             descending_ = order == Qt::DescendingOrder;
+            if (is_column_hidden(sort_))
+              set_column_hidden(sort_, false); // never sort by the unseen
             rebuild();
             // Nine columns overflow the pane at 1440 px: bring the sorted
             // one into view (and, with nothing selected, the top rows).
@@ -204,17 +272,78 @@ EdgeListPanel::EdgeListPanel(EdgeEditor &editor, QWidget *parent)
             if (const EdgeView *e = model_->row_at(cur.row()))
               emit edge_activated(e->edge.key);
           });
-  connect(&editor_, &EdgeEditor::changed, this, &EdgeListPanel::rebuild);
-  // The pane gets its width after a colour mode set the sort (the gallery,
-  // a restored layout): reveal the sorted column again once it has one.
-  view_->viewport()->installEventFilter(this);
+  connect(&editor_, &EdgeEditor::changed, this,
+          &EdgeListPanel::schedule_rebuild);
   rebuild();
 }
 
-bool EdgeListPanel::eventFilter(QObject *watched, QEvent *event) {
-  if (watched == view_->viewport() && event->type() == QEvent::Resize)
-    QTimer::singleShot(0, this, [this] { reveal_sort_column(); });
-  return QWidget::eventFilter(watched, event);
+void EdgeListPanel::schedule_rebuild() {
+  if (rebuild_pending_)
+    return;
+  rebuild_pending_ = true;
+  QTimer::singleShot(0, this, [this] {
+    rebuild_pending_ = false;
+    rebuild();
+  });
+}
+
+void EdgeListPanel::set_column_hidden(EdgeColumn column, bool hidden) {
+  if (column == EdgeColumn::pair)
+    return; // the row's identity
+  view_->horizontalHeader()->setSectionHidden(static_cast<int>(column), hidden);
+  save_hidden();
+}
+
+bool EdgeListPanel::is_column_hidden(EdgeColumn column) const {
+  return view_->horizontalHeader()->isSectionHidden(static_cast<int>(column));
+}
+
+void EdgeListPanel::column_menu(const QPoint &pos) {
+  QMenu menu(this);
+  for (int i = 0; i < kEdgeColumnCount; ++i) {
+    const auto c = static_cast<EdgeColumn>(i);
+    QAction *a = menu.addAction(QString::fromStdString(edge_column_title(c)));
+    a->setCheckable(true);
+    a->setChecked(!is_column_hidden(c));
+    // PAR names the row; the sorted column is what the list is about.
+    a->setEnabled(c != EdgeColumn::pair && c != sort_);
+    connect(a, &QAction::toggled, this,
+            [this, c](bool on) { set_column_hidden(c, !on); });
+  }
+  menu.exec(view_->horizontalHeader()->mapToGlobal(pos));
+}
+
+void EdgeListPanel::restore_hidden() {
+  std::vector<int> hidden;
+  for (EdgeColumn c : default_hidden_edge_columns())
+    hidden.push_back(static_cast<int>(c));
+  if (persist_) {
+    const QVariant stored = QSettings().value("rediger/edge_list/hidden");
+    if (stored.isValid()) {
+      hidden.clear();
+      for (const QString &part :
+           stored.toString().split(',', Qt::SkipEmptyParts)) {
+        bool ok = false;
+        const int i = part.toInt(&ok);
+        if (ok && i > 0 && i < kEdgeColumnCount)
+          hidden.push_back(i);
+      }
+    }
+  }
+  auto *h = view_->horizontalHeader();
+  for (int i = 0; i < kEdgeColumnCount; ++i)
+    h->setSectionHidden(i, std::find(hidden.begin(), hidden.end(), i) !=
+                               hidden.end());
+}
+
+void EdgeListPanel::save_hidden() const {
+  if (!persist_)
+    return;
+  QStringList parts;
+  for (int i = 0; i < kEdgeColumnCount; ++i)
+    if (view_->horizontalHeader()->isSectionHidden(i))
+      parts << QString::number(i);
+  QSettings().setValue("rediger/edge_list/hidden", parts.join(','));
 }
 
 void EdgeListPanel::reveal_sort_column() {
@@ -233,6 +362,8 @@ void EdgeListPanel::reveal_sort_column() {
 void EdgeListPanel::set_sort(EdgeColumn column, bool descending) {
   auto *h = view_->horizontalHeader();
   const auto order = descending ? Qt::DescendingOrder : Qt::AscendingOrder;
+  if (is_column_hidden(column))
+    set_column_hidden(column, false);
   if (h->sortIndicatorSection() == static_cast<int>(column) &&
       h->sortIndicatorOrder() == order)
     return; // no sortIndicatorChanged, and nothing to do
@@ -261,7 +392,10 @@ void EdgeListPanel::select_edge(const EdgeKey &key) {
     view_->clearSelection();
   } else {
     view_->selectRow(r);
-    reveal(r, QAbstractItemView::PositionAtCenter);
+    // Vertically only: keep the user's horizontal scroll.
+    auto *h = view_->horizontalHeader();
+    view_->scrollTo(model_->index(r, std::max(0, h->logicalIndexAt(0))),
+                    QAbstractItemView::PositionAtCenter);
   }
   selecting_ = false;
 }

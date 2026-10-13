@@ -91,28 +91,36 @@ Selection edge_selection(const EdgeView &v, int a, int b) {
     s.pill = status_da(v.edge.status);
     s.pill_tone = status_tone(v.edge.status);
   }
-  SelectionSection e{"Kant", {}, {}};
-  e.rows.push_back({"Fra", QString::number(v.edge.key.from)});
-  e.rows.push_back({"Til", QString::number(v.edge.key.to)});
-  e.rows.push_back({"Type", QString::fromStdString(v.edge.key.type),
-                    SelectionRow::Style::mono});
-  e.rows.push_back({"Vægt", weight_text(v.edge.weight)});
-  e.rows.push_back({"Residual", residual_text(v.edge.residual)});
-  e.rows.push_back(
-      {"Status", status_da(v.edge.status), SelectionRow::Style::value});
+  const auto add = [](SelectionSection &sec, const QString &key,
+                      const QString &value,
+                      SelectionRow::Style style = SelectionRow::Style::mono) {
+    SelectionRow r;
+    r.key = key;
+    r.value = value;
+    r.style = style;
+    sec.rows.push_back(r);
+  };
+  SelectionSection e;
+  e.title = "Kant";
+  add(e, "Fra", QString::number(v.edge.key.from));
+  add(e, "Til", QString::number(v.edge.key.to));
+  add(e, "Type", QString::fromStdString(v.edge.key.type));
+  add(e, "Vægt", weight_text(v.edge.weight));
+  add(e, "Residual", residual_text(v.edge.residual));
+  add(e, "Status", status_da(v.edge.status), SelectionRow::Style::value);
   if (!v.edge.source.empty())
-    e.rows.push_back({"Kilde", QString::fromStdString(v.edge.source),
-                      SelectionRow::Style::mono});
-  e.rows.push_back({"Retning",
-                    v.reversed ? QString("B → A (%1 → %2)").arg(b).arg(a)
-                               : QString("A → B (%1 → %2)").arg(a).arg(b),
-                    SelectionRow::Style::value});
+    add(e, "Kilde", QString::fromStdString(v.edge.source));
+  add(e, "Retning",
+      v.reversed ? QString("B → A (%1 → %2)").arg(b).arg(a)
+                 : QString("A → B (%1 → %2)").arg(a).arg(b),
+      SelectionRow::Style::value);
   s.sections.push_back(e);
-  SelectionSection about{"Om tallene", {}, {}};
-  about.rows.push_back(
-      {"Vægt", "Translationsinformation, 1/σ²", SelectionRow::Style::value});
-  about.rows.push_back({"Residual", "½ · hvidet kvadratfejl efter optimering",
-                        SelectionRow::Style::value});
+  SelectionSection about;
+  about.title = "Om tallene";
+  add(about, "Vægt", "Translationsinformation, 1/σ²",
+      SelectionRow::Style::value);
+  add(about, "Residual", "½ · hvidet kvadratfejl efter optimering",
+      SelectionRow::Style::value);
   s.sections.push_back(about);
   return s;
 }

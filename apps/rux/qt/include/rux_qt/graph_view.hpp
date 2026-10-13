@@ -39,6 +39,8 @@ ZoomLimits zoom_limits(double content_extent, int viewport_px);
 double clamp_zoom_factor(double units_per_px, double factor,
                          const ZoomLimits &limits);
 
+/// fit_avoiding_corner keeps at least this share of the plain fit's scale.
+inline constexpr double kMinCornerFitRatio = 0.5;
 /// A content rect in scene units: centre and size (scene y points down).
 struct FitRect {
   double cx = 0.0;
@@ -55,8 +57,8 @@ struct FitFrame {
 /// Fit @p content into a @p vw x @p vh px viewport whose lower-left
 /// @p rw x @p rh px corner is taken (the legend card): the content goes
 /// above the corner or right of it, whichever keeps the larger scale (above
-/// on a tie), centred in what is left. A corner that leaves no room on
-/// either side is ignored.
+/// on a tie), centred in what is left. A corner that leaves no room, or
+/// would cost more than half the plain fit's scale, is ignored.
 FitFrame fit_avoiding_corner(const FitRect &content, double vw, double vh,
                              double rw, double rh);
 

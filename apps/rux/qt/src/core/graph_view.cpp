@@ -38,12 +38,13 @@ FitFrame fit_avoiding_corner(const FitRect &c, double vw, double vh, double rw,
                ? std::min(w / c.w, h / c.h)
                : 0.0;
   };
+  const double plain = fit(vw, vh);
   const double above = rh > 0.0 ? fit(vw, vh - rh) : 0.0;
   const double right = rw > 0.0 ? fit(vw - rw, vh) : 0.0;
-  if (above <= 0.0 && right <= 0.0) {
-    const double s = fit(vw, vh);
-    return {s > 0.0 ? s : 1.0, c.cx, c.cy};
-  }
+  // A corner that would cost more than half the scale (a large card in a
+  // small pane) is ignored: a graph partly under it beats a speck.
+  if (std::max(above, right) < kMinCornerFitRatio * plain)
+    return {plain > 0.0 ? plain : 1.0, c.cx, c.cy};
   // Centred in what is left: the viewport's centre is half the corner away
   // from the content's.
   if (above >= right)

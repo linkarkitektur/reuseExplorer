@@ -7,12 +7,15 @@
 // applied) with type, source, status and the optimizer's metrics; sorted so
 // the suspicious ones are on top (the colour mode's metric, descending, by
 // default), filtered by type and status. Rows come from rux_qt_core's
-// edge_table(); this file only adapts them to a QTableView.
+// edge_table(); this file only adapts them to a QTableView. Columns can be
+// hidden from the header's context menu (the angle columns start hidden);
+// the choice persists under rediger/edge_list/hidden (not in a shot).
 
 #include <rux_qt/edge_table.hpp>
 
 #include <QAbstractItemView>
 #include <QAbstractTableModel>
+#include <QFont>
 #include <QWidget>
 
 #include <vector>
@@ -30,7 +33,7 @@ class EdgeEditor;
 class EdgeListModel : public QAbstractTableModel {
   Q_OBJECT
     public:
-  using QAbstractTableModel::QAbstractTableModel;
+  explicit EdgeListModel(QObject *parent = nullptr);
   void set_rows(std::vector<EdgeView> rows);
   const EdgeView *row_at(int row) const;
   int row_of(const EdgeKey &key) const;
@@ -40,13 +43,17 @@ class EdgeListModel : public QAbstractTableModel {
   QVariant headerData(int section, Qt::Orientation o, int role) const override;
 
     private:
+  void refresh_font();
   std::vector<EdgeView> rows_;
+  QFont mono_; ///< figures and ids; refreshed on a theme change
 };
 
 class EdgeListPanel : public QWidget {
   Q_OBJECT
     public:
-  explicit EdgeListPanel(EdgeEditor &editor, QWidget *parent = nullptr);
+  /// @p persist: remember hidden columns in QSettings (not in a shot).
+  explicit EdgeListPanel(EdgeEditor &editor, bool persist = false,
+                         QWidget *parent = nullptr);
   void set_sort(EdgeColumn column, bool descending);
   void set_filter(const EdgeFilter &filter);
   /// Select and scroll to @p key without emitting edge_activated; clears
@@ -54,17 +61,22 @@ class EdgeListPanel : public QWidget {
   void select_edge(const EdgeKey &key);
   int row_count() const;
   QTableView *view() const { return view_; }
+  void set_column_hidden(EdgeColumn column, bool hidden);
+  bool is_column_hidden(EdgeColumn column) const;
 
     signals:
   void edge_activated(const rux::qt::EdgeKey &key);
 
-    protected:
-  bool eventFilter(QObject *watched, QEvent *event) override;
-
     private:
   void rebuild();
-  /// Scroll horizontally so the sorted column shows (nine columns overflow
-  /// the pane at 1440 px).
+  /// Rebuild once the current event is done: one staged edit can emit
+  /// EdgeEditor::changed more than once.
+  void schedule_rebuild();
+  void column_menu(const QPoint &pos);
+  void restore_hidden();
+  void save_hidden() const;
+  /// A narrow window's fallback: scroll so the sorted column shows. Only
+  /// on a sort change, so a splitter drag keeps the user's scroll.
   void reveal_sort_column();
   /// Scroll @p row and the sort column into view.
   void
@@ -82,6 +94,8 @@ class EdgeListPanel : public QWidget {
   EdgeColumn sort_ = EdgeColumn::residual;
   bool descending_ = true;
   bool selecting_ = false;
+  bool persist_ = false;
+  bool rebuild_pending_ = false;
 };
 
 } // namespace rux::qt

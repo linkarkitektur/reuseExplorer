@@ -114,6 +114,19 @@ std::string edge_cell_text(const EdgeView &v, EdgeColumn c) {
   return format_decimal_da(*value, decimals);
 }
 
+std::string edge_list_cell_text(const EdgeView &v, EdgeColumn c) {
+  const bool staged = v.pending != EdgeView::Pending::none;
+  if (c == EdgeColumn::status)
+    return edge_status_da(v.edge.status);
+  if (c == EdgeColumn::pair && staged)
+    return "• " + edge_cell_text(v, c);
+  return edge_cell_text(v, c);
+}
+
+std::vector<EdgeColumn> default_hidden_edge_columns() {
+  return {EdgeColumn::deviation_deg, EdgeColumn::seed_deg};
+}
+
 bool edge_matches(const EdgeView &v, const EdgeFilter &f) {
   if (!f.type.empty() && v.edge.key.type != f.type)
     return false;

@@ -113,6 +113,9 @@ PaneFrame::PaneFrame(const QString &title, QWidget *parent) : QFrame(parent) {
   body_->setSpacing(0);
   auto *head = new QFrame;
   head->setObjectName("paneHeader");
+  // Never squeezed: a full graph pane gave its header ~5 px less than its
+  // hint, clipping "Skjul".
+  head->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
   header_ = new QHBoxLayout(head);
   header_->setContentsMargins(t.px("--space-3"), t.px("--space-1"),
                               t.px("--space-2"), t.px("--space-1"));
@@ -125,6 +128,9 @@ PaneFrame::PaneFrame(const QString &title, QWidget *parent) : QFrame(parent) {
   hide->setCursor(Qt::PointingHandCursor);
   hide->setToolTip(
       "Skjul panelet — vis det igen under Paneler eller med Ctrl+K");
+  // Polished first: the unpolished hint lacks the QSS padding, and a
+  // squeezed pane then clipped the label's descenders ("Skjul").
+  hide->ensurePolished();
   hide->setMinimumHeight(hide->sizeHint().height());
   header_->addWidget(hide);
   body_->addWidget(head);
