@@ -437,7 +437,7 @@ and deleted the shims. `include/geometry/` now holds only the real
 - `quality_metrics.hpp` / `accuracy_metrics.hpp`: backing `rux analyze`
 
 **slam** (`include/slam/`):
-- `PlaneGraphOptimizer.hpp`: plane-landmark pose graph (GTSAM).
+- `PlaneGraphOptimizer.hpp`: plane-landmark pose graph (GTSAM), `rux optimize`.
   Solves the stored pose graph (`pose_graph_edges`, seeded from
   `sensor_frames.initial_transform`; `optimize_graph`); `slam/pose_graph.hpp`
   is `rux graph init`, `slam/loop_candidates.hpp` the ORB / panorama / file

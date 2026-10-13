@@ -97,10 +97,14 @@ above the offset watermark.  The one table without a FK constraint
 second scan by design (e.g. re-processing after editing the RTABMap DB).
 A `WARN` is logged; the import is not blocked.
 
-**Pose graph.** `rux import rtabmap` also stores RTABMap's graph links in
+**Pose graph.** `rux import rtabmap` stores **every** link in the RTABMap
+database's link table (not just its optimized graph's) into
 `pose_graph_edges` (Neighbor/NeighborMerged → `odometry`, Global/LocalSpace/
 LocalTime/User closures → `loop_closure`, source `rtabmap`, ids offset like the
-frames) and each imported pose in `sensor_frames.initial_transform`.
+frames) and each imported pose in `sensor_frames.initial_transform`. Gravity,
+prior, landmark and virtual links are ignored and counted in the import log.
+Links that are self-links, point to a node that was not imported, or carry an
+invalid (null/non-rigid) transform are skipped with a warning.
 
 ### `graph_init` (`rux graph init`)
 
