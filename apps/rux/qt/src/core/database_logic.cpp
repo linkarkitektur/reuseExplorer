@@ -179,17 +179,29 @@ PendingEdgeEdits::Result PendingEdgeEdits::add(const EdgeRecord &edge) {
   op.edge.deviation_deg.reset();
   const EdgeRecord *s = stored(edge.key);
   op.overwrite_rejected = s && s->status == "rejected";
-  if (const int i = pending_index(edge.key); i >= 0) {
-    const bool was_upsert = pending_[i].kind == Op::Kind::upsert;
+  const int i = pending_index(edge.key);
+  // Without a measurement the store only changes a stored row's status
+  // (ProjectDB::upsert_pose_graph_edge): that is a confirmation.
+  if (s && s->status == "confirmed" && !edge.transform) {
+    if (i < 0)
+      return Result::unchanged;
+    pending_.erase(pending_.begin() + i); // back to the file state
+    return Result::unstaged;
+  }
+  const Result r = !s                      ? Result::added
+                   : op.overwrite_rejected ? Result::revived
+                   : !edge.transform       ? Result::confirmed
+                                           : Result::replaced;
+  if (i >= 0) {
+    const bool was_upsert =
+        pending_[static_cast<std::size_t>(i)].kind == Op::Kind::upsert;
     pending_[static_cast<std::size_t>(i)] = op;
-    if (was_upsert || !s)
+    if (!s || (was_upsert && r == Result::revived))
       return Result::replaced;
-    return op.overwrite_rejected ? Result::revived : Result::replaced;
+    return r;
   }
   pending_.push_back(op);
-  if (!s)
-    return Result::added;
-  return op.overwrite_rejected ? Result::revived : Result::replaced;
+  return r;
 }
 
 PendingEdgeEdits::Result
@@ -279,6 +291,9 @@ std::vector<EdgeView> PendingEdgeEdits::effective() const {
       if (o.kind == Op::Kind::set_status) {
         v.edge.status = o.edge.status;
         v.pending = EdgeView::Pending::status;
+      } else if (!o.edge.transform) {
+        v.edge.status = o.edge.status; // the store keeps the measurement
+        v.pending = EdgeView::Pending::status;
       } else {
         v.edge = o.edge;
         v.pending = EdgeView::Pending::replaced;
@@ -336,15 +351,21 @@ void PendingEdgeEdits::commit_saved(const std::vector<Op> &saved) {
     for (auto &e : base_)
       if (same_edge(e.key, o.edge.key))
         s = &e;
-    if (o.kind == Op::Kind::set_status) {
+    // Mirror what the store wrote (ProjectDB::upsert_pose_graph_edge,
+    // edge_row_from_record): status only without a measurement, and
+    // "manual" for a record without a source.
+    EdgeRecord written = o.edge;
+    if (written.source.empty())
+      written.source = "manual";
+    if (o.kind == Op::Kind::set_status || (s && !o.edge.transform)) {
       if (s)
         s->status = o.edge.status;
     } else if (s) {
       // Until the next reload the base may hold it as staged (to > from);
       // the store keeps it canonical with the measurement inverted.
-      *s = o.edge;
+      *s = written;
     } else {
-      base_.push_back(o.edge);
+      base_.push_back(written);
     }
     if (const int i = pending_index(o.edge.key); i >= 0) {
       const Op &p = pending_[static_cast<std::size_t>(i)];

@@ -401,10 +401,12 @@ QWidget *make_posegraf_stress(const PageContext &ctx) {
 QWidget *make_posegraf_click(const PageContext &ctx) {
   auto *shell = make_pg(ctx);
   settle();
-  const auto &ops = shell->database()->editor().edits().ops();
-  if (!ops.empty())
-    shell->posegraph()->click_edge(ops.front().edge.key.from,
-                                   ops.front().edge.key.to);
+  // A staged edge that is drawn: a staged rejection is not.
+  for (const auto &op : shell->database()->editor().edits().ops())
+    if (op.edge.status != "rejected") {
+      shell->posegraph()->click_edge(op.edge.key.from, op.edge.key.to);
+      break;
+    }
   return shell;
 }
 

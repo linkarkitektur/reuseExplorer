@@ -135,7 +135,8 @@ class PendingEdgeEdits {
     added,      ///< a new edge is staged
     replaced,   ///< a new measurement for an existing / staged key
     revived,    ///< a new measurement over a rejected edge (overwrites it)
-    confirmed,  ///< a status change to confirmed is staged
+    confirmed,  ///< a status change to confirmed is staged (also: an add
+                ///< without a transform over a stored edge)
     rejected,   ///< a status change to rejected is staged
     unrejected, ///< a rejected edge goes back to auto
     unstaged,   ///< it cancelled a pending op: the file state shows again
@@ -155,7 +156,9 @@ class PendingEdgeEdits {
   const std::vector<EdgeRecord> &base() const { return base_; }
 
   /// Stage a measurement (always status "confirmed"; residual and metrics
-  /// cleared — optimize writes them).
+  /// cleared — optimize writes them). Over a stored key WITHOUT a transform
+  /// the store keeps the stored measurement and only confirms it: that is
+  /// Result::confirmed (or unchanged when it is confirmed already).
   Result add(const EdgeRecord &edge);
   Result confirm(const EdgeKey &key);
   Result reject(const EdgeKey &key);

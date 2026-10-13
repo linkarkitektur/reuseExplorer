@@ -172,3 +172,96 @@ TEST_CASE("EdgeSave_ReversedKey_UpdatesTheStoredEdge",
   REQUIRE(rows[0].transform.has_value());
   CHECK((*rows[0].transform)[3] == -0.5); // inverted by the store
 }
+
+namespace {
+
+void store_edge(ProjectDB &db, int from, int to, const char *status) {
+  ProjectDB::PoseGraphEdge row;
+  row.from_node_id = from;
+  row.to_node_id = to;
+  row.edge_type = "loop_closure";
+  row.source = "orb";
+  row.status = status;
+  REQUIRE(db.upsert_pose_graph_edge(row));
+}
+
+std::vector<EdgeRecord> load(const ProjectDB &db) {
+  std::vector<EdgeRecord> out;
+  for (const auto &row : db.list_pose_graph_edges())
+    out.push_back(edge_record_from_row(row));
+  return out;
+}
+
+} // namespace
+
+TEST_CASE("EdgeSave_StatusOnAVanishedRow_FailsAndKeepsTheEditPending",
+          "[rux_qt][database][save]") {
+  reusex::test_support::TempPath tmp("edge_save_vanished");
+  ProjectDB db(tmp.path);
+  store_edge(db, 1, 2, "auto");
+  store_edge(db, 3, 4, "auto");
+  PendingEdgeEdits edits;
+  edits.set_base(load(db));
+  REQUIRE(edits.confirm({3, 4, "loop_closure"}) ==
+          PendingEdgeEdits::Result::confirmed);
+  REQUIRE(edits.reject({1, 2, "loop_closure"}) ==
+          PendingEdgeEdits::Result::rejected);
+  // Another writer drops (1, 2) after the base was loaded.
+  REQUIRE(db.delete_pose_graph_edges_from_source("orb") == 2);
+  store_edge(db, 3, 4, "auto");
+  CHECK_THROWS_AS(apply_edge_ops(db, edits.ops()), std::runtime_error);
+  CHECK(edits.count() == 2); // the caller commits nothing on failure
+  // Rolled back: (3, 4) was not confirmed either.
+  REQUIRE(db.list_pose_graph_edges().size() == 1);
+  CHECK(db.list_pose_graph_edges()[0].status == "auto");
+}
+
+TEST_CASE("EdgeSave_ConfirmAndUnreject_RoundTrip", "[rux_qt][database][save]") {
+  reusex::test_support::TempPath tmp("edge_save_status");
+  ProjectDB db(tmp.path);
+  store_edge(db, 1, 2, "auto");
+  store_edge(db, 3, 4, "rejected");
+  PendingEdgeEdits edits;
+  edits.set_base(load(db));
+  REQUIRE(edits.confirm({1, 2, "loop_closure"}) ==
+          PendingEdgeEdits::Result::confirmed);
+  REQUIRE(edits.unreject({3, 4, "loop_closure"}) ==
+          PendingEdgeEdits::Result::unrejected);
+  const auto ops = edits.ops();
+  apply_edge_ops(db, ops);
+  edits.commit_saved(ops);
+  CHECK(edits.empty());
+  const auto back = load(db);
+  REQUIRE(back.size() == 2);
+  CHECK(back[0].status == "confirmed");
+  CHECK(back[1].status == "auto"); // the tombstone is lifted
+  CHECK(back[1].source == "orb");
+  for (std::size_t i = 0; i < back.size(); ++i)
+    CHECK(same_record(back[i], edits.base()[i]));
+}
+
+TEST_CASE("EdgeSave_AddWithoutMeasurement_OverStored_MatchesTheStore",
+          "[rux_qt][database][save]") {
+  reusex::test_support::TempPath tmp("edge_save_confirm_add");
+  ProjectDB db(tmp.path);
+  ProjectDB::PoseGraphEdge row;
+  row.from_node_id = 1;
+  row.to_node_id = 2;
+  row.edge_type = "loop_closure";
+  row.source = "orb";
+  row.transform =
+      std::array<double, 16>{1, 0, 0, 0.3, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  REQUIRE(db.upsert_pose_graph_edge(row));
+  PendingEdgeEdits edits;
+  edits.set_base(load(db));
+  REQUIRE(edits.add(record(2, 1, 400.0)) ==
+          PendingEdgeEdits::Result::confirmed);
+  const auto ops = edits.ops();
+  apply_edge_ops(db, ops);
+  edits.commit_saved(ops);
+  const auto back = load(db);
+  REQUIRE(back.size() == 1);
+  CHECK(back[0].source == "orb");
+  CHECK(back[0].status == "confirmed");
+  CHECK(same_record(back[0], edits.base()[0]));
+}

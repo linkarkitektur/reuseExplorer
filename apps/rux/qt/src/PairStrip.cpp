@@ -233,9 +233,10 @@ void PairStrip::rebuild() {
   for (const EdgeView &v : views) {
     auto *row = new EdgeRow(
         [this, v] { emit edge_selected(edge_selection(v, a_, b_)); });
-    row->setProperty("state", v.pending != EdgeView::Pending::none ? "add"
-                              : v.edge.status == "rejected"        ? "delete"
-                                                                   : "stored");
+    row->setProperty("state", v.edge.status == "rejected" ? "delete"
+                              : v.pending != EdgeView::Pending::none
+                                  ? "add"
+                                  : "stored");
     auto *h = new QHBoxLayout(row);
     h->setContentsMargins(t.px("--space-2"), t.px("--space-1"),
                           t.px("--space-1"), t.px("--space-1"));
@@ -359,6 +360,14 @@ void PairStrip::add_edge() {
   const auto r = editor_.add(e);
   if (r == PendingEdgeEdits::Result::replaced) {
     note_->setText("Kanten findes — den nye måling erstatter den ved gem.");
+    note_->setVisible(true);
+  } else if (r == PendingEdgeEdits::Result::confirmed ||
+             r == PendingEdgeEdits::Result::revived) {
+    note_->setText("Kanten findes — den bekræftes ved gem, og dens måling "
+                   "beholdes.");
+    note_->setVisible(true);
+  } else if (r == PendingEdgeEdits::Result::unchanged) {
+    note_->setText("Kanten findes og er allerede bekræftet.");
     note_->setVisible(true);
   }
 }

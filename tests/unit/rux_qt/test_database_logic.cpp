@@ -135,9 +135,58 @@ TEST_CASE("PendingEdits_Add_StagesAConfirmedMeasurement",
   // Staging the same key again replaces the staged measurement.
   CHECK(e.add(edge(1, 5)) == R::replaced);
   CHECK(e.count() == 1);
-  // Over a stored active edge: a new measurement for it.
-  CHECK(e.add(edge(1, 2, "odometry")) == R::replaced);
+  // Over a stored active edge without a measurement: the store only
+  // changes its status, so it is a confirmation, not a replacement.
+  CHECK(e.add(edge(1, 2, "odometry")) == R::confirmed);
   CHECK(e.count() == 2);
+  // With a measurement it replaces the stored one.
+  CHECK(e.add(m) == R::replaced); // (1, 5) is staged: re-staged
+  EdgeRecord m12 = edge(1, 2, "odometry");
+  m12.transform = m.transform;
+  CHECK(e.add(m12) == R::replaced);
+  CHECK(e.count() == 2);
+}
+
+TEST_CASE("PendingEdits_AddWithoutMeasurement_OverStored_KeepsTheMeasurement",
+          "[rux_qt][database][pending]") {
+  PendingEdgeEdits e;
+  EdgeRecord stored = edge(1, 2, "loop_closure", "auto", 3.5, 9.0);
+  stored.transform =
+      std::array<double, 16>{1, 0, 0, 0.3, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  stored.source = "orb";
+  stored.deviation_m = 0.2;
+  e.set_base({stored, edge(3, 4, "loop_closure", "confirmed")});
+  REQUIRE(e.add(edge(1, 2, "loop_closure", "auto", 0.0, 400.0)) ==
+          R::confirmed);
+  // Already confirmed: nothing to stage.
+  CHECK(e.add(edge(3, 4)) == R::unchanged);
+  CHECK(e.count() == 1);
+  // Shown as the stored measurement, now confirmed.
+  const auto v = e.effective();
+  REQUIRE(v.size() == 2);
+  CHECK(v[0].pending == EdgeView::Pending::status);
+  CHECK(v[0].edge.status == "confirmed");
+  CHECK(v[0].edge.weight == 9.0);
+  CHECK(v[0].edge.source == "orb");
+  // After the save the base holds what the store holds: status only.
+  e.commit_saved(e.ops());
+  CHECK(e.empty());
+  REQUIRE(e.base().size() == 2);
+  CHECK(e.base()[0].status == "confirmed");
+  CHECK(e.base()[0].weight == 9.0);
+  CHECK(e.base()[0].residual == 3.5);
+  CHECK(e.base()[0].source == "orb");
+  CHECK(e.base()[0].transform == stored.transform);
+  CHECK(e.base()[0].deviation_m == 0.2);
+}
+
+TEST_CASE("PendingEdits_CommitSaved_NewKey_StoresTheWrittenSource",
+          "[rux_qt][database][pending]") {
+  PendingEdgeEdits e;
+  REQUIRE(e.add(edge(1, 2)) == R::added);
+  e.commit_saved(e.ops());
+  REQUIRE(e.base().size() == 1);
+  CHECK(e.base()[0].source == "manual"); // what edge_row_from_record writes
 }
 
 TEST_CASE("PendingEdits_AddOverRejected_Revives",

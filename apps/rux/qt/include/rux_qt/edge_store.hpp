@@ -62,14 +62,19 @@ edge_row_from_record(const EdgeRecord &r) {
 }
 
 /// Apply @p ops in ONE transaction. Throws (and rolls back) when the store
-/// refuses an upsert: the key was rejected in the file after it was loaded.
+/// refuses an upsert (the key was rejected in the file after it was loaded)
+/// or a status change finds no row (it was deleted after it was loaded).
 inline void apply_edge_ops(reusex::ProjectDB &db,
                            const std::vector<PendingEdgeEdits::Op> &ops) {
   reusex::ProjectDB::Transaction tx(db);
   for (const auto &op : ops) {
     const auto &k = op.edge.key;
     if (op.kind == PendingEdgeEdits::Op::Kind::set_status) {
-      db.set_pose_graph_edge_status(k.from, k.to, k.type, op.edge.status);
+      if (!db.set_pose_graph_edge_status(k.from, k.to, k.type, op.edge.status))
+        throw std::runtime_error(
+            "edge " + std::to_string(k.from) + " -> " + std::to_string(k.to) +
+            " (" + k.type +
+            ") is no longer in the project; reload and edit it again");
     } else if (!db.upsert_pose_graph_edge(edge_row_from_record(op.edge),
                                           op.overwrite_rejected)) {
       throw std::runtime_error(
