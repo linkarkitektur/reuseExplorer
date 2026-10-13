@@ -2,16 +2,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <rux_qt/EdgeEditor.hpp>
-#include <rux_qt/PoseGraphWorkspace.hpp>
+#include <rux_qt/GraphPanel.hpp>
 #include <rux_qt/ProjectSession.hpp>
 #include <rux_qt/Theme.hpp>
+#include <rux_qt/ViewSettings.hpp>
 #include <rux_qt/background.hpp>
 #include <rux_qt/graph_view.hpp>
 #include <rux_qt/widgets.hpp>
 
 #include <reusex/core/ProjectDB.hpp>
+#include <reusex/core/SensorIntrinsics.hpp>
 
 #include <QApplication>
+#include <QButtonGroup>
+#include <QDoubleSpinBox>
 #include <QGraphicsItem>
 #include <QGraphicsLineItem>
 #include <QGraphicsPathItem>
@@ -26,6 +30,9 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QSettings>
+#include <QSignalBlocker>
+#include <QSlider>
 #include <QStackedLayout>
 #include <QStyleOptionGraphicsItem>
 #include <QVBoxLayout>
@@ -34,7 +41,9 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <numbers>
 #include <thread>
+#include <tuple>
 
 namespace rux::qt {
 
@@ -45,8 +54,12 @@ const QLocale &da() {
   return l;
 }
 
-/// Screen pixels of a node's radius and of the click tolerance.
+/// Screen pixels of a node's radius, its heading tick and the click
+/// tolerance.
 constexpr double kNodePx = 1.6;
+constexpr double kTickPx = 7.0;
+/// Heading ticks are blitted from sprites, one per 5° of direction.
+constexpr int kTickBins = 72;
 constexpr double kHitPx = 7.0;
 /// Edges drawn antialiased up to this many (see EdgesItem::paint).
 constexpr std::size_t kAntialiasedEdges = 2000;
@@ -70,8 +83,23 @@ int label_slots() {
 /// size on screen at every zoom.
 class NodesItem : public QGraphicsItem {
     public:
-  NodesItem(const std::vector<GraphNode> &nodes, const std::vector<int> &scans)
-      : scans_(scans) {
+  NodesItem(const std::vector<GraphNode> &nodes, std::vector<int> scans,
+            std::vector<Heading> ticks)
+      : scans_(std::move(scans)) {
+    // The direction bin of each tick (-1: hidden), fixed for the item.
+    tick_bin_.reserve(ticks.size());
+    for (const Heading &h : ticks) {
+      if (!h.visible) {
+        tick_bin_.push_back(-1);
+        continue;
+      }
+      // Screen y points down: the canvas negates the view's up.
+      const double a = std::atan2(-h.dir.y, h.dir.x);
+      int bin = static_cast<int>(
+                    std::lround(a / (2.0 * std::numbers::pi) * kTickBins)) %
+                kTickBins;
+      tick_bin_.push_back(bin < 0 ? bin + kTickBins : bin);
+    }
     points_.reserve(nodes.size());
     double x0 = 0, y0 = 0, x1 = 0, y1 = 0;
     for (const auto &n : nodes) {
@@ -105,10 +133,15 @@ class NodesItem : public QGraphicsItem {
     // stroke, so the dot's shape follows the zoom) nor a device-space one
     // (the raster engine draws a wide cosmetic point as a sliver, round cap
     // ignored) is a dot, and thousands of drawEllipse calls cost ~50 % more.
+    // The heading ticks are device-space too (a fixed length on screen),
+    // blitted the same way from a sprite per colour and 5° of direction,
+    // under the dots: antialiased wide drawLines cost ~35 ms a frame for
+    // NewOffice's 3876 nodes, the sprites next to nothing.
     const QTransform to_device = p->worldTransform();
     const double r = kNodePx;
-    const QRectF visible = to_device.mapRect(opt->exposedRect)
-                               .adjusted(-2 * r, -2 * r, 2 * r, 2 * r);
+    const double m = std::max(2 * r, kTickPx + 2);
+    const QRectF visible =
+        to_device.mapRect(opt->exposedRect).adjusted(-m, -m, m, m);
     const double dpr = p->device() ? p->device()->devicePixelRatioF() : 1.0;
     const int nslots = label_slots();
     p->save();
@@ -121,16 +154,26 @@ class NodesItem : public QGraphicsItem {
         ++end;
       // The first scan in the chrome's muted ink, so the coloured edges read
       // on top; further scans take the --label-* scale in turn.
-      const QPixmap &dot = disc(
+      const QColor colour =
           scan <= 1 ? theme().color("--color-on-chrome-muted")
-                    : theme().color(QString("--label-%1").arg(scan % nslots)),
-          dpr);
+                    : theme().color(QString("--label-%1").arg(scan % nslots));
+      const QPixmap &dot = disc(colour, dpr);
       const QPointF half(dot.width() / dpr / 2.0, dot.height() / dpr / 2.0);
+      device_.clear();
       for (std::size_t i = begin; i < end; ++i) {
         const QPointF d = to_device.map(points_[i]);
-        if (visible.contains(d))
-          p->drawPixmap(d - half, dot);
+        if (!visible.contains(d))
+          continue;
+        device_.push_back(d);
+        const int bin = i < tick_bin_.size() ? tick_bin_[i] : -1;
+        if (bin >= 0) {
+          const QPixmap &t = tick(colour, dpr, bin);
+          p->drawPixmap(
+              d - QPointF(t.width() / dpr / 2.0, t.height() / dpr / 2.0), t);
+        }
       }
+      for (const QPointF &d : device_)
+        p->drawPixmap(d - half, dot);
       begin = end;
     }
     p->restore();
@@ -139,6 +182,36 @@ class NodesItem : public QGraphicsItem {
     private:
   std::vector<QPointF> points_;
   std::vector<int> scans_;
+  std::vector<int> tick_bin_; ///< per point; -1 = no tick
+  /// Per-paint scratch, kept to avoid reallocating every frame.
+  std::vector<QPointF> device_;
+  /// The heading tick of direction @p bin in @p colour, centred on the
+  /// node, rendered once and kept like the discs.
+  const QPixmap &tick(const QColor &colour, double dpr, int bin) {
+    const auto key = std::make_tuple(colour.rgba(), dpr, bin);
+    auto it = ticks_.find(key);
+    if (it == ticks_.end()) {
+      const int side = static_cast<int>(std::ceil((2.0 * kTickPx + 4.0) * dpr));
+      QPixmap pm(side, side);
+      pm.setDevicePixelRatio(dpr);
+      pm.fill(Qt::transparent);
+      QPainter tp(&pm);
+      tp.setRenderHint(QPainter::Antialiasing);
+      // Toned down: in a dense overview the ticks are a texture, and the
+      // dots, path and edges must still read through them.
+      QPen pen(with_alpha(colour, 0.7), 1.5);
+      pen.setCapStyle(Qt::RoundCap);
+      tp.setPen(pen);
+      const double c = side / dpr / 2.0;
+      const double a = 2.0 * std::numbers::pi * bin / kTickBins;
+      tp.drawLine(QPointF(c, c), QPointF(c + std::cos(a) * kTickPx,
+                                         c + std::sin(a) * kTickPx));
+      tp.end();
+      it = ticks_.emplace(key, std::move(pm)).first;
+    }
+    return it->second;
+  }
+  std::map<std::tuple<QRgb, double, int>, QPixmap> ticks_;
   /// One node disc of @p colour at @p dpr, rendered once and kept: the
   /// cache key follows a theme switch.
   const QPixmap &disc(const QColor &colour, double dpr) {
@@ -308,7 +381,9 @@ double PoseGraphView::units_per_pixel() const {
 void PoseGraphView::wheelEvent(QWheelEvent *e) {
   const double want = std::pow(1.0015, e->angleDelta().y());
   const double extent = std::max(content_.width(), content_.height());
-  const int px = std::max(viewport()->width(), viewport()->height());
+  // The short side: fit() frames by it, so the zoom-out limit (four graphs
+  // across) must too, or a wide viewport starts out past the limit.
+  const int px = std::min(viewport()->width(), viewport()->height());
   const double f =
       clamp_zoom_factor(units_per_pixel(), want, zoom_limits(extent, px));
   if (f != 1.0)
@@ -340,20 +415,21 @@ void PoseGraphView::keyPressEvent(QKeyEvent *e) {
   QGraphicsView::keyPressEvent(e);
 }
 
-// ------------------------------------------------------ PoseGraphWorkspace --
+// ------------------------------------------------------ GraphPanel --
 
-struct PoseGraphWorkspace::Loaded {
+struct GraphPanel::Loaded {
   unsigned generation = 0;
-  std::vector<GraphNode> nodes;
-  std::vector<int> scans;
+  std::vector<NodeData> nodes;
   int unposed = 0;
   QString error;
 };
 
-PoseGraphWorkspace::PoseGraphWorkspace(ProjectSession &session,
-                                       EdgeEditor &editor, QWidget *parent)
-    : QWidget(parent), session_(session), editor_(editor) {
-  setObjectName("poseGraphWorkspace");
+GraphPanel::GraphPanel(ProjectSession &session, EdgeEditor &editor,
+                       ViewSettings &view_settings, bool persist,
+                       QWidget *parent)
+    : QWidget(parent), session_(session), editor_(editor),
+      view_settings_(view_settings), persist_(persist) {
+  setObjectName("graphPanel");
   const Theme &t = theme();
   auto *v = new QVBoxLayout(this);
   v->setContentsMargins(0, 0, 0, 0);
@@ -365,35 +441,67 @@ PoseGraphWorkspace::PoseGraphWorkspace(ProjectSession &session,
   bl->setContentsMargins(t.px("--space-4"), t.px("--space-2"),
                          t.px("--space-4"), t.px("--space-2"));
   bl->setSpacing(t.px("--space-3"));
-  bl->addWidget(new CapsLabel("Posegraf", "panelTitle"));
-  meta_ = new QLabel;
-  meta_->setObjectName("toolbarMeta");
-  meta_->setWordWrap(true); // the counts must not set the pane's width
-  bl->addWidget(meta_, 1);
-  // Edge legend: the stroke colours of the canvas.
-  legend_ = new QWidget;
-  auto *lg = new QHBoxLayout(legend_);
-  lg->setContentsMargins(0, 0, 0, 0);
-  lg->setSpacing(t.px("--space-3"));
-  for (const auto &[token, name] : std::vector<std::pair<QString, QString>>{
-           {"--color-text-faint", "Odometri"},
-           {"--color-accent", "Løkkelukning"},
-           {"--color-star", "Panorama"}}) {
-    auto *item = new QWidget;
-    auto *il = new QHBoxLayout(item);
-    il->setContentsMargins(0, 0, 0, 0);
-    il->setSpacing(t.px("--space-1"));
-    il->addWidget(new Swatch(token));
-    auto *l = new QLabel(name);
-    l->setObjectName("legendText");
-    il->addWidget(l);
-    lg->addWidget(item);
+  // The pane header already says "Graf": the toolbar is the view's
+  // controls only, so it fits the left column of a 1440 px window.
+  auto *seg = new QFrame;
+  seg->setObjectName("segmented");
+  auto *segl = new QHBoxLayout(seg);
+  segl->setContentsMargins(0, 0, 0, 0);
+  segl->setSpacing(0);
+  planes_ = new QButtonGroup(this);
+  const std::array<std::pair<const char *, const char *>, 3> planes = {
+      {{"XY", "Plan, set ovenfra"},
+       {"XZ", "Opstalt, set fra −y"},
+       {"YZ", "Opstalt, set fra +x"}}};
+  for (int i = 0; i < 3; ++i) {
+    auto *b = new QPushButton(planes[i].first);
+    b->setObjectName("segment");
+    b->setCheckable(true);
+    b->setCursor(Qt::PointingHandCursor);
+    b->setProperty("position", i == 0 ? "first" : i == 2 ? "last" : "middle");
+    b->setToolTip(planes[i].second);
+    planes_->addButton(b, i);
+    segl->addWidget(b);
   }
-  bl->addWidget(legend_);
+  bl->addWidget(seg);
+
+  auto *drej = new CapsLabel("Drej", "fieldLabel");
+  drej->ensurePolished();
+  drej->setMinimumWidth(drej->sizeHint().width()); // a word, never elided
+  bl->addWidget(drej);
+  yaw_slider_ = new QSlider(Qt::Horizontal);
+  yaw_slider_->setObjectName("yawSlider");
+  yaw_slider_->setRange(-180, 180);
+  yaw_slider_->setMinimumWidth(t.px("--layout-nav-width") / 2);
+  bl->addWidget(yaw_slider_);
+  yaw_spin_ = new QDoubleSpinBox;
+  yaw_spin_->setObjectName("yawSpin");
+  yaw_spin_->setRange(-180.0, 180.0);
+  yaw_spin_->setDecimals(1);
+  yaw_spin_->setSuffix(" °");
+  yaw_spin_->setButtonSymbols(QAbstractSpinBox::NoButtons);
+  yaw_spin_->setLocale(QLocale(QLocale::Danish, QLocale::Denmark));
+  yaw_spin_->setToolTip(
+      "Visningens drejning om lodret akse. Gemmes i projektet "
+      "og bruges også af 3D og rux render; modellen ændres "
+      "ikke.");
+  // As wide as its widest value, not a default line edit.
+  yaw_spin_->ensurePolished();
+  yaw_spin_->setMaximumWidth(
+      yaw_spin_->fontMetrics().horizontalAdvance("−180,0 °") +
+      2 * t.px("--space-2") + 2 * t.px("--space-1"));
+  bl->addWidget(yaw_spin_);
+  auto *autob = new QPushButton(NavItem::escape_mnemonic("Auto"));
+  autob->setProperty("kind", "ghost");
+  autob->setCursor(Qt::PointingHandCursor);
+  autob->setToolTip("Drej, så bygningens hovedretning ligger vandret — ud fra "
+                    "kameraernes retninger");
+  bl->addWidget(autob);
   auto *fit = new QPushButton(NavItem::escape_mnemonic("Tilpas"));
   fit->setProperty("kind", "ghost");
   fit->setCursor(Qt::PointingHandCursor);
   fit->setToolTip("Vis hele grafen (F)");
+  bl->addStretch(1);
   bl->addWidget(fit);
   v->addWidget(bar);
 
@@ -417,37 +525,67 @@ PoseGraphWorkspace::PoseGraphWorkspace(ProjectSession &session,
   auto *sl = new QHBoxLayout(status);
   sl->setContentsMargins(t.px("--space-4"), t.px("--space-1"),
                          t.px("--space-4"), t.px("--space-1"));
-  auto *hint = new QLabel("Klik på en node: A, så B · Shift+klik: B · klik "
-                          "på en kant: A og B · hjul: zoom · træk: panorér");
+  auto *hint = new QLabel("Klik: næste af A/B · Shift+klik: B · klik på en "
+                          "kant: A og B · hjul: zoom · træk: panorér · F: "
+                          "tilpas");
   hint->setObjectName("statusText");
   // Wraps rather than widening Rediger's left column past a 1440 px window.
   hint->setWordWrap(true);
+  sl->setSpacing(t.px("--space-4"));
+  meta_ = new QLabel;
+  meta_->setObjectName("statusText");
+  sl->addWidget(meta_, 0, Qt::AlignTop);
+  hint->setAlignment(Qt::AlignRight | Qt::AlignTop);
   sl->addWidget(hint, 1);
   v->addWidget(status);
 
   connect(fit, &QPushButton::clicked, view_, &PoseGraphView::fit);
-  connect(view_, &PoseGraphView::clicked_at, this,
-          &PoseGraphWorkspace::on_click);
+  connect(view_, &PoseGraphView::clicked_at, this, &GraphPanel::on_click);
   connect(&editor_, &EdgeEditor::changed, this, [this] {
     rebuild_edges();
     update_meta();
   });
-  connect(&session_, &ProjectSession::state_changed, this,
-          &PoseGraphWorkspace::reset);
+  connect(&session_, &ProjectSession::state_changed, this, &GraphPanel::reset);
   connect(&theme(), &Theme::changed, this, [this] {
     view_->setBackgroundBrush(theme().color("--color-canvas"));
     rebuild_scene();
   });
+
+  connect(planes_, &QButtonGroup::idClicked, this,
+          [this](int id) { set_plane(static_cast<ViewPlane>(id)); });
+  connect(yaw_slider_, &QSlider::valueChanged, this,
+          [this](int v) { view_settings_.set_yaw_deg(v); });
+  connect(yaw_spin_, &QDoubleSpinBox::valueChanged, this,
+          [this](double v) { view_settings_.set_yaw_deg(v); });
+  connect(autob, &QPushButton::clicked, this, [this] {
+    std::vector<std::array<double, 3>> f;
+    f.reserve(data_.size());
+    for (const auto &n : data_)
+      f.push_back(n.forward);
+    view_settings_.set_yaw_deg(auto_yaw_deg(f));
+  });
+  connect(&view_settings_, &ViewSettings::yaw_changed, this,
+          &GraphPanel::set_yaw);
+  ViewPlane plane = ViewPlane::xy;
+  if (persist_)
+    plane =
+        parse_view_plane(
+            QSettings().value("rediger/plane", "xy").toString().toStdString())
+            .value_or(ViewPlane::xy);
+  projection_.plane = plane;
+  planes_->button(static_cast<int>(plane))->setChecked(true);
   reset();
+  set_yaw(view_settings_.yaw_deg());
 }
 
-PoseGraphWorkspace::~PoseGraphWorkspace() = default;
+GraphPanel::~GraphPanel() = default;
 
-void PoseGraphWorkspace::reset() {
+void GraphPanel::reset() {
   ++generation_;
   loading_ = false;
+  data_.clear();
   nodes_.clear();
-  scan_of_.clear();
+  ticks_.clear();
   selection_ = {};
   rebuild_scene();
   update_meta();
@@ -455,7 +593,7 @@ void PoseGraphWorkspace::reset() {
     activate();
 }
 
-void PoseGraphWorkspace::activate() {
+void GraphPanel::activate() {
   active_ = true;
   if (!session_.is_open() || loading_ || !nodes_.empty())
     return;
@@ -464,7 +602,7 @@ void PoseGraphWorkspace::activate() {
   const std::string path = session_.path().toStdString();
   const unsigned gen = generation_;
   auto work = std::make_shared<BackgroundWork>();
-  QPointer<PoseGraphWorkspace> guard(this);
+  QPointer<GraphPanel> guard(this);
   std::thread([path, gen, guard, work]() mutable {
     auto d = std::make_shared<Loaded>();
     d->generation = gen;
@@ -478,8 +616,19 @@ void PoseGraphWorkspace::activate() {
           continue;
         }
         const auto pose = db.sensor_frame_pose(id);
-        d->nodes.push_back({id, pose[3], pose[7]});
-        d->scans.push_back(scan);
+        std::array<double, 16> local{1, 0, 0, 0, 0, 1, 0, 0,
+                                     0, 0, 1, 0, 0, 0, 0, 1};
+        try {
+          const auto &l = db.sensor_frame_intrinsics(id).local_transform;
+          for (std::size_t i = 0; i < 16; ++i)
+            local[i] = l[i];
+        } catch (const std::exception &) {
+          // no intrinsics: the pose's own z is the optical axis
+        }
+        d->nodes.push_back({id,
+                            scan,
+                            {pose[3], pose[7], pose[11]},
+                            camera_forward(pose, local)});
       }
     } catch (const std::exception &e) {
       d->error = QString::fromUtf8(e.what());
@@ -495,12 +644,12 @@ void PoseGraphWorkspace::activate() {
   }).detach();
 }
 
-void PoseGraphWorkspace::loaded(std::shared_ptr<Loaded> d) {
+void GraphPanel::loaded(std::shared_ptr<Loaded> d) {
   if (d->generation != generation_)
     return;
   loading_ = false;
-  nodes_ = std::move(d->nodes);
-  scan_of_ = std::move(d->scans);
+  data_ = std::move(d->nodes);
+  project();
   rebuild_scene();
   if (!d->error.isEmpty())
     empty_->setText(QString("Poserne kunne ikke læses.\n%1").arg(d->error));
@@ -508,7 +657,44 @@ void PoseGraphWorkspace::loaded(std::shared_ptr<Loaded> d) {
   view_->fit();
 }
 
-void PoseGraphWorkspace::rebuild_scene() {
+void GraphPanel::project() {
+  nodes_.clear();
+  ticks_.clear();
+  nodes_.reserve(data_.size());
+  ticks_.reserve(data_.size());
+  for (const auto &n : data_) {
+    const Vec2 p = project_point(projection_, n.t[0], n.t[1], n.t[2]);
+    nodes_.push_back({n.id, p.x, p.y});
+    ticks_.push_back(heading_in_view(projection_, n.forward));
+  }
+}
+
+void GraphPanel::set_plane(ViewPlane plane) {
+  projection_.plane = plane;
+  if (planes_)
+    if (auto *b = planes_->button(static_cast<int>(plane)))
+      b->setChecked(true);
+  if (persist_)
+    QSettings().setValue("rediger/plane",
+                         QString::fromLatin1(view_plane_key(plane)));
+  project();
+  rebuild_scene();
+  view_->fit();
+}
+
+void GraphPanel::set_yaw(double deg) {
+  projection_.yaw_deg = deg;
+  {
+    const QSignalBlocker a(yaw_slider_), b(yaw_spin_);
+    yaw_slider_->setValue(static_cast<int>(std::lround(deg)));
+    yaw_spin_->setValue(deg);
+  }
+  project();
+  rebuild_scene();
+  view_->fit();
+}
+
+void GraphPanel::rebuild_scene() {
   QGraphicsScene *sc = view_->scene();
   sc->clear();
   edge_items_.clear();
@@ -531,9 +717,9 @@ void PoseGraphWorkspace::rebuild_scene() {
   int scan = -1;
   for (std::size_t i = 0; i < nodes_.size(); ++i) {
     const QPointF p(nodes_[i].x, -nodes_[i].y);
-    if (scan_of_[i] != scan) {
+    if (data_[i].scan != scan) {
       path.moveTo(p);
-      scan = scan_of_[i];
+      scan = data_[i].scan;
     } else {
       path.lineTo(p);
     }
@@ -543,7 +729,11 @@ void PoseGraphWorkspace::rebuild_scene() {
   auto *trail_item = sc->addPath(path, trail);
   trail_item->setZValue(0);
 
-  nodes_item_ = new NodesItem(nodes_, scan_of_);
+  std::vector<int> scans;
+  scans.reserve(data_.size());
+  for (const auto &n : data_)
+    scans.push_back(n.scan);
+  nodes_item_ = new NodesItem(nodes_, std::move(scans), ticks_);
   sc->addItem(nodes_item_);
   view_->set_content_rect(path.boundingRect());
   // Chrome colours, not class colours: a marker must never read as a label.
@@ -555,7 +745,7 @@ void PoseGraphWorkspace::rebuild_scene() {
   place_markers();
 }
 
-void PoseGraphWorkspace::rebuild_edges() {
+void GraphPanel::rebuild_edges() {
   QGraphicsScene *sc = view_->scene();
   for (QGraphicsItem *it : edge_items_) {
     sc->removeItem(it);
@@ -601,7 +791,7 @@ void PoseGraphWorkspace::rebuild_edges() {
   edge_items_.push_back(item);
 }
 
-void PoseGraphWorkspace::place_markers() {
+void GraphPanel::place_markers() {
   auto place = [this](QGraphicsItem *m, int id) {
     if (!m)
       return;
@@ -616,14 +806,13 @@ void PoseGraphWorkspace::place_markers() {
   place(marker_b_, b_);
 }
 
-void PoseGraphWorkspace::set_pair(int a_id, int b_id) {
+void GraphPanel::set_pair(int a_id, int b_id) {
   a_ = a_id;
   b_ = b_id;
   place_markers();
 }
 
-void PoseGraphWorkspace::on_click(const QPointF &pos,
-                                  Qt::KeyboardModifiers mods) {
+void GraphPanel::on_click(const QPointF &pos, Qt::KeyboardModifiers mods) {
   const double tol = kHitPx * view_->units_per_pixel();
   const int n = nearest_node(nodes_, pos.x(), -pos.y(), tol);
   if (n >= 0) {
@@ -641,7 +830,7 @@ void PoseGraphWorkspace::on_click(const QPointF &pos,
   }
 }
 
-void PoseGraphWorkspace::click_node(int id, bool as_b) {
+void GraphPanel::click_node(int id, bool as_b) {
   const auto it = std::find_if(nodes_.begin(), nodes_.end(),
                                [id](const GraphNode &n) { return n.id == id; });
   if (it == nodes_.end())
@@ -650,13 +839,13 @@ void PoseGraphWorkspace::click_node(int id, bool as_b) {
   s.kind = "Node";
   s.title = QString("Billede %1").arg(id);
   s.subtitle = QString("Billede i posegrafen");
+  // World coordinates, not the projected ones: the yaw is display only.
+  const NodeData &n = data_[static_cast<std::size_t>(it - nodes_.begin())];
   SelectionSection p{"Pose", {}, {}};
-  p.rows.push_back({"X", da().toString(it->x, 'f', 2) + " m"});
-  p.rows.push_back({"Y", da().toString(it->y, 'f', 2) + " m"});
-  p.rows.push_back(
-      {"Scanning",
-       QString::number(
-           scan_of_[static_cast<std::size_t>(it - nodes_.begin())])});
+  p.rows.push_back({"X", da().toString(n.t[0], 'f', 2) + " m"});
+  p.rows.push_back({"Y", da().toString(n.t[1], 'f', 2) + " m"});
+  p.rows.push_back({"Z", da().toString(n.t[2], 'f', 2) + " m"});
+  p.rows.push_back({"Scanning", QString::number(n.scan)});
   p.rows.push_back({"Kanter", QString::number(editor_.edits().degree(id))});
   s.sections.push_back(p);
   selection_ = s;
@@ -664,7 +853,7 @@ void PoseGraphWorkspace::click_node(int id, bool as_b) {
   emit frame_requested(id, as_b);
 }
 
-void PoseGraphWorkspace::click_edge(int from, int to) {
+void GraphPanel::click_edge(int from, int to) {
   for (const auto &d : edges_) {
     if (d.edge.from != from || d.edge.to != to)
       continue;
@@ -693,7 +882,7 @@ void PoseGraphWorkspace::click_edge(int from, int to) {
   }
 }
 
-void PoseGraphWorkspace::update_meta() {
+void GraphPanel::update_meta() {
   if (!session_.is_open()) {
     meta_->setText(QString());
     return;

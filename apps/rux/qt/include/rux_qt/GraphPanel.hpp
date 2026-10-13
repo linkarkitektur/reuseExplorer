@@ -3,24 +3,33 @@
 
 #pragma once
 
-// The Posegraf workspace (Stream Q, Q3): every posed frame as a node at its
-// pose's x/y, the capture path through them, and the pose-graph edges —
-// stored ones by type, pending ones (Rediger's staged edits) dashed. A click
-// on a node is handed to Rediger's A/B picker; a click on an edge sets both.
-// Wheel zooms about the cursor, a drag pans, "Tilpas" (or F) fits.
+// Rediger's graph pane (spec §5.2): every posed frame as a node at its world
+// translation, turned by the project's view yaw and projected onto the
+// chosen view plane (XY plan, XZ / YZ elevations), with a fixed-length tick
+// for the camera's heading; the capture path through the nodes; and the
+// pose-graph edges — stored ones by type, pending ones (staged edits)
+// dashed. A click on a node is handed to Rediger's A/B picker; a click on an
+// edge sets both. Wheel zooms about the cursor, a drag pans, "Tilpas" (or F)
+// fits. The yaw is display only (ViewSettings); the plane is a per-user
+// QSettings choice (rediger/plane).
 //
 // Positions are read off the GUI thread with a read-only ProjectDB of its
 // own, like every other bulk read of the client.
 
+#include <rux_qt/graph_view.hpp>
 #include <rux_qt/selection.hpp>
 #include <rux_qt/workspace_logic.hpp>
 
 #include <QGraphicsView>
 #include <QWidget>
 
+#include <array>
 #include <vector>
 
+class QButtonGroup;
+class QDoubleSpinBox;
 class QLabel;
+class QSlider;
 class QGraphicsItem;
 class QGraphicsPathItem;
 
@@ -28,6 +37,7 @@ namespace rux::qt {
 
 class EdgeEditor;
 class ProjectSession;
+class ViewSettings;
 
 /// The canvas: zoom about the cursor, drag to pan, click to pick.
 class PoseGraphView : public QGraphicsView {
@@ -57,12 +67,14 @@ class PoseGraphView : public QGraphicsView {
   QRectF content_;
 };
 
-class PoseGraphWorkspace : public QWidget {
+class GraphPanel : public QWidget {
   Q_OBJECT
     public:
-  PoseGraphWorkspace(ProjectSession &session, EdgeEditor &editor,
-                     QWidget *parent = nullptr);
-  ~PoseGraphWorkspace() override;
+  /// @p persist: remember the view plane in QSettings (not in a shot).
+  GraphPanel(ProjectSession &session, EdgeEditor &editor,
+             ViewSettings &view_settings, bool persist,
+             QWidget *parent = nullptr);
+  ~GraphPanel() override;
 
   /// The page is on screen: read the poses if not read yet.
   void activate();
@@ -79,6 +91,8 @@ class PoseGraphWorkspace : public QWidget {
   /// Click programmatically at a node / an edge (the gallery).
   void click_node(int id, bool as_b = false);
   void click_edge(int from, int to);
+  void set_plane(ViewPlane plane);
+  const ViewProjection &projection() const { return projection_; }
 
     signals:
   /// A node was clicked (@p as_b: Shift held); Rediger picks the slot.
@@ -89,6 +103,15 @@ class PoseGraphWorkspace : public QWidget {
 
     private:
   struct Loaded;
+  /// One posed frame as loaded: id, scan, world translation, camera forward.
+  struct NodeData {
+    int id = 0;
+    int scan = 0;
+    std::array<double, 3> t{};
+    std::array<double, 3> forward{};
+  };
+  void project();
+  void set_yaw(double deg);
   void reset();
   void loaded(std::shared_ptr<Loaded> data);
   void rebuild_scene();
@@ -99,16 +122,22 @@ class PoseGraphWorkspace : public QWidget {
 
   ProjectSession &session_;
   EdgeEditor &editor_;
+  ViewSettings &view_settings_;
+  bool persist_ = true;
+  ViewProjection projection_;
+  std::vector<NodeData> data_; ///< id order, as loaded
+  std::vector<Heading> ticks_; ///< per node, after project()
+  QButtonGroup *planes_ = nullptr;
+  QSlider *yaw_slider_ = nullptr;
+  QDoubleSpinBox *yaw_spin_ = nullptr;
   unsigned generation_ = 0;
   bool active_ = false;
   bool loading_ = false;
   PoseGraphView *view_ = nullptr;
   QLabel *meta_ = nullptr;
   QLabel *empty_ = nullptr;
-  QWidget *legend_ = nullptr;
 
-  std::vector<GraphNode> nodes_; ///< id order
-  std::vector<int> scan_of_;     ///< per node
+  std::vector<GraphNode> nodes_; ///< data_ projected, same order
   struct DrawnEdge {
     GraphEdge edge;
     std::string type;

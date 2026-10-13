@@ -12,16 +12,20 @@
 #include <rux_qt/EdgeEditor.hpp>
 #include <rux_qt/EditWorkspace.hpp>
 #include <rux_qt/FrameBrowser.hpp>
+#include <rux_qt/GraphPanel.hpp>
 #include <rux_qt/PairStrip.hpp>
 #include <rux_qt/PipelineWorkspace.hpp>
-#include <rux_qt/PoseGraphWorkspace.hpp>
 #include <rux_qt/ProjectSession.hpp>
 #include <rux_qt/RecentProjects.hpp>
 #include <rux_qt/SceneView.hpp>
 #include <rux_qt/TableBrowser.hpp>
 #include <rux_qt/Theme.hpp>
+#include <rux_qt/ViewSettings.hpp>
 #include <rux_qt/Viewer3DWorkspace.hpp>
 #include <rux_qt/background.hpp>
+#include <rux_qt/graph_view.hpp>
+
+#include <reusex/core/ProjectDB.hpp>
 
 #include <QAbstractButton>
 #include <QApplication>
@@ -272,6 +276,19 @@ AppShell *make_pg(const PageContext &ctx) {
 
 QWidget *make_rediger(const PageContext &ctx) { return make_pg(ctx); }
 
+QWidget *make_rediger_plane(const PageContext &ctx, ViewPlane plane) {
+  auto *shell = make_pg(ctx);
+  settle();
+  shell->edit()->graph()->set_plane(plane);
+  return shell;
+}
+QWidget *make_rediger_xz(const PageContext &ctx) {
+  return make_rediger_plane(ctx, ViewPlane::xz);
+}
+QWidget *make_rediger_yz(const PageContext &ctx) {
+  return make_rediger_plane(ctx, ViewPlane::yz);
+}
+
 /// Rediger with the edge list and both pair panes hidden, from the palette.
 QWidget *make_rediger_panes(const PageContext &ctx) {
   auto *shell = make_pg(ctx);
@@ -311,13 +328,34 @@ QWidget *make_rediger_pending(const PageContext &ctx) {
   return shell;
 }
 
-/// A save that cannot happen: the project is open read-only.
+/// Set the view yaw to 30°, wait out the 500 ms debounce and the write,
+/// and print what the project file holds afterwards under @p tag.
+void yaw_30_and_report(AppShell *shell, const PageContext &ctx,
+                       const char *tag) {
+  shell->view_settings().set_yaw_deg(30.0);
+  QElapsedTimer t;
+  t.start();
+  while (t.elapsed() < 2000) { // the 500 ms debounce, then the write
+    QApplication::processEvents();
+    QThread::msleep(10);
+  }
+  settle();
+  if (!ctx.project_path.isEmpty()) {
+    reusex::ProjectDB db(ctx.project_path.toStdString(), /*readOnly=*/true);
+    std::fprintf(stderr, "%s: stored view.yaw_deg=%s\n", tag,
+                 db.setting(kViewYawSetting).value_or("<none>").c_str());
+  }
+}
+
+/// A save that cannot happen: the project is open read-only. The 30° yaw
+/// applies on screen but is not written.
 QWidget *make_rediger_readonly(const PageContext &ctx) {
   auto *shell = rediger_shell(ctx, Open::read_only);
   if (shell->edit()->a() < 0)
     return shell;
   shell->edges().add(loop_closure(shell->edit()->a(), shell->edit()->b(), 1.0));
   shell->edit()->save_edits();
+  yaw_30_and_report(shell, ctx, "rediger-readonly");
   return shell;
 }
 
@@ -437,7 +475,7 @@ QWidget *make_rediger_zoom(const PageContext &ctx) {
   auto *probe = new QTimer(shell);
   probe->setInterval(50);
   QObject::connect(probe, &QTimer::timeout, shell, [shell, probe] {
-    PoseGraphWorkspace *pg = shell->edit()->graph();
+    GraphPanel *pg = shell->edit()->graph();
     PoseGraphView *v = pg->view();
     if (!shell->isVisible() || pg->node_count() == 0)
       return;
@@ -474,6 +512,14 @@ QWidget *make_rediger_zoom(const PageContext &ctx) {
     }
   });
   probe->start();
+  return shell;
+}
+
+/// Yaw 30° (WRITES project_settings to the copy) and reads it back.
+QWidget *make_rediger_yaw(const PageContext &ctx) {
+  auto *shell = make_pg(ctx);
+  settle();
+  yaw_30_and_report(shell, ctx, "rediger-yaw");
   return shell;
 }
 
@@ -601,6 +647,13 @@ void register_shell_pages() {
       {"3d-labels", "3D: semantiske mærkater ovenfra", make_3d_labels});
   register_page({"rediger", "Rediger: posegraf, A/B og ventende løkkelukninger",
                  make_rediger});
+  register_page(
+      {"rediger-xz", "Rediger: grafen i opstalt, set fra −y", make_rediger_xz});
+  register_page(
+      {"rediger-yz", "Rediger: grafen i opstalt, set fra +x", make_rediger_yz});
+  register_page({"rediger-yaw",
+                 "Rediger: visningen drejet 30° (skriver til projektkopien)",
+                 make_rediger_yaw});
   register_page({"rediger-panes",
                  "Rediger: kantliste og billeder skjult, kun grafen og "
                  "højre kolonne",

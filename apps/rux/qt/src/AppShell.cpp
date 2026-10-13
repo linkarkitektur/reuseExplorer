@@ -7,12 +7,12 @@
 #include <rux_qt/EditWorkspace.hpp>
 #include <rux_qt/FrameBrowser.hpp>
 #include <rux_qt/PipelineWorkspace.hpp>
-#include <rux_qt/PoseGraphWorkspace.hpp>
 #include <rux_qt/ProjectSession.hpp>
 #include <rux_qt/RecentProjects.hpp>
 #include <rux_qt/StartPage.hpp>
 #include <rux_qt/TableBrowser.hpp>
 #include <rux_qt/Theme.hpp>
+#include <rux_qt/ViewSettings.hpp>
 #include <rux_qt/Viewer3DWorkspace.hpp>
 #include <rux_qt/palette_table.hpp>
 #include <rux_qt/widgets.hpp>
@@ -183,13 +183,15 @@ AppShell::AppShell(ProjectSession &session, RecentProjects &recent,
   start_ = new StartPage(session_, recent_);
   stack_->addWidget(start_);
   edges_ = new EdgeEditor(session_, this);
+  view_settings_ = new ViewSettings(session_, this);
   database_ = new DatabaseWorkspace(session_, *edges_);
   connect(database_, &DatabaseWorkspace::browse_requested, this,
           &AppShell::browse);
   stack_->addWidget(database_);
   viewer_ = new Viewer3DWorkspace(session_, options.interactive_3d);
   stack_->addWidget(viewer_);
-  edit_ = new EditWorkspace(session_, *edges_, options.persist_layout);
+  edit_ = new EditWorkspace(session_, *edges_, *view_settings_,
+                            options.persist_layout);
   stack_->addWidget(edit_);
   pipeline_ = new PipelineWorkspace(session_, options.stage_executor);
   stack_->addWidget(pipeline_);
@@ -242,6 +244,8 @@ AppShell::AppShell(ProjectSession &session, RecentProjects &recent,
   // While a stage runs, pose-graph saves wait (they take the runner's
   // writer lease too, so a stage started meanwhile still wins cleanly).
   edges_->set_runner_source([this] { return pipeline_->runner_handle(); });
+  view_settings_->set_runner_source(
+      [this] { return pipeline_->runner_handle(); });
   pipeline_->set_pending_edits_source(
       [this] { return edit_->pending_edits(); });
   connect(pipeline_, &PipelineWorkspace::job_started, this,

@@ -142,7 +142,6 @@ PairStrip::PairStrip(ProjectSession &session, EdgeEditor &editor,
   // The edits on a line of their own, so the strip fits a narrow column.
   auto *actions = new QHBoxLayout;
   actions->setSpacing(t.px("--space-3"));
-  actions->addStretch(1);
   icp_ = new QPushButton(NavItem::escape_mnemonic("ICP-forfin"));
   icp_->setProperty("kind", "secondary");
   icp_->setCursor(Qt::PointingHandCursor);
@@ -159,6 +158,7 @@ PairStrip::PairStrip(ProjectSession &session, EdgeEditor &editor,
   add_->setProperty("kind", "primary");
   add_->setCursor(Qt::PointingHandCursor);
   actions->addWidget(add_);
+  actions->addStretch(1); // left-aligned, under the edge rows' start
   v->addLayout(actions);
 
   rows_ = new QWidget;

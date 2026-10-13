@@ -36,6 +36,7 @@ class Inspector;
 class PipelineLogView;
 class PipelineWorkspace;
 class Viewer3DWorkspace;
+class ViewSettings;
 class NavRail;
 class ProjectSession;
 class RecentProjects;
@@ -79,6 +80,8 @@ class AppShell : public QWidget {
   EditWorkspace *edit() const { return edit_; }
   /// The pending pose-graph edits, shared by Oversigt and Rediger.
   EdgeEditor &edges() const { return *edges_; }
+  /// The project's display settings (the view yaw), shared by every view.
+  ViewSettings &view_settings() const { return *view_settings_; }
   PipelineWorkspace *pipeline() const { return pipeline_; }
   PipelineLogView *log() const { return log_; }
   /// Unsaved pose-graph edits: ask whether to save, discard or cancel
@@ -129,6 +132,7 @@ class AppShell : public QWidget {
   Viewer3DWorkspace *viewer_ = nullptr;
   EditWorkspace *edit_ = nullptr;
   EdgeEditor *edges_ = nullptr;
+  ViewSettings *view_settings_ = nullptr;
   PipelineWorkspace *pipeline_ = nullptr;
   PipelineLogView *log_ = nullptr;
   Selection log_selection_;

@@ -3,9 +3,9 @@
 
 #include <rux_qt/EdgeEditor.hpp>
 #include <rux_qt/EditWorkspace.hpp>
+#include <rux_qt/GraphPanel.hpp>
 #include <rux_qt/PairStrip.hpp>
 #include <rux_qt/PendingBanner.hpp>
-#include <rux_qt/PoseGraphWorkspace.hpp>
 #include <rux_qt/ProjectSession.hpp>
 #include <rux_qt/Theme.hpp>
 #include <rux_qt/widgets.hpp>
@@ -39,7 +39,8 @@ QString key_of(EditPane p) {
 } // namespace
 
 EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
-                             bool persist_layout, QWidget *parent)
+                             ViewSettings &view_settings, bool persist_layout,
+                             QWidget *parent)
     : QWidget(parent), session_(session), editor_(editor),
       persist_(persist_layout) {
   setObjectName("editWorkspace");
@@ -51,7 +52,7 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   banner_ = new PendingBanner(editor_);
   v->addWidget(banner_);
 
-  graph_ = new PoseGraphWorkspace(session_, editor_);
+  graph_ = new GraphPanel(session_, editor_, view_settings, persist_);
   panes_[0] = new PaneFrame("Graf");
   panes_[0]->set_content(graph_);
   panes_[1] = new PaneFrame("Kanter");
@@ -90,7 +91,6 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   next_hint_ = new QLabel;
   next_hint_->setObjectName("toolbarMeta");
   next_hint_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-  next_hint_->setWordWrap(true); // wraps instead of widening the column
   hl->addWidget(next_hint_, 1);
   auto *swap = new QPushButton(NavItem::escape_mnemonic("Byt A og B"));
   swap->setProperty("kind", "ghost");
@@ -128,15 +128,14 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
             [this, i] { set_pane_visible(static_cast<EditPane>(i), false); });
   for (QSplitter *s : {main_, left_, right_})
     connect(s, &QSplitter::splitterMoved, this, [this] { save_layout(); });
-  connect(graph_, &PoseGraphWorkspace::selection_changed, this,
+  connect(graph_, &GraphPanel::selection_changed, this,
           [this](const Selection &s) {
             selection_ = s;
             emit selection_changed(s);
           });
-  connect(graph_, &PoseGraphWorkspace::frame_requested, this,
+  connect(graph_, &GraphPanel::frame_requested, this,
           &EditWorkspace::node_clicked);
-  connect(graph_, &PoseGraphWorkspace::pair_requested, this,
-          &EditWorkspace::set_pair);
+  connect(graph_, &GraphPanel::pair_requested, this, &EditWorkspace::set_pair);
   connect(strip_, &PairStrip::edge_selected, this, [this](const Selection &s) {
     selection_ = s;
     emit selection_changed(s);
@@ -207,9 +206,8 @@ void EditWorkspace::sync_pair_header() {
   auto id = [](int v) { return v >= 0 ? QString::number(v) : QString("—"); };
   pair_a_->setText("A  " + id(slots_.a()));
   pair_b_->setText("B  " + id(slots_.b()));
-  next_hint_->setText(slots_.next() == Slot::a
-                          ? QString("Næste klik: A · Shift+klik: B")
-                          : QString("Næste klik: B"));
+  next_hint_->setText(slots_.next() == Slot::a ? QString("Næste klik: A")
+                                               : QString("Næste klik: B"));
 }
 
 int EditWorkspace::pending_edits() const { return editor_.pending(); }

@@ -6,7 +6,7 @@
 // The Rediger workspace (spec §5.2): the pose graph and its edge list on the
 // left, the selected pair (images over a 3D overlay, then its edges) on the
 // right, in nested QSplitters, under the pending-edits banner. A node click
-// fills the next free slot of the pair (Shift: B), an edge click both; the
+// fills the next slot of the pair (Shift: B), an edge click both; the
 // right column's header names A and B and its foot is the pair strip. Each pane
 // can be hidden from its header and shown again from the toolbar's "Paneler"
 // menu or the command palette; splitter sizes and visibility persist in
@@ -30,19 +30,21 @@ class EdgeEditor;
 class PairStrip;
 class PaneFrame;
 class PendingBanner;
-class PoseGraphWorkspace;
+class GraphPanel;
 class ProjectSession;
+class ViewSettings;
 
 class EditWorkspace : public QWidget {
   Q_OBJECT
     public:
   EditWorkspace(ProjectSession &session, EdgeEditor &editor,
-                bool persist_layout, QWidget *parent = nullptr);
+                ViewSettings &view_settings, bool persist_layout,
+                QWidget *parent = nullptr);
   ~EditWorkspace() override;
 
   /// The page is on screen: load what is not loaded yet.
   void activate();
-  PoseGraphWorkspace *graph() const { return graph_; }
+  GraphPanel *graph() const { return graph_; }
   EdgeEditor &editor() const { return editor_; }
   PaneFrame *pane(EditPane p) const { return panes_[static_cast<int>(p)]; }
   /// The user's choice for @p p (the overlay also needs a complete pair).
@@ -94,7 +96,7 @@ class EditWorkspace : public QWidget {
   std::array<PaneFrame *, kEditPaneCount> panes_{};
   std::array<bool, kEditPaneCount> wanted_{true, true, true, true};
   std::array<QAction *, kEditPaneCount> pane_actions_{};
-  PoseGraphWorkspace *graph_ = nullptr;
+  GraphPanel *graph_ = nullptr;
   QLabel *meta_ = nullptr;
   Selection selection_;
   SlotPicker slots_;

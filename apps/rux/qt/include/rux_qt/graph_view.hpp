@@ -33,7 +33,8 @@ ZoomLimits zoom_limits(double content_extent, int viewport_px);
 
 /// The scale factor to apply for a requested @p factor (> 1 zooms in) at
 /// @p units_per_px, clamped so the result stays within @p limits. 1 when
-/// either input is not positive.
+/// either input is not positive, or when the clamp would move the view the
+/// opposite way to the one asked (a view already past a limit).
 double clamp_zoom_factor(double units_per_px, double factor,
                          const ZoomLimits &limits);
 

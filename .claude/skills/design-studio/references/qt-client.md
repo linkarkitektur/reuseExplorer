@@ -21,7 +21,8 @@ apps/rux/qt/
 │   ├── SceneView.hpp         3D canvas: QVTKOpenGLNativeWidget or EGL
 │   │                         offscreen image; LOD swap; hardware picking
 │   ├── Viewer3DWorkspace.hpp Q3: layers, colour-by + legend, cut, presets
-│   ├── PoseGraphWorkspace.hpp Q3: QGraphicsView of frames and edges
+│   ├── GraphPanel.hpp        Rediger graph: XY/XZ/YZ, view yaw, ticks
+│   ├── ViewSettings.hpp      project display settings (view yaw)
 │   ├── PipelineWorkspace.hpp Q3: stage form, JobRunner, log tail, CLI line
 │   ├── pipeline_ui.hpp       Danish stage/field names, JSON -> rux line
 │   ├── cli_command.hpp       Qt-free: "Kopiér som rux-kommando"

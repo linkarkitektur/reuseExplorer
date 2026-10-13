@@ -1144,9 +1144,9 @@ QTextEdit#inspectorBlock {
   padding: var(--space-2);
 }
 
-/* ============================================ 3D, Posegraf, Pipeline (Q3) */
+/* ============================================= 3D, Rediger, Pipeline (Q3) */
 
-#viewerWorkspace, #poseGraphWorkspace, #pipelineWorkspace, #logWorkspace,
+#viewerWorkspace, #graphPanel, #pipelineWorkspace, #logWorkspace,
 #pipelineContent, QScrollArea#pipelineScroll {
   background: var(--color-surface);
 }
@@ -1167,6 +1167,15 @@ QLabel#legendText {
 QGraphicsView#poseGraphView {
   background: var(--color-canvas);
   border: none;
+}
+/* The view yaw: -180..180 has no "less" side, so no filled sub-page. */
+QSlider#yawSlider::sub-page:horizontal {
+  background: var(--color-border);
+}
+QDoubleSpinBox#yawSpin {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  padding: var(--space-1) var(--space-2);
 }
 
 /* ---- log filter bar */

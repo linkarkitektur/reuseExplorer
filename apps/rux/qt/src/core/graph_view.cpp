@@ -25,7 +25,12 @@ double clamp_zoom_factor(double units_per_px, double factor,
     return 1.0;
   const double target = std::clamp(
       units_per_px / factor, limits.min_units_per_px, limits.max_units_per_px);
-  return units_per_px / target;
+  const double f = units_per_px / target;
+  // Already past a limit (a very wide viewport fits the graph by its
+  // height): a wheel step never moves the opposite way to the one asked.
+  if ((factor > 1.0 && f < 1.0) || (factor < 1.0 && f > 1.0))
+    return 1.0;
+  return f;
 }
 
 namespace {

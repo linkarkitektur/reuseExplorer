@@ -37,6 +37,17 @@ TEST_CASE("ClampZoomFactor_StopsAtTheLimits", "[rux_qt][graphview][zoom]") {
   CHECK(clamp_zoom_factor(0.01, -1.0, z) == Approx(1.0));
 }
 
+TEST_CASE("ClampZoomFactor_NeverReversesTheWheel",
+          "[rux_qt][graphview][zoom]") {
+  // A very wide viewport fits the graph by its height, past the zoom-out
+  // limit: scrolling out must not zoom in, nor scrolling in zoom out.
+  const ZoomLimits z{0.001, 0.2};
+  CHECK(clamp_zoom_factor(0.5, 0.8, z) == Approx(1.0));
+  CHECK(clamp_zoom_factor(0.0005, 1.25, z) == Approx(1.0));
+  // Zooming in from out there lands on the limit, as asked.
+  CHECK(clamp_zoom_factor(0.5, 1.25, z) == Approx(2.5));
+}
+
 namespace {
 std::array<double, 16> yaw_pose(double deg, double tx = 0, double ty = 0,
                                 double tz = 0) {
