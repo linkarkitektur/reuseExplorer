@@ -60,6 +60,7 @@ GraphDiscoverResult discover_loop_edges(ProjectDB &db,
       count_usable_odometry_edges(db.list_pose_graph_edges()) == 0) {
     const auto init = init_pose_graph(db);
     res.initialised_graph = true;
+    res.odometry_edges_written = init.odometry_edges_written;
     core::info("GraphDiscover: the stored pose graph had no odometry; "
                "initialised {} odometry edges from the current poses "
                "(as 'rux graph init')",

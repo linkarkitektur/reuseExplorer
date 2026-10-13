@@ -8,8 +8,8 @@
 # (~/repos/NewOffice/pseudo-gt/REPORT.md, results summarised in
 # https://github.com/pfmephisto/ReUseX/issues/221#issuecomment-5620619174):
 #
-#   XFeat loop edges + `rux optimize --loop-edges <f> --loop-trust
-#   --odometry-sigma-trans 0.05` is the ONLY tested configuration in this
+#   XFeat loop edges + `rux graph discover --no-loop-closure --loop-edges <f>`
+#   + `rux optimize --loop-trust --odometry-sigma-trans 0.05` is the ONLY tested configuration in this
 #   workstream that produced a real, visually-confirmed drift correction:
 #   NewOffice's start<->end gap closed 23.44 m -> 16.05 m (max pose shift
 #   9.80 m). Bare `--loop-trust` alone, at the default
@@ -274,13 +274,14 @@ run "${xfeat_env[@]}" "$venv_py" -u "$repo_root/tools/loop_edges/export_loop_edg
 # default --odometry-sigma-trans 0.01, saturates at a correction
 # indistinguishable from doing nothing. Both flags together are required.
 # ---------------------------------------------------------------------------
-echo "==> [4/5] optimize --loop-edges --loop-trust --odometry-sigma-trans 0.05"
+echo "==> [4/5] graph discover --loop-edges; optimize --loop-trust --odometry-sigma-trans 0.05"
 if $dry_run; then
-  run "$rux" -v -p "$work" optimize --loop-edges "$edges" --loop-trust \
-    --odometry-sigma-trans 0.05
+  run "$rux" -v -p "$work" graph discover --no-loop-closure --loop-edges "$edges"
+  run "$rux" -v -p "$work" optimize --loop-trust --odometry-sigma-trans 0.05
 else
-  "$rux" -v -p "$work" optimize --loop-edges "$edges" --loop-trust \
-    --odometry-sigma-trans 0.05 2>&1 | tee "$optimize_log"
+  { "$rux" -v -p "$work" graph discover --no-loop-closure --loop-edges "$edges" &&
+    "$rux" -v -p "$work" optimize --loop-trust --odometry-sigma-trans 0.05; } \
+    2>&1 | tee "$optimize_log"
 fi
 
 # `optimize` only rewrites stored poses — it does not touch the cloud/plane
@@ -330,8 +331,8 @@ else
     echo "Output: \`$work\`"
     echo "Matcher: XFeat (Apache-2.0, commercial-safe), \`--proposal endcap"
     echo "--min-frame-gap $min_frame_gap --max-pairs $max_pairs --device $device\`."
-    echo "Apply: \`optimize --loop-edges <edges> --loop-trust"
-    echo "--odometry-sigma-trans 0.05\`."
+    echo "Apply: \`rux graph discover --no-loop-closure --loop-edges <edges>\`"
+    echo "+ \`rux optimize --loop-trust --odometry-sigma-trans 0.05\`."
     echo
     echo "| Metric | Before | After |"
     echo "|---|---:|---:|"

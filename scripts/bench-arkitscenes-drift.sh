@@ -155,7 +155,7 @@ for vid in $video_ids; do
             rm -f "$work" "$work-shm" "$work-wal"
             continue
           fi
-          "$rux" -v -p "$work" optimize --no-plane-factors --loop-edges "$edges"
+          "$rux" -v -p "$work" graph discover --no-loop-closure --loop-edges "$edges" && "$rux" -v -p "$work" optimize --no-plane-factors
           ;;
         plane-xfeat)
           # Plane term ON *and* external loop edges. The interesting cell once
@@ -168,7 +168,7 @@ for vid in $video_ids; do
             rm -f "$work" "$work-shm" "$work-wal"
             continue
           fi
-          "$rux" -v -p "$work" optimize --loop-edges "$edges"
+          "$rux" -v -p "$work" graph discover --no-loop-closure --loop-edges "$edges" && "$rux" -v -p "$work" optimize
           ;;
         register)     "$rux" -v -p "$work" register ;;
         opt-register) "$rux" -v -p "$work" optimize &&

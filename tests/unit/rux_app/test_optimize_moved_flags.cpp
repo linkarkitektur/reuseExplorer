@@ -83,3 +83,12 @@ TEST_CASE("OptimizeMovedFlags_RefusalMessage_PointsAtGraphDiscover",
     CHECK(msg.find(flag) != std::string::npos);
   }
 }
+
+TEST_CASE("OptimizeMovedFlags_LoopClosureRefusal_SaysItIsOnByDefault",
+          "[rux_app][cli][optimize]") {
+  // `rux graph discover` runs ORB loop closure by default and has no
+  // --loop-closure flag: the refusal must not suggest one.
+  const std::string msg = optimize_moved_flag_message("--loop-closure");
+  CHECK(msg.find("rux graph discover --loop-closure") == std::string::npos);
+  CHECK(msg.find("on by default") != std::string::npos);
+}

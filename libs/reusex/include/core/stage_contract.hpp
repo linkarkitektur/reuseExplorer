@@ -54,8 +54,9 @@ enum class PipelineStage {
   // `gsplat` consumes `cloud` + `sensor_frames`, so anywhere after `clouds`
   // would satisfy the ordering invariant. It sits last because it is a LEAF:
   // it produces a `splat` nothing else consumes, so putting it mid-table would
-  // read as if the reconstruction spine ran through it. Leaves at the end also
-  // keeps the numbering of the existing stages stable.
+  // read as if the reconstruction spine ran through it. Enumerator values are
+  // not persisted anywhere; only the declaration order (the ordering
+  // invariant above) matters.
   gsplat, ///< train a 3D Gaussian splat and store it in the project
 };
 

@@ -26,8 +26,9 @@ struct StageSpec {
   std::vector<FlagSpec> flags;
 };
 
-/// Mirrors apps/rux/src/create/*.cpp and optimize.cpp. Keys absent here
-/// have no flag (rooms.propagate_k) and are reported as unmapped.
+/// Mirrors apps/rux/src/create/*.cpp, optimize.cpp and graph/discover.cpp.
+/// Keys absent here have no flag (rooms.propagate_k) and are reported as
+/// unmapped.
 const std::vector<StageSpec> &stage_specs() {
   static const std::vector<StageSpec> specs = {
       {"clouds",
@@ -83,6 +84,16 @@ const std::vector<StageSpec> &stage_specs() {
        {{"min_observations", "--min-observations", {}, {}},
         {"assoc_rounds", "--assoc-rounds", {}, {}},
         {"no_gnc", {}, "--no-gnc", {}},
+        {"dry_run", {}, "--dry-run", {}}}},
+      {"graph_discover",
+       {"graph", "discover"},
+       {{"loop_closure", {}, {}, "--no-loop-closure"},
+        {"use_panoramas", {}, "--use-panoramas", {}},
+        {"loop_edges_file", "--loop-edges", {}, {}},
+        {"loop_proposal", "--loop-proposal", {}, {}},
+        {"loop_min_frame_gap", "--loop-min-frame-gap", {}, {}},
+        {"loop_min_inliers", "--loop-min-inliers", {}, {}},
+        {"pcm", {}, {}, "--loop-no-pcm"},
         {"dry_run", {}, "--dry-run", {}}}},
   };
   return specs;

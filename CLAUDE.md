@@ -383,7 +383,8 @@ binaries carry no Qt client code. Hidden dev flag:
 The Qt client's 3D workspace and `rux render` share one scene builder,
 `visualize::populate_scene()` (`visualize/scene.hpp`); its Pipeline workspace
 runs stages in-process through `pipeline::JobRunner` with
-`pipeline::stage_executor_with_optimize()` (handed over in `GuiLaunch`; `ruxd`
+`pipeline::stage_executor_with_optimize()` (which runs `optimize` and
+`graph_discover`; handed over in `GuiLaunch`; `ruxd`
 injects the same executor for the web GUI, from its own repo), and "Kopiér som
 rux-kommando" (`rux_qt/cli_command.hpp`) is round-trip tested against the real
 CLI (`tests/unit/rux_app/test_cli_command_roundtrip.cpp`, via
@@ -441,7 +442,10 @@ and deleted the shims. `include/geometry/` now holds only the real
   Solves the stored pose graph (`pose_graph_edges`, seeded from
   `sensor_frames.initial_transform`; `optimize_graph`); `slam/pose_graph.hpp`
   is `rux graph init`, `slam/loop_candidates.hpp` the ORB / panorama / file
-  loop front-ends.
+  loop front-ends, `slam/graph_discover.hpp` (`rux graph discover`:
+  front-ends vs the stored graph, PCM with confirmed edges as fixed inliers;
+  also `JobStage::graph_discover`, run by `stage_executor_with_optimize()`),
+  `slam/graph_prune.hpp` (`rux graph prune`).
 - `pose_graph_conventions.hpp`: stored (`sensor_frames.transform`) ↔ optical
   edge transforms and information; `core/pose_graph.hpp` holds the schema
   vocabulary and SE(3) helpers.
@@ -457,7 +461,7 @@ and deleted the shims. `include/geometry/` now holds only the real
   repo, `ruxd`, because `reusex_pipeline` must not link GTSAM (#464)
 - `PanoramaAlignment.hpp`: content-based 360 pose refinement, `rux align 360`
 - `PanoramaLoopEdges.hpp`: wide-baseline `LoopEdge`s derived from 360
-  panoramas (`rux optimize --use-panoramas`, #236). Each panorama is resected
+  panoramas (`rux graph discover --use-panoramas`, #236). Each panorama is resected
   INDEPENDENTLY against every frame it matches, in that frame's own optical
   coordinates — reusing the aligned panorama *pose* instead would be circular
   and carry no drift information. Does not require `rux align 360`.
@@ -606,7 +610,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | `edit` | `downsample`, `perturb-poses` (drift synthesis, #338) | `src/edit/` |
 | `analyze` | `quality`, `accuracy` | `src/analyze/` |
 | `optimize` | — (solves the stored pose graph) | `src/optimize.cpp` |
-| `graph` | `init` (stored pose graph) | `src/graph/` |
+| `graph` | `init`, `discover`, `prune` (stored pose graph) | `src/graph/` |
 | `register` | — (joint pairwise registration) | `src/register.cpp` |
 | `validate` | — (`--stage`, `--json`) | `src/validate.cpp` |
 | `get` / `set` / `del` | path-based DB access (`src/database/*_router.cpp`) | `src/get.cpp`, `src/set.cpp`, `src/del.cpp` |

@@ -5,7 +5,7 @@
 # Loop-closure matcher benchmark (issue #221/#225 P2). Measures the effect of
 # externally-computed wide-baseline loop edges (from tools/loop_edges/, produced
 # by ORB / XFeat / MASt3R / MapAnything) on pose quality, all fed through the
-# license-clean `rux optimize --loop-edges` bridge.
+# license-clean `rux graph discover --loop-edges` bridge (then `rux optimize`).
 #
 # For a given scan it builds a fresh copy per variant, runs the identical
 # reconstruction pipeline (deterministic), and scores it with `rux analyze
@@ -13,7 +13,8 @@
 # `rux analyze accuracy` (F-score @ threshold). Variants:
 #   base                 stored poses, no pose stage
 #   optimize             plane-graph optimize (current default)
-#   optimize+<edges>     optimize --loop-edges <file> --loop-trust  (one per file)
+#   optimize+<edges>     graph discover --loop-edges <file>; optimize --loop-trust
+#                        (one per file)
 #
 # Usage:
 #   scripts/bench-loop-edges.sh <project.rux> <out_dir> <edges_dir> [gt.ply]
@@ -24,7 +25,8 @@
 # `pcm_kept` (of `pcm_in`) and `max_shift_m`:
 #   pcm_kept     edges that survived Pairwise Consistency Maximization, i.e.
 #                that agree with EACH OTHER about the trajectory. For a
-#                --loop-edges variant this is the matcher's own edge count
+#                file-edge (--loop-edges) variant this is the matcher's own
+#                edge count
 #                (external_total - external_rejected), not the union.
 #   max_shift_m  the correction actually applied to the worst-displaced pose.
 # `edges_emitted` and `sum_inliers` are SECONDARY diagnostics describing the
@@ -70,10 +72,11 @@ print(f"{len(edges)}\t{sum(int(e.get('inliers', 0) or 0) for e in edges)}")
 PY
 }
 
-# PRIMARY metric extraction (#312). Parses the `rux optimize` log for the
-# consistency outcome; prints "<pcm_kept>\t<pcm_in>\t<graph_edges>\t<max_shift_m>".
+# PRIMARY metric extraction (#312). Parses the `rux graph discover` +
+# `rux optimize` log for the consistency outcome; prints
+# "<pcm_kept>\t<pcm_in>\t<graph_edges>\t<max_shift_m>".
 #
-# The library logs (src/slam/optimize_sensor_poses.cpp):
+# The library logs (src/slam/graph_discover.cpp):
 #   "PlaneGraph: PCM kept K of N unioned loop edges; R of T external edges
 #    rejected as inconsistent"
 # K/N describe the UNION (external + internally detected + panorama). When a
@@ -133,8 +136,10 @@ run_variant() {
   fi
   if [[ "$name" != "base" ]]; then
     if [[ -n "$edge_file" ]]; then
-      "$rux" -v -p "$rux_copy" optimize --loop-edges "$edge_file" --loop-trust \
-        --odometry-sigma-trans 0.05 "$@" > "$opt_log" 2>&1 || true
+      { "$rux" -v -p "$rux_copy" graph discover --no-loop-closure \
+          --loop-edges "$edge_file" &&
+        "$rux" -v -p "$rux_copy" optimize --loop-trust \
+          --odometry-sigma-trans 0.05 "$@"; } > "$opt_log" 2>&1 || true
     else
       "$rux" -v -p "$rux_copy" optimize "$@" > "$opt_log" 2>&1 || true
     fi

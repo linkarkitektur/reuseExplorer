@@ -45,6 +45,7 @@ struct GraphDiscoverResult {
   int added_panorama = 0;
   int added_file = 0;
   bool initialised_graph = false; ///< odometry was created first
+  int odometry_edges_written = 0; ///< by that initialisation (0 otherwise)
 };
 
 /// PCM cost is O(M^2) pairwise cycle tests with M = stored active loop edges

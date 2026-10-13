@@ -175,6 +175,7 @@ TEST_CASE("GraphDiscover_NoGraph_InitialisesOdometryFirst",
   write_edges(file.path, {{1, 8, rel(1, 8)}});
   const auto r = slam::discover_loop_edges(db, file_only(file.path));
   CHECK(r.initialised_graph);
+  CHECK(r.odometry_edges_written == 7);
   CHECK(slam::count_usable_odometry_edges(db.list_pose_graph_edges()) == 7);
   CHECK(r.added == 1);
 }

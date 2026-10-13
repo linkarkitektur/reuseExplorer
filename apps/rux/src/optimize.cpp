@@ -46,6 +46,12 @@ const std::vector<std::pair<std::string, bool>> &optimize_moved_flags() {
 }
 
 std::string optimize_moved_flag_message(const std::string &flag) {
+  // Discover runs ORB loop closure unless --no-loop-closure: it has no
+  // --loop-closure flag to suggest.
+  if (flag == "--loop-closure")
+    return "'--loop-closure' moved to 'rux graph discover', where ORB loop "
+           "closure is on by default: rux optimize now solves the stored pose "
+           "graph. Run 'rux graph discover' first, then 'rux optimize'.";
   return fmt::format("'{}' moved to 'rux graph discover': rux optimize now "
                      "solves the stored pose graph. Run 'rux graph discover "
                      "{} ...' first, then 'rux optimize'.",

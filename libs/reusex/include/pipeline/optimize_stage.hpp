@@ -93,15 +93,21 @@ inline StageResult run_graph_discover_stage(ProjectDB &db,
   try {
     const auto r = slam::discover_loop_edges(db, options);
     const std::string summary = fmt::format(
-        "{}{} proposed, {} matched, {} PCM-rejected, {} over the PCM cap, {} "
+        "{}{}{} proposed, {} matched, {} PCM-rejected, {} over the PCM cap, {} "
         "already stored, {} rejected before, {} added",
-        options.dry_run ? "dry run: " : "", r.proposed, r.candidates,
-        r.pcm_rejected, r.pcm_capped, r.skipped_existing, r.skipped_rejected,
-        r.added);
+        options.dry_run ? "dry run: " : "",
+        r.initialised_graph
+            ? fmt::format("no odometry stored: initialised {} odometry edges "
+                          "first; ",
+                          r.odometry_edges_written)
+            : std::string(),
+        r.proposed, r.candidates, r.pcm_rejected, r.pcm_capped,
+        r.skipped_existing, r.skipped_rejected, r.added);
     if (options.dry_run)
       return StageResult::success(summary);
-    return StageResult::success(summary, {{"table", "pose_graph_edges",
-                                           static_cast<int64_t>(r.added)}});
+    return StageResult::success(
+        summary, {{"table", "pose_graph_edges",
+                   static_cast<int64_t>(r.added + r.odometry_edges_written)}});
   } catch (const std::invalid_argument &e) {
     return StageResult::invalid(e.what());
   } catch (const std::exception &e) {

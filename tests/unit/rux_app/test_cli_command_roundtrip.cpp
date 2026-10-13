@@ -6,7 +6,7 @@
 // command that really does what the GUI run did. The key -> flag table lives
 // in rux_qt/cli_command.cpp, far from the CLI it describes; this test parses
 // every generated command back through the REAL CLI11 setup of each stage
-// subcommand (setup_subcommand_create / setup_subcommand_optimize) and checks
+// subcommand (setup_subcommand_create / _optimize / _graph) and checks
 // that the stage receives the same parameters — key by key, for every
 // parameter pipeline::stage_parameters() lists, and all at once.
 //
@@ -18,6 +18,7 @@
 #include <create.hpp>
 #include <create/stage_bridge.hpp>
 #include <global-params.hpp>
+#include <graph.hpp>
 #include <optimize.hpp>
 
 #include <reusex/pipeline/mesh_parameters.hpp>
@@ -61,7 +62,6 @@ const std::set<std::string> kNoFlag = {"rooms.propagate_k"};
 const std::set<std::string> kNoCliMapping = {
     "gsplat",
     "annotate",
-    "graph_discover", // until Task 18 adds rux graph discover
 };
 
 struct Captured {
@@ -76,6 +76,7 @@ Captured parse_through_cli(const std::vector<std::string> &args) {
   app.add_option("-p,--project", global->project_db);
   setup_subcommand_create(app, global);
   setup_subcommand_optimize(app, global);
+  setup_subcommand_graph(app, global);
 
   Captured got;
   rux::set_stage_params_sink(
@@ -135,6 +136,8 @@ std::string changed_value(const pl::ParameterDescriptor &d) {
       return "planes in [1, 2]";
     if (d.key == "solver")
       return "highs";
+    if (d.key == "loop_proposal")
+      return "spatial";
     return "x_" + d.key;
   case pl::ParameterType::integer_list:
     return "1,4";
