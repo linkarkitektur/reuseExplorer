@@ -36,6 +36,7 @@ class QGraphicsPathItem;
 namespace rux::qt {
 
 class EdgeEditor;
+class ElidedLabel;
 class ProjectSession;
 class ViewSettings;
 
@@ -46,7 +47,12 @@ class PoseGraphView : public QGraphicsView {
   explicit PoseGraphView(QWidget *parent = nullptr);
   void fit();
   /// What fit() frames (the nodes; screen-sized markers would skew it).
-  void set_content_rect(const QRectF &r) { content_ = r; }
+  void set_content_rect(const QRectF &r);
+  /// Zoom by @p factor and centre on @p scene_pos, as the user would (the
+  /// gallery): a resize or a yaw change then keeps the view.
+  void zoom_on(const QPointF &scene_pos, double factor);
+  /// Zoomed or panned by the user since the last fit.
+  bool user_view() const { return user_view_; }
   /// Scene units per screen pixel at the current zoom.
   double units_per_pixel() const;
 
@@ -127,6 +133,7 @@ class GraphPanel : public QWidget {
   ViewProjection projection_;
   std::vector<NodeData> data_; ///< id order, as loaded
   std::vector<Heading> ticks_; ///< per node, after project()
+  double step_ = 0.0;          ///< median_step of the projected nodes
   QButtonGroup *planes_ = nullptr;
   QSlider *yaw_slider_ = nullptr;
   QDoubleSpinBox *yaw_spin_ = nullptr;
@@ -134,7 +141,7 @@ class GraphPanel : public QWidget {
   bool active_ = false;
   bool loading_ = false;
   PoseGraphView *view_ = nullptr;
-  QLabel *meta_ = nullptr;
+  ElidedLabel *meta_ = nullptr;
   QLabel *empty_ = nullptr;
 
   std::vector<GraphNode> nodes_; ///< data_ projected, same order

@@ -83,9 +83,11 @@ int label_slots() {
 /// size on screen at every zoom.
 class NodesItem : public QGraphicsItem {
     public:
+  /// @p step: median scene distance of consecutive nodes (median_step);
+  /// the ticks show only once that is a tick long on screen.
   NodesItem(const std::vector<GraphNode> &nodes, std::vector<int> scans,
-            std::vector<Heading> ticks)
-      : scans_(std::move(scans)) {
+            const std::vector<Heading> &ticks, double step)
+      : scans_(std::move(scans)), step_(step) {
     // The direction bin of each tick (-1: hidden), fixed for the item.
     tick_bin_.reserve(ticks.size());
     for (const Heading &h : ticks) {
@@ -144,6 +146,10 @@ class NodesItem : public QGraphicsItem {
         to_device.mapRect(opt->exposedRect).adjusted(-m, -m, m, m);
     const double dpr = p->device() ? p->device()->devicePixelRatioF() : 1.0;
     const int nslots = label_slots();
+    // Uniform scale (the canvas only zooms and pans), whatever the yaw.
+    const double scale = std::sqrt(std::abs(to_device.determinant()));
+    const bool ticks =
+        heading_ticks_visible(step_, scale > 0 ? 1.0 / scale : 0.0, kTickPx);
     p->save();
     p->resetTransform();
     std::size_t begin = 0;
@@ -165,7 +171,7 @@ class NodesItem : public QGraphicsItem {
         if (!visible.contains(d))
           continue;
         device_.push_back(d);
-        const int bin = i < tick_bin_.size() ? tick_bin_[i] : -1;
+        const int bin = ticks && i < tick_bin_.size() ? tick_bin_[i] : -1;
         if (bin >= 0) {
           const QPixmap &t = tick(colour, dpr, bin);
           p->drawPixmap(
@@ -183,6 +189,7 @@ class NodesItem : public QGraphicsItem {
   std::vector<QPointF> points_;
   std::vector<int> scans_;
   std::vector<int> tick_bin_; ///< per point; -1 = no tick
+  double step_ = 0.0;
   /// Per-paint scratch, kept to avoid reallocating every frame.
   std::vector<QPointF> device_;
   /// The heading tick of direction @p bin in @p colour, centred on the
@@ -354,16 +361,30 @@ PoseGraphView::PoseGraphView(QWidget *parent) : QGraphicsView(parent) {
   setFocusPolicy(Qt::StrongFocus);
 }
 
+namespace {
+/// The graph's rect with a margin: what fit() frames.
+QRectF padded(QRectF r) {
+  const double pad = std::max(r.width(), r.height()) * 0.06 + 0.5;
+  return r.adjusted(-pad, -pad, pad, pad);
+}
+} // namespace
+
+void PoseGraphView::set_content_rect(const QRectF &r) {
+  content_ = r;
+  if (!scene() || content_.isNull())
+    return;
+  // Let the view pan past the graph's edge a little. Set here, not only in
+  // fit(): a yaw change that keeps the zoom moves the graph, and centerOn
+  // clamps to the scene rect.
+  const QRectF p = padded(content_);
+  scene()->setSceneRect(
+      p.adjusted(-p.width(), -p.height(), p.width(), p.height()));
+}
+
 void PoseGraphView::fit() {
   if (!scene() || content_.isNull())
     return;
-  QRectF r = content_;
-  const double pad = std::max(r.width(), r.height()) * 0.06 + 0.5;
-  r.adjust(-pad, -pad, pad, pad);
-  // Let the view pan past the graph's edge a little.
-  scene()->setSceneRect(
-      r.adjusted(-r.width(), -r.height(), r.width(), r.height()));
-  fitInView(r, Qt::KeepAspectRatio);
+  fitInView(padded(content_), Qt::KeepAspectRatio);
   user_view_ = false;
 }
 
@@ -371,6 +392,12 @@ void PoseGraphView::resizeEvent(QResizeEvent *e) {
   QGraphicsView::resizeEvent(e);
   if (!user_view_)
     fit();
+}
+
+void PoseGraphView::zoom_on(const QPointF &scene_pos, double factor) {
+  scale(factor, factor);
+  centerOn(scene_pos);
+  user_view_ = true;
 }
 
 double PoseGraphView::units_per_pixel() const {
@@ -471,7 +498,7 @@ GraphPanel::GraphPanel(ProjectSession &session, EdgeEditor &editor,
   bl->addWidget(drej);
   yaw_slider_ = new QSlider(Qt::Horizontal);
   yaw_slider_->setObjectName("yawSlider");
-  yaw_slider_->setRange(-180, 180);
+  yaw_slider_->setRange(-179, 180); // (-180, 180]: -180 would snap to 180
   yaw_slider_->setMinimumWidth(t.px("--layout-nav-width") / 2);
   bl->addWidget(yaw_slider_);
   yaw_spin_ = new QDoubleSpinBox;
@@ -532,8 +559,11 @@ GraphPanel::GraphPanel(ProjectSession &session, EdgeEditor &editor,
   // Wraps rather than widening Rediger's left column past a 1440 px window.
   hint->setWordWrap(true);
   sl->setSpacing(t.px("--space-4"));
-  meta_ = new QLabel;
+  // Elides rather than widening the column (a long "ikke gemt" count).
+  meta_ = new ElidedLabel(QString(), Qt::ElideRight);
   meta_->setObjectName("statusText");
+  // Its natural width when there is room; it can still shrink (and elide).
+  meta_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
   sl->addWidget(meta_, 0, Qt::AlignTop);
   hint->setAlignment(Qt::AlignRight | Qt::AlignTop);
   sl->addWidget(hint, 1);
@@ -667,6 +697,15 @@ void GraphPanel::project() {
     nodes_.push_back({n.id, p.x, p.y});
     ticks_.push_back(heading_in_view(projection_, n.forward));
   }
+  std::vector<Vec2> pts;
+  std::vector<int> scans;
+  pts.reserve(nodes_.size());
+  scans.reserve(nodes_.size());
+  for (std::size_t i = 0; i < nodes_.size(); ++i) {
+    pts.push_back({nodes_[i].x, nodes_[i].y});
+    scans.push_back(data_[i].scan);
+  }
+  step_ = median_step(pts, scans);
 }
 
 void GraphPanel::set_plane(ViewPlane plane) {
@@ -683,15 +722,32 @@ void GraphPanel::set_plane(ViewPlane plane) {
 }
 
 void GraphPanel::set_yaw(double deg) {
+  const ViewProjection old = projection_;
   projection_.yaw_deg = deg;
   {
     const QSignalBlocker a(yaw_slider_), b(yaw_spin_);
     yaw_slider_->setValue(static_cast<int>(std::lround(deg)));
     yaw_spin_->setValue(deg);
   }
+  // Zoomed or panned: the yaw is for lining the plan up close, so keep the
+  // scale and the world point at the centre. Otherwise frame the graph.
+  const bool keep = view_->user_view() && !data_.empty();
+  Vec2 centre;
+  if (keep) {
+    const QPointF c = view_->mapToScene(view_->viewport()->rect().center());
+    // Lifted with the graph's mean depth on the axis the plane drops.
+    double depth = 0.0;
+    for (const auto &n : data_)
+      depth += view_depth(old, n.t[0], n.t[1], n.t[2]);
+    depth /= static_cast<double>(data_.size());
+    centre = reproject_after_yaw(old, deg, {c.x(), -c.y()}, depth);
+  }
   project();
   rebuild_scene();
-  view_->fit();
+  if (keep)
+    view_->centerOn(centre.x, -centre.y);
+  else
+    view_->fit();
 }
 
 void GraphPanel::rebuild_scene() {
@@ -733,7 +789,7 @@ void GraphPanel::rebuild_scene() {
   scans.reserve(data_.size());
   for (const auto &n : data_)
     scans.push_back(n.scan);
-  nodes_item_ = new NodesItem(nodes_, std::move(scans), ticks_);
+  nodes_item_ = new NodesItem(nodes_, std::move(scans), ticks_, step_);
   sc->addItem(nodes_item_);
   view_->set_content_rect(path.boundingRect());
   // Chrome colours, not class colours: a marker must never read as a label.
@@ -884,11 +940,11 @@ void GraphPanel::click_edge(int from, int to) {
 
 void GraphPanel::update_meta() {
   if (!session_.is_open()) {
-    meta_->setText(QString());
+    meta_->set_full_text(QString());
     return;
   }
   if (loading_) {
-    meta_->setText("Læser poserne …");
+    meta_->set_full_text("Læser poserne …");
     return;
   }
   QString m = QString("%1 billeder · %2 kanter")
@@ -896,7 +952,7 @@ void GraphPanel::update_meta() {
                   .arg(format_count(static_cast<qulonglong>(edges_.size())));
   if (const int n = editor_.pending())
     m += QString(" · %1 ikke gemt").arg(n);
-  meta_->setText(m);
+  meta_->set_full_text(m);
 }
 
 } // namespace rux::qt

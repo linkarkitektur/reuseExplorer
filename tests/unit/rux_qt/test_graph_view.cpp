@@ -28,12 +28,11 @@ TEST_CASE("ZoomLimits_ScaleWithTheGraphAndTheViewport",
 
 TEST_CASE("ClampZoomFactor_StopsAtTheLimits", "[rux_qt][graphview][zoom]") {
   const ZoomLimits z{0.001, 0.2};
-  CHECK(clamp_zoom_factor(0.01, 2.0, z) == Approx(2.0));  // inside: as asked
-  CHECK(clamp_zoom_factor(0.002, 4.0, z) == Approx(2.0)); // lands on min
-  CHECK(clamp_zoom_factor(0.1, 0.25, z) == Approx(0.5));  // lands on max
-  CHECK(clamp_zoom_factor(0.0005, 1.0, z) ==
-        Approx(0.5));                                   // already past: back in
-  CHECK(clamp_zoom_factor(0.0, 2.0, z) == Approx(1.0)); // degenerate: no-op
+  CHECK(clamp_zoom_factor(0.01, 2.0, z) == Approx(2.0));   // inside: as asked
+  CHECK(clamp_zoom_factor(0.002, 4.0, z) == Approx(2.0));  // lands on min
+  CHECK(clamp_zoom_factor(0.1, 0.25, z) == Approx(0.5));   // lands on max
+  CHECK(clamp_zoom_factor(0.0005, 1.0, z) == Approx(1.0)); // no step: no change
+  CHECK(clamp_zoom_factor(0.0, 2.0, z) == Approx(1.0));    // degenerate: no-op
   CHECK(clamp_zoom_factor(0.01, -1.0, z) == Approx(1.0));
 }
 
@@ -44,8 +43,11 @@ TEST_CASE("ClampZoomFactor_NeverReversesTheWheel",
   const ZoomLimits z{0.001, 0.2};
   CHECK(clamp_zoom_factor(0.5, 0.8, z) == Approx(1.0));
   CHECK(clamp_zoom_factor(0.0005, 1.25, z) == Approx(1.0));
-  // Zooming in from out there lands on the limit, as asked.
-  CHECK(clamp_zoom_factor(0.5, 1.25, z) == Approx(2.5));
+  // Moving back towards the range takes the step as asked, no snap...
+  CHECK(clamp_zoom_factor(0.5, 1.25, z) == Approx(1.25));
+  CHECK(clamp_zoom_factor(0.0005, 0.8, z) == Approx(0.8));
+  // ...and does not overshoot the far limit.
+  CHECK(clamp_zoom_factor(0.5, 1000.0, z) == Approx(500.0));
 }
 
 namespace {
@@ -210,4 +212,42 @@ TEST_CASE("SlotPicker_SetPair_FromAnEdge", "[rux_qt][graphview][slots]") {
   CHECK(s.a() == -1);
   CHECK(s.b() == -1);
   CHECK(s.next() == Slot::a);
+}
+
+TEST_CASE("ReprojectAfterYaw_KeepsTheSameWorldPoint",
+          "[rux_qt][graphview][projection]") {
+  // Plan view: the dropped axis does not matter.
+  const ViewProjection plan{ViewPlane::xy, 0.0};
+  const Vec2 p = project_point(plan, 3.0, 1.0, 0.0);
+  const Vec2 q = reproject_after_yaw(plan, 90.0, p);
+  const Vec2 want = project_point({ViewPlane::xy, 90.0}, 3.0, 1.0, 0.0);
+  CHECK(q.x == Approx(want.x));
+  CHECK(q.y == Approx(want.y));
+  // Elevations: lifted at the point's own depth, it lands on itself.
+  for (ViewPlane plane : {ViewPlane::xz, ViewPlane::yz}) {
+    const ViewProjection v{plane, 30.0};
+    const Vec2 e = project_point(v, 2.0, 5.0, 1.5);
+    const double d = view_depth(v, 2.0, 5.0, 1.5);
+    const Vec2 r = reproject_after_yaw(v, 75.0, e, d);
+    const Vec2 w = project_point({plane, 75.0}, 2.0, 5.0, 1.5);
+    CHECK(r.x == Approx(w.x));
+    CHECK(r.y == Approx(w.y));
+  }
+}
+
+TEST_CASE("MedianStep_ConsecutiveNodesWithinAScan",
+          "[rux_qt][graphview][ticks]") {
+  const std::vector<Vec2> pts = {{0, 0}, {1, 0}, {3, 0}, {3, 0.5}};
+  CHECK(median_step(pts, {}) == Approx(1.0));            // 1, 2, 0.5
+  CHECK(median_step(pts, {1, 1, 2, 2}) == Approx(0.75)); // 1, 0.5: mean
+  CHECK(median_step({{1, 1}}, {}) == Approx(0.0));
+  CHECK(median_step({}, {}) == Approx(0.0));
+}
+
+TEST_CASE("HeadingTicks_OnlyOnceNodesAreATickApart",
+          "[rux_qt][graphview][ticks]") {
+  CHECK(heading_ticks_visible(0.1, 0.01, 7.0));        // 10 px apart
+  CHECK_FALSE(heading_ticks_visible(0.05, 0.01, 7.0)); // 5 px: fur
+  CHECK(heading_ticks_visible(0.0, 0.01, 7.0)); // one node, or all in one spot
+  CHECK(heading_ticks_visible(0.05, 0.0, 7.0)); // degenerate zoom
 }

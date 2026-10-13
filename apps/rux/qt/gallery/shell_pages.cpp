@@ -40,6 +40,7 @@
 #include <QThread>
 #include <QTimer>
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <optional>
@@ -523,6 +524,52 @@ QWidget *make_rediger_yaw(const PageContext &ctx) {
   return shell;
 }
 
+/// Zoomed in on a node, then a 30° yaw: the scale and the centre must stay
+/// (the yaw is for lining up the plan close up). stderr: how far the node
+/// moved from the centre, and the scale before and after.
+QWidget *make_rediger_yaw_zoomed(const PageContext &ctx) {
+  auto *shell = make_pg(ctx);
+  settle();
+  GraphPanel *g = shell->edit()->graph();
+  PoseGraphView *v = g->view();
+  if (g->node_count() == 0)
+    return shell;
+  shell->show();
+  QApplication::processEvents();
+  const int k = g->node_count() / 2;
+  v->zoom_on(g->node_scene_pos(k), 8.0);
+  const double upp = v->units_per_pixel();
+  const auto from_centre = [g, v, k] {
+    const QPointF c = v->mapToScene(v->viewport()->rect().center());
+    const QPointF off = (g->node_scene_pos(k) - c) / v->units_per_pixel();
+    return std::hypot(off.x(), off.y());
+  };
+  const double before = from_centre();
+  shell->view_settings().set_yaw_deg(30.0);
+  std::fprintf(stderr,
+               "rediger-yaw-zoomed: node %.2f px from centre before, %.2f "
+               "after; upp %.4g -> %.4g\n",
+               before, from_centre(), upp, v->units_per_pixel());
+  return shell;
+}
+
+/// A yaw set and the project closed at once, inside the 500 ms debounce:
+/// the close writes it rather than dropping it (WRITES to the copy).
+QWidget *make_rediger_yaw_close(const PageContext &ctx) {
+  auto *shell = make_pg(ctx);
+  settle();
+  shell->view_settings().set_yaw_deg(45.0);
+  if (auto *session = shell->findChild<ProjectSession *>())
+    session->close();
+  settle();
+  if (!ctx.project_path.isEmpty()) {
+    reusex::ProjectDB db(ctx.project_path.toStdString(), /*readOnly=*/true);
+    std::fprintf(stderr, "rediger-yaw-close: stored view.yaw_deg=%s\n",
+                 db.setting(kViewYawSetting).value_or("<none>").c_str());
+  }
+  return shell;
+}
+
 QWidget *make_pipeline(const PageContext &ctx) {
   auto *shell = make_shell(ctx, Open::project);
   shell->show_page(Workspace::pipeline);
@@ -654,6 +701,14 @@ void register_shell_pages() {
   register_page({"rediger-yaw",
                  "Rediger: visningen drejet 30° (skriver til projektkopien)",
                  make_rediger_yaw});
+  register_page({"rediger-yaw-zoomed",
+                 "Rediger: indzoomet, så drejet 30° — skala og midte "
+                 "bevares (skriver til projektkopien)",
+                 make_rediger_yaw_zoomed});
+  register_page({"rediger-yaw-close",
+                 "Rediger: drejet og lukket straks — drejningen gemmes "
+                 "alligevel (skriver til projektkopien)",
+                 make_rediger_yaw_close});
   register_page({"rediger-panes",
                  "Rediger: kantliste og billeder skjult, kun grafen og "
                  "højre kolonne",

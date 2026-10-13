@@ -23,14 +23,12 @@ double clamp_zoom_factor(double units_per_px, double factor,
                          const ZoomLimits &limits) {
   if (!(units_per_px > 0.0) || !(factor > 0.0))
     return 1.0;
-  const double target = std::clamp(
-      units_per_px / factor, limits.min_units_per_px, limits.max_units_per_px);
-  const double f = units_per_px / target;
-  // Already past a limit (a very wide viewport fits the graph by its
-  // height): a wheel step never moves the opposite way to the one asked.
-  if ((factor > 1.0 && f < 1.0) || (factor < 1.0 && f > 1.0))
-    return 1.0;
-  return f;
+  // A view already past a limit (a very wide viewport fits the graph by its
+  // height) widens the range to include it: it is never pushed further out,
+  // moves back by the step asked, and never against the wheel.
+  const double lo = std::min(limits.min_units_per_px, units_per_px);
+  const double hi = std::max(limits.max_units_per_px, units_per_px);
+  return units_per_px / std::clamp(units_per_px / factor, lo, hi);
 }
 
 namespace {
@@ -72,6 +70,69 @@ Vec2 project_point(const ViewProjection &view, double x, double y, double z) {
   const double a = view.yaw_deg * kDeg;
   const double c = std::cos(a), s = std::sin(a);
   return pick(view.plane, x * c - y * s, x * s + y * c, z);
+}
+
+double view_depth(const ViewProjection &view, double x, double y, double z) {
+  const double a = view.yaw_deg * kDeg;
+  const double c = std::cos(a), s = std::sin(a);
+  switch (view.plane) {
+  case ViewPlane::xy:
+    return z;
+  case ViewPlane::xz:
+    return x * s + y * c;
+  case ViewPlane::yz:
+    return x * c - y * s;
+  }
+  return z;
+}
+
+Vec2 reproject_after_yaw(const ViewProjection &view, double new_yaw_deg, Vec2 p,
+                         double depth) {
+  // Lift into the old view's rotated frame, undo its yaw, project anew.
+  double rx = 0, ry = 0, z = 0;
+  switch (view.plane) {
+  case ViewPlane::xy:
+    rx = p.x, ry = p.y, z = depth;
+    break;
+  case ViewPlane::xz:
+    rx = p.x, ry = depth, z = p.y;
+    break;
+  case ViewPlane::yz:
+    rx = depth, ry = p.x, z = p.y;
+    break;
+  }
+  const double a = view.yaw_deg * kDeg;
+  const double c = std::cos(a), s = std::sin(a);
+  return project_point({view.plane, new_yaw_deg}, rx * c + ry * s,
+                       -rx * s + ry * c, z);
+}
+
+double median_step(const std::vector<Vec2> &points,
+                   const std::vector<int> &scans) {
+  std::vector<double> steps;
+  steps.reserve(points.size());
+  for (std::size_t i = 1; i < points.size(); ++i) {
+    if (i < scans.size() && scans[i] != scans[i - 1])
+      continue;
+    steps.push_back(std::hypot(points[i].x - points[i - 1].x,
+                               points[i].y - points[i - 1].y));
+  }
+  if (steps.empty())
+    return 0.0;
+  const std::size_t mid = steps.size() / 2;
+  std::nth_element(steps.begin(), steps.begin() + mid, steps.end());
+  const double upper = steps[mid];
+  if (steps.size() % 2)
+    return upper;
+  const double lower = *std::max_element(steps.begin(), steps.begin() + mid);
+  return 0.5 * (lower + upper);
+}
+
+bool heading_ticks_visible(double median_step_units, double units_per_px,
+                           double tick_px) {
+  if (!(median_step_units > 0.0) || !(units_per_px > 0.0))
+    return true;
+  return median_step_units / units_per_px >= tick_px;
 }
 
 std::array<double, 3> camera_forward(const std::array<double, 16> &w,

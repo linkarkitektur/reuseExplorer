@@ -32,9 +32,10 @@ struct ZoomLimits {
 ZoomLimits zoom_limits(double content_extent, int viewport_px);
 
 /// The scale factor to apply for a requested @p factor (> 1 zooms in) at
-/// @p units_per_px, clamped so the result stays within @p limits. 1 when
-/// either input is not positive, or when the clamp would move the view the
-/// opposite way to the one asked (a view already past a limit).
+/// @p units_per_px, clamped so the result stays within @p limits. A view
+/// already past a limit (a very wide viewport fits the graph by its height)
+/// is never pushed further out, and moves back as asked — no snap, and never
+/// the opposite way to the wheel. 1 when either input is not positive.
 double clamp_zoom_factor(double units_per_px, double factor,
                          const ZoomLimits &limits);
 
@@ -77,6 +78,29 @@ struct Heading {
 /// it lies in the view plane (it would be a meaningless stub).
 Heading heading_in_view(const ViewProjection &view,
                         const std::array<double, 3> &forward);
+
+/// The coordinate project_point drops (the one along the view axis), in
+/// the yaw-rotated frame: z in plan, the rotated y for xz, x for yz.
+double view_depth(const ViewProjection &view, double x, double y, double z);
+
+/// Where the world point that canvas point @p p shows under @p view lands
+/// once the yaw is @p new_yaw_deg — so a yaw change can keep the view's
+/// centre. The point is lifted with @p depth on the dropped axis (see
+/// view_depth; irrelevant in plan view).
+Vec2 reproject_after_yaw(const ViewProjection &view, double new_yaw_deg, Vec2 p,
+                         double depth = 0.0);
+
+/// Median distance between consecutive points of the same scan (@p scans
+/// per point, or empty for one scan); 0 with no such pair. The mean of the
+/// middle two for an even count.
+double median_step(const std::vector<Vec2> &points,
+                   const std::vector<int> &scans);
+
+/// Heading ticks only once consecutive nodes are at least @p tick_px apart
+/// on screen (at a fit zoom of a dense graph they would be fur). True for a
+/// step of 0 (one node, or all in one spot) or a degenerate zoom.
+bool heading_ticks_visible(double median_step_units, double units_per_px,
+                           double tick_px);
 
 // ------------------------------------------------------------------ yaw --
 
