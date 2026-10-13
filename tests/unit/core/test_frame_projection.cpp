@@ -111,6 +111,7 @@ TEST_CASE("ProjectPointsToBox_EmptyInputOrBadIntrinsics_ReturnsNullopt",
 
 #include <core/ProjectDB.hpp>
 #include <core/instance_evidence.hpp>
+#include <core/logging.hpp>
 
 #include "../../support/temp_path.hpp"
 
@@ -160,6 +161,22 @@ void seed_instances(ProjectDB &db) {
   db.save_point_cloud("cloud", positions, "test", "{}");
   db.save_point_cloud("instances", labels, "test", "{}");
 }
+struct InfoCapture {
+  std::vector<std::string> lines;
+  reusex::core::LogLevel saved = reusex::core::get_log_level();
+  InfoCapture() {
+    reusex::core::set_log_handler(
+        [this](reusex::core::LogLevel l, std::string_view m) {
+          if (l == reusex::core::LogLevel::info)
+            lines.emplace_back(m);
+        });
+    reusex::core::set_log_level(reusex::core::LogLevel::info);
+  }
+  ~InfoCapture() {
+    reusex::core::reset_log_handler();
+    reusex::core::set_log_level(saved);
+  }
+};
 } // namespace
 
 TEST_CASE("InstancePoints_GroupsFinitePointsByLabel_SkipsUnlabeled",
@@ -271,4 +288,22 @@ TEST_CASE("CompleteViewRegion_NotInViewOrNoCloud_StaysNull",
   longer.resize(9);
   db.save_point_cloud("instances", longer, "test", "{}");
   CHECK(complete_view_region(db, bare, "instances", 1) == bare);
+}
+
+TEST_CASE("CompleteViewRegion_UnposedFrame_StaysNullWithoutLoadingClouds",
+          "[core][projection][view]") {
+  const reusex::test_support::TempPath tmp("complete_view_region_unposed");
+  ProjectDB db(tmp.path);
+  seed_instances(db);
+  // A frame saved without a pose (e.g. an imported survey photo).
+  db.save_sensor_frame(2, cv::Mat(128, 128, CV_8UC3, cv::Scalar(40, 90, 160)));
+  REQUIRE_FALSE(db.has_sensor_frame_pose(2));
+  const ResourceView bare{ViewKind::frame, 2, std::nullopt};
+  InfoCapture info;
+  CHECK(complete_view_region(db, bare, "instances", 1) == bare);
+  // The pose check must short-circuit before the clouds are ever loaded: the
+  // log names the real reason ("no pose"), not the stale "does not project
+  // into the frame" message that loading-then-failing would produce.
+  REQUIRE(info.lines.size() == 1);
+  CHECK(info.lines[0].find("no pose") != std::string::npos);
 }

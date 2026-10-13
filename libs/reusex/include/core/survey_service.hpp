@@ -97,8 +97,9 @@ struct SurveySyncReport {
   /// frame (core::instance_evidence), region = the instance's padded bbox
   /// in it (spec 2026-10-13-resource-view-record §2). Never overwrites.
   std::size_t views_attached = 0;
-  /// Instance-backed parts still without a view: no frame sees the
-  /// instance, the project has no sensor frames, or no positions cloud.
+  /// Instance-backed parts of instances_cloud still without a view: no
+  /// frame sees the instance, or the project has no sensor frames, no
+  /// positions cloud, or misaligned clouds.
   std::size_t views_unavailable = 0;
 };
 /// Fill survey_types / survey_parts from the instances table: one type per

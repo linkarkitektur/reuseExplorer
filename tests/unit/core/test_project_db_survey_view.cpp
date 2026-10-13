@@ -16,6 +16,7 @@
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
+#include <sqlite3.h>
 
 #include <algorithm>
 #include <stdexcept>
@@ -126,6 +127,28 @@ TEST_CASE("SurveyPartView_DanglingPanorama_ReadsNullAndWarns",
   db.set_survey_part_view("RX-001",
                           ResourceView{ViewKind::panorama, 1, std::nullopt});
   db.delete_panoramic_image(1);
+  WarnCapture warns;
+  CHECK_FALSE(db.survey_part("RX-001")->view);
+  REQUIRE(warns.lines.size() == 1);
+  CHECK(warns.lines[0].find("RX-001") != std::string::npos);
+}
+
+TEST_CASE("SurveyPartView_DanglingFrame_ReadsNullAndWarns",
+          "[ProjectDB][survey][view]") {
+  TempDB tmp;
+  ProjectDB db(tmp.path);
+  seed(db);
+  db.set_survey_part_view("RX-001",
+                          ResourceView{ViewKind::frame, 5, std::nullopt});
+  {
+    sqlite3 *raw = nullptr;
+    REQUIRE(sqlite3_open(tmp.path.string().c_str(), &raw) == SQLITE_OK);
+    char *err = nullptr;
+    REQUIRE(sqlite3_exec(raw, "DELETE FROM sensor_frames WHERE node_id = 5;",
+                         nullptr, nullptr, &err) == SQLITE_OK);
+    sqlite3_free(err);
+    sqlite3_close(raw);
+  }
   WarnCapture warns;
   CHECK_FALSE(db.survey_part("RX-001")->view);
   REQUIRE(warns.lines.size() == 1);

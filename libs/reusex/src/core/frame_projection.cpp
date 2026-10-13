@@ -122,6 +122,13 @@ ResourceView complete_view_region(const ProjectDB &db, ResourceView view,
   if (view.kind != ViewKind::frame || view.region ||
       !db.has_sensor_frame(view.id))
     return view;
+  // An unposed frame (an imported survey photo, say) can never project an
+  // instance into it (project_instance_bbox needs the pose): skip the two
+  // full-cloud loads below rather than pay for them just to find that out.
+  if (!db.has_sensor_frame_pose(view.id)) {
+    reusex::info("frame view {}: no pose; whole image", view.id);
+    return view;
+  }
   std::map<std::uint32_t, std::vector<Eigen::Vector3f>> all;
   try {
     all = instance_points(db, label_cloud, positions_cloud);

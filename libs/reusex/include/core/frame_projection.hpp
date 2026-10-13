@@ -69,7 +69,9 @@ instance_points(const ProjectDB &db, std::string_view label_cloud,
 /// label cloud @p label_cloud in that frame. Returned unchanged otherwise,
 /// and when the instance cannot be placed in the frame: a missing or
 /// misaligned cloud (logged at warn), no points or not in view (info), a
-/// frame that does not exist (the caller's existence check refuses it).
+/// frame that does not exist (the caller's existence check refuses it), or
+/// an unposed frame (info — checked before either cloud is loaded, so an
+/// imported survey photo costs no cloud load here).
 /// Never throws for those cases; a cloud that cannot be loaded still throws
 /// std::runtime_error.
 ResourceView complete_view_region(const ProjectDB &db, ResourceView view,

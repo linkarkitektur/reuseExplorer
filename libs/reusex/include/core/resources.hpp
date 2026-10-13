@@ -69,7 +69,9 @@ struct ResourcePatchResult {
 /// `sys:view` without a region, on an instance-backed part, is stored with
 /// the instance's padded region in that frame (complete_view_region).
 /// @throws KeyValueError (nothing written) — also when one key appears
-///         twice in @p writes —, std::out_of_range (no part).
+///         twice in @p writes —, std::out_of_range (no part),
+///         std::runtime_error (a cloud cannot be loaded while filling a
+///         frame view's region).
 ResourcePatchResult patch_resource(
     ProjectDB &db, std::string_view code,
     const std::vector<ResourceWrite> &writes,

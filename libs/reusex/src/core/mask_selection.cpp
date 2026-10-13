@@ -462,12 +462,18 @@ apply_mask_selection(ProjectDB &db, const std::vector<std::size_t> &indices,
         region = pad_region(*opts.view_region);
       } else {
         const auto base = db.point_cloud_xyzrgb(opts.base_cloud);
-        std::vector<Eigen::Vector3f> pts;
-        pts.reserve(sel.size());
-        for (const auto i : sel)
-          pts.emplace_back(base->points[i].x, base->points[i].y,
-                           base->points[i].z);
-        region = project_instance_bbox(db, opts.frame_id, pts);
+        if (!base) {
+          reusex::warn("apply_mask_selection: '{}' did not load; part {} "
+                       "gets no fallback region in frame {}",
+                       opts.base_cloud, part.code, opts.frame_id);
+        } else {
+          std::vector<Eigen::Vector3f> pts;
+          pts.reserve(sel.size());
+          for (const auto i : sel)
+            pts.emplace_back(base->points[i].x, base->points[i].y,
+                             base->points[i].z);
+          region = project_instance_bbox(db, opts.frame_id, pts);
+        }
       }
       out.view = ResourceView{ViewKind::frame, opts.frame_id, region};
       db.set_survey_part_view(part.code, out.view);
