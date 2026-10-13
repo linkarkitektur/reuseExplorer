@@ -29,8 +29,8 @@
 //     }
 //   }
 //
-// The same text is embedded in libs/reusex/src/core/report_generator.cpp
-// (kTypstTemplate); the ReportTemplate_CopiesInSync test fails when they differ.
+// This file is the only copy: CMake embeds it into the generated header
+// reusex/core/report_template_default.hpp at build time.
 
 #let data = json("data.json")
 #let cols = data.columns

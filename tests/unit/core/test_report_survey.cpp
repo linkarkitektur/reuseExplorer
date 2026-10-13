@@ -4,8 +4,7 @@
 
 // The PDF report's survey section (GUI Phase 5, R8): which types it lists,
 // their summed quantities, the Danish labels, the blocking count stored with a
-// version, that the two copies of the Typst template agree and — where typst
-// is installed — that the template compiles.
+// version and — where typst is installed — that the template compiles.
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -20,8 +19,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <fstream>
-#include <iterator>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -69,17 +66,6 @@ void await_sample(ProjectDB &db, int64_t type) {
   db.set_sample_links(s.id, {type});
 }
 
-std::string slurp(const std::string &path) {
-  std::ifstream f(path, std::ios::binary);
-  REQUIRE(f.good());
-  return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>{}};
-}
-
-std::string trim(const std::string &s) {
-  const auto b = s.find_first_not_of(" \t\r\n");
-  const auto e = s.find_last_not_of(" \t\r\n");
-  return b == std::string::npos ? std::string() : s.substr(b, e - b + 1);
-}
 } // namespace
 
 TEST_CASE("ReportSurveyRows_ApprovedOnly_QuantitySummed", "[report][survey]") {
@@ -180,22 +166,6 @@ TEST_CASE("DanishLabels_MatchTheFrontendVocabulary", "[report][survey]") {
         "Afventer prøve");
   CHECK(core::environment_label_da(core::EnvironmentStatus::ren_proevesvar) ==
         "Ren (prøvesvar)");
-}
-
-TEST_CASE("ReportTemplate_CopiesInSync", "[report][typst]") {
-  // The template lives twice: apps/rux/resources/report.typ (canonical,
-  // readable) and kTypstTemplate in report_generator.cpp (what actually
-  // runs). They must be identical, comments included.
-  const std::string src = REUSEX_SOURCE_DIR;
-  const auto resource = slurp(src + "/apps/rux/resources/report.typ");
-  const auto cpp = slurp(src + "/libs/reusex/src/core/report_generator.cpp");
-  const std::string open = "kTypstTemplate = R\"typst(";
-  const auto a = cpp.find(open);
-  REQUIRE(a != std::string::npos);
-  const auto b = cpp.find(")typst\";", a);
-  REQUIRE(b != std::string::npos);
-  const auto embedded = cpp.substr(a + open.size(), b - a - open.size());
-  CHECK(trim(embedded) == trim(resource));
 }
 
 TEST_CASE("ReportPdf_WithSurveySection_Compiles", "[report][typst]") {
