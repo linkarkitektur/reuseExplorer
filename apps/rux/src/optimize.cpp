@@ -274,6 +274,14 @@ NOTES:
                   "GNC-TLS inlier threshold for --loop-trust loop edges "
                   "(0.5 * whitened squared residual)")
       ->default_val(opt->loop_trust_inlier_cost);
+  sub->add_option("--loop-default-sigma-rot", opt->loop_default_sigma_rot,
+                  "Rotation std (rad) of a stored loop edge without an "
+                  "information matrix")
+      ->default_val(opt->loop_default_sigma_rot);
+  sub->add_option("--loop-default-sigma-trans", opt->loop_default_sigma_trans,
+                  "Translation std (m) of a stored loop edge without an "
+                  "information matrix")
+      ->default_val(opt->loop_default_sigma_trans);
 
   // --- Flags that moved to `rux graph discover` (2026-10-13) ---
   // Registered hidden so a stale script gets a pointer instead of
@@ -383,6 +391,8 @@ plane_graph_options(SubcommandOptimizeOptions const &opt) {
   options.surfel.voxel_size = opt.surfel_voxel;
   options.loop_edges_trusted = opt.loop_trust;
   options.loop_trust_inlier_cost = opt.loop_trust_inlier_cost;
+  options.loop_default_sigma_rot = opt.loop_default_sigma_rot;
+  options.loop_default_sigma_trans = opt.loop_default_sigma_trans;
   return options;
 }
 

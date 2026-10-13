@@ -77,6 +77,10 @@ struct SubcommandOptimizeOptions {
   bool loop_trust = false;
   float loop_trust_inlier_cost =
       reusex::geometry::PlaneGraphOptions{}.loop_trust_inlier_cost;
+  float loop_default_sigma_rot =
+      reusex::geometry::PlaneGraphOptions{}.loop_default_sigma_rot;
+  float loop_default_sigma_trans =
+      reusex::geometry::PlaneGraphOptions{}.loop_default_sigma_trans;
 
   // Surfel extraction (shared with `rux register`).
   float surfel_voxel = 0.03f;

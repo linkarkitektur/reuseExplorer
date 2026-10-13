@@ -33,6 +33,9 @@
 #include "reusex/segmentation/surfel_extraction.hpp"
 #include "reusex/slam/LoopClosure.hpp"
 
+#include <Eigen/Core>
+
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -375,6 +378,12 @@ struct PlaneGraphOptions {
   /// only way to bound a loop edge under GNC.
   float loop_trust_inlier_cost = 200.0f;
 
+  /// Noise of a loop edge that carries no information matrix (a stored edge
+  /// with NULL `information`, spec §3.1). Mirrors the LoopClosureOptions
+  /// base sigmas.
+  float loop_default_sigma_rot = 0.05f;   ///< rad
+  float loop_default_sigma_trans = 0.10f; ///< m
+
   /// Memberwise, covering every field above AND every field of `surfel`
   /// (its own defaulted operator==).
   /// Relied on by CliCommandRoundTrip_OptimizeFlagDefaults_MatchTheStageBase
@@ -383,6 +392,26 @@ struct PlaneGraphOptions {
   /// CLI default is caught instead of silently skipped by a hand-maintained
   /// field list (integration review finding 4).
   bool operator==(const PlaneGraphOptions &) const = default;
+};
+
+/// One edge of the (stored) pose graph handed to the solver, already in the
+/// optimizer's OPTICAL convention (slam/pose_graph_conventions.hpp). Indices
+/// are positions in the frames vector.
+struct GraphEdge {
+  enum class Kind { odometry, loop };
+  int i = -1;
+  int j = -1;
+  /// pose(i)^-1 * pose(j), optical convention.
+  Eigen::Matrix4d T_ij = Eigen::Matrix4d::Identity();
+  /// 6x6, GTSAM order (rx, ry, rz, tx, ty, tz). nullopt: odometry uses
+  /// odometry_sigma_* (x observability guard x motion model), loop uses
+  /// loop_default_sigma_*.
+  std::optional<Eigen::Matrix<double, 6, 6>> information;
+  Kind kind = Kind::odometry;
+  /// GNC may never demote this factor (a user-confirmed edge).
+  bool known_inlier = false;
+  /// Caller's tag, echoed in PoseGraphEdgeRecord::tag; -1 = none.
+  int tag = -1;
 };
 
 /// One pose-graph edge produced by the optimizer, indexed by position in the
@@ -394,6 +423,7 @@ struct PoseGraphEdgeRecord {
   std::string type;      ///< "odometry" | "loop_closure"
   double residual = 0.0; ///< 0.5 × whitened squared residual (GTSAM convention)
   double weight = 1.0;   ///< 1 / sigma_trans² at build time
+  int tag = -1;          ///< GraphEdge::tag of the edge
 };
 
 /// Summary statistics from a plane-graph optimization run.
@@ -430,6 +460,11 @@ struct PlaneGraphResult {
   /// are the run's own estimate of what a typical plane observation is worth.
   double median_fit_sigma_normal = 0.0;   ///< rad
   double median_fit_sigma_distance = 0.0; ///< m
+  /// Stored-graph bookkeeping (optimize_sensor_poses).
+  int graph_edges = 0;  ///< stored edges that entered the solve
+  int bridge_edges = 0; ///< connectivity bridges from the initial poses
+  bool graph_initialised = false; ///< the run created the odometry edges
+  int edges_with_metrics = 0;     ///< stored rows whose metrics were written
 };
 
 /// Plane-landmark pose-graph optimizer operating purely in memory.
@@ -449,9 +484,24 @@ class PlaneGraphOptimizer {
   PlaneGraphResult optimize(std::vector<FrameSurfels> &frames,
                             const std::vector<LoopEdge> &loop_edges = {}) const;
 
+  /// Solve with an explicit edge list instead of consecutive-seed odometry:
+  /// odometry AND loop factors all come from @p edges (out-of-range or
+  /// self-loop edges are skipped). The gauge prior still pins frame 0 at its
+  /// world_pose. optimize() == optimize_graph(frames,
+  /// legacy_graph_edges(frames, loop_edges)).
+  PlaneGraphResult optimize_graph(std::vector<FrameSurfels> &frames,
+                                  const std::vector<GraphEdge> &edges) const;
+
     private:
   PlaneGraphOptions options_;
 };
+
+/// The graph optimize() has always built: odometry between consecutive frames
+/// measured from their world_pose (no information: default sigmas), then each
+/// loop edge with information_from_sigmas(sigma_rot, sigma_trans).
+std::vector<GraphEdge>
+legacy_graph_edges(const std::vector<FrameSurfels> &frames,
+                   const std::vector<LoopEdge> &loop_edges);
 
 /// High-level entry point: extract surfels for every sensor frame in @p db,
 /// globally optimize their poses via the plane-landmark graph, and (unless
