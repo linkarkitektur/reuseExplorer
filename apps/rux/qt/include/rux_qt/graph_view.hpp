@@ -97,4 +97,29 @@ std::optional<double> parse_yaw_setting(std::string_view text);
 /// The stored text: normalised, one decimal, '.' separator ("-12.5").
 std::string format_yaw_setting(double deg);
 
+// --------------------------------------------------------------- slots --
+
+enum class Slot { a, b };
+
+/// Which of the pair a node click fills (spec §5.2): A, then B, alternating;
+/// Shift forces B. A frame is never both A and B.
+class SlotPicker {
+    public:
+  Slot next() const { return next_; }
+  int a() const { return a_; }
+  int b() const { return b_; }
+  bool complete() const { return a_ >= 0 && b_ >= 0; }
+  /// A click on frame @p id: the slot it filled, or nullopt (no change) when
+  /// @p id is already in the other slot.
+  std::optional<Slot> click(int id, bool force_b);
+  /// Both at once (an edge or a list row); the next click is A again.
+  void set_pair(int a, int b);
+  void clear();
+
+    private:
+  int a_ = -1;
+  int b_ = -1;
+  Slot next_ = Slot::a;
+};
+
 } // namespace rux::qt

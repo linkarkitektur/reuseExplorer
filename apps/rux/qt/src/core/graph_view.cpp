@@ -143,4 +143,28 @@ std::string format_yaw_setting(double deg) {
   return std::string(buf, r.ptr);
 }
 
+std::optional<Slot> SlotPicker::click(int id, bool force_b) {
+  const Slot target = force_b ? Slot::b : next_;
+  if (target == Slot::a) {
+    if (id == b_)
+      return std::nullopt;
+    a_ = id;
+    next_ = Slot::b;
+    return Slot::a;
+  }
+  if (id == a_)
+    return std::nullopt;
+  b_ = id;
+  next_ = Slot::a;
+  return Slot::b;
+}
+
+void SlotPicker::set_pair(int a, int b) {
+  a_ = a;
+  b_ = b;
+  next_ = Slot::a;
+}
+
+void SlotPicker::clear() { set_pair(-1, -1); }
+
 } // namespace rux::qt

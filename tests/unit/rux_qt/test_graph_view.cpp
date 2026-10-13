@@ -151,3 +151,52 @@ TEST_CASE("YawSetting_ParsesAndFormatsWithoutTheLocale",
   CHECK(normalize_yaw_deg(-180.0) == Approx(180.0));
   CHECK(normalize_yaw_deg(720.0) == Approx(0.0));
 }
+
+TEST_CASE("SlotPicker_AlternatesAThenB", "[rux_qt][graphview][slots]") {
+  SlotPicker s;
+  CHECK(s.next() == Slot::a);
+  CHECK(s.click(10, false) == Slot::a);
+  CHECK(s.a() == 10);
+  CHECK(s.next() == Slot::b);
+  CHECK_FALSE(s.complete());
+  CHECK(s.click(20, false) == Slot::b);
+  CHECK(s.b() == 20);
+  CHECK(s.complete());
+  CHECK(s.next() == Slot::a);
+  CHECK(s.click(30, false) == Slot::a); // the next click replaces A
+  CHECK(s.a() == 30);
+  CHECK(s.b() == 20);
+}
+
+TEST_CASE("SlotPicker_ShiftForcesB_AndTheNextClickIsA",
+          "[rux_qt][graphview][slots]") {
+  SlotPicker s;
+  s.click(10, false);
+  s.click(20, false);
+  CHECK(s.click(40, true) == Slot::b);
+  CHECK(s.b() == 40);
+  CHECK(s.next() == Slot::a);
+}
+
+TEST_CASE("SlotPicker_TheSameFrameNeverFillsBothSlots",
+          "[rux_qt][graphview][slots]") {
+  SlotPicker s;
+  s.click(10, false); // A = 10, next B
+  CHECK_FALSE(s.click(10, false).has_value());
+  CHECK(s.b() == -1);
+  CHECK(s.next() == Slot::b); // still waiting for B
+  CHECK_FALSE(s.click(10, true).has_value());
+}
+
+TEST_CASE("SlotPicker_SetPair_FromAnEdge", "[rux_qt][graphview][slots]") {
+  SlotPicker s;
+  s.click(1, false);
+  s.set_pair(5, 9);
+  CHECK(s.a() == 5);
+  CHECK(s.b() == 9);
+  CHECK(s.next() == Slot::a);
+  s.clear();
+  CHECK(s.a() == -1);
+  CHECK(s.b() == -1);
+  CHECK(s.next() == Slot::a);
+}
