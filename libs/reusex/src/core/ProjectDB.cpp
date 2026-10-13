@@ -1799,14 +1799,24 @@ class ProjectDB::Impl {
                        strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
               ?11, ?12, ?13, ?14)
       ON CONFLICT (from_node_id, to_node_id, edge_type) DO UPDATE SET
-        residual = excluded.residual, weight = excluded.weight,
-        transform = excluded.transform, information = excluded.information,
-        source = excluded.source, status = excluded.status,
+        residual = IIF(?16, excluded.residual, pose_graph_edges.residual),
+        weight = IIF(?16, excluded.weight, pose_graph_edges.weight),
+        transform = IIF(?16, excluded.transform, pose_graph_edges.transform),
+        information =
+          IIF(?16, excluded.information, pose_graph_edges.information),
+        source = IIF(?16, excluded.source, pose_graph_edges.source),
+        status = IIF(NOT ?16 AND excluded.status = 'auto'
+                       AND pose_graph_edges.status = 'confirmed',
+                     'confirmed', excluded.status),
         created_at = COALESCE(NULLIF(?10, ''), pose_graph_edges.created_at),
-        seed_disagreement_m = excluded.seed_disagreement_m,
-        seed_disagreement_deg = excluded.seed_disagreement_deg,
-        deviation_m = excluded.deviation_m,
-        deviation_deg = excluded.deviation_deg
+        seed_disagreement_m = IIF(?16, excluded.seed_disagreement_m,
+                                  pose_graph_edges.seed_disagreement_m),
+        seed_disagreement_deg = IIF(?16, excluded.seed_disagreement_deg,
+                                    pose_graph_edges.seed_disagreement_deg),
+        deviation_m = IIF(?16, excluded.deviation_m,
+                          pose_graph_edges.deviation_m),
+        deviation_deg = IIF(?16, excluded.deviation_deg,
+                            pose_graph_edges.deviation_deg)
       WHERE pose_graph_edges.status <> 'rejected' OR ?15 = 1;
     )";
     sqlite3_stmt *s = prepare_or_throw(db, sql, "upsert_pose_graph_edge");
@@ -1834,6 +1844,9 @@ class ProjectDB::Impl {
     bindOptionalDouble(s, 13, e.deviation_m);
     bindOptionalDouble(s, 14, e.deviation_deg);
     sqlite3_bind_int(s, 15, overwriteRejected ? 1 : 0);
+    // ?16: does this upsert carry a measurement? Without one, an existing
+    // row is only re-statused (final review I1).
+    sqlite3_bind_int(s, 16, e.transform ? 1 : 0);
     if (sqlite3_step(s) != SQLITE_DONE)
       throw std::runtime_error("upsert_pose_graph_edge: " +
                                std::string(sqlite3_errmsg(db)));
@@ -8782,6 +8795,14 @@ int ProjectDB::add_pose_graph_edge(const PoseGraphEdge &edge) {
   PoseGraphEdge e = edge;
   if (e.source.empty())
     e.source = std::string(core::pose_graph::kSourceManual);
+  // The old add never touched an existing row, so it must not downgrade a
+  // user's confirmation either (a measurement-less add keeps the stored
+  // measurement and source: upsertPoseGraphEdge).
+  if (e.status == core::pose_graph::kStatusAuto)
+    if (const auto row =
+            pose_graph_edge(e.from_node_id, e.to_node_id, e.edge_type);
+        row && row->status == core::pose_graph::kStatusConfirmed)
+      e.status = std::string(core::pose_graph::kStatusConfirmed);
   if (!impl_->upsertPoseGraphEdge(e, /*overwriteRejected=*/true))
     return -1;
   const auto row = pose_graph_edge(e.from_node_id, e.to_node_id, e.edge_type);

@@ -678,6 +678,11 @@ class ProjectDB {
   /// adjoint (core::pose_graph::reverse_edge_information); metric magnitudes
   /// are kept as given. `weight` is derived from `information` when present.
   ///
+  /// An upsert WITHOUT a measurement (`transform` nullopt) onto an existing
+  /// row only changes its status: the stored transform, information, weight,
+  /// residual, metrics and source are kept, and status "auto" never
+  /// downgrades a "confirmed" row. A new key is inserted as given.
+  ///
   /// @returns false — and writes nothing — when the stored row is "rejected"
   ///          and @p overwrite_rejected is false (tombstones survive
   ///          `rux graph discover`).
@@ -706,7 +711,9 @@ class ProjectDB {
 
   /// Superseded by upsert_pose_graph_edge (kept for ruxd, which builds against
   /// the installed package). Upserts with overwrite_rejected = true and
-  /// source "manual" when the edge has none; returns the row id.
+  /// source "manual" when the edge has none; returns the row id. Never
+  /// downgrades a "confirmed" row to "auto", and (without a measurement)
+  /// never touches a stored measurement.
   [[deprecated("use upsert_pose_graph_edge")]]
   int add_pose_graph_edge(const PoseGraphEdge &edge);
 

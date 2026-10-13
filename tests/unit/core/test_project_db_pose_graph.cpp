@@ -369,10 +369,110 @@ TEST_CASE("PoseGraphUpsert_ReadOnlyProject_Throws", "[projectdb][pose_graph]") {
                   std::runtime_error);
 }
 
+TEST_CASE("PoseGraphUpsert_WithoutMeasurement_KeepsStoredMeasurement",
+          "[projectdb][pose_graph]") {
+  // A measurement-less upsert onto an existing row (the Qt EdgeEditor's
+  // "add", ruxd's POST /posegraph/edges) is a status change: the stored
+  // measurement, its metrics and its source survive (final review I1).
+  TempPath tmp("test_pose_graph_upsert_keep");
+  ProjectDB db(tmp.path);
+  auto stored = measured_edge(2, 6, "odometry");
+  stored.source = "rtabmap";
+  REQUIRE(db.upsert_pose_graph_edge(stored));
+  ProjectDB::PoseGraphEdgeMetrics m;
+  m.from_node_id = 2;
+  m.to_node_id = 6;
+  m.edge_type = "odometry";
+  m.residual = 0.7;
+  m.deviation_m = 0.02;
+  m.deviation_deg = 0.4;
+  m.seed_disagreement_m = 0.25;
+  m.seed_disagreement_deg = 3.0;
+  REQUIRE(db.update_pose_graph_edge_metrics(std::span(&m, 1)) == 1);
+  const auto before = *db.pose_graph_edge(2, 6, "odometry");
+
+  ProjectDB::PoseGraphEdge confirm = legacy_edge(6, 2, "odometry", 9.0, 1.0);
+  confirm.source = "manual";
+  confirm.status = "confirmed";
+  REQUIRE(db.upsert_pose_graph_edge(confirm, /*overwrite_rejected=*/true));
+  auto row = db.pose_graph_edge(2, 6, "odometry");
+  REQUIRE(row.has_value());
+  CHECK(row->status == "confirmed");
+  CHECK(row->source == "rtabmap");
+  REQUIRE(row->transform.has_value());
+  CHECK(*row->transform == *before.transform);
+  REQUIRE(row->information.has_value());
+  CHECK(*row->information == *before.information);
+  CHECK(row->weight == Approx(before.weight));
+  CHECK(row->residual == Approx(0.7));
+  CHECK(row->deviation_m == Approx(0.02));
+  CHECK(row->seed_disagreement_m == Approx(0.25));
+
+  // "auto" without a measurement never downgrades a confirmed row ...
+  ProjectDB::PoseGraphEdge plain = legacy_edge(2, 6, "odometry", 0.0, 0.0);
+  REQUIRE(db.upsert_pose_graph_edge(plain, /*overwrite_rejected=*/true));
+  CHECK(db.pose_graph_edge(2, 6, "odometry")->status == "confirmed");
+  // ... but un-rejects a tombstone when the caller asks for that.
+  REQUIRE(db.set_pose_graph_edge_status(2, 6, "odometry", "rejected"));
+  CHECK_FALSE(db.upsert_pose_graph_edge(plain));
+  CHECK(db.pose_graph_edge(2, 6, "odometry")->status == "rejected");
+  REQUIRE(db.upsert_pose_graph_edge(plain, /*overwrite_rejected=*/true));
+  row = db.pose_graph_edge(2, 6, "odometry");
+  CHECK(row->status == "auto");
+  CHECK(*row->transform == *before.transform);
+
+  // A new key without a measurement is still inserted as given.
+  REQUIRE(db.upsert_pose_graph_edge(legacy_edge(1, 9, "loop_closure", 0, 4)));
+  row = db.pose_graph_edge(1, 9, "loop_closure");
+  REQUIRE(row.has_value());
+  CHECK(row->source == "manual");
+  CHECK_FALSE(row->transform.has_value());
+
+  // An upsert WITH a measurement still replaces everything, as before.
+  auto replace = measured_edge(2, 6, "odometry");
+  replace.transform = pose_rt(0.0, 4.0, 0.0, 0.0);
+  replace.status = "auto";
+  REQUIRE(db.upsert_pose_graph_edge(replace));
+  row = db.pose_graph_edge(2, 6, "odometry");
+  CHECK(row->source == "orb");
+  CHECK(row->status == "auto");
+  CHECK((*row->transform)[3] == 4.0);
+}
+
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #endif
+TEST_CASE("PoseGraphDeprecatedAdd_OverStoredEdge_KeepsMeasurementAndConfirmed",
+          "[projectdb][pose_graph]") {
+  TempPath tmp("test_pose_graph_deprecated_add_keep");
+  ProjectDB db(tmp.path);
+  auto stored = measured_edge(4, 11, "loop_closure");
+  stored.source = "rtabmap";
+  REQUIRE(db.upsert_pose_graph_edge(stored));
+  REQUIRE(db.set_pose_graph_edge_status(4, 11, "loop_closure", "confirmed"));
+
+  // ruxd's add: no measurement, default status "auto".
+  const int id =
+      db.add_pose_graph_edge(legacy_edge(11, 4, "loop_closure", 0.1, 1.0));
+  CHECK(id > 0);
+  auto row = db.pose_graph_edge(4, 11, "loop_closure");
+  REQUIRE(row.has_value());
+  CHECK(row->id == id);
+  CHECK(row->status == "confirmed");
+  CHECK(row->source == "rtabmap");
+  REQUIRE(row->transform.has_value());
+  CHECK(*row->transform == *stored.transform);
+
+  // Even an add that carries a measurement does not downgrade confirmed.
+  auto measured = measured_edge(4, 11, "loop_closure");
+  measured.transform = pose_rt(0.0, 3.0, 0.0, 0.0);
+  CHECK(db.add_pose_graph_edge(measured) == id);
+  row = db.pose_graph_edge(4, 11, "loop_closure");
+  CHECK(row->status == "confirmed");
+  CHECK((*row->transform)[3] == 3.0);
+}
+
 TEST_CASE("PoseGraphDeprecatedWrappers_KeepRuxdWorking",
           "[projectdb][pose_graph]") {
   TempPath tmp("test_pose_graph_deprecated");
