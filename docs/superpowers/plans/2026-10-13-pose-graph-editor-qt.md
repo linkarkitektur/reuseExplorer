@@ -12,6 +12,45 @@
 
 ---
 
+## RECONCILIATION WITH THE LIBRARY PLAN (read first; overrides the section below)
+
+The library plan (`2026-10-13-pose-graph-editor-library.md`, "Interfaces for
+the Qt plan") is authoritative. When this plan's code disagrees, adapt this
+plan's code to the library as actually merged (read the headers):
+
+1. **Edge direction is canonical (`from < to`).** `upsert_pose_graph_edge`
+   inverts the transform / maps information when given `from > to`; rows
+   always read back with `from < to`. Staged-edit keys (Task 4) and edge-list
+   keys must canonicalise the same way (`std::minmax`); Task 20's "re-measure
+   an edge stored the other way round" collapses to a plain upsert.
+2. **`set_pose_graph_edge_status` returns `bool`** (false = no row) and takes
+   `std::string_view`; it throws `std::invalid_argument` on a bad status.
+3. **`initial_pose(id)` returns `std::optional<std::array<double,16>>`.**
+4. **ICP:** the option is `FramePairIcpOptions::initial_world_delta` (not
+   `initial_guess`), applied to the `from` cloud in world space; the result
+   carries `edge_transform` (== `relative_pose⁻¹`) and
+   `slam::icp_edge_information(result)` gives the information
+   (σ_t = max(fitness, 1 cm), σ_r = max(fitness/2, 0.005) rad). Task 15/19/20
+   use these instead of their own ICP information formula: call
+   `refine_frame_pair_icp(db, B, A, {.initial_world_delta = ΔT})` and stage
+   edge `(B→A, r.edge_transform, icp_edge_information(r), "icp", "confirmed")`.
+   Manual (non-ICP) edges keep Task 15's `T_A⁻¹·ΔT·T_B` as the A→B transform.
+   Library Task 6 already provides these — Task 16 (`frame_world_points`)
+   remains a Qt-plan task.
+5. **Vocabulary constants** (`kStatus*`, `kSource*`, `kType*`,
+   `kSettingViewYawDeg`) live in header-only `reusex/core/pose_graph.hpp`;
+   `rux_qt_core` must stay standard-library-only, so mirror the string values
+   there rather than including that header (it pulls Eigen).
+6. **Already done by the library plan — skip/verify instead of redoing:**
+   `EdgeEditor` moved to upsert/reject and hides rejected edges (lib Task 3) —
+   Task 4 extends that rather than re-porting it; the gallery
+   `posegraf-stress` page already uses upsert (lib Task 10); the
+   `graph_discover` pipeline rows in `pipeline_ui`/`PipelineWorkspace`/
+   `cli_command` (lib Tasks 17–18) — Task 12 only adds the Rediger toolbar
+   buttons.
+7. `PoseGraphEdge::residual`/`weight` default to NaN (NULL); `created_at`
+   empty on write → now.
+
 ## Assumed library interfaces (reconcile with the library plan)
 
 Written without sight of the library plan. Every Qt task below codes against exactly these; if the library plan differs, fix the names here and in the referencing tasks before executing.
