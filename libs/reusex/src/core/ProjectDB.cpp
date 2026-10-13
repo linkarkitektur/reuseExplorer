@@ -15,6 +15,7 @@
 #include "core/resource_templates.hpp"
 #include "reusex/core/pose_graph.hpp"
 
+#include <Eigen/Geometry>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -36,6 +37,7 @@
 #include <mutex>
 #include <random>
 #include <set>
+#include <span>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -1768,60 +1770,189 @@ class ProjectDB::Impl {
     return false;
   }
 
-  int addPoseGraphEdge(const ProjectDB::PoseGraphEdge &edge) {
-    checkWritable();
-    const char *ins = R"(
-      INSERT INTO pose_graph_edges
-        (from_node_id, to_node_id, edge_type, residual, weight)
-      VALUES (?, ?, ?, ?, ?);
-    )";
-    sqlite3_stmt *stmt;
-    if (sqlite3_prepare_v2(db, ins, -1, &stmt, nullptr) != SQLITE_OK)
-      throw std::runtime_error("Failed to prepare pose_graph_edges insert: " +
-                               std::string(sqlite3_errmsg(db)));
-    StmtGuard guard(stmt);
-    sqlite3_bind_int(stmt, 1, edge.from_node_id);
-    sqlite3_bind_int(stmt, 2, edge.to_node_id);
-    sqlite3_bind_text(stmt, 3, edge.edge_type.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_double(stmt, 4, edge.residual);
-    if (std::isnan(edge.weight))
-      sqlite3_bind_null(stmt, 5);
-    else
-      sqlite3_bind_double(stmt, 5, edge.weight);
-    if (sqlite3_step(stmt) != SQLITE_DONE)
-      throw std::runtime_error("pose_graph_edges insert failed: " +
-                               std::string(sqlite3_errmsg(db)));
-    return static_cast<int>(sqlite3_last_insert_rowid(db));
+  void requireV27PoseGraph(const char *who) const {
+    if (!hasPoseGraphV27)
+      throw std::runtime_error(std::string(who) +
+                               ": project schema predates v27; open it "
+                               "read-write once to migrate");
   }
 
-  int deletePoseGraphEdges(int from_node_id, int to_node_id,
-                           std::string_view edge_type) {
+  static void bindOptionalDouble(sqlite3_stmt *s, int idx,
+                                 const std::optional<double> &v) {
+    if (v && std::isfinite(*v))
+      sqlite3_bind_double(s, idx, *v);
+    else
+      sqlite3_bind_null(s, idx);
+  }
+
+  static void bindNanAsNull(sqlite3_stmt *s, int idx, double v) {
+    if (std::isfinite(v))
+      sqlite3_bind_double(s, idx, v);
+    else
+      sqlite3_bind_null(s, idx);
+  }
+
+  bool upsertPoseGraphEdge(ProjectDB::PoseGraphEdge e, bool overwriteRejected) {
+    namespace pg = core::pose_graph;
     checkWritable();
-    sqlite3_stmt *stmt;
-    if (edge_type.empty()) {
-      const char *del = "DELETE FROM pose_graph_edges "
-                        "WHERE from_node_id=? AND to_node_id=?;";
-      if (sqlite3_prepare_v2(db, del, -1, &stmt, nullptr) != SQLITE_OK)
-        throw std::runtime_error("Failed to prepare pose_graph_edges delete: " +
-                                 std::string(sqlite3_errmsg(db)));
-      StmtGuard guard(stmt);
-      sqlite3_bind_int(stmt, 1, from_node_id);
-      sqlite3_bind_int(stmt, 2, to_node_id);
-      sqlite3_step(stmt);
-    } else {
-      const char *del = "DELETE FROM pose_graph_edges "
-                        "WHERE from_node_id=? AND to_node_id=? "
-                        "AND edge_type=?;";
-      if (sqlite3_prepare_v2(db, del, -1, &stmt, nullptr) != SQLITE_OK)
-        throw std::runtime_error("Failed to prepare pose_graph_edges delete: " +
-                                 std::string(sqlite3_errmsg(db)));
-      StmtGuard guard(stmt);
-      sqlite3_bind_int(stmt, 1, from_node_id);
-      sqlite3_bind_int(stmt, 2, to_node_id);
-      const std::string type_str(edge_type);
-      sqlite3_bind_text(stmt, 3, type_str.c_str(), -1, SQLITE_TRANSIENT);
-      sqlite3_step(stmt);
+    requireV27PoseGraph("upsert_pose_graph_edge");
+    if (e.from_node_id == e.to_node_id)
+      throw std::invalid_argument("upsert_pose_graph_edge: self-loop on node " +
+                                  std::to_string(e.from_node_id));
+    if (e.edge_type.empty())
+      throw std::invalid_argument("upsert_pose_graph_edge: empty edge_type");
+    if (e.source.empty())
+      throw std::invalid_argument("upsert_pose_graph_edge: empty source");
+    if (!pg::is_valid_status(e.status))
+      throw std::invalid_argument("upsert_pose_graph_edge: invalid status '" +
+                                  e.status + "'");
+    if (e.transform && !pg::is_rigid_transform(*e.transform))
+      throw std::invalid_argument(
+          "upsert_pose_graph_edge: transform is not a rigid 4x4 pose");
+    if (e.information && !pg::is_valid_information(*e.information))
+      throw std::invalid_argument(
+          "upsert_pose_graph_edge: information is not a finite symmetric 6x6");
+
+    if (e.from_node_id > e.to_node_id) {
+      std::swap(e.from_node_id, e.to_node_id);
+      if (e.transform) {
+        const Eigen::Matrix4d T = pg::matrix_from_row_major(*e.transform);
+        if (e.information)
+          e.information =
+              pg::row_major_from_information(pg::reverse_edge_information(
+                  pg::information_from_row_major(*e.information), T));
+        e.transform = pg::row_major_from_matrix(T.inverse());
+      }
     }
+    if (e.information) {
+      const auto &a = *e.information;
+      e.weight = (a[21] + a[28] + a[35]) / 3.0; // mean translational precision
+    }
+
+    const char *sql = R"(
+      INSERT INTO pose_graph_edges
+        (from_node_id, to_node_id, edge_type, residual, weight, transform,
+         information, source, status, created_at, seed_disagreement_m,
+         seed_disagreement_deg, deviation_m, deviation_deg)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
+              COALESCE(NULLIF(?10, ''),
+                       strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+              ?11, ?12, ?13, ?14)
+      ON CONFLICT (from_node_id, to_node_id, edge_type) DO UPDATE SET
+        residual = excluded.residual, weight = excluded.weight,
+        transform = excluded.transform, information = excluded.information,
+        source = excluded.source, status = excluded.status,
+        created_at = excluded.created_at,
+        seed_disagreement_m = excluded.seed_disagreement_m,
+        seed_disagreement_deg = excluded.seed_disagreement_deg,
+        deviation_m = excluded.deviation_m,
+        deviation_deg = excluded.deviation_deg
+      WHERE pose_graph_edges.status <> 'rejected' OR ?15 = 1;
+    )";
+    sqlite3_stmt *s = prepare_or_throw(db, sql, "upsert_pose_graph_edge");
+    StmtGuard guard(s);
+    sqlite3_bind_int(s, 1, e.from_node_id);
+    sqlite3_bind_int(s, 2, e.to_node_id);
+    sqlite3_bind_text(s, 3, e.edge_type.c_str(), -1, SQLITE_TRANSIENT);
+    bindNanAsNull(s, 4, e.residual);
+    bindNanAsNull(s, 5, e.weight);
+    if (e.transform)
+      sqlite3_bind_blob(s, 6, e.transform->data(), 16 * sizeof(double),
+                        SQLITE_TRANSIENT);
+    else
+      sqlite3_bind_null(s, 6);
+    if (e.information)
+      sqlite3_bind_blob(s, 7, e.information->data(), 36 * sizeof(double),
+                        SQLITE_TRANSIENT);
+    else
+      sqlite3_bind_null(s, 7);
+    sqlite3_bind_text(s, 8, e.source.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(s, 9, e.status.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(s, 10, e.created_at.c_str(), -1, SQLITE_TRANSIENT);
+    bindOptionalDouble(s, 11, e.seed_disagreement_m);
+    bindOptionalDouble(s, 12, e.seed_disagreement_deg);
+    bindOptionalDouble(s, 13, e.deviation_m);
+    bindOptionalDouble(s, 14, e.deviation_deg);
+    sqlite3_bind_int(s, 15, overwriteRejected ? 1 : 0);
+    if (sqlite3_step(s) != SQLITE_DONE)
+      throw std::runtime_error("upsert_pose_graph_edge: " +
+                               std::string(sqlite3_errmsg(db)));
+    return sqlite3_changes(db) > 0;
+  }
+
+  bool setPoseGraphEdgeStatus(int from, int to, std::string_view type,
+                              std::string_view status) {
+    checkWritable();
+    requireV27PoseGraph("set_pose_graph_edge_status");
+    if (!core::pose_graph::is_valid_status(status))
+      throw std::invalid_argument(
+          "set_pose_graph_edge_status: invalid status '" + std::string(status) +
+          "'");
+    sqlite3_stmt *s = prepare_or_throw(
+        db,
+        "UPDATE pose_graph_edges SET status = ?4 WHERE from_node_id = "
+        "MIN(?1, ?2) AND to_node_id = MAX(?1, ?2) AND edge_type = ?3;",
+        "set_pose_graph_edge_status");
+    StmtGuard guard(s);
+    sqlite3_bind_int(s, 1, from);
+    sqlite3_bind_int(s, 2, to);
+    const std::string t(type), st(status);
+    sqlite3_bind_text(s, 3, t.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(s, 4, st.c_str(), -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(s) != SQLITE_DONE)
+      throw std::runtime_error("set_pose_graph_edge_status: " +
+                               std::string(sqlite3_errmsg(db)));
+    return sqlite3_changes(db) > 0;
+  }
+
+  int updatePoseGraphEdgeMetrics(
+      std::span<const ProjectDB::PoseGraphEdgeMetrics> metrics) {
+    checkWritable();
+    requireV27PoseGraph("update_pose_graph_edge_metrics");
+    Savepoint sp(db, "pose_graph_metrics");
+    sqlite3_stmt *s = prepare_or_throw(
+        db,
+        "UPDATE pose_graph_edges SET residual = ?4, deviation_m = ?5, "
+        "deviation_deg = ?6, seed_disagreement_m = ?7, "
+        "seed_disagreement_deg = ?8 WHERE from_node_id = MIN(?1, ?2) AND "
+        "to_node_id = MAX(?1, ?2) AND edge_type = ?3;",
+        "update_pose_graph_edge_metrics");
+    StmtGuard guard(s);
+    int updated = 0;
+    for (const auto &m : metrics) {
+      sqlite3_reset(s);
+      sqlite3_clear_bindings(s);
+      sqlite3_bind_int(s, 1, m.from_node_id);
+      sqlite3_bind_int(s, 2, m.to_node_id);
+      sqlite3_bind_text(s, 3, m.edge_type.c_str(), -1, SQLITE_TRANSIENT);
+      bindOptionalDouble(s, 4, m.residual);
+      bindOptionalDouble(s, 5, m.deviation_m);
+      bindOptionalDouble(s, 6, m.deviation_deg);
+      bindOptionalDouble(s, 7, m.seed_disagreement_m);
+      bindOptionalDouble(s, 8, m.seed_disagreement_deg);
+      if (sqlite3_step(s) != SQLITE_DONE)
+        throw std::runtime_error("update_pose_graph_edge_metrics: " +
+                                 std::string(sqlite3_errmsg(db)));
+      updated += sqlite3_changes(db);
+    }
+    sp.release();
+    return updated;
+  }
+
+  int deletePoseGraphEdgesFromSource(std::string_view source) {
+    checkWritable();
+    requireV27PoseGraph("delete_pose_graph_edges_from_source");
+    sqlite3_stmt *s = prepare_or_throw(
+        db,
+        "DELETE FROM pose_graph_edges WHERE source = ?1 AND status <> "
+        "'rejected';",
+        "delete_pose_graph_edges_from_source");
+    StmtGuard guard(s);
+    const std::string src(source);
+    sqlite3_bind_text(s, 1, src.c_str(), -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(s) != SQLITE_DONE)
+      throw std::runtime_error("delete_pose_graph_edges_from_source: " +
+                               std::string(sqlite3_errmsg(db)));
     return sqlite3_changes(db);
   }
 
@@ -8581,13 +8712,55 @@ ProjectDB::pose_graph_edge(int from_node_id, int to_node_id,
   return impl_->poseGraphEdge(from_node_id, to_node_id, edge_type);
 }
 
+bool ProjectDB::upsert_pose_graph_edge(const PoseGraphEdge &edge,
+                                       bool overwrite_rejected) {
+  return impl_->upsertPoseGraphEdge(edge, overwrite_rejected);
+}
+
+bool ProjectDB::set_pose_graph_edge_status(int from_node_id, int to_node_id,
+                                           std::string_view edge_type,
+                                           std::string_view status) {
+  return impl_->setPoseGraphEdgeStatus(from_node_id, to_node_id, edge_type,
+                                       status);
+}
+
+int ProjectDB::update_pose_graph_edge_metrics(
+    std::span<const PoseGraphEdgeMetrics> metrics) {
+  return impl_->updatePoseGraphEdgeMetrics(metrics);
+}
+
+int ProjectDB::delete_pose_graph_edges_from_source(std::string_view source) {
+  return impl_->deletePoseGraphEdgesFromSource(source);
+}
+
 int ProjectDB::add_pose_graph_edge(const PoseGraphEdge &edge) {
-  return impl_->addPoseGraphEdge(edge);
+  PoseGraphEdge e = edge;
+  if (e.source.empty())
+    e.source = std::string(core::pose_graph::kSourceManual);
+  if (!impl_->upsertPoseGraphEdge(e, /*overwriteRejected=*/true))
+    return -1;
+  const auto row = pose_graph_edge(e.from_node_id, e.to_node_id, e.edge_type);
+  return row ? static_cast<int>(row->id) : -1;
 }
 
 int ProjectDB::delete_pose_graph_edges(int from_node_id, int to_node_id,
                                        std::string_view edge_type) {
-  return impl_->deletePoseGraphEdges(from_node_id, to_node_id, edge_type);
+  if (!edge_type.empty())
+    return set_pose_graph_edge_status(from_node_id, to_node_id, edge_type,
+                                      core::pose_graph::kStatusRejected)
+               ? 1
+               : 0;
+  int n = 0;
+  for (const auto &e : list_pose_graph_edges())
+    if (std::min(e.from_node_id, e.to_node_id) ==
+            std::min(from_node_id, to_node_id) &&
+        std::max(e.from_node_id, e.to_node_id) ==
+            std::max(from_node_id, to_node_id))
+      n += set_pose_graph_edge_status(e.from_node_id, e.to_node_id, e.edge_type,
+                                      core::pose_graph::kStatusRejected)
+               ? 1
+               : 0;
+  return n;
 }
 
 // --- Scans (multi-session import, #129) ---

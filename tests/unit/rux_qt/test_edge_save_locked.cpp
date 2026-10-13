@@ -10,6 +10,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <core/ProjectDB.hpp>
+#include <reusex/core/pose_graph.hpp>
 #include <rux_qt/database_logic.hpp>
 
 #include "../../support/temp_path.hpp"
@@ -29,8 +30,9 @@ void apply_ops(ProjectDB &db, const std::vector<PendingEdgeEdits::Op> &ops) {
   ProjectDB::Transaction tx(db);
   for (const auto &op : ops) {
     if (op.kind == PendingEdgeEdits::Op::Kind::remove) {
-      db.delete_pose_graph_edges(op.edge.key.from, op.edge.key.to,
-                                 op.edge.key.type);
+      db.set_pose_graph_edge_status(op.edge.key.from, op.edge.key.to,
+                                    op.edge.key.type,
+                                    reusex::core::pose_graph::kStatusRejected);
     } else {
       ProjectDB::PoseGraphEdge row;
       row.from_node_id = op.edge.key.from;
@@ -38,7 +40,9 @@ void apply_ops(ProjectDB &db, const std::vector<PendingEdgeEdits::Op> &ops) {
       row.edge_type = op.edge.key.type;
       row.residual = op.edge.residual;
       row.weight = op.edge.weight;
-      db.add_pose_graph_edge(row);
+      row.source = std::string(reusex::core::pose_graph::kSourceManual);
+      row.status = std::string(reusex::core::pose_graph::kStatusConfirmed);
+      db.upsert_pose_graph_edge(row, /*overwrite_rejected=*/true);
     }
   }
   tx.commit();

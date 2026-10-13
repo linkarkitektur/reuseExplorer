@@ -649,20 +649,61 @@ class ProjectDB {
   /// True when the pose graph table exists and has at least one row.
   bool has_pose_graph() const;
 
-  /// Insert a single edge and return its row id.
+  /// Per-edge solve metrics, written by `rux optimize`. The key may be given
+  /// in either direction. nullopt writes NULL.
+  struct PoseGraphEdgeMetrics {
+    int from_node_id = 0;
+    int to_node_id = 0;
+    std::string edge_type;
+    std::optional<double> residual;
+    std::optional<double> deviation_m;
+    std::optional<double> deviation_deg;
+    std::optional<double> seed_disagreement_m;
+    std::optional<double> seed_disagreement_deg;
+  };
+
+  /// Insert @p edge, or replace every column of the row with the same
+  /// canonical key (from < to, edge_type). An edge given with from > to is
+  /// canonicalised: transform inverted, information mapped through the
+  /// adjoint (core::pose_graph::reverse_edge_information); metric magnitudes
+  /// are kept as given. `weight` is derived from `information` when present.
   ///
-  /// Used by the GUI editor to add manual loop-closure edges without disturbing
-  /// the rest of the graph.  Unlike save_pose_graph_edges(), this does not
-  /// replace the whole table — it appends exactly one row.
+  /// @returns false — and writes nothing — when the stored row is "rejected"
+  ///          and @p overwrite_rejected is false (tombstones survive
+  ///          `rux graph discover`).
+  /// @throws std::invalid_argument for from == to, an empty edge_type or
+  ///         source, an invalid status, a non-rigid transform or an invalid
+  ///         information; std::runtime_error on a read-only project.
+  bool upsert_pose_graph_edge(const PoseGraphEdge &edge,
+                              bool overwrite_rejected = false);
+
+  /// Set "auto" | "confirmed" | "rejected" on the edge (either direction).
+  /// @returns false when no such edge exists.
+  /// @throws std::invalid_argument for any other status string.
+  bool set_pose_graph_edge_status(int from_node_id, int to_node_id,
+                                  std::string_view edge_type,
+                                  std::string_view status);
+
+  /// Write residual / deviation / seed-disagreement for many edges inside one
+  /// SAVEPOINT (nests in a ProjectDB::Transaction). Unknown keys are skipped.
+  /// @returns the number of rows updated.
+  int update_pose_graph_edge_metrics(
+      std::span<const PoseGraphEdgeMetrics> metrics);
+
+  /// Delete every NON-rejected row with this source; tombstones stay.
+  /// @returns the number of rows deleted.
+  int delete_pose_graph_edges_from_source(std::string_view source);
+
+  /// Superseded by upsert_pose_graph_edge (kept for ruxd, which builds against
+  /// the installed package). Upserts with overwrite_rejected = true and
+  /// source "manual" when the edge has none; returns the row id.
+  [[deprecated("use upsert_pose_graph_edge")]]
   int add_pose_graph_edge(const PoseGraphEdge &edge);
 
-  /// Delete edges matching @p from_node_id and @p to_node_id.
-  ///
-  /// When @p edge_type is non-empty, only edges of that type are removed so
-  /// the caller can target a single loop-closure without touching an odometry
-  /// edge that happens to share the same endpoint pair.
-  ///
-  /// @returns the number of rows deleted (0 when nothing matched).
+  /// Superseded by set_pose_graph_edge_status: marks the matching edges
+  /// "rejected" (every type on the pair when @p edge_type is empty) instead
+  /// of deleting them. @returns the number of rows marked.
+  [[deprecated("use set_pose_graph_edge_status(..., \"rejected\")")]]
   int delete_pose_graph_edges(int from_node_id, int to_node_id,
                               std::string_view edge_type = "");
 

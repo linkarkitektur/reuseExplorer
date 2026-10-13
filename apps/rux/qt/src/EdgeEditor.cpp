@@ -5,6 +5,7 @@
 #include <rux_qt/ProjectSession.hpp>
 
 #include <reusex/core/ProjectDB.hpp>
+#include <reusex/core/pose_graph.hpp>
 
 #include <rux_qt/background.hpp>
 
@@ -107,7 +108,9 @@ bool EdgeEditor::save() {
         for (const auto &op : snapshot) {
           const auto &e = op.edge;
           if (op.kind == PendingEdgeEdits::Op::Kind::remove) {
-            db.delete_pose_graph_edges(e.key.from, e.key.to, e.key.type);
+            db.set_pose_graph_edge_status(
+                e.key.from, e.key.to, e.key.type,
+                reusex::core::pose_graph::kStatusRejected);
           } else {
             reusex::ProjectDB::PoseGraphEdge row;
             row.from_node_id = e.key.from;
@@ -115,7 +118,10 @@ bool EdgeEditor::save() {
             row.edge_type = e.key.type;
             row.residual = e.residual;
             row.weight = e.weight;
-            db.add_pose_graph_edge(row);
+            row.source = std::string(reusex::core::pose_graph::kSourceManual);
+            row.status =
+                std::string(reusex::core::pose_graph::kStatusConfirmed);
+            db.upsert_pose_graph_edge(row, /*overwrite_rejected=*/true);
           }
         }
         tx.commit();
@@ -208,10 +214,13 @@ void EdgeEditor::reload() {
   std::vector<EdgeRecord> base;
   if (reusex::ProjectDB *db = session_.db()) {
     try {
-      for (const auto &e : db->list_pose_graph_edges())
+      for (const auto &e : db->list_pose_graph_edges()) {
+        if (e.status == reusex::core::pose_graph::kStatusRejected)
+          continue;
         base.push_back({{e.from_node_id, e.to_node_id, e.edge_type},
                         e.residual,
                         e.weight});
+      }
     } catch (const std::exception &ex) {
       error_ = "Posegrafens kanter kunne ikke læses.";
       error_detail_ = QString::fromUtf8(ex.what());

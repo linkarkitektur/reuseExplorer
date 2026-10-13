@@ -312,8 +312,18 @@ QWidget *make_posegraf_stress(const PageContext &ctx) {
     reusex::ProjectDB db(ctx.project_path.toStdString());
     const auto ids = db.sensor_frame_ids();
     std::vector<reusex::ProjectDB::PoseGraphEdge> edges;
+    const auto edge = [](int from, int to, const char *type, double residual,
+                         double weight) {
+      reusex::ProjectDB::PoseGraphEdge e;
+      e.from_node_id = from;
+      e.to_node_id = to;
+      e.edge_type = type;
+      e.residual = residual;
+      e.weight = weight;
+      return e;
+    };
     for (std::size_t i = 1; i < ids.size() && edges.size() < kEdges / 2; ++i)
-      edges.push_back({ids[i - 1], ids[i], "odometry", 0.1, 100.0});
+      edges.push_back(edge(ids[i - 1], ids[i], "odometry", 0.1, 100.0));
     std::uint64_t x = 0x9E3779B97F4A7C15ULL; // fixed seed: the same shot
     while (edges.size() < kEdges && ids.size() > 1) {
       x ^= x << 13;
@@ -323,7 +333,7 @@ QWidget *make_posegraf_stress(const PageContext &ctx) {
       const int b = ids[(x >> 32) % ids.size()];
       if (a != b)
         edges.push_back(
-            {a, b, (x & 15) == 0 ? "panorama" : "loop_closure", 0.5, 25.0});
+            edge(a, b, (x & 15) == 0 ? "panorama" : "loop_closure", 0.5, 25.0));
     }
     db.save_pose_graph_edges(edges);
   }
