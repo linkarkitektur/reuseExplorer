@@ -40,10 +40,14 @@ struct GraphDiscoverResult {
   int stored_inconsistent = 0; ///< stored auto loop edges PCM disagrees with
   int skipped_existing = 0;    ///< key (pair, type) already stored, active
   int skipped_rejected = 0;    ///< key (pair, type) is a tombstone
-  int added = 0;               ///< rows written (0 under dry_run)
+  int added = 0;               ///< new rows written (0 under dry_run)
   int added_orb = 0;
   int added_panorama = 0;
   int added_file = 0;
+  /// Active stored rows without a measurement (legacy / GUI-added) that a
+  /// candidate on the same key gave one; their status is kept. Not counted
+  /// in `added`.
+  int filled = 0;
   bool initialised_graph = false; ///< odometry was created first
   int odometry_edges_written = 0; ///< by that initialisation (0 otherwise)
 };

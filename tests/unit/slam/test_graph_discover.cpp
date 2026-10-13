@@ -337,3 +337,58 @@ TEST_CASE("GraphDiscover_NonIdentityLocalTransforms_RoundTrip",
     CHECK(diff < 1e-9);
   }
 }
+
+TEST_CASE("GraphDiscover_ActiveRowWithoutMeasurement_IsFilled",
+          "[slam][graph_discover]") {
+  // Final review I2: a legacy (pre-v27) or GUI-added loop row has no
+  // transform. A candidate on its key fills the measurement and the row
+  // keeps its status; a tombstone still blocks.
+  TempPath tmp("test_discover_fill");
+  TempPath file("test_discover_fill", ".json");
+  ProjectDB db(tmp.path);
+  make_project(db);
+  slam::init_pose_graph(db);
+  auto bare = [&](int a, int b, const char *source, const char *status) {
+    ProjectDB::PoseGraphEdge e;
+    e.from_node_id = a;
+    e.to_node_id = b;
+    e.edge_type = "loop_closure";
+    e.source = source;
+    e.status = "auto";
+    REQUIRE(db.upsert_pose_graph_edge(e));
+    if (std::string(status) != "auto")
+      REQUIRE(db.set_pose_graph_edge_status(a, b, "loop_closure", status));
+  };
+  bare(1, 7, "legacy", "auto");
+  bare(2, 7, "manual", "confirmed");
+  bare(3, 8, "legacy", "rejected");
+  write_edges(file.path, {{1, 7, rel(1, 7)},
+                          {7, 2, rel(7, 2)},
+                          {3, 8, rel(3, 8)},
+                          {1, 8, rel(1, 8)}});
+
+  const auto r = slam::discover_loop_edges(db, file_only(file.path));
+  CHECK(r.filled == 2);
+  CHECK(r.added == 1);
+  CHECK(r.skipped_existing == 0);
+  CHECK(r.skipped_rejected == 1);
+  for (auto [a, b, status] :
+       {std::tuple{1, 7, "auto"}, std::tuple{2, 7, "confirmed"}}) {
+    const auto e = db.pose_graph_edge(a, b, "loop_closure");
+    REQUIRE(e.has_value());
+    CHECK(e->status == status);
+    CHECK(e->source == "file");
+    REQUIRE(e->transform.has_value());
+    CHECK((pg::matrix_from_row_major(*e->transform) - rel(a, b)).norm() < 1e-9);
+    CHECK(e->information.has_value());
+  }
+  const auto tomb = db.pose_graph_edge(3, 8, "loop_closure");
+  CHECK(tomb->status == "rejected");
+  CHECK_FALSE(tomb->transform.has_value());
+
+  // A second run finds every key measured: nothing more is filled.
+  const auto again = slam::discover_loop_edges(db, file_only(file.path));
+  CHECK(again.filled == 0);
+  CHECK(again.added == 0);
+  CHECK(again.skipped_existing == 3);
+}

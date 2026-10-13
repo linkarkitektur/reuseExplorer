@@ -162,7 +162,8 @@ PlaneGraphResult optimize_sensor_poses(ProjectDB &db,
     index_of[frames[k].node_id] = static_cast<int>(k);
 
   std::vector<GraphEdge> edges;
-  int rejected = 0, no_measurement = 0, missing_frame = 0, panorama = 0;
+  int rejected = 0, no_measurement_odometry = 0, no_measurement_loop = 0,
+      missing_frame = 0, panorama = 0;
   for (size_t k = 0; k < stored.size(); ++k) {
     const auto &s = stored[k];
     if (s.status == pg::kStatusRejected) {
@@ -170,7 +171,8 @@ PlaneGraphResult optimize_sensor_poses(ProjectDB &db,
       continue;
     }
     if (!s.transform) {
-      ++no_measurement;
+      ++(s.edge_type == pg::kTypeOdometry ? no_measurement_odometry
+                                          : no_measurement_loop);
       continue;
     }
     const auto a = index_of.find(s.from_node_id);
@@ -198,11 +200,14 @@ PlaneGraphResult optimize_sensor_poses(ProjectDB &db,
       ++panorama;
     edges.push_back(std::move(e));
   }
-  if (no_measurement > 0)
+  if (no_measurement_odometry + no_measurement_loop > 0)
     core::warn("PlaneGraph: {} stored edges carry no measurement (pre-v27 "
-               "'legacy' rows) and were skipped; re-create them with 'rux "
-               "graph discover' or 'rux graph init --force'",
-               no_measurement);
+               "'legacy' or GUI-added rows) and were skipped: {} odometry "
+               "('rux graph init' fills them) and {} loop/panorama ('rux "
+               "graph discover' fills the pairs its front-ends re-find); "
+               "reject the rest in Rediger / 'rux graph prune --pair'",
+               no_measurement_odometry + no_measurement_loop,
+               no_measurement_odometry, no_measurement_loop);
   if (missing_frame > 0)
     core::warn("PlaneGraph: {} stored edges reference a frame that yielded "
                "no surfels or has no pose and were skipped",

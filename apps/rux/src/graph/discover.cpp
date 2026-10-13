@@ -205,11 +205,11 @@ int run_subcommand_graph_discover(const SubcommandGraphDiscoverOptions &opt,
                      r.odometry_edges_written);
       spdlog::info("Loop edges{}: {} proposed, {} matched, {} PCM-rejected, "
                    "{} over the PCM cap, {} already stored, {} rejected "
-                   "before, {} added",
+                   "before, {} added, {} stored rows given a measurement",
                    opt.dry_run ? " (dry run)" : "", r.proposed, r.candidates,
                    r.pcm_rejected, r.pcm_capped, r.skipped_existing,
-                   r.skipped_rejected, r.added);
-      if (!opt.dry_run && r.added > 0)
+                   r.skipped_rejected, r.added, r.filled);
+      if (!opt.dry_run && r.added + r.filled > 0)
         spdlog::info("Run 'rux optimize' to solve with the new edges.");
       return RuxError::SUCCESS;
     } catch (const std::exception &e) {

@@ -114,14 +114,25 @@ GraphDiscoverResult discover_loop_edges(ProjectDB &db,
   // Keyed by (pair, edge_type) (spec §4.3 "skips any key that already
   // exists", ruling R10): a stored panorama edge does not block a
   // loop_closure on the same pair, and vice versa.
+  // An ACTIVE row without a measurement (a migrated 'legacy' row, or one
+  // added in the GUI before it could carry a measurement) does not block its
+  // key: the candidate fills its measurement and the row keeps its status
+  // (final review I2). Tombstones always block.
   const auto stored = db.list_pose_graph_edges();
-  std::map<EdgeKey, bool> decided; // key -> tombstone
+  std::map<EdgeKey, bool> decided;         // key -> tombstone
+  std::map<EdgeKey, std::string> fillable; // key -> stored status
   for (const auto &s : stored)
     if (is_loop_type(s.edge_type)) {
-      bool &tomb = decided[edge_key(s.from_node_id, s.to_node_id, s.edge_type)];
+      const auto key = edge_key(s.from_node_id, s.to_node_id, s.edge_type);
+      if (s.status != pg::kStatusRejected && !s.transform) {
+        fillable.emplace(key, s.status);
+        continue;
+      }
+      bool &tomb = decided[key];
       tomb = tomb || s.status == pg::kStatusRejected;
     }
   std::vector<LoopCandidate> fresh;
+  std::vector<std::string> fill_status; // parallel to fresh; "" = new key
   for (auto &cand : cands) {
     const auto key =
         edge_key(node_ids[static_cast<size_t>(cand.edge.i)],
@@ -130,6 +141,10 @@ GraphDiscoverResult discover_loop_edges(ProjectDB &db,
       (it->second ? res.skipped_rejected : res.skipped_existing)++;
       continue;
     }
+    const auto f = fillable.find(key);
+    fill_status.push_back(f == fillable.end() ? std::string() : f->second);
+    if (f != fillable.end())
+      fillable.erase(f); // one candidate per key fills it
     fresh.push_back(std::move(cand));
   }
   if (res.skipped_existing + res.skipped_rejected > 0)
@@ -168,9 +183,11 @@ GraphDiscoverResult discover_loop_edges(ProjectDB &db,
   }
   if (stored_no_measurement > 0)
     core::warn("GraphDiscover: {} active stored loop edges carry no "
-               "measurement (legacy rows) and are left out of the "
-               "consistency check; reject them in Rediger / `rux graph prune "
-               "--pair`, or re-import the scan to restore their transforms",
+               "measurement (pre-v27 'legacy' or GUI-added rows) and are left "
+               "out of the consistency check; this run fills the ones its "
+               "front-ends re-find (see 'measurements filled'). Reject the "
+               "rest in Rediger / 'rux graph prune --pair', or re-import an "
+               "RTABMap scan to restore its transforms",
                stored_no_measurement);
   if (stored_unseeded > 0)
     core::warn("GraphDiscover: {} stored active loop edges reference a frame "
@@ -192,11 +209,15 @@ GraphDiscoverResult discover_loop_edges(ProjectDB &db,
     by_support.resize(static_cast<size_t>(pcm_opt.pcm_max_edges));
     std::sort(by_support.begin(), by_support.end()); // keep input order
     std::vector<LoopCandidate> capped;
+    std::vector<std::string> capped_fill;
     capped.reserve(by_support.size());
-    for (size_t k : by_support)
+    for (size_t k : by_support) {
       capped.push_back(std::move(fresh[k]));
+      capped_fill.push_back(std::move(fill_status[k]));
+    }
     res.pcm_capped = static_cast<int>(fresh.size() - capped.size());
     fresh = std::move(capped);
+    fill_status = std::move(capped_fill);
     core::warn("GraphDiscover: {} new candidates over pcm_max_edges = {} "
                "(lowest inlier count) were dropped without a consistency "
                "test; raise loop_closure.pcm_max_edges or run discover again "
@@ -259,7 +280,8 @@ GraphDiscoverResult discover_loop_edges(ProjectDB &db,
   if (options.dry_run) {
     core::info("GraphDiscover dry-run: {} proposed, {} matched, {} "
                "PCM-rejected, {} over the PCM cap, {} skipped (already "
-               "stored), {} skipped (rejected before); {} would be added",
+               "stored), {} skipped (rejected before); {} would be added or "
+               "filled",
                res.proposed, res.candidates, res.pcm_rejected, res.pcm_capped,
                res.skipped_existing, res.skipped_rejected, survivors);
     return res;
@@ -286,12 +308,17 @@ GraphDiscoverResult discover_loop_edges(ProjectDB &db,
             pg::information_from_sigmas(f.edge.sigma_rot, f.edge.sigma_trans),
             local[j]));
     row.source = f.source;
-    row.status = std::string(pg::kStatusAuto);
+    const bool fills = !fill_status[k].empty();
+    row.status = fills ? fill_status[k] : std::string(pg::kStatusAuto);
     const auto err = pg::transform_error(T, seed_stored[i], seed_stored[j]);
     row.seed_disagreement_m = err.translation_m;
     row.seed_disagreement_deg = err.rotation_deg;
     if (!db.upsert_pose_graph_edge(row)) {
       ++not_written;
+      continue;
+    }
+    if (fills) {
+      ++res.filled; // an existing row gained its measurement
       continue;
     }
     ++res.added;
@@ -310,10 +337,11 @@ GraphDiscoverResult discover_loop_edges(ProjectDB &db,
                not_written);
   core::info("GraphDiscover: {} proposed, {} matched, {} PCM-rejected, {} "
              "over the PCM cap, {} skipped (already stored), {} skipped "
-             "(rejected before), {} added ({} ORB, {} panorama, {} file)",
+             "(rejected before), {} added ({} ORB, {} panorama, {} file), {} "
+             "measurements filled on stored rows",
              res.proposed, res.candidates, res.pcm_rejected, res.pcm_capped,
              res.skipped_existing, res.skipped_rejected, res.added,
-             res.added_orb, res.added_panorama, res.added_file);
+             res.added_orb, res.added_panorama, res.added_file, res.filled);
   return res;
 }
 
