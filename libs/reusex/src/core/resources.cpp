@@ -4,6 +4,7 @@
 
 #include "reusex/core/resources.hpp"
 
+#include "reusex/core/frame_projection.hpp"
 #include "reusex/core/logging.hpp"
 #include "reusex/core/survey.hpp"
 #include "reusex/core/survey_service.hpp"
@@ -195,6 +196,13 @@ patch_resource(ProjectDB &db, std::string_view code,
                                        (frame ? "sensor frame " : "panorama ") +
                                        std::to_string(view.id) +
                                        ", which does not exist");
+      // A frame picked without a region shows the instance's part of it.
+      if (part->cloud_name && part->instance_id && *part->instance_id != 0) {
+        const auto filled = complete_view_region(db, view, *part->cloud_name,
+                                                 *part->instance_id);
+        if (filled.region != view.region)
+          value = view_to_json(filled);
+      }
     }
     plan.push_back({k, std::move(value)});
   }

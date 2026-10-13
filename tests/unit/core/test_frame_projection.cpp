@@ -212,3 +212,63 @@ TEST_CASE("ProjectInstanceBbox_UnseenOrUnposed_ReturnsNullopt",
   CHECK_FALSE(project_instance_bbox(db, 99, pts.at(1))); // no such frame
   CHECK_FALSE(project_instance_bbox(db, 1, {}));         // no points
 }
+
+using reusex::core::complete_view_region;
+using reusex::core::ResourceView;
+using reusex::core::ViewKind;
+
+TEST_CASE("CompleteViewRegion_InstanceInView_FillsPaddedBbox",
+          "[core][projection][view]") {
+  const reusex::test_support::TempPath tmp("complete_view_region");
+  ProjectDB db(tmp.path);
+  seed_instances(db);
+  frame_at_origin(db, 1);
+  const auto filled = complete_view_region(
+      db, ResourceView{ViewKind::frame, 1, std::nullopt}, "instances", 1);
+  CHECK(filled.kind == ViewKind::frame);
+  CHECK(filled.id == 1);
+  REQUIRE(filled.region);
+  CHECK_THAT((*filled.region)[0], WithinAbs(57.35 / 128.0, 1e-9));
+  CHECK_THAT((*filled.region)[1], WithinAbs(63.85 / 128.0, 1e-9));
+  CHECK_THAT((*filled.region)[2], WithinAbs(14.3 / 128.0, 1e-9));
+  CHECK_THAT((*filled.region)[3], WithinAbs(1.3 / 128.0, 1e-9));
+  const auto expected =
+      project_instance_bbox(db, 1, instance_points(db, "instances").at(1));
+  CHECK(filled.region == expected);
+}
+
+TEST_CASE("CompleteViewRegion_RegionGivenOrPanorama_Unchanged",
+          "[core][projection][view]") {
+  const reusex::test_support::TempPath tmp("complete_view_region_kept");
+  ProjectDB db(tmp.path);
+  seed_instances(db);
+  frame_at_origin(db, 1);
+  const ResourceView given{ViewKind::frame, 1,
+                           reusex::core::ViewRegion{0.1, 0.2, 0.3, 0.4}};
+  CHECK(complete_view_region(db, given, "instances", 1) == given);
+  const ResourceView pano{ViewKind::panorama, 1, std::nullopt};
+  CHECK(complete_view_region(db, pano, "instances", 1) == pano);
+}
+
+TEST_CASE("CompleteViewRegion_NotInViewOrNoCloud_StaysNull",
+          "[core][projection][view]") {
+  const reusex::test_support::TempPath tmp("complete_view_region_null");
+  ProjectDB db(tmp.path);
+  seed_instances(db);
+  frame_at_origin(db, 1);
+  const ResourceView bare{ViewKind::frame, 1, std::nullopt};
+  // Instance 2 is behind the camera; instance 7 has no points.
+  CHECK(complete_view_region(db, bare, "instances", 2) == bare);
+  CHECK(complete_view_region(db, bare, "instances", 7) == bare);
+  // A frame that does not exist: unchanged, the caller's check refuses it.
+  const ResourceView missing{ViewKind::frame, 99, std::nullopt};
+  CHECK(complete_view_region(db, missing, "instances", 1) == missing);
+  // Missing label or positions cloud: unchanged, no throw.
+  CHECK(complete_view_region(db, bare, "nope", 1) == bare);
+  CHECK(complete_view_region(db, bare, "instances", 1, "nope") == bare);
+  // Misaligned clouds: unchanged, no throw.
+  reusex::CloudL longer;
+  longer.resize(9);
+  db.save_point_cloud("instances", longer, "test", "{}");
+  CHECK(complete_view_region(db, bare, "instances", 1) == bare);
+}

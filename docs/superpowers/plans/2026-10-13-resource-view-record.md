@@ -4,7 +4,7 @@
 
 **Goal:** Give every resource (survey part) one stored, user-changeable image, the *view record* (sensor frame or 360° panorama plus a normalised region). It is set automatically on sync and on mask → resource, PATCHable through the resource key `sys:view`, and it is the only image the GUI table thumbnail and Foto tab show.
 
-**Architecture:** ReUseX stores the record in six nullable `survey_parts.view_*` columns (schema v27). It validates the record in one pure `core/resource_view` unit and exposes it through `SurveyPartRecord::view`, `core::Resource::view` and a new built-in key `sys:view`. Because `core` may not link `vision`, the instance→frame bbox projection moves from `vision` into a new `core/frame_projection` unit, and `vision` keeps an alias. ruxd serialises the record (`view` on every resource, `region` on every instance frame) and passes the mask bbox on mask → resource. rux-frontend renders the record with a region crop and offers "Brug som ressourcebillede" / "Fjern billede". It never falls back to a ranking.
+**Architecture:** ReUseX stores the record in six nullable `survey_parts.view_*` columns (schema v27). It validates the record in one pure `core/resource_view` unit and exposes it through `SurveyPartRecord::view`, `core::Resource::view` and a new built-in key `sys:view`. Because `core` may not link `vision`, the instance→frame bbox projection moves from `vision` into a new `core/frame_projection` unit, and `vision` keeps an alias. A frame view PATCHed without a region on an instance-backed part gets the instance's padded region from the library (`complete_view_region`), so ruxd computes no per-frame regions. ruxd serialises the record (`view` on every resource) and passes the mask bbox on mask → resource. rux-frontend renders the record with a region crop and offers "Brug som ressourcebillede" / "Fjern billede". It never falls back to a ranking.
 
 **Tech Stack:** C++20, SQLite (schema migration), Eigen, OpenCV core, nlohmann::json, Catch2 v3 (ReUseX + ruxd); Crow/ruxd API layer; React 19 + TypeScript + vitest (rux-frontend).
 
@@ -88,6 +88,14 @@ project_instance_bbox(const ProjectDB &db, int frame_id,
 std::map<std::uint32_t, std::vector<Eigen::Vector3f>>
 instance_points(const ProjectDB &db, std::string_view label_cloud,
                 std::string_view positions_cloud = "cloud");
+// Task 1.6b: a frame view without region gets instance @p instance_id's
+// project_instance_bbox in that frame; unchanged otherwise or when the
+// instance cannot be placed (missing/misaligned cloud: warn; no points /
+// not in view: info; no such frame). Never throws for those.
+ResourceView complete_view_region(const ProjectDB &db, ResourceView view,
+                                  std::string_view label_cloud,
+                                  std::uint32_t instance_id,
+                                  std::string_view positions_cloud = "cloud");
 }
 // vision/instance_crop.hpp keeps: namespace reusex::vision { using core::ProjectedBox; using core::project_points_to_box; }
 ```
@@ -130,6 +138,7 @@ struct MaskSelectionResult  { /* … */ std::optional<ResourceView> view; };
 
 - In `values["sys:view"]`: a string, canonical compact JSON, key order `kind, id, region`. Example: `"{\"kind\":\"frame\",\"id\":7,\"region\":[0.1,0.2,0.3,0.4]}"`. `region` is `null` for the whole image. The value is `null` when unset.
 - PATCH input: any JSON string `parse_view` accepts (unknown fields refused), or `null`/`""` to clear. The server canonicalises it. A shape error or a source that does not exist is a **400** (`KeyValueError`).
+- A frame value with `region: null` (or no region) on an instance-backed part is stored with the instance's padded, normalised bbox in that frame (`core::complete_view_region`, Task 1.6b). It stays null when the instance cannot be placed (manual part, missing/misaligned cloud, no points, not in that frame); the write still succeeds. So a whole-image frame view cannot be stored for an instance-backed part via PATCH. A panorama value, a frame value that already has a region, and a clear are stored as sent.
 
 ### C. ruxd JSON (Part 2 produces, Part 3 consumes)
 
@@ -141,7 +150,6 @@ struct MaskSelectionResult  { /* … */ std::optional<ResourceView> view; };
   ```
   `view` is always present (object or `null`), even when a `?template=` filter leaves `sys:view` out of `values`.
 - **Key catalogue** (`GET /resources/keys`): includes `{"id":"sys:view","label":"Ressourcebillede","category":"Kortlægning","scope":"part","data_type":"view","unit":null,"options":[],"editable":true}`. `data_type` enum gains `view`.
-- **Instance frames** (`GET /instances/{cloud}/{id}/frames`): every `frames[]` item gains `"region": [x,y,w,h] | null`. This is the padded, normalised bbox of the instance in that frame (`core::project_instance_bbox`). It is null when the instance does not project into that frame or the base `cloud` is missing.
 - **Mask → resource** (`POST /frames/{id}/segment/resource`, 201): gains `"view": {"kind":"frame","id":<id>,"region":[…]} | null`.
 - **Survey sync** (`POST /survey/sync`): gains `"views_attached": int, "views_unavailable": int`.
 - Panorama image URL (unchanged): `GET /panoramas/{id}/image?max_size=N`. Frame image URL (unchanged): `GET /frames/{id}/image?kind=color&max_size=N`.
@@ -153,7 +161,6 @@ export type ViewRegion = [number, number, number, number];
 export interface ResourceView { kind: 'frame' | 'panorama'; id: number; region: ViewRegion | null }
 export interface Resource { code: string; type_id: number; manual: boolean; values: Record<string, string | null>; view: ResourceView | null }
 export type ResourceDataType = 'text' | 'number' | 'enum' | 'multiselect' | 'boolean' | 'date' | 'view';
-export interface InstanceFrame extends VisibleFrame { region: ViewRegion | null }
 // SurveySyncReport: views_attached?: number; views_unavailable?: number;
 // SegmentResourceResult: view: ResourceView | null;
 ```

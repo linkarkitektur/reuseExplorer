@@ -65,7 +65,9 @@ struct ResourcePatchResult {
 /// Validate every write (normalise_value), then apply them in one
 /// transaction: type-scoped keys to the survey type, part-scoped built-ins
 /// to the part, leksikon/column keys to the part's passport (created on
-/// the first non-null write). Clearing an absent value succeeds.
+/// the first non-null write). Clearing an absent value succeeds. A frame
+/// `sys:view` without a region, on an instance-backed part, is stored with
+/// the instance's padded region in that frame (complete_view_region).
 /// @throws KeyValueError (nothing written) — also when one key appears
 ///         twice in @p writes —, std::out_of_range (no part).
 ResourcePatchResult patch_resource(

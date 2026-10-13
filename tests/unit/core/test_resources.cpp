@@ -6,9 +6,11 @@
 // rename carries their stored values.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <core/MaterialPassport.hpp>
 #include <core/ProjectDB.hpp>
+#include <core/SensorIntrinsics.hpp>
 #include <core/logging.hpp>
 #include <core/materialepas_json_export.hpp>
 #include <core/resource_keys.hpp>
@@ -599,4 +601,49 @@ TEST_CASE("Resources_Patch_View_RoundTripsChecksSourceAndClears",
 
   patch_resource(db, "RX-001", {{"sys:view", std::nullopt}});
   CHECK_FALSE(db.survey_part("RX-001")->view);
+}
+
+TEST_CASE("Resources_Patch_FrameViewWithoutRegion_StoresInstanceRegion",
+          "[resources][view]") {
+  using Catch::Matchers::WithinAbs;
+  TempDB tmp;
+  ProjectDB db(tmp.path);
+  make_instance_cloud(db, 1);
+  reusex::Cloud positions; // instance 1's one point, on the optical axis
+  pcl::PointXYZRGB p;
+  p.x = p.y = 0.0F;
+  p.z = 2.0F;
+  positions.push_back(p);
+  db.save_point_cloud("cloud", positions, "test", "{}");
+  SensorIntrinsics k; // fx = fy = 100, principal point (64, 64), 128 x 128
+  k.fx = k.fy = 100.0;
+  k.cx = k.cy = 64.0;
+  k.width = k.height = 128;
+  db.save_sensor_frame(
+      1, cv::Mat(128, 128, CV_8UC3, cv::Scalar(1, 2, 3)), cv::Mat(), cv::Mat(),
+      {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}, k, 1.0, -1);
+  const auto t = make_type(db, "Døre");
+  make_part(db, "RX-001", t, 1u);
+  make_part(db, "RX-002", t);
+
+  // Instance-backed: (64, 64), one pixel, padded 15 % per side.
+  const auto out = patch_resource(db, "RX-001",
+                                  {{"sys:view", R"({"kind":"frame","id":1})"}});
+  const auto stored = db.survey_part("RX-001")->view;
+  REQUIRE(stored);
+  REQUIRE(stored->region);
+  CHECK_THAT((*stored->region)[0], WithinAbs(63.85 / 128.0, 1e-9));
+  CHECK_THAT((*stored->region)[1], WithinAbs(63.85 / 128.0, 1e-9));
+  CHECK_THAT((*stored->region)[2], WithinAbs(1.3 / 128.0, 1e-9));
+  CHECK_THAT((*stored->region)[3], WithinAbs(1.3 / 128.0, 1e-9));
+  CHECK(out.resource.view == stored);
+  CHECK(value_of(out.resource, "sys:view") == view_to_json(*stored));
+
+  // Manual part: nothing to place, the whole image.
+  const auto manual = patch_resource(
+      db, "RX-002", {{"sys:view", R"({"kind":"frame","id":1})"}});
+  REQUIRE(manual.resource.view);
+  CHECK_FALSE(manual.resource.view->region);
+  CHECK(value_of(manual.resource, "sys:view") ==
+        R"({"kind":"frame","id":1,"region":null})");
 }

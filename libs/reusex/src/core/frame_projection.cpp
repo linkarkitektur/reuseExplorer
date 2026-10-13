@@ -8,6 +8,7 @@
 
 #include "core/ProjectDB.hpp"
 #include "core/instance_evidence.hpp"
+#include "core/logging.hpp"
 
 #include <Eigen/Geometry>
 #include <pcl/point_cloud.h>
@@ -111,6 +112,43 @@ instance_points(const ProjectDB &db, std::string_view label_cloud,
                 std::string_view positions_cloud) {
   return detail::load_instance_points(db, label_cloud, positions_cloud,
                                       "instance_points");
+}
+
+ResourceView complete_view_region(const ProjectDB &db, ResourceView view,
+                                  std::string_view label_cloud,
+                                  std::uint32_t instance_id,
+                                  std::string_view positions_cloud) {
+  // A frame that does not exist is the caller's error to report; leave it.
+  if (view.kind != ViewKind::frame || view.region ||
+      !db.has_sensor_frame(view.id))
+    return view;
+  std::map<std::uint32_t, std::vector<Eigen::Vector3f>> all;
+  try {
+    all = instance_points(db, label_cloud, positions_cloud);
+  } catch (const std::invalid_argument &e) {
+    reusex::warn("frame view {} of instance {}: whole image, cannot place the "
+                 "instance ({})",
+                 view.id, instance_id, e.what());
+    return view;
+  } catch (const CloudMisalignedError &e) {
+    reusex::warn("frame view {} of instance {}: whole image, cannot place the "
+                 "instance ({})",
+                 view.id, instance_id, e.what());
+    return view;
+  }
+  const auto it = all.find(instance_id);
+  if (it == all.end()) {
+    reusex::info("frame view {}: instance {} of '{}' has no finite points; "
+                 "whole image",
+                 view.id, instance_id, label_cloud);
+    return view;
+  }
+  view.region = project_instance_bbox(db, view.id, it->second);
+  if (!view.region)
+    reusex::info("frame view {}: instance {} of '{}' ({} points) does not "
+                 "project into the frame; whole image",
+                 view.id, instance_id, label_cloud, it->second.size());
+  return view;
 }
 
 std::map<std::uint32_t, std::vector<Eigen::Vector3f>>

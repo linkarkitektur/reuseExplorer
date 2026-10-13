@@ -64,4 +64,17 @@ std::map<std::uint32_t, std::vector<Eigen::Vector3f>>
 instance_points(const ProjectDB &db, std::string_view label_cloud,
                 std::string_view positions_cloud = "cloud");
 
+/// @p view with its region filled in when it is a frame view without one:
+/// the padded bbox (project_instance_bbox) of instance @p instance_id of
+/// label cloud @p label_cloud in that frame. Returned unchanged otherwise,
+/// and when the instance cannot be placed in the frame: a missing or
+/// misaligned cloud (logged at warn), no points or not in view (info), a
+/// frame that does not exist (the caller's existence check refuses it).
+/// Never throws for those cases; a cloud that cannot be loaded still throws
+/// std::runtime_error.
+ResourceView complete_view_region(const ProjectDB &db, ResourceView view,
+                                  std::string_view label_cloud,
+                                  std::uint32_t instance_id,
+                                  std::string_view positions_cloud = "cloud");
+
 } // namespace reusex::core

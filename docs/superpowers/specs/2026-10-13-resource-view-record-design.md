@@ -107,10 +107,11 @@ copies.
   strip below and a one-line hint.
 - **Choosing**: each `PhotoStrip` thumbnail and the 360° strip get a
   "Brug som ressourcebillede" action → `PATCH sys:view` with the
-  instance's region for that frame (frames: from the existing
-  `/instances/.../frames` data if it carries a bbox, else add it there in
-  ruxd; panorama: a fixed ~60° × 45° window centred on the instance's
-  `u,v`). The current view is marked in the strip ("Valgt").
+  instance's region for that frame (frames: send `{kind:"frame",id}` and
+  the library fills in the instance's padded region on PATCH,
+  `core::complete_view_region` — changed 2026-10-13, user-approved: avoids
+  loading two clouds per frames request; panorama: a fixed ~60° × 45°
+  window centred on the instance's `u,v`). The current view is marked in the strip ("Valgt").
 - "Fjern billede" clears it (PATCH null).
 - Tests per the repo's conventions (vitest for the region/crop maths and
   the fallback-free selection; component test for the action).
