@@ -40,6 +40,11 @@ gtsam::Pose3 to_pose3(const Eigen::Matrix4d &T) {
                       gtsam::Point3(T.block<3, 1>(0, 3)));
 }
 
+gtsam::SharedNoiseModel sigmas_noise(double sr, double st) {
+  return gtsam::noiseModel::Diagonal::Sigmas(
+      (gtsam::Vector(6) << sr, sr, sr, st, st, st).finished());
+}
+
 gtsam::SharedNoiseModel
 information_noise(const Eigen::Matrix<double, 6, 6> &I) {
   if (I.isDiagonal(1e-12))
@@ -433,6 +438,21 @@ PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
       std::any_of(edges.begin(), edges.end(), [](const GraphEdge &e) {
         return e.kind == GraphEdge::Kind::loop;
       });
+  // Edges that cannot enter the graph (an endpoint outside frames[] or a
+  // self-loop) are skipped. Odometry now comes from the edge list, so a
+  // skipped odometry edge can disconnect the trajectory: say so (STANDARDS §5).
+  {
+    int bad_odom = 0, bad_loop = 0;
+    for (const auto &e : edges)
+      if (!in_range(e))
+        ++(e.kind == GraphEdge::Kind::loop ? bad_loop : bad_odom);
+    if (bad_odom + bad_loop > 0)
+      core::warn("PlaneGraph: skipped {} odometry and {} loop edges with an "
+                 "out-of-range index or a self-loop ({} frames). Edge indices "
+                 "must be positions in frames[]; check the node_id -> index "
+                 "mapping",
+                 bad_odom, bad_loop, N);
+  }
 
   // --- Seed poses ----------------------------------------------------------
   // seed[] is the ORIGINAL input pose of each frame, held fixed for the whole
@@ -827,8 +847,7 @@ PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
               motion_scale.empty() ? 1.0 : motion_scale[slot].translation;
           const double sr = base_r * s * mr;
           const double st = base_t * s * mt;
-          noise = gtsam::noiseModel::Diagonal::Sigmas(
-              (gtsam::Vector(6) << sr, sr, sr, st, st, st).finished());
+          noise = sigmas_noise(sr, st);
           weight = 1.0 / (st * st);
         }
         graph.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
@@ -880,8 +899,7 @@ PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
       } else {
         const double sr = options_.loop_default_sigma_rot;
         const double st = options_.loop_default_sigma_trans;
-        base_noise = gtsam::noiseModel::Diagonal::Sigmas(
-            (gtsam::Vector(6) << sr, sr, sr, st, st, st).finished());
+        base_noise = sigmas_noise(sr, st);
         weight = 1.0 / (st * st);
       }
       gtsam::SharedNoiseModel noise = base_noise;
