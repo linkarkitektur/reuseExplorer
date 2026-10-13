@@ -53,7 +53,7 @@ struct StageName {
 // used in `ruxd`'s HTTP contract (docs/gui/openapi.yaml, in its own repo) and
 // `contract` selects the input check run before the stage executes
 // (docs/CONTRACTS.md).
-constexpr std::array<StageName, 7> kStages{{
+constexpr std::array<StageName, 8> kStages{{
     {JobStage::clouds, "clouds", "cloud_reconstruction",
      core::PipelineStage::clouds, false},
     {JobStage::planes, "planes", "segment_planes", core::PipelineStage::planes,
@@ -84,6 +84,11 @@ constexpr std::array<StageName, 7> kStages{{
     // executor already does for optimize (#464).
     {JobStage::annotate, "annotate", "annotate", core::PipelineStage::annotate,
      true},
+    // Not cancellable: ORB matching has no cooperative cancel hook. Like
+    // optimize it needs reusex_slam, so dispatch() refuses it and the
+    // header-only pipeline/optimize_stage.hpp executor runs it (#464).
+    {JobStage::graph_discover, "graph_discover", "graph_discover",
+     core::PipelineStage::graph_discover, false},
 }};
 
 const StageName &descriptor(JobStage stage) {
@@ -592,6 +597,10 @@ StageResult dispatch(ProjectDB &db, const StageContext &ctx,
     // W0, ruxd repo) rather than retry the default one.
     return StageResult::invalid(
         "annotate needs an executor with a vision backend");
+  case JobStage::graph_discover:
+    return StageResult::failure(
+        "the graph_discover stage requires the slam executor "
+        "(pipeline::stage_executor_with_optimize, see #464)");
   }
   return StageResult::failure("unknown stage");
 }

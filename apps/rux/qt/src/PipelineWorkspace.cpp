@@ -487,9 +487,11 @@ void PipelineWorkspace::rebuild_stages() {
     auto *n = new QLabel(stage_name_da(s));
     n->setObjectName("stageRowName");
     texts->addWidget(n);
-    auto *c = new QLabel(QString("rux %1").arg(
-        s == pl::JobStage::optimize ? QString("optimize")
-                                    : QString("create %1").arg(qs(name))));
+    const QString cmd = s == pl::JobStage::optimize ? QString("optimize")
+                        : s == pl::JobStage::graph_discover
+                            ? QString("graph discover")
+                            : QString("create %1").arg(qs(name));
+    auto *c = new QLabel(QString("rux %1").arg(cmd));
     c->setObjectName("stageRowCmd");
     texts->addWidget(c);
     h->addLayout(texts, 1);
@@ -742,16 +744,19 @@ bool PipelineWorkspace::run() {
   refresh_readiness();
   if (!run_->isEnabled())
     return false;
-  // optimize reads the stored pose graph: edits not yet saved are not in it.
-  if (stage_ == pl::JobStage::optimize && pending_edits_ &&
-      pending_edits_() > 0) {
+  // optimize and graph_discover read the stored pose graph: edits not yet
+  // saved are not in it.
+  if ((stage_ == pl::JobStage::optimize ||
+       stage_ == pl::JobStage::graph_discover) &&
+      pending_edits_ && pending_edits_() > 0) {
     QMessageBox box(this);
     box.setIcon(QMessageBox::Warning);
     box.setWindowTitle("Ændringer i posegrafen er ikke gemt");
     box.setText(QString("%1 ændring(er) i posegrafen er ikke gemt.")
                     .arg(pending_edits_()));
-    box.setInformativeText("Optimér poser bruger kun de gemte kanter. Gem "
-                           "dem i Database først, eller kør uden dem.");
+    box.setInformativeText("Optimér poser og Find kanter bruger kun de gemte "
+                           "kanter. Gem dem i Database først, eller kør uden "
+                           "dem.");
     auto *go = box.addButton(NavItem::escape_mnemonic("Kør uden dem"),
                              QMessageBox::AcceptRole);
     auto *stop = box.addButton(NavItem::escape_mnemonic("Annullér"),

@@ -48,6 +48,7 @@ enum class JobStage {
   mesh,      ///< MIP-solve the cell complex into a watertight mesh
   optimize,  ///< refine per-frame sensor poses via plane-landmark pose graph
   annotate,  ///< ML semantic labelling of the stored sensor frames
+  graph_discover, ///< find loop edges and store them in the pose graph
 };
 
 /// Canonical lower-case stage name (the token used on the wire and the CLI).

@@ -180,6 +180,9 @@ TEST_CASE("PipelineLogName_RunnableStages_MatchesCliNames",
   // pipeline_log before now (batch `rux create annotate` never logged there).
   CHECK(pipeline_log_name(JobStage::annotate) == "annotate");
   CHECK(to_string(JobStage::annotate) == "annotate");
+
+  CHECK(pipeline_log_name(JobStage::graph_discover) == "graph_discover");
+  CHECK(to_string(JobStage::graph_discover) == "graph_discover");
 }
 
 TEST_CASE("JobStage_NameRoundTrip_CoversEveryRunnableStage",

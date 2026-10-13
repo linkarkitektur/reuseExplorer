@@ -120,6 +120,21 @@ odometry edge with a measurement.
 | Options  | `InitPoseGraphOptions` (`libs/reusex/include/slam/pose_graph.hpp`) |
 | Checks   | ≥2 stored frames; refuses when odometry edges exist unless `--force` |
 
+### `graph_discover` (`rux graph discover`)
+
+Run the loop-edge front-ends (ORB frame pairs, 360 panoramas, an external
+`reusex.loop_edges.v1` file) seeded from the initial poses, skip every pair the
+stored graph already decides (including rejected tombstones), PCM over stored
+active edges ∪ new candidates (confirmed edges are fixed inliers), and store the
+survivors with status `auto`. Initialises odometry first when there is none.
+
+| | |
+|---|---|
+| Consumes | `sensor_frames` |
+| Produces | `pose_graph_edges` |
+| Options  | `GraphDiscoverOptions` (`libs/reusex/include/slam/graph_discover.hpp`) |
+| Checks   | ≥2 stored frames; at least one source enabled |
+
 ### `optimize` / `register` (`rux optimize`, `rux register`)
 
 Solve the stored pose graph: seeds from `sensor_frames.initial_transform`, one
@@ -402,9 +417,9 @@ rasterizer.
 ## Typical pipeline order
 
 ```
-import → [graph_init] → (optimize|register) → clouds → planes → rooms → mesh → texture
-                                  ↘ annotate → project → instances → windows
-                                  ↘ gsplat (leaf: produces `splat`)
+import → [graph_init] → [graph_discover] → (optimize|register) → clouds → planes → rooms → mesh → texture
+                                                    ↘ annotate → project → instances → windows
+                                                    ↘ gsplat (leaf: produces `splat`)
 ```
 
 Stage order in the table is load-bearing and asserted by a test: an input may

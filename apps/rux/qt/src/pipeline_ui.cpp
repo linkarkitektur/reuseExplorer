@@ -30,6 +30,8 @@ QString stage_name_da(pl::JobStage stage) {
     return "Mesh";
   case pl::JobStage::optimize:
     return "Optimér poser";
+  case pl::JobStage::graph_discover:
+    return "Find kanter";
   }
   return {};
 }
@@ -48,6 +50,9 @@ QString stage_blurb_da(pl::JobStage stage) {
     return "Løs cellekomplekset til et vandtæt mesh (MIP).";
   case pl::JobStage::optimize:
     return "Forfin billedernes poser med plan-landemærker i en posegraf.";
+  case pl::JobStage::graph_discover:
+    return "Find nye løkkekanter (ORB, 360°-panoramaer, kantfil) og gem dem i "
+           "posegrafen.";
   }
   return {};
 }
@@ -96,6 +101,14 @@ QString parameter_label_da(pl::JobStage stage,
       {{5, "assoc_rounds"}, "Tilknytningsrunder"},
       {{5, "no_gnc"}, "Uden GNC (hurtigere, mindre robust)"},
       {{5, "dry_run"}, "Prøvekørsel — skriv ikke poserne"},
+      {{7, "loop_closure"}, "ORB-løkkelukning"},
+      {{7, "use_panoramas"}, "Brug 360°-panoramaer"},
+      {{7, "loop_edges_file"}, "Kantfil (JSON)"},
+      {{7, "loop_proposal"}, "Kandidatforslag"},
+      {{7, "loop_min_frame_gap"}, "Mindste billedafstand"},
+      {{7, "loop_min_inliers"}, "Mindste inliers"},
+      {{7, "pcm"}, "Konsistensfilter (PCM)"},
+      {{7, "dry_run"}, "Prøvekørsel — skriv ikke kanterne"},
   };
   if (auto it = labels.find({static_cast<int>(stage), d.key});
       it != labels.end())
@@ -129,6 +142,8 @@ reusex::core::PipelineStage contract_stage(pl::JobStage stage) {
     return P::mesh;
   case pl::JobStage::optimize:
     return P::optimize;
+  case pl::JobStage::graph_discover:
+    return P::graph_discover;
   }
   return P::clouds;
 }

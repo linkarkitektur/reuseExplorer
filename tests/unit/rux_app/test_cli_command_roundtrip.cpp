@@ -58,7 +58,11 @@ const std::set<std::string> kNoFlag = {"rooms.propagate_k"};
 /// job_stage_names(), but is listed for the same reason
 /// CliCommand_UnknownStage_IsUnsupported (test_workspace_logic.cpp) uses it:
 /// a byword for "a stage name with no CLI mapping".
-const std::set<std::string> kNoCliMapping = {"gsplat", "annotate"};
+const std::set<std::string> kNoCliMapping = {
+    "gsplat",
+    "annotate",
+    "graph_discover", // until Task 18 adds rux graph discover
+};
 
 struct Captured {
   std::string stage;

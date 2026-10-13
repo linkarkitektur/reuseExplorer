@@ -57,3 +57,35 @@ TEST_CASE("OptimizeStage_OtherStages_GoToTheDefaultExecutor",
   CHECK(via_optimize_exec.invalid_input == via_default.invalid_input);
   CHECK_FALSE(via_optimize_exec.ok);
 }
+
+TEST_CASE("GraphDiscoverStage_BadParameters_RefusedAsInvalid",
+          "[pipeline][optimize_stage]") {
+  TempPath project("test_discover_stage_bad");
+  {
+    reusex::ProjectDB db(project.path);
+  }
+  StageContext ctx;
+  ctx.project = project.path;
+  ctx.stage = JobStage::graph_discover;
+  for (const std::string params :
+       {"[1]", R"({"loop_proposal":"psychic"})",
+        R"({"loop_closure":false})"}) { // last: no source selected
+    ctx.parameters = params;
+    const StageResult r = stage_executor_with_optimize()(ctx);
+    INFO(params << " -> " << r.message);
+    CHECK_FALSE(r.ok);
+    CHECK(r.invalid_input);
+  }
+}
+
+TEST_CASE("GraphDiscoverStage_DefaultExecutor_Refuses",
+          "[pipeline][optimize_stage]") {
+  TempPath project("test_discover_stage_default");
+  {
+    reusex::ProjectDB db(project.path);
+  }
+  StageContext ctx;
+  ctx.project = project.path;
+  ctx.stage = JobStage::graph_discover;
+  CHECK_FALSE(default_stage_executor()(ctx).ok);
+}

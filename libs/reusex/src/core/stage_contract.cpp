@@ -84,6 +84,14 @@ const std::vector<StageContract> &contracts() {
        {{{"sensor_frames"}, /*min_rows=*/2}},
        {"pose_graph_edges"}},
 
+      {PipelineStage::graph_discover,
+       "graph_discover",
+       {},
+       "rux graph discover",
+       "find wide-baseline loop edges and store them in the pose graph",
+       {{{"sensor_frames"}, /*min_rows=*/2}},
+       {"pose_graph_edges"}},
+
       {PipelineStage::optimize,
        "optimize",
        {"register"},

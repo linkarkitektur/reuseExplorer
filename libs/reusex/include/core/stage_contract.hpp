@@ -35,21 +35,22 @@ namespace reusex::core {
 /// a stage's inputs may only be produced by a *strictly earlier* stage, which
 /// is asserted by tests/unit/core/test_stage_contract.cpp.
 enum class PipelineStage {
-  import,     ///< extract raw sensor frames from a scan
-  graph_init, ///< snapshot initial poses + odometry edges (rux graph init)
-  optimize,   ///< refine per-frame sensor poses (a.k.a. register)
-  clouds,     ///< back-project sensor frames into "cloud" + "normals"
-  annotate,   ///< ML semantic labelling of the stored frames
-  project,    ///< project 2D semantic labels onto the 3D cloud
-  planes,     ///< detect planar surfaces
-  rooms,      ///< partition into rooms
-  instances,  ///< separate semantic labels into spatial instances
-  mesh,       ///< generate the reconstructed mesh
-  texture,    ///< texture-map the reconstructed mesh
-  windows,    ///< derive window building components
-  materials,  ///< create one material passport per instance + link it
-  survey,     ///< fill the Ressourcekortlægning from the instances table
-  attributes, ///< VLM-derived per-material annotations (description + kv)
+  import,         ///< extract raw sensor frames from a scan
+  graph_init,     ///< snapshot initial poses + odometry edges (rux graph init)
+  graph_discover, ///< find loop edges into the pose graph (rux graph discover)
+  optimize,       ///< refine per-frame sensor poses (a.k.a. register)
+  clouds,         ///< back-project sensor frames into "cloud" + "normals"
+  annotate,       ///< ML semantic labelling of the stored frames
+  project,        ///< project 2D semantic labels onto the 3D cloud
+  planes,         ///< detect planar surfaces
+  rooms,          ///< partition into rooms
+  instances,      ///< separate semantic labels into spatial instances
+  mesh,           ///< generate the reconstructed mesh
+  texture,        ///< texture-map the reconstructed mesh
+  windows,        ///< derive window building components
+  materials,      ///< create one material passport per instance + link it
+  survey,         ///< fill the Ressourcekortlægning from the instances table
+  attributes,     ///< VLM-derived per-material annotations (description + kv)
   // `gsplat` consumes `cloud` + `sensor_frames`, so anywhere after `clouds`
   // would satisfy the ordering invariant. It sits last because it is a LEAF:
   // it produces a `splat` nothing else consumes, so putting it mid-table would
