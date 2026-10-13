@@ -26,10 +26,15 @@ DESCRIPTION:
   consecutive frames of each scan, measured from those poses. 'rux optimize'
   runs this automatically when the graph has no odometry edges.
 
-  Refuses when odometry edges exist. --force replaces only the odometry_init
-  edges and re-snapshots the initial poses; loop edges, RTABMap edges and
-  rejected edges are kept. Use it after changing poses outside optimize
-  (e.g. 'rux register') to optimise on top of that result.
+  On a graph that already has odometry it only fills the gaps: frames
+  without an initial pose are snapshotted and consecutive pairs without
+  odometry get an edge (e.g. after importing another scan). Existing
+  snapshots and edges are kept; it refuses only when there is nothing to add.
+
+  --force replaces the auto odometry_init edges and re-snapshots every initial
+  pose from the current poses; confirmed odometry_init edges, loop edges,
+  RTABMap edges and rejected edges are kept. Use it after changing poses
+  outside optimize (e.g. 'rux register') to optimise on top of that result.
 )");
   sub->add_flag("--force", opt->force,
                 "Re-derive the odometry_init edges and re-snapshot every "
@@ -53,9 +58,10 @@ int run_subcommand_graph_init(const SubcommandGraphInitOptions &opt,
       const auto r = reusex::slam::init_pose_graph(db, {.force = opt.force});
       db.log_pipeline_end(logId, true);
       spdlog::info("Pose graph: {} frames in {} scan(s); {} initial poses "
-                   "snapshotted; {} odometry edges written",
+                   "snapshotted; {} odometry edges written ({} pairs kept "
+                   "their existing edge)",
                    r.frames, r.scans, r.snapshots_written,
-                   r.odometry_edges_written);
+                   r.odometry_edges_written, r.pairs_with_existing_odometry);
       return RuxError::SUCCESS;
     } catch (const reusex::slam::PoseGraphExistsError &e) {
       db.log_pipeline_end(logId, false, e.what());

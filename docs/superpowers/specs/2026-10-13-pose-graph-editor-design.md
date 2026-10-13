@@ -142,6 +142,10 @@ Each subcommand is thin (STANDARDS §1) over a library entry point in `slam/`.
   consecutive-frame pair (source `odometry_init`, default odometry σ).
   Refuses if odometry edges exist unless `--force`; `--force` replaces only
   `odometry_init` edges and re-snapshots, never touches loop edges or tombstones.
+  *Amended by the final review (I4/I5):* without `--force` it fills gaps
+  (frames without a snapshot, consecutive in-scan pairs without odometry) and
+  refuses only when there is nothing to add; `--force` keeps confirmed
+  `odometry_init` edges.
 - `rux graph discover [loop/panorama/file flags]` →
   `slam::discover_loop_edges(db, options)`. Runs the existing front-ends
   (ORB `detect_loop_edges`, `PanoramaLoopEdges`, `load_loop_edges`) seeded from

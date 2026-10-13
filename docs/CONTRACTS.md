@@ -111,14 +111,18 @@ invalid (null/non-rigid) transform are skipped with a warning.
 Snapshot each frame's current pose into `sensor_frames.initial_transform` and
 store one odometry edge per consecutive pair of frames of each scan (source
 `odometry_init`). `rux optimize` runs it automatically when the graph has no
-odometry edge with a measurement.
+odometry edge with a measurement. On a graph that already has odometry, a
+plain run only fills gaps: frames without a snapshot and consecutive in-scan
+pairs without odometry (e.g. a newly imported scan). `--force` re-snapshots
+every frame and replaces the `auto` `odometry_init` edges; confirmed and
+rejected edges are kept.
 
 | | |
 |---|---|
 | Consumes | `sensor_frames` |
 | Produces | `pose_graph_edges` |
 | Options  | `InitPoseGraphOptions` (`libs/reusex/include/slam/pose_graph.hpp`) |
-| Checks   | ≥2 stored frames; refuses when odometry edges exist unless `--force` |
+| Checks   | ≥2 stored frames; without `--force`, refuses when odometry exists and there is nothing to add |
 
 ### `graph_discover` (`rux graph discover`)
 

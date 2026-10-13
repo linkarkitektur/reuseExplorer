@@ -91,22 +91,60 @@ odometry_init_edges(const ProjectDB &db, bool from_current_transform) {
 InitPoseGraphResult init_pose_graph(ProjectDB &db,
                                     const InitPoseGraphOptions &options) {
   InitPoseGraphResult r;
-  const int usable = count_usable_odometry_edges(db.list_pose_graph_edges());
-  if (!options.force && usable > 0)
-    throw PoseGraphExistsError(fmt::format(
-        "the stored pose graph already has {} odometry edges; pass --force "
-        "('rux graph init --force') to re-derive the odometry_init edges and "
-        "re-snapshot the initial poses from the current poses",
-        usable));
+  const auto stored = db.list_pose_graph_edges();
+  const int usable = count_usable_odometry_edges(stored);
+
+  // A pair already covered by an odometry measurement (rtabmap, or a
+  // confirmed odometry_init edge that force keeps) or an odometry tombstone
+  // keeps it; legacy NULL-transform rows are overwritten. Under force the
+  // "auto" odometry_init rows are about to be purged, so they do not count.
+  std::set<std::pair<int, int>> taken;
+  std::set<std::pair<int, int>> confirmed_unmeasured; // keep "confirmed"
+  for (const auto &e : stored)
+    if (e.edge_type == pg::kTypeOdometry && !e.transform &&
+        e.status == pg::kStatusConfirmed)
+      confirmed_unmeasured.emplace(e.from_node_id, e.to_node_id);
+  for (const auto &e : stored)
+    if (e.edge_type == pg::kTypeOdometry &&
+        (e.transform.has_value() || e.status == pg::kStatusRejected) &&
+        !(options.force && e.source == pg::kSourceOdometryInit &&
+          e.status == pg::kStatusAuto))
+      taken.emplace(e.from_node_id, e.to_node_id);
+
+  int skipped = 0;
+  const auto groups =
+      posed_frames_by_scan(db, /*from_current=*/false, &skipped);
+
+  // Without force, init only fills gaps (final review I5): frames without a
+  // snapshot and consecutive in-scan pairs without usable odometry. It
+  // refuses only when the graph already has odometry and nothing is missing.
+  // The planned edges are measured from the initial poses, falling back to
+  // the current pose of a frame not snapshotted yet -- the pose the snapshot
+  // below copies, so planning before writing gives the same measurements.
+  const auto planned = odometry_init_edges(db, /*from_current=*/false);
+  if (!options.force && usable > 0) {
+    int missing_snapshots = 0;
+    for (const auto &[scan, ids] : groups)
+      for (int id : ids)
+        missing_snapshots += db.has_initial_pose(id) ? 0 : 1;
+    const auto missing_pairs =
+        std::count_if(planned.begin(), planned.end(), [&](const auto &e) {
+          return taken.count({e.from_node_id, e.to_node_id}) == 0;
+        });
+    if (missing_snapshots == 0 && missing_pairs == 0)
+      throw PoseGraphExistsError(fmt::format(
+          "the stored pose graph already has {} odometry edges and every "
+          "posed frame has an initial pose, so there is nothing to add; pass "
+          "--force ('rux graph init --force') to re-derive the odometry_init "
+          "edges and re-snapshot the initial poses from the current poses",
+          usable));
+  }
 
   ProjectDB::Transaction tx(db);
   if (options.force)
     r.odometry_edges_removed =
         db.delete_pose_graph_edges_from_source(pg::kSourceOdometryInit);
 
-  int skipped = 0;
-  const auto groups =
-      posed_frames_by_scan(db, /*from_current=*/false, &skipped);
   r.scans = static_cast<int>(groups.size());
   int stale_snapshots = 0; // force, but the current pose is unusable
   for (const auto &[scan, ids] : groups) {
@@ -123,15 +161,11 @@ InitPoseGraphResult init_pose_graph(ProjectDB &db,
     }
   }
 
-  // A pair already covered by an odometry measurement (rtabmap, or a
-  // confirmed odometry_init edge that force kept) or an odometry tombstone
-  // keeps it; legacy NULL-transform rows are overwritten.
-  std::set<std::pair<int, int>> taken;
-  for (const auto &e : db.list_pose_graph_edges())
-    if (e.edge_type == pg::kTypeOdometry &&
-        (e.transform.has_value() || e.status == pg::kStatusRejected))
-      taken.emplace(e.from_node_id, e.to_node_id);
-  for (const auto &e : odometry_init_edges(db, /*from_current=*/false)) {
+  // Under force the snapshots were just rewritten: measure from them.
+  for (auto e : options.force ? odometry_init_edges(db, /*from_current=*/false)
+                              : planned) {
+    if (confirmed_unmeasured.count({e.from_node_id, e.to_node_id}) > 0)
+      e.status = std::string(pg::kStatusConfirmed);
     if (taken.count({e.from_node_id, e.to_node_id}) > 0 ||
         !db.upsert_pose_graph_edge(e)) {
       ++r.pairs_with_existing_odometry;

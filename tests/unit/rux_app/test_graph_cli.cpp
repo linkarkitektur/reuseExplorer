@@ -72,6 +72,19 @@ TEST_CASE("GraphCli_Init_RefusesASecondInitWithoutForce",
         }) == 2);
 }
 
+TEST_CASE("GraphCli_Init_AfterNewFrames_FillsTheGaps",
+          "[rux_app][cli][graph]") {
+  // Final review I5: frames imported after init are added by a plain init.
+  TempPath tmp("test_graph_cli_init_fill");
+  make_frames(tmp.path, 3);
+  CHECK(run_rux(tmp.path, {"graph", "init"}));
+  make_frames(tmp.path, 5); // re-saves 1..3 unchanged, adds 4 and 5
+  CHECK(run_rux(tmp.path, {"graph", "init"}));
+  reusex::ProjectDB db(tmp.path, /*readOnly=*/true);
+  CHECK(db.list_pose_graph_edges().size() == 4);
+  CHECK(db.has_initial_pose(5));
+}
+
 TEST_CASE("GraphCli_Init_NeedsTwoFrames", "[rux_app][cli][graph]") {
   TempPath tmp("test_graph_cli_init_empty");
   make_frames(tmp.path, 1);

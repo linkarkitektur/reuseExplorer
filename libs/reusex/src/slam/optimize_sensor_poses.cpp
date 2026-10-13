@@ -148,7 +148,7 @@ PlaneGraphResult optimize_sensor_poses(ProjectDB &db,
   if (fallback > 0)
     core::warn("PlaneGraph: {} of {} frames have no initial pose "
                "(sensor_frames.initial_transform); seeded from their current "
-               "transform. Run 'rux graph init --force' to snapshot them.",
+               "transform. Run 'rux graph init' to snapshot them.",
                fallback, frames.size());
   if (frames.size() < 2)
     throw std::runtime_error(fmt::format(

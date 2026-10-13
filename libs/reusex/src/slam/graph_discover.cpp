@@ -93,8 +93,8 @@ GraphDiscoverResult discover_loop_edges(ProjectDB &db,
   res.frames = static_cast<int>(node_ids.size());
   if (fallback > 0)
     core::warn("GraphDiscover: {} of {} frames have no initial pose; seeded "
-               "from their current transform (run 'rux graph init --force' "
-               "to snapshot them)",
+               "from their current transform (run 'rux graph init' to "
+               "snapshot them)",
                fallback, node_ids.size());
   if (node_ids.size() < 2)
     throw std::runtime_error(

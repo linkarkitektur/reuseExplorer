@@ -16,7 +16,8 @@
 namespace reusex::slam {
 
 /// init_pose_graph() without `force` on a graph that already has usable
-/// odometry. The CLI maps it to INVALID_ARGUMENT.
+/// odometry and nothing to add (every posed frame snapshotted, every
+/// consecutive in-scan pair covered). The CLI maps it to INVALID_ARGUMENT.
 class PoseGraphExistsError : public std::runtime_error {
     public:
   using std::runtime_error::runtime_error;
@@ -52,8 +53,13 @@ int count_usable_odometry_edges(
 std::vector<ProjectDB::PoseGraphEdge>
 odometry_init_edges(const ProjectDB &db, bool from_current_transform);
 
+/// Without `force`, snapshots only frames that have no initial pose and
+/// writes only the consecutive in-scan pairs no odometry edge or tombstone
+/// covers, so it adds a newly imported scan to an initialised graph.
+///
 /// Opens its own ProjectDB::Transaction: do not call inside one.
-/// @throws PoseGraphExistsError when usable odometry exists and !force.
+/// @throws PoseGraphExistsError when !force, usable odometry exists and
+///         there is nothing to add.
 InitPoseGraphResult init_pose_graph(ProjectDB &db,
                                     const InitPoseGraphOptions &options = {});
 

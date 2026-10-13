@@ -86,6 +86,69 @@ TEST_CASE("InitPoseGraph_Twice_RefusesWithoutForce",
   CHECK_THROWS_AS(slam::init_pose_graph(db), slam::PoseGraphExistsError);
 }
 
+TEST_CASE("InitPoseGraph_SecondImport_FillsOnlyTheGaps",
+          "[slam][pose_graph][init]") {
+  // Final review I5: frames imported after init get a snapshot and an
+  // odometry chain from a plain init; scan 1's snapshots and edges stay.
+  TempPath tmp("test_graph_init_fill");
+  ProjectDB db(tmp.path);
+  const auto a = db.create_scan("/data/scan_a.db");
+  for (int k = 1; k <= 3; ++k)
+    seed(db, k, pose_k(k), a.id);
+  slam::init_pose_graph(db);
+  const auto edge_12 = *db.pose_graph_edge(1, 2, "odometry")->transform;
+  // optimize moved scan 1 since; a second scan arrives.
+  for (int k = 1; k <= 3; ++k)
+    db.update_sensor_frame_pose(k, pose_k(k + 20));
+  const auto b = db.create_scan("/data/scan_b.db");
+  for (int k = 4; k <= 6; ++k)
+    seed(db, k, pose_k(k), b.id);
+
+  const auto r = slam::init_pose_graph(db);
+  CHECK(r.snapshots_written == 3);
+  CHECK(r.odometry_edges_written == 2);
+  CHECK(r.pairs_with_existing_odometry == 2);
+  for (int k = 1; k <= 3; ++k)
+    CHECK(*db.initial_pose(k) == pose_k(k)); // not re-snapshotted
+  for (int k = 4; k <= 6; ++k)
+    CHECK(*db.initial_pose(k) == pose_k(k));
+  CHECK(*db.pose_graph_edge(1, 2, "odometry")->transform == edge_12);
+  CHECK((pg::matrix_from_row_major(
+             *db.pose_graph_edge(4, 5, "odometry")->transform) -
+         rel(db, 4, 5))
+            .norm() < 1e-12);
+  CHECK(db.pose_graph_edge(5, 6, "odometry").has_value());
+  CHECK_FALSE(db.pose_graph_edge(3, 4, "odometry").has_value());
+
+  // Nothing left to add: refuses.
+  CHECK_THROWS_AS(slam::init_pose_graph(db), slam::PoseGraphExistsError);
+}
+
+TEST_CASE("InitPoseGraph_MeasuredOdometryWithoutSnapshots_Snapshots",
+          "[slam][pose_graph][init]") {
+  // Usable odometry (e.g. from an importer) but no initial poses: plain init
+  // snapshots the frames and writes no edge over the measured ones.
+  TempPath tmp("test_graph_init_snapshots_only");
+  ProjectDB db(tmp.path);
+  for (int k = 1; k <= 3; ++k)
+    seed(db, k, pose_k(k));
+  for (int k = 1; k <= 2; ++k) {
+    ProjectDB::PoseGraphEdge e;
+    e.from_node_id = k;
+    e.to_node_id = k + 1;
+    e.edge_type = "odometry";
+    e.transform = pg::row_major_from_matrix(rel(db, k, k + 1));
+    e.source = "rtabmap";
+    REQUIRE(db.upsert_pose_graph_edge(e));
+  }
+  const auto r = slam::init_pose_graph(db);
+  CHECK(r.snapshots_written == 3);
+  CHECK(r.odometry_edges_written == 0);
+  CHECK(r.pairs_with_existing_odometry == 2);
+  CHECK(db.pose_graph_edge(1, 2, "odometry")->source == "rtabmap");
+  CHECK_THROWS_AS(slam::init_pose_graph(db), slam::PoseGraphExistsError);
+}
+
 TEST_CASE("InitPoseGraph_Force_ReplacesOnlyInitEdges",
           "[slam][pose_graph][init]") {
   TempPath tmp("test_graph_init_force");
