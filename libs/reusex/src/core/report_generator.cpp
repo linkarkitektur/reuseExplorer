@@ -6,6 +6,7 @@
 
 #include <reusex/core/ProjectDB.hpp>
 #include <reusex/core/logging.hpp>
+#include <reusex/core/report_template_default.hpp>
 #include <reusex/core/resource_export.hpp>
 #include <reusex/core/survey_service.hpp>
 
@@ -14,14 +15,18 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include <sys/wait.h>
@@ -63,6 +68,50 @@ std::string ext_for_mime(const std::string &mime) {
   return ".jpg";
 }
 
+/// True when @p guid is safe as a file name stem: starts alphanumeric, only
+/// [A-Za-z0-9._-] after that, and no "..". The guid comes from the .rux,
+/// which may be untrusted, so anything else must not reach a path.
+bool is_safe_file_stem(const std::string &guid) {
+  if (guid.empty() || !std::isalnum(static_cast<unsigned char>(guid[0])))
+    return false;
+  for (const char c : guid) {
+    const auto u = static_cast<unsigned char>(c);
+    if (!(std::isalnum(u) || c == '.' || c == '_' || c == '-'))
+      return false;
+  }
+  return guid.find("..") == std::string::npos;
+}
+
+constexpr const char *kTemplateEnvVar = "REUSEX_REPORT_TEMPLATE";
+
+/// The Typst source this run compiles: options.template_path, else the file
+/// named by $REUSEX_REPORT_TEMPLATE, else the copy of
+/// apps/rux/resources/report.typ embedded at build time. A named file that
+/// is missing is an error — never a silent fallback to the embedded copy.
+std::string resolve_template(const ReportOptions &options) {
+  std::filesystem::path path = options.template_path;
+  std::string origin = "ReportOptions::template_path";
+  if (path.empty()) {
+    const char *env =
+        std::getenv(kTemplateEnvVar); // NOLINT(concurrency-mt-unsafe)
+    if (env == nullptr || *env == '\0')
+      return core::detail::kDefaultReportTemplate;
+    path = env;
+    origin = std::string("$") + kTemplateEnvVar;
+  }
+  std::error_code ec;
+  if (!std::filesystem::is_regular_file(path, ec))
+    throw std::runtime_error(fmt::format(
+        "report template {} (from {}) does not exist or is not a regular file",
+        path.string(), origin));
+  std::ifstream f(path, std::ios::binary);
+  if (!f)
+    throw std::runtime_error(fmt::format(
+        "report template {} (from {}) cannot be read", path.string(), origin));
+  reusex::info("report template: {} (from {})", path.string(), origin);
+  return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>{}};
+}
+
 // ── RAII temp directory ───────────────────────────────────────────────────
 
 struct TempDir {
@@ -86,188 +135,6 @@ struct TempDir {
   TempDir &operator=(const TempDir &) = delete;
 };
 
-// ── Typst template (embedded) ─────────────────────────────────────────────
-
-// Canonical source: apps/rux/resources/report.typ. The two copies must be
-// identical: ReportTemplate_CopiesInSync
-// (tests/unit/core/test_report_survey.cpp) fails when they are not.
-constexpr const char *kTypstTemplate = R"typst(
-// SPDX-FileCopyrightText: 2026 Povl Filip Sonne-Frederiksen
-//
-// SPDX-License-Identifier: GPL-3.0-or-later
-
-// Ressourcekortlægning (Material Resource Mapping) report template.
-//
-// Invoked by ruxd via:
-//   typst compile report.typ out.pdf --root <tmpdir>
-//
-// data.json must be present in <tmpdir> with the structure:
-//   {
-//     "project_name": "...",
-//     "generated_at": "...",
-//     "columns": [{"id": "...", "name": "...", "type": "..."}],
-//     "materials": [{
-//       "guid": "...",
-//       "has_thumbnail": true,
-//       "thumbnail_path": "thumbnails/guid.jpg",
-//       "properties": {"col-name": "value"}
-//     }],
-//     "survey": {
-//       "rows": [{"name", "bim7aa", "eak", "quantity", "mass", "treatment", "environment"}],
-//       "circularity": [{"label": "Genanvendelse", "tonnes": "196,8 t"}],
-//       "blocking": 7
-//     }
-//     "resources": null | {
-//       "name": "template name",
-//       "tables": [{"headers": ["Betegnelse", ...], "rows": [["...", ...]]}]
-//     }
-//   }
-//
-// The same text is embedded in libs/reusex/src/core/report_generator.cpp
-// (kTypstTemplate); the ReportTemplate_CopiesInSync test fails when they differ.
-
-#let data = json("data.json")
-#let cols = data.columns
-#let mats = data.materials
-
-// ── Page layout ──────────────────────────────────────────────────────────────
-
-#set page(
-  paper: "a4",
-  margin: (top: 2.5cm, bottom: 2.8cm, left: 2cm, right: 2cm),
-  header: context [
-    #set text(size: 8pt, fill: luma(140))
-    #data.project_name
-    #h(1fr)
-    Ressourcekortlægning
-  ],
-  footer: context [
-    #set text(size: 8pt, fill: luma(140))
-    #data.generated_at
-    #h(1fr)
-    Side #counter(page).display() / #counter(page).final().at(0)
-  ],
-)
-
-#set text(size: 10pt)
-#set par(justify: false)
-
-// ── Title block ───────────────────────────────────────────────────────────────
-
-#v(0.5cm)
-#align(center)[
-  #text(size: 22pt, weight: "bold")[Ressourcekortlægning]
-  #v(0.3cm)
-  #text(size: 13pt)[#data.project_name]
-  #v(0.2cm)
-  #text(size: 9pt, fill: luma(120))[Genereret: #data.generated_at]
-]
-#v(0.6cm)
-#line(length: 100%, stroke: 0.4pt + luma(180))
-#v(0.5cm)
-
-// ── Kortlægning: approved survey types ───────────────────────────────────────
-
-#let survey = data.survey
-
-#text(size: 13pt, weight: "bold")[Kortlægning]
-#v(0.2cm)
-#if survey.blocking > 0 [
-  #text(size: 9pt, style: "italic")[Udkast — #survey.blocking type(r) afventer gennemsyn eller prøvesvar, eller mangler tons, og indgår ikke i mængderne.]
-  #v(0.2cm)
-]
-#if survey.rows.len() == 0 [
-  _Ingen godkendte typer endnu._
-] else {
-  table(
-    columns: (1.9fr, 1.5fr, 0.9fr, 0.9fr, 0.7fr, 1.35fr, 1.1fr),
-    stroke: 0.3pt + luma(190),
-    inset: (x: 5pt, y: 5pt),
-    fill: (col, row) => if row == 0 { luma(215) } else { white },
-    table.header([*Type*], [*BIM7AA*], [*EAK*], [*Mængde*], [*Tons*], [*Behandling*], [*Miljø*]),
-    ..survey.rows.map(r => (r.name, r.bim7aa, r.eak, r.quantity, r.mass, r.treatment, r.environment)).flatten(),
-  )
-}
-#if survey.circularity.len() > 0 [
-  #v(0.2cm)
-  #text(size: 9pt)[Cirkularitet (godkendte typer): #survey.circularity.map(c => c.label + " " + c.tonnes).join(" · ")]
-]
-#v(0.6cm)
-
-// ── Ressourcetabel: resources through a chosen template ──────────────────────
-
-#let res = data.at("resources", default: none)
-#if res != none [
-  #text(size: 13pt, weight: "bold")[Ressourcetabel — #res.name]
-  #v(0.2cm)
-  #if res.tables.len() == 0 [
-    _Ingen ressourcer i projektet._
-  ] else {
-    for t in res.tables {
-      table(
-        columns: t.headers.len(),
-        stroke: 0.3pt + luma(190),
-        inset: (x: 5pt, y: 5pt),
-        fill: (col, row) => if row == 0 { luma(215) } else { white },
-        table.header(..t.headers.map(h => [*#h*])),
-        ..t.rows.flatten(),
-      )
-      v(0.3cm)
-    }
-  }
-  #v(0.6cm)
-]
-
-#text(size: 13pt, weight: "bold")[Materialepas]
-#v(0.2cm)
-
-// ── Material table ────────────────────────────────────────────────────────────
-
-#if mats.len() == 0 [
-  #align(center)[_Ingen materialer i projektet._]
-] else {
-  // Build header cells: thumbnail + one cell per user-defined column.
-  let header_cells = (
-    table.cell(fill: luma(215), align: center)[*Billede*],
-  ) + cols.map(col =>
-    table.cell(fill: luma(215), align: center)[*#col.name*]
-  )
-
-  // Build body cells: one thumbnail + one property cell per column per row.
-  let body_cells = ()
-  for mat in mats {
-    let thumb_cell = if mat.has_thumbnail {
-      table.cell(align: center)[
-        #image(mat.thumbnail_path, width: 2.8cm, height: 2.2cm, fit: "contain")
-      ]
-    } else {
-      table.cell(fill: luma(245), align: center)[—]
-    }
-    body_cells = body_cells + (thumb_cell,)
-    for col in cols {
-      let val = mat.properties.at(col.name, default: "")
-      body_cells = body_cells + (table.cell[#val],)
-    }
-  }
-
-  // Column widths: fixed thumbnail + 1fr per user column.
-  let col_widths = (2.9cm,) + cols.map(_ => 1fr)
-
-  table(
-    columns: col_widths,
-    stroke: 0.3pt + luma(190),
-    inset: (x: 5pt, y: 6pt),
-    fill: (col, row) => {
-      if row == 0 { luma(215) }
-      else if calc.odd(row) { luma(250) }
-      else { white }
-    },
-    ..header_cells,
-    ..body_cells,
-  )
-}
-)typst";
-
 nlohmann::json resources_json(const core::ResourceReportSection &s) {
   nlohmann::json tables = nlohmann::json::array();
   for (const auto &t : s.tables)
@@ -275,10 +142,41 @@ nlohmann::json resources_json(const core::ResourceReportSection &s) {
   return {{"name", s.template_name}, {"tables", std::move(tables)}};
 }
 
+/// True if @p dir is a previous dump_report_data() output: nothing at the
+/// top level but data.json and images/, and data.json parses as a JSON
+/// object carrying the keys every dump writes. Anything else (an unrelated
+/// data.json, extra files, a parse failure) is not a previous dump, so the
+/// caller refuses rather than guessing.
+bool is_previous_report_dump(const std::filesystem::path &dir) {
+  namespace fs = std::filesystem;
+  for (const auto &entry : fs::directory_iterator(dir)) {
+    const auto name = entry.path().filename().string();
+    if (name != "data.json" && name != "images")
+      return false;
+  }
+
+  std::ifstream f(dir / "data.json", std::ios::binary);
+  if (!f)
+    return false;
+  nlohmann::json data;
+  try {
+    f >> data;
+  } catch (const nlohmann::json::parse_error &) {
+    return false;
+  }
+  return data.is_object() && data.contains("project_name") &&
+         data.contains("materials") && data.contains("survey");
+}
+
 // ── data assembly ─────────────────────────────────────────────────────────
 
-nlohmann::json assemble_report_data(ProjectDB &db,
-                                    const std::filesystem::path &tmpdir) {
+/// Write the report's data directory: data.json plus images/<guid><ext> for
+/// every material with a thumbnail. Shared by the PDF run (into a temp dir)
+/// and dump_report_data, so both see byte-identical input.
+nlohmann::json
+write_report_data(ProjectDB &db,
+                  const std::optional<core::ResourceReportSection> &resources,
+                  const std::filesystem::path &dir) {
   const auto summary = db.project_summary();
   const auto defs = db.list_property_definitions();
 
@@ -297,12 +195,12 @@ nlohmann::json assemble_report_data(ProjectDB &db,
     cols.push_back({{"id", d.id}, {"name", d.name}, {"type", d.type}});
   data["columns"] = std::move(cols);
 
-  const auto thumb_dir = tmpdir / "thumbnails";
-  std::filesystem::create_directories(thumb_dir);
+  const auto image_dir = dir / "images";
+  std::filesystem::create_directories(image_dir);
 
   nlohmann::json mats = nlohmann::json::array();
-  for (const auto &info : summary.materials) {
-    const auto &guid = info.guid;
+  for (std::size_t index = 0; index < summary.materials.size(); ++index) {
+    const auto &guid = summary.materials[index].guid;
 
     auto thumb_opt = db.material_thumbnail(guid);
     bool has_thumb = thumb_opt.has_value();
@@ -310,14 +208,25 @@ nlohmann::json assemble_report_data(ProjectDB &db,
 
     if (has_thumb) {
       const auto &[blob, mime] = *thumb_opt;
-      const std::string fname = "thumbnails/" + guid + ext_for_mime(mime);
-      std::ofstream f(tmpdir / fname, std::ios::binary);
+      std::string stem = guid;
+      if (!is_safe_file_stem(guid)) {
+        stem = fmt::format("material-{:04d}", index);
+        reusex::warn("Material guid '{}' is not a safe file name; writing its "
+                     "thumbnail as images/{}{}",
+                     guid, stem, ext_for_mime(mime));
+      }
+      const std::string fname = "images/" + stem + ext_for_mime(mime);
+      std::ofstream f(dir / fname, std::ios::binary);
       f.write(reinterpret_cast<const char *>(blob.data()),
               static_cast<std::streamsize>(blob.size()));
-      if (f.good())
+      if (f.good()) {
         thumb_path = fname;
-      else
+      } else {
+        reusex::warn("Could not write the thumbnail of material '{}' to {}; "
+                     "the report shows it without an image",
+                     guid, (dir / fname).string());
         has_thumb = false;
+      }
     }
 
     const auto props_map = db.passport_stored_properties(guid);
@@ -361,27 +270,42 @@ nlohmann::json assemble_report_data(ProjectDB &db,
   data["survey"] = {{"rows", std::move(rows)},
                     {"circularity", std::move(circ)},
                     {"blocking", report_blocking_types(db)}};
+
+  data["resources"] =
+      resources ? resources_json(*resources) : nlohmann::json(nullptr);
+  {
+    std::ofstream f(dir / "data.json");
+    f << data.dump(2);
+    if (!f.good())
+      throw std::runtime_error("report_generator: failed to write " +
+                               (dir / "data.json").string());
+  }
   return data;
 }
 
 // ── Typst invocation ──────────────────────────────────────────────────────
 
-std::vector<std::uint8_t> run_typst(const std::filesystem::path &tmpdir) {
+std::vector<std::uint8_t> run_typst(const std::filesystem::path &tmpdir,
+                                    const std::string &template_text) {
   const auto typ_path = tmpdir / "report.typ";
   const auto out_path = tmpdir / "out.pdf";
   const auto err_path = tmpdir / "typst.stderr";
 
   {
-    std::ofstream f(typ_path);
-    f << kTypstTemplate;
+    std::ofstream f(typ_path, std::ios::binary);
+    f << template_text;
     if (!f.good())
       throw std::runtime_error(
           "report_generator: failed to write template to " + typ_path.string());
   }
 
-  const std::string cmd = "typst compile '" + typ_path.string() + "' '" +
-                          out_path.string() + "' --root '" + tmpdir.string() +
-                          "' 2>'" + err_path.string() + "'";
+  // --ignore-system-fonts: the PDF must come out the same in the devshell,
+  // CI, ruxd and the nix package, so only fonts embedded in typst (or named
+  // via $TYPST_FONT_PATHS) are used.
+  const std::string cmd = "typst compile --ignore-system-fonts '" +
+                          typ_path.string() + "' '" + out_path.string() +
+                          "' --root '" + tmpdir.string() + "' 2>'" +
+                          err_path.string() + "'";
 
   const int status = std::system(cmd.c_str()); // NOLINT(cert-env33-c)
 
@@ -415,23 +339,18 @@ int report_blocking_types(const ProjectDB &db) {
 
 std::vector<std::uint8_t>
 generate_ressourcekortlaegning_pdf(ProjectDB &db,
-                                   std::optional<std::int64_t> template_id) {
-  // Resolve the template first: an unknown id fails fast, typst or not.
+                                   const ReportOptions &options) {
+  // Everything bad input can break is checked before any typst work: an
+  // unknown resource template first, then a missing template file.
   std::optional<core::ResourceReportSection> resources;
-  if (template_id)
-    resources = core::resource_report_section(db, *template_id);
+  if (options.resource_template_id)
+    resources =
+        core::resource_report_section(db, *options.resource_template_id);
+  const std::string template_text = resolve_template(options);
 
   TempDir tmpdir;
 
-  auto data = assemble_report_data(db, tmpdir.path);
-  data["resources"] =
-      resources ? resources_json(*resources) : nlohmann::json(nullptr);
-  {
-    std::ofstream f(tmpdir.path / "data.json");
-    f << data.dump();
-    if (!f.good())
-      throw std::runtime_error("report_generator: failed to write data.json");
-  }
+  const auto data = write_report_data(db, resources, tmpdir.path);
 
   reusex::info(
       "generate_ressourcekortlaegning_pdf: invoking typst ({} materials, "
@@ -439,10 +358,69 @@ generate_ressourcekortlaegning_pdf(ProjectDB &db,
       data.at("materials").size(), data.at("columns").size(),
       resources ? resources->tables.size() : 0);
 
-  const auto pdf = run_typst(tmpdir.path);
+  const auto pdf = run_typst(tmpdir.path, template_text);
 
   reusex::info("generate_ressourcekortlaegning_pdf: {} bytes", pdf.size());
   return pdf;
+}
+
+std::vector<std::uint8_t>
+generate_ressourcekortlaegning_pdf(ProjectDB &db,
+                                   std::optional<std::int64_t> template_id) {
+  ReportOptions options;
+  options.resource_template_id = template_id;
+  return generate_ressourcekortlaegning_pdf(db, options);
+}
+
+void dump_report_data(ProjectDB &db, const ReportOptions &options,
+                      const std::filesystem::path &dir) {
+  namespace fs = std::filesystem;
+  // An unknown template fails before anything touches the disk.
+  std::optional<core::ResourceReportSection> resources;
+  if (options.resource_template_id)
+    resources =
+        core::resource_report_section(db, *options.resource_template_id);
+
+  std::error_code ec;
+  const bool exists = fs::exists(dir, ec);
+  if (ec)
+    throw std::runtime_error(fmt::format("dump_report_data: cannot stat {}: {}",
+                                         dir.string(), ec.message()));
+
+  if (exists) {
+    const bool is_dir = fs::is_directory(dir, ec);
+    if (ec)
+      throw std::runtime_error(fmt::format(
+          "dump_report_data: cannot stat {}: {}", dir.string(), ec.message()));
+    if (!is_dir)
+      throw std::runtime_error(fmt::format(
+          "dump_report_data: {} exists and is not a directory", dir.string()));
+
+    const bool empty = fs::is_empty(dir, ec);
+    if (ec)
+      throw std::runtime_error(fmt::format(
+          "dump_report_data: cannot stat {}: {}", dir.string(), ec.message()));
+
+    if (!empty && !is_previous_report_dump(dir))
+      throw std::runtime_error(fmt::format(
+          "dump_report_data: {} is not empty and is not a previous report "
+          "dump; refusing to write a report dump into it",
+          dir.string()));
+
+    // A previous dump's images: replace, never mix in stale files.
+    fs::remove_all(dir / "images", ec);
+    if (ec)
+      throw std::runtime_error(
+          fmt::format("dump_report_data: cannot clear {}: {}",
+                      (dir / "images").string(), ec.message()));
+  }
+  fs::create_directories(dir);
+
+  const auto data = write_report_data(db, resources, dir);
+  reusex::info("dump_report_data: wrote {} ({} materials, {} resource "
+               "table(s))",
+               dir.string(), data.at("materials").size(),
+               resources ? resources->tables.size() : 0);
 }
 
 } // namespace reusex
