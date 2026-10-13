@@ -14,9 +14,8 @@
 #include <fmt/format.h>
 
 #include <algorithm>
-#include <limits>
 #include <map>
-#include <set>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -117,9 +116,10 @@ GraphDiscoverResult discover_loop_edges(ProjectDB &db,
   const auto stored = db.list_pose_graph_edges();
   std::map<EdgeKey, bool> decided; // key -> tombstone
   for (const auto &s : stored)
-    if (is_loop_type(s.edge_type))
-      decided[edge_key(s.from_node_id, s.to_node_id, s.edge_type)] =
-          s.status == pg::kStatusRejected;
+    if (is_loop_type(s.edge_type)) {
+      bool &tomb = decided[edge_key(s.from_node_id, s.to_node_id, s.edge_type)];
+      tomb = tomb || s.status == pg::kStatusRejected;
+    }
   std::vector<LoopCandidate> fresh;
   for (auto &cand : cands) {
     const auto key =
@@ -141,11 +141,14 @@ GraphDiscoverResult discover_loop_edges(ProjectDB &db,
   std::vector<geometry::LoopEdge> pcm_set;
   std::vector<bool> fixed;
   std::vector<int> fresh_index; // -1 for a stored edge
-  int stored_unseeded = 0;
+  int stored_unseeded = 0, stored_no_measurement = 0;
   for (const auto &s : stored) {
-    if (!is_loop_type(s.edge_type) || s.status == pg::kStatusRejected ||
-        !s.transform)
+    if (!is_loop_type(s.edge_type) || s.status == pg::kStatusRejected)
       continue;
+    if (!s.transform) {
+      ++stored_no_measurement;
+      continue;
+    }
     const auto a = index_of.find(s.from_node_id);
     const auto b = index_of.find(s.to_node_id);
     if (a == index_of.end() || b == index_of.end()) {
@@ -158,17 +161,48 @@ GraphDiscoverResult discover_loop_edges(ProjectDB &db,
     e.T_ij = stored_to_optical(pg::matrix_from_row_major(*s.transform),
                                local[static_cast<size_t>(e.i)],
                                local[static_cast<size_t>(e.j)]);
-    // Stored edges rank ahead of every new candidate under pcm_max_edges.
-    e.inliers = std::numeric_limits<int>::max() / 2;
     pcm_set.push_back(e);
     fixed.push_back(s.status == pg::kStatusConfirmed);
     fresh_index.push_back(-1);
   }
+  if (stored_no_measurement > 0)
+    core::warn("GraphDiscover: {} active stored loop edges carry no "
+               "measurement (legacy rows) and are left out of the "
+               "consistency check; reject them in Rediger / `rux graph prune "
+               "--pair`, or re-import the scan to restore their transforms",
+               stored_no_measurement);
   if (stored_unseeded > 0)
     core::warn("GraphDiscover: {} stored active loop edges reference a frame "
                "with no usable pose and are left out of the consistency "
                "check; give the frame a pose or reject the edge in Rediger",
                stored_unseeded);
+  // pcm_max_edges caps the NEW candidates only (the O(M^2) bound); stored
+  // edges always take part, so a large imported graph cannot crowd the
+  // candidates out. Capped candidates are never reported as inconsistent.
+  geometry::LoopClosureOptions pcm_opt = c.loop_closure;
+  if (pcm_opt.pcm && pcm_opt.pcm_max_edges > 0 &&
+      fresh.size() > static_cast<size_t>(pcm_opt.pcm_max_edges)) {
+    std::vector<size_t> by_support(fresh.size());
+    std::iota(by_support.begin(), by_support.end(), size_t{0});
+    std::stable_sort(by_support.begin(), by_support.end(),
+                     [&](size_t a, size_t b) {
+                       return fresh[a].edge.inliers > fresh[b].edge.inliers;
+                     });
+    by_support.resize(static_cast<size_t>(pcm_opt.pcm_max_edges));
+    std::sort(by_support.begin(), by_support.end()); // keep input order
+    std::vector<LoopCandidate> capped;
+    capped.reserve(by_support.size());
+    for (size_t k : by_support)
+      capped.push_back(std::move(fresh[k]));
+    res.pcm_capped = static_cast<int>(fresh.size() - capped.size());
+    fresh = std::move(capped);
+    core::warn("GraphDiscover: {} new candidates over pcm_max_edges = {} "
+               "(lowest inlier count) were dropped without a consistency "
+               "test; raise loop_closure.pcm_max_edges or run discover again "
+               "to propose them",
+               res.pcm_capped, pcm_opt.pcm_max_edges);
+  }
+  pcm_opt.pcm_max_edges = 0; // already applied to the candidates above
   for (size_t k = 0; k < fresh.size(); ++k) {
     pcm_set.push_back(fresh[k].edge);
     fixed.push_back(false);
@@ -181,7 +215,7 @@ GraphDiscoverResult discover_loop_edges(ProjectDB &db,
       std::find(fixed.begin(), fixed.end(), true) != fixed.end();
   if (c.loop_closure.pcm && (pcm_set.size() > 2 || any_fixed)) {
     const auto kept_idx = geometry::consistent_loop_edge_indices(
-        pcm_set, seed_optical, c.loop_closure, fixed);
+        pcm_set, seed_optical, pcm_opt, fixed);
     std::vector<char> kept(pcm_set.size(), 0);
     for (size_t k : kept_idx)
       kept[k] = 1;
@@ -223,15 +257,16 @@ GraphDiscoverResult discover_loop_edges(ProjectDB &db,
       static_cast<int>(std::count(keep.begin(), keep.end(), true));
   if (options.dry_run) {
     core::info("GraphDiscover dry-run: {} proposed, {} matched, {} "
-               "PCM-rejected, {} skipped (already stored), {} skipped "
-               "(rejected before); {} would be added",
-               res.proposed, res.candidates, res.pcm_rejected,
+               "PCM-rejected, {} over the PCM cap, {} skipped (already "
+               "stored), {} skipped (rejected before); {} would be added",
+               res.proposed, res.candidates, res.pcm_rejected, res.pcm_capped,
                res.skipped_existing, res.skipped_rejected, survivors);
     return res;
   }
 
   // --- Store survivors ------------------------------------------------------
   ProjectDB::Transaction tx(db);
+  int not_written = 0; // a tombstone appeared under the key (cannot normally)
   for (size_t k = 0; k < fresh.size(); ++k) {
     if (!keep[k])
       continue;
@@ -254,8 +289,10 @@ GraphDiscoverResult discover_loop_edges(ProjectDB &db,
     const auto err = pg::transform_error(T, seed_stored[i], seed_stored[j]);
     row.seed_disagreement_m = err.translation_m;
     row.seed_disagreement_deg = err.rotation_deg;
-    if (!db.upsert_pose_graph_edge(row))
+    if (!db.upsert_pose_graph_edge(row)) {
+      ++not_written;
       continue;
+    }
     ++res.added;
     if (f.source == "orb")
       ++res.added_orb;
@@ -265,10 +302,15 @@ GraphDiscoverResult discover_loop_edges(ProjectDB &db,
       ++res.added_file;
   }
   tx.commit();
+  if (not_written > 0)
+    core::warn("GraphDiscover: {} surviving candidates were not written "
+               "because their key is a tombstone (rejected edge); un-reject "
+               "it in Rediger to store it",
+               not_written);
   core::info("GraphDiscover: {} proposed, {} matched, {} PCM-rejected, {} "
-             "skipped (already stored), {} skipped (rejected before), {} "
-             "added ({} ORB, {} panorama, {} file)",
-             res.proposed, res.candidates, res.pcm_rejected,
+             "over the PCM cap, {} skipped (already stored), {} skipped "
+             "(rejected before), {} added ({} ORB, {} panorama, {} file)",
+             res.proposed, res.candidates, res.pcm_rejected, res.pcm_capped,
              res.skipped_existing, res.skipped_rejected, res.added,
              res.added_orb, res.added_panorama, res.added_file);
   return res;

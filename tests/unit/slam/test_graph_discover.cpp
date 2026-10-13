@@ -11,12 +11,17 @@
 #include <reusex/core/pose_graph.hpp>
 #include <reusex/slam/graph_discover.hpp>
 #include <reusex/slam/pose_graph.hpp>
+#include <reusex/slam/pose_graph_conventions.hpp>
 
 #include "../../support/pose_fixture.hpp"
 #include "../../support/temp_path.hpp"
 
 #include <nlohmann/json.hpp>
 
+#include <Eigen/Geometry>
+
+#include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <stdexcept>
 
@@ -247,4 +252,87 @@ TEST_CASE("GraphDiscover_InconsistentStoredAutoEdge_IsOnlyReported",
   CHECK(kept->status == "auto");
   CHECK((pg::matrix_from_row_major(*kept->transform) - rel(1, 6) * off).norm() <
         1e-9);
+}
+
+TEST_CASE("GraphDiscover_PcmCapCountsNewCandidatesOnly",
+          "[slam][graph_discover]") {
+  // Three stored (true) loop edges exceed pcm_max_edges = 2. They must all
+  // take part in PCM, none may be reported inconsistent, and the cap may only
+  // cut NEW candidates — and those are counted as capped, not rejected.
+  TempPath tmp("test_discover_cap");
+  TempPath file("test_discover_cap", ".json");
+  ProjectDB db(tmp.path);
+  make_project(db);
+  slam::init_pose_graph(db);
+  store_loop(db, 1, 5, rel(1, 5), "auto");
+  store_loop(db, 2, 6, rel(2, 6), "auto");
+  store_loop(db, 3, 7, rel(3, 7), "auto");
+  Eigen::Matrix4d off = Eigen::Matrix4d::Identity();
+  off(0, 3) = 2.0;
+  write_edges(file.path, {{4, 8, rel(4, 8) * off}, // aliasing: tested, out
+                          {1, 8, rel(1, 8)},       // true: tested, kept
+                          {2, 8, rel(2, 8)}});     // over the cap
+  auto o = file_only(file.path);
+  o.candidates.loop_closure.pcm_max_edges = 2;
+
+  const auto r = slam::discover_loop_edges(db, o);
+  CHECK(r.stored_inconsistent == 0);
+  CHECK(r.pcm_capped == 1);
+  CHECK(r.pcm_rejected == 1);
+  CHECK(r.added == 1);
+  CHECK(db.pose_graph_edge(1, 8, "loop_closure").has_value());
+  CHECK_FALSE(db.pose_graph_edge(4, 8, "loop_closure").has_value());
+  CHECK_FALSE(db.pose_graph_edge(2, 8, "loop_closure").has_value());
+}
+
+TEST_CASE("GraphDiscover_NonIdentityLocalTransforms_RoundTrip",
+          "[slam][graph_discover]") {
+  // Every frame gets a DIFFERENT local (body -> optical) transform, so a
+  // swapped local_i / local_j in the stored <-> optical conversions breaks
+  // both the confirmed stored edge's PCM role and the written measurement.
+  TempPath tmp("test_discover_local");
+  TempPath file("test_discover_local", ".json");
+  ProjectDB db(tmp.path);
+  auto local = [](int k) {
+    Eigen::Matrix4d L = Eigen::Matrix4d::Identity();
+    L.block<3, 3>(0, 0) =
+        (Eigen::AngleAxisd(0.3 * k, Eigen::Vector3d::UnitZ()) *
+         Eigen::AngleAxisd(-M_PI / 2, Eigen::Vector3d::UnitX()))
+            .toRotationMatrix();
+    L.block<3, 1>(0, 3) = Eigen::Vector3d(0.05 * k, -0.02, 0.1);
+    return L;
+  };
+  for (int k = 1; k <= 8; ++k)
+    db.save_sensor_frame(
+        k, make_color(8, 8), make_depth(8, 8, 1.0), cv::Mat(),
+        pg::row_major_from_matrix(truth(k)),
+        make_intrinsics(8, 8, 4, 4, 8, 8, pg::row_major_from_matrix(local(k))),
+        k);
+  slam::init_pose_graph(db);
+  store_loop(db, 1, 5, rel(1, 5), "confirmed");
+  auto optical = [&](int a, int b) {
+    return Eigen::Matrix4d((truth(a) * local(a)).inverse() *
+                           (truth(b) * local(b)));
+  };
+  write_edges(file.path, {{2, 6, optical(2, 6)}, {3, 7, optical(3, 7)}});
+
+  const auto r = slam::discover_loop_edges(db, file_only(file.path));
+  CHECK(r.pcm_rejected == 0);
+  CHECK(r.added == 2);
+  for (auto [a, b] : {std::pair{2, 6}, std::pair{3, 7}}) {
+    const auto e = db.pose_graph_edge(a, b, "loop_closure");
+    REQUIRE(e.has_value());
+    CHECK((pg::matrix_from_row_major(*e->transform) - rel(a, b)).norm() < 1e-9);
+    CHECK(*e->seed_disagreement_m < 1e-9);
+    const auto expected = slam::information_optical_to_stored(
+        pg::information_from_sigmas(0.05, 0.1), local(b));
+    REQUIRE(e->information.has_value());
+    double diff = 0.0;
+    for (int r6 = 0; r6 < 6; ++r6)
+      for (int c6 = 0; c6 < 6; ++c6)
+        diff = std::max(
+            diff, std::abs((*e->information)[r6 * 6 + c6] - expected(r6, c6)) /
+                      (1.0 + std::abs(expected(r6, c6))));
+    CHECK(diff < 1e-9);
+  }
 }

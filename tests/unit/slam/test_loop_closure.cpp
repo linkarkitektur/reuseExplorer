@@ -486,17 +486,28 @@ TEST_CASE("ConsistentLoopEdgeIndices_InconsistentFixedEdges_Warn",
                                        make_edge(1, 5, rel(1, 5), 100)};
   int warnings = 0;
   std::string text;
-  core::set_log_level(core::LogLevel::trace);
-  core::set_log_handler([&](core::LogLevel level, std::string_view message) {
-    if (level == core::LogLevel::warn &&
-        message.find("confirmed") != std::string_view::npos) {
-      ++warnings;
-      text = std::string(message);
+  // Restores the handler and level even when a CHECK/REQUIRE throws.
+  struct LogGuard {
+    core::LogLevel saved = core::get_log_level();
+    ~LogGuard() {
+      core::reset_log_handler();
+      core::set_log_level(saved);
     }
-  });
-  const auto kept = consistent_loop_edge_indices(
-      edges, seed, LoopClosureOptions{}, {true, true, false});
-  core::reset_log_handler();
+  };
+  std::vector<size_t> kept;
+  {
+    const LogGuard guard;
+    core::set_log_level(core::LogLevel::trace);
+    core::set_log_handler([&](core::LogLevel level, std::string_view message) {
+      if (level == core::LogLevel::warn &&
+          message.find("confirmed") != std::string_view::npos) {
+        ++warnings;
+        text = std::string(message);
+      }
+    });
+    kept = consistent_loop_edge_indices(edges, seed, LoopClosureOptions{},
+                                        {true, true, false});
+  }
   CHECK(warnings == 1);
   CHECK(text.find("rux graph prune --pair") != std::string::npos);
   // Both fixed edges are still kept (they are the user's call).
