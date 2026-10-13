@@ -60,7 +60,7 @@ struct WarnCapture {
 };
 } // namespace
 
-TEST_CASE("SetSurveyPartView_FrameAndPanorama_RoundTripAndClear",
+TEST_CASE("SetSurveyPartView_FrameAndPanorama_RoundTripAndChange",
           "[ProjectDB][survey][view]") {
   TempDB tmp;
   ProjectDB db(tmp.path);
@@ -76,8 +76,24 @@ TEST_CASE("SetSurveyPartView_FrameAndPanorama_RoundTripAndClear",
   db.set_survey_part_view("RX-001",
                           ResourceView{ViewKind::frame, 5, std::nullopt});
   CHECK_FALSE(db.survey_part("RX-001")->view->region);
-  db.set_survey_part_view("RX-001", std::nullopt);
+}
+
+TEST_CASE("SetSurveyPartView_ClearOnceSet_RefusesAndClearOnAbsent_IsNoOp",
+          "[ProjectDB][survey][view]") {
+  // A resource always has an image once one is chosen: the setter refuses
+  // to clear a set view (same mechanism as a 400-class KeyValueError), but
+  // clearing an already-absent view stays a no-op success.
+  TempDB tmp;
+  ProjectDB db(tmp.path);
+  seed(db);
+  CHECK_NOTHROW(db.set_survey_part_view("RX-001", std::nullopt));
   CHECK_FALSE(db.survey_part("RX-001")->view);
+  db.set_survey_part_view("RX-001",
+                          ResourceView{ViewKind::frame, 5, std::nullopt});
+  CHECK_THROWS_AS(db.set_survey_part_view("RX-001", std::nullopt),
+                  std::invalid_argument);
+  REQUIRE(db.survey_part("RX-001")->view);
+  CHECK(db.survey_part("RX-001")->view->id == 5);
 }
 
 TEST_CASE("SetSurveyPartView_BadInput_ThrowsAndWritesNothing",

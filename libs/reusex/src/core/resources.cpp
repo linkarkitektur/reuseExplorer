@@ -185,7 +185,16 @@ patch_resource(ProjectDB &db, std::string_view code,
     if (!seen.insert(w.key).second)
       throw KeyValueError(w.key, "key '" + w.key + "' is written twice");
     auto value = normalise_value(*k, w.value);
-    if (k->id == kViewKey && value) {
+    if (k->id == kViewKey && !value) {
+      // A resource keeps its image once it has one: the setter refuses this
+      // too (inside the write transaction), but refuse here so a bad clear
+      // writes nothing (validate first, write second). Clearing an
+      // already-absent view stays a no-op success.
+      if (part->view)
+        throw KeyValueError(k->id, "'" + k->id +
+                                       "' already has a value and cannot be "
+                                       "cleared");
+    } else if (k->id == kViewKey && value) {
       // The setter checks this too, but inside the write transaction; refuse
       // here so a bad view writes nothing (validate first, write second).
       const auto view = parse_view(*value);

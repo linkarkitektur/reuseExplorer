@@ -67,11 +67,14 @@ struct ResourcePatchResult {
 /// to the part, leksikon/column keys to the part's passport (created on
 /// the first non-null write). Clearing an absent value succeeds. A frame
 /// `sys:view` without a region, on an instance-backed part, is stored with
-/// the instance's padded region in that frame (complete_view_region).
+/// the instance's padded region in that frame (complete_view_region). A
+/// resource keeps its image once it has one: clearing a set `sys:view` is
+/// refused (KeyValueError); clearing an already-absent one stays a no-op
+/// success — only changing it is allowed.
 /// @throws KeyValueError (nothing written) — also when one key appears
-///         twice in @p writes —, std::out_of_range (no part),
-///         std::runtime_error (a cloud cannot be loaded while filling a
-///         frame view's region).
+///         twice in @p writes, or `sys:view` is cleared while set —,
+///         std::out_of_range (no part), std::runtime_error (a cloud cannot
+///         be loaded while filling a frame view's region).
 ResourcePatchResult patch_resource(
     ProjectDB &db, std::string_view code,
     const std::vector<ResourceWrite> &writes,

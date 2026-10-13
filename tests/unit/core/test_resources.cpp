@@ -599,7 +599,24 @@ TEST_CASE("Resources_Patch_View_RoundTripsChecksSourceAndClears",
   CHECK(db.survey_part("RX-001")->note.empty());
   CHECK(db.survey_part("RX-001")->view->id == 7);
 
-  patch_resource(db, "RX-001", {{"sys:view", std::nullopt}});
+  // A resource always has an image once one is chosen: clearing a set view
+  // is refused, nothing written.
+  CHECK_THROWS_AS(patch_resource(db, "RX-001", {{"sys:view", std::nullopt}}),
+                  KeyValueError);
+  REQUIRE(db.survey_part("RX-001")->view);
+  CHECK(db.survey_part("RX-001")->view->id == 7);
+}
+
+TEST_CASE("Resources_Patch_View_ClearingAbsentViewIsNoOp",
+          "[resources][view]") {
+  TempDB tmp;
+  ProjectDB db(tmp.path);
+  const auto t = make_type(db, "Døre");
+  make_part(db, "RX-001", t);
+  CHECK_FALSE(db.survey_part("RX-001")->view);
+  CHECK_NOTHROW(patch_resource(db, "RX-001", {{"sys:view", std::nullopt}}));
+  CHECK_FALSE(db.survey_part("RX-001")->view);
+  CHECK_NOTHROW(patch_resource(db, "RX-001", {{"sys:view", std::string("")}}));
   CHECK_FALSE(db.survey_part("RX-001")->view);
 }
 

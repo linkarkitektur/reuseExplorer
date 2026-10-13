@@ -1239,11 +1239,15 @@ class ProjectDB {
   std::string ensure_resource_passport(std::string_view code);
   /// @throws std::out_of_range when @p code is unknown.
   void delete_survey_part(std::string_view code);
-  /// Set or clear (nullopt) a part's view record (schema v27). Validates the
-  /// shape (core::validate_view_shape) and that the frame / panorama exists.
-  /// Does not open a transaction (one UPDATE); call inside one to batch.
-  /// @throws std::invalid_argument (shape), std::out_of_range (no part, no
-  ///         sensor frame, no panorama).
+  /// Set, change, or clear (nullopt) a part's view record (schema v27).
+  /// Validates the shape (core::validate_view_shape) and that the frame /
+  /// panorama exists. A resource keeps its image once it has one: clearing
+  /// (nullopt) a part whose view is already set is refused
+  /// (core::KeyValueError, which derives from std::invalid_argument);
+  /// clearing an already-absent view is a no-op success. Does not open a
+  /// transaction (one UPDATE); call inside one to batch.
+  /// @throws std::invalid_argument (shape, or clearing a set view),
+  ///         std::out_of_range (no part, no sensor frame, no panorama).
   void set_survey_part_view(std::string_view code,
                             const std::optional<core::ResourceView> &view);
   /// Deletes a survey type; its parts and sample links cascade. Storage only:

@@ -9356,8 +9356,18 @@ void ProjectDB::set_survey_part_view(
   impl_->checkWritable();
   if (view)
     core::validate_view_shape(*view);
-  if (!survey_part(code))
+  const auto existing = survey_part(code);
+  if (!existing)
     throw std::out_of_range("no survey part '" + std::string(code) + "'");
+  // A resource keeps its image once it has one: refuse to clear a set view.
+  // Clearing an already-absent view is a no-op success. No internal caller
+  // (sync_survey, mask -> resource) ever clears a set view, so the setter
+  // can be as strict as patch_resource's higher-level check.
+  if (!view && existing->view)
+    throw core::KeyValueError(
+        std::string(core::kViewKey),
+        "'" + std::string(core::kViewKey) +
+            "' already has a value and cannot be cleared");
   if (view) {
     const bool frame = view->kind == core::ViewKind::frame;
     if (frame ? !has_sensor_frame(view->id) : !has_panoramic_image(view->id))
