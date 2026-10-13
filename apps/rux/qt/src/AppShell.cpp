@@ -4,6 +4,7 @@
 #include <rux_qt/AppShell.hpp>
 #include <rux_qt/DatabaseWorkspace.hpp>
 #include <rux_qt/EdgeEditor.hpp>
+#include <rux_qt/EditWorkspace.hpp>
 #include <rux_qt/FrameBrowser.hpp>
 #include <rux_qt/PipelineWorkspace.hpp>
 #include <rux_qt/PoseGraphWorkspace.hpp>
@@ -181,14 +182,15 @@ AppShell::AppShell(ProjectSession &session, RecentProjects &recent,
   stack_->setObjectName("workspaceStack");
   start_ = new StartPage(session_, recent_);
   stack_->addWidget(start_);
-  database_ = new DatabaseWorkspace(session_);
+  edges_ = new EdgeEditor(session_, this);
+  database_ = new DatabaseWorkspace(session_, *edges_);
   connect(database_, &DatabaseWorkspace::browse_requested, this,
           &AppShell::browse);
   stack_->addWidget(database_);
   viewer_ = new Viewer3DWorkspace(session_, options.interactive_3d);
   stack_->addWidget(viewer_);
-  posegraph_ = new PoseGraphWorkspace(session_, database_->editor());
-  stack_->addWidget(posegraph_);
+  edit_ = new EditWorkspace(session_, *edges_, options.persist_layout);
+  stack_->addWidget(edit_);
   pipeline_ = new PipelineWorkspace(session_, options.stage_executor);
   stack_->addWidget(pipeline_);
   log_ = new PipelineLogView(session_, /*filters=*/true);
@@ -220,8 +222,8 @@ AppShell::AppShell(ProjectSession &session, RecentProjects &recent,
   };
   connect(viewer_, &Viewer3DWorkspace::selection_changed, this,
           follow(Workspace::viewer3d));
-  connect(posegraph_, &PoseGraphWorkspace::selection_changed, this,
-          follow(Workspace::posegraph));
+  connect(edit_, &EditWorkspace::selection_changed, this,
+          follow(Workspace::edit));
   connect(pipeline_, &PipelineWorkspace::selection_changed, this,
           follow(Workspace::pipeline));
   connect(log_, &PipelineLogView::selection_changed, this,
@@ -231,7 +233,7 @@ AppShell::AppShell(ProjectSession &session, RecentProjects &recent,
               inspector_->set_selection(sel);
           });
   // Posegraf -> Database: a node is frame A (B with Shift), an edge both.
-  connect(posegraph_, &PoseGraphWorkspace::frame_requested, this,
+  connect(edit_->graph(), &PoseGraphWorkspace::frame_requested, this,
           [this](int id, bool as_b) {
             if (as_b)
               database_->frames()->set_b(id);
@@ -240,14 +242,14 @@ AppShell::AppShell(ProjectSession &session, RecentProjects &recent,
             database_->open_item(ProjectTree::Kind::frames);
             show_page(Workspace::database);
           });
-  connect(posegraph_, &PoseGraphWorkspace::pair_requested, this,
+  connect(edit_->graph(), &PoseGraphWorkspace::pair_requested, this,
           [this](int a, int b) {
             database_->frames()->set_a(a);
             database_->frames()->set_b(b);
             database_->open_item(ProjectTree::Kind::frames);
             show_page(Workspace::database);
           });
-  connect(database_->frames(), &FrameBrowser::pair_changed, posegraph_,
+  connect(database_->frames(), &FrameBrowser::pair_changed, edit_->graph(),
           &PoseGraphWorkspace::set_pair);
   // A pipeline run changed the project: re-read it, unless that would drop
   // pose-graph edits nobody has saved (then F5 does it when they are).
@@ -258,16 +260,13 @@ AppShell::AppShell(ProjectSession &session, RecentProjects &recent,
   connect(&session_, &ProjectSession::opened, log_, &PipelineLogView::reload);
   // While a stage runs, pose-graph saves wait (they take the runner's
   // writer lease too, so a stage started meanwhile still wins cleanly).
-  database_->editor().set_runner_source(
-      [this] { return pipeline_->runner_handle(); });
+  edges_->set_runner_source([this] { return pipeline_->runner_handle(); });
   pipeline_->set_pending_edits_source(
       [this] { return database_->pending_edits(); });
   connect(pipeline_, &PipelineWorkspace::job_started, this,
-          [this](const QString &stage) {
-            database_->editor().set_pipeline_busy(stage);
-          });
+          [this](const QString &stage) { edges_->set_pipeline_busy(stage); });
   connect(pipeline_, &PipelineWorkspace::job_finished, this, [this] {
-    database_->editor().set_pipeline_busy({});
+    edges_->set_pipeline_busy({});
     if (after_job_) {
       auto next = std::move(after_job_);
       after_job_ = nullptr;
@@ -428,6 +427,12 @@ QVector<Command> AppShell::commands() {
     } else if (id == "copy-path" || id == "copy-cli") {
       const QString text = c.subtitle;
       c.run = [text] { QApplication::clipboard()->setText(text); };
+    } else if (id.startsWith("pane:")) {
+      if (const auto p = parse_edit_pane(id.mid(5).toStdString()))
+        c.run = [this, p = *p] {
+          show_page(Workspace::edit);
+          edit_->toggle_pane(p);
+        };
     } else if (QAction *a = actions.value(id)) {
       c.run = [a] { a->trigger(); };
     }
@@ -447,8 +452,8 @@ void AppShell::show_page(Workspace w) {
   // Pages load lazily: a million-point cloud is read when 3D is first shown.
   if (w == Workspace::viewer3d)
     viewer_->activate();
-  else if (w == Workspace::posegraph)
-    posegraph_->activate();
+  else if (w == Workspace::edit)
+    edit_->activate();
   inspector_->set_selection(page_selection(w));
 }
 
@@ -458,8 +463,8 @@ Selection AppShell::page_selection(Workspace w) const {
     return database_->selection();
   case Workspace::viewer3d:
     return viewer_->selection();
-  case Workspace::posegraph:
-    return posegraph_->selection();
+  case Workspace::edit:
+    return edit_->selection();
   case Workspace::pipeline:
     return pipeline_->selection();
   case Workspace::log:

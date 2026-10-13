@@ -10,6 +10,7 @@
 #include <rux_qt/AppShell.hpp>
 #include <rux_qt/DatabaseWorkspace.hpp>
 #include <rux_qt/EdgeEditor.hpp>
+#include <rux_qt/EditWorkspace.hpp>
 #include <rux_qt/FrameBrowser.hpp>
 #include <rux_qt/PipelineWorkspace.hpp>
 #include <rux_qt/PoseGraphWorkspace.hpp>
@@ -60,6 +61,7 @@ AppShell *make_shell(const PageContext &ctx, Open open) {
   auto *recent = new RecentProjects(demo_recent(ctx));
   ShellOptions options;
   options.interactive_3d = ctx.interactive_3d;
+  options.persist_layout = false; // a shot never touches QSettings
   auto *shell = new AppShell(*session, *recent, options);
   session->setParent(shell);
   recent->setParent(shell);
@@ -232,7 +234,7 @@ QWidget *make_db_cloud(const PageContext &ctx) {
   return shell;
 }
 
-// ---- 3D, Posegraf, Pipeline, Log (Q3)
+// ---- 3D, Rediger, Pipeline, Log
 
 /// Run the event loop until the off-thread work a page started has landed
 /// (bounded), so a page can act on its result — pick a point once the cloud
@@ -310,16 +312,24 @@ AppShell *make_pg(const PageContext &ctx) {
     f->set_a(at(0.30));
     f->set_b(at(0.81));
   }
-  shell->show_page(Workspace::posegraph);
+  shell->show_page(Workspace::edit);
   return shell;
 }
 
-QWidget *make_posegraf(const PageContext &ctx) { return make_pg(ctx); }
+QWidget *make_rediger(const PageContext &ctx) { return make_pg(ctx); }
+
+/// Rediger with the edge list and both pair panes hidden, from the palette.
+QWidget *make_rediger_panes(const PageContext &ctx) {
+  auto *shell = make_pg(ctx);
+  shell->edit()->set_pane_visible(EditPane::edges, false);
+  shell->edit()->set_pane_visible(EditPane::images, false);
+  return shell;
+}
 
 /// Stress: 10 000 stored edges (WRITTEN to the project copy) — odometry
 /// along the capture, then deterministic pseudo-random loop closures and
 /// panorama edges — and the paint and edit cost measured, on stderr.
-QWidget *make_posegraf_stress(const PageContext &ctx) {
+QWidget *make_rediger_stress(const PageContext &ctx) {
   constexpr std::size_t kEdges = 10000;
   if (!ctx.project_path.isEmpty()) {
     reusex::ProjectDB db(ctx.project_path.toStdString());
@@ -361,8 +371,8 @@ QWidget *make_posegraf_stress(const PageContext &ctx) {
   auto *probe = new QTimer(shell);
   probe->setInterval(50);
   QObject::connect(probe, &QTimer::timeout, shell, [shell, probe] {
-    QGraphicsView *v = shell->posegraph()->view();
-    if (!shell->isVisible() || shell->posegraph()->node_count() == 0)
+    QGraphicsView *v = shell->edit()->graph()->view();
+    if (!shell->isVisible() || shell->edit()->graph()->node_count() == 0)
       return;
     probe->stop();
     QElapsedTimer t;
@@ -382,10 +392,10 @@ QWidget *make_posegraf_stress(const PageContext &ctx) {
     const double edit_ms = static_cast<double>(t.nsecsElapsed()) / 1e6;
     std::fprintf(
         stderr, "%s\n",
-        qPrintable(QString("posegraf-stress: %1 nodes, %2 stored edges, "
+        qPrintable(QString("rediger-stress: %1 nodes, %2 stored edges, "
                            "%3x%4 px: %5 ms/frame (%6 fps); a staged edit "
                            "%7 ms")
-                       .arg(shell->posegraph()->node_count())
+                       .arg(shell->edit()->graph()->node_count())
                        .arg(kEdges)
                        .arg(v->viewport()->width())
                        .arg(v->viewport()->height())
@@ -398,13 +408,13 @@ QWidget *make_posegraf_stress(const PageContext &ctx) {
 }
 
 /// A click on a staged edge: the Database opens with A and B on its ends.
-QWidget *make_posegraf_click(const PageContext &ctx) {
+QWidget *make_rediger_click(const PageContext &ctx) {
   auto *shell = make_pg(ctx);
   settle();
   // A staged edge that is drawn: a staged rejection is not.
   for (const auto &op : shell->database()->editor().edits().ops())
     if (op.edge.status != "rejected") {
-      shell->posegraph()->click_edge(op.edge.key.from, op.edge.key.to);
+      shell->edit()->graph()->click_edge(op.edge.key.from, op.edge.key.to);
       break;
     }
   return shell;
@@ -414,12 +424,12 @@ QWidget *make_posegraf_click(const PageContext &ctx) {
 /// the middle node by setting the view transform directly (no clamp), and
 /// count the pixels of the node's own colour within 6 px of where it should
 /// be. stderr gets one line per level; 0 means the node vanished.
-QWidget *make_posegraf_zoom(const PageContext &ctx) {
+QWidget *make_rediger_zoom(const PageContext &ctx) {
   auto *shell = make_pg(ctx);
   auto *probe = new QTimer(shell);
   probe->setInterval(50);
   QObject::connect(probe, &QTimer::timeout, shell, [shell, probe] {
-    PoseGraphWorkspace *pg = shell->posegraph();
+    PoseGraphWorkspace *pg = shell->edit()->graph();
     PoseGraphView *v = pg->view();
     if (!shell->isVisible() || pg->node_count() == 0)
       return;
@@ -450,9 +460,9 @@ QWidget *make_posegraf_zoom(const PageContext &ctx) {
                      std::abs(px.blue() - ink.blue()) <
                  40;
         }
-      std::fprintf(
-          stderr, "posegraf-zoom: x%g upp=%.3g centre=(%d,%d) node-pixels=%d\n",
-          level, v->units_per_pixel(), c.x(), c.y(), lit);
+      std::fprintf(stderr,
+                   "rediger-zoom: x%g upp=%.3g centre=(%d,%d) node-pixels=%d\n",
+                   level, v->units_per_pixel(), c.x(), c.y(), lit);
     }
   });
   probe->start();
@@ -590,20 +600,23 @@ void register_shell_pages() {
                  make_3d_plan});
   register_page(
       {"3d-labels", "3D: semantiske mærkater ovenfra", make_3d_labels});
-  register_page({"posegraf",
-                 "Posegraf: billeder, A/B og ventende løkkelukninger",
-                 make_posegraf});
-  register_page({"posegraf-stress",
-                 "Posegraf: 10.000 kanter (skriver til projektkopien), måler "
+  register_page({"rediger", "Rediger: posegraf, A/B og ventende løkkelukninger",
+                 make_rediger});
+  register_page({"rediger-panes",
+                 "Rediger: kantliste og billeder skjult, kun grafen og "
+                 "højre kolonne",
+                 make_rediger_panes});
+  register_page({"rediger-stress",
+                 "Rediger: 10.000 kanter (skriver til projektkopien), måler "
                  "tegnetid",
-                 make_posegraf_stress});
-  register_page({"posegraf-click",
-                 "Posegraf: klik på en kant åbner Database med A og B",
-                 make_posegraf_click});
-  register_page({"posegraf-zoom",
-                 "Posegraf: zoomer ind på én node og tæller dens pixels "
+                 make_rediger_stress});
+  register_page({"rediger-click",
+                 "Rediger: klik på en kant åbner Oversigt med A og B",
+                 make_rediger_click});
+  register_page({"rediger-zoom",
+                 "Rediger: zoomer ind på én node og tæller dens pixels "
                  "(reproduktion af forsvindende noder)",
-                 make_posegraf_zoom});
+                 make_rediger_zoom});
   register_page({"pipeline",
                  "Pipeline: planer med ændrede parametre og rux-kommandoen",
                  make_pipeline});

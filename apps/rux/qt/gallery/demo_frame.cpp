@@ -83,9 +83,9 @@ QWidget *demo_frame(const PageContext &ctx, int active, QWidget *content,
 
   auto *rail = new NavRail(name);
   rail->add_group("Data");
-  rail->add_item("Database", frames);
+  rail->add_item("Oversigt", frames);
   rail->add_item("3D", clouds);
-  rail->add_item("Posegraf");
+  rail->add_item("Rediger");
   rail->add_group("Behandling");
   rail->add_item("Pipeline");
   rail->add_item("Log");

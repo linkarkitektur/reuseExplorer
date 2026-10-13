@@ -4,7 +4,7 @@
 #pragma once
 
 // The Qt client's window content: a title bar (project, schema status), the
-// left nav rail (Start, Database, 3D, Posegraf, Pipeline, Log), a stack of
+// left nav rail (Start, Oversigt, 3D, Rediger, Pipeline, Log), a stack of
 // workspaces, a collapsible inspector on the right, and the Ctrl+K command
 // palette over all of it. A plain QWidget, so the gallery can screenshot it
 // without a QMainWindow; MainWindow wraps it for the real app.
@@ -30,10 +30,11 @@ class QStackedWidget;
 namespace rux::qt {
 
 class DatabaseWorkspace;
+class EdgeEditor;
+class EditWorkspace;
 class Inspector;
 class PipelineLogView;
 class PipelineWorkspace;
-class PoseGraphWorkspace;
 class Viewer3DWorkspace;
 class NavRail;
 class ProjectSession;
@@ -48,6 +49,9 @@ struct ShellOptions {
   bool interactive_3d = false;
   /// Runs the Pipeline workspace's stages; empty = the library default.
   reusex::pipeline::StageExecutor stage_executor;
+  /// Splitter sizes and pane visibility persist in QSettings (false in a
+  /// gallery shot).
+  bool persist_layout = true;
 };
 
 class AppShell : public QWidget {
@@ -72,7 +76,9 @@ class AppShell : public QWidget {
 
   DatabaseWorkspace *database() const { return database_; }
   Viewer3DWorkspace *viewer() const { return viewer_; }
-  PoseGraphWorkspace *posegraph() const { return posegraph_; }
+  EditWorkspace *edit() const { return edit_; }
+  /// The pending pose-graph edits, shared by Oversigt and Rediger.
+  EdgeEditor &edges() const { return *edges_; }
   PipelineWorkspace *pipeline() const { return pipeline_; }
   PipelineLogView *log() const { return log_; }
   /// Unsaved pose-graph edits: ask whether to save, discard or cancel
@@ -121,7 +127,8 @@ class AppShell : public QWidget {
   StartPage *start_ = nullptr;
   DatabaseWorkspace *database_ = nullptr;
   Viewer3DWorkspace *viewer_ = nullptr;
-  PoseGraphWorkspace *posegraph_ = nullptr;
+  EditWorkspace *edit_ = nullptr;
+  EdgeEditor *edges_ = nullptr;
   PipelineWorkspace *pipeline_ = nullptr;
   PipelineLogView *log_ = nullptr;
   Selection log_selection_;

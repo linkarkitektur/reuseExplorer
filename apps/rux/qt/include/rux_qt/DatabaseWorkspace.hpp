@@ -51,8 +51,9 @@ class ProjectTree : public QTreeWidget {
 class DatabaseWorkspace : public QWidget {
   Q_OBJECT
     public:
-  explicit DatabaseWorkspace(ProjectSession &session,
-                             QWidget *parent = nullptr);
+  /// @p editor is the shell's (Rediger edits through the same one).
+  DatabaseWorkspace(ProjectSession &session, EdgeEditor &editor,
+                    QWidget *parent = nullptr);
   ~DatabaseWorkspace() override;
 
   EdgeEditor &editor() const { return *editor_; }

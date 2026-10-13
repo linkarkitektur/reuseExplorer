@@ -893,6 +893,21 @@ QFrame#dbToolbar {
 QFrame#dbToolbar QLabel {
   background: transparent;
 }
+
+/* Rediger: splitter panes (PaneFrame) */
+QFrame#paneFrame {
+  background: var(--color-surface);
+}
+QFrame#paneHeader {
+  background: var(--color-surface-raised);
+  border-bottom: 1px solid var(--color-border);
+}
+QSplitter::handle {
+  background: var(--color-border);
+}
+QSplitter::handle:hover {
+  background: var(--color-border-strong);
+}
 QLabel#toolbarMeta {
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);

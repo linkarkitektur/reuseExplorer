@@ -366,7 +366,7 @@ QWidget *StartPage::make_summary() {
   auto *row = new QHBoxLayout;
   row->setContentsMargins(0, t.px("--space-2"), 0, 0);
   row->setSpacing(t.px("--space-2"));
-  auto *go = button("Gå til Database", "primary");
+  auto *go = button("Gå til Oversigt", "primary");
   connect(go, &QPushButton::clicked, this, [this] {
     emit navigate_requested(static_cast<int>(Workspace::database));
   });

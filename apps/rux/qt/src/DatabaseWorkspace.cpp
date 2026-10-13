@@ -226,11 +226,11 @@ void ProjectTree::select(Kind kind, const QString &key) {
 // --------------------------------------------------------- DatabaseWorkspace
 // --
 
-DatabaseWorkspace::DatabaseWorkspace(ProjectSession &session, QWidget *parent)
-    : QWidget(parent), session_(session) {
+DatabaseWorkspace::DatabaseWorkspace(ProjectSession &session,
+                                     EdgeEditor &editor, QWidget *parent)
+    : QWidget(parent), session_(session), editor_(&editor) {
   setObjectName("databaseWorkspace");
   const Theme &t = theme();
-  editor_ = new EdgeEditor(session_, this);
   loader_ = new FrameImageLoader(this);
 
   auto *v = new QVBoxLayout(this);

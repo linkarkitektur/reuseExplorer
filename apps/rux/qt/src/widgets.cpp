@@ -105,6 +105,46 @@ Panel::Panel(const QString &title, QWidget *parent, const QString &kind)
   outer->addWidget(bodyw, 1);
 }
 
+PaneFrame::PaneFrame(const QString &title, QWidget *parent) : QFrame(parent) {
+  setObjectName("paneFrame");
+  const Theme &t = theme();
+  body_ = new QVBoxLayout(this);
+  body_->setContentsMargins(0, 0, 0, 0);
+  body_->setSpacing(0);
+  auto *head = new QFrame;
+  head->setObjectName("paneHeader");
+  header_ = new QHBoxLayout(head);
+  header_->setContentsMargins(t.px("--space-3"), t.px("--space-1"),
+                              t.px("--space-2"), t.px("--space-1"));
+  header_->setSpacing(t.px("--space-2"));
+  header_->addWidget(new CapsLabel(title, "panelTitle"));
+  header_->addStretch(1);
+  auto *hide = new QPushButton(NavItem::escape_mnemonic("Skjul"));
+  hide->setObjectName("paneHide");
+  hide->setProperty("kind", "ghost");
+  hide->setCursor(Qt::PointingHandCursor);
+  hide->setToolTip(
+      "Skjul panelet — vis det igen under Paneler eller med Ctrl+K");
+  hide->setMinimumHeight(hide->sizeHint().height());
+  header_->addWidget(hide);
+  body_->addWidget(head);
+  connect(hide, &QPushButton::clicked, this, &PaneFrame::hide_requested);
+}
+
+void PaneFrame::set_content(QWidget *content) {
+  if (content_) {
+    content_->hide();
+    body_->removeWidget(content_);
+    content_->deleteLater();
+  }
+  content_ = content;
+  body_->addWidget(content_, 1);
+}
+
+void PaneFrame::add_header_widget(QWidget *w) {
+  header_->insertWidget(header_->count() - 1, w); // before "Skjul"
+}
+
 void Panel::add_header_widget(QWidget *w) {
   if (header_)
     header_->addWidget(w);
