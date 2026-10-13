@@ -120,6 +120,14 @@ namespace {
 
 // ---- Database workspace (Q2)
 
+/// A loop closure the way the pair strip stages one (no measurement).
+EdgeRecord loop_closure(int from, int to, double weight) {
+  EdgeRecord r;
+  r.key = {from, to, "loop_closure"};
+  r.weight = weight;
+  return r;
+}
+
 /// The shell on the Database page with A and B a few frames apart in the
 /// middle of the capture (frame ids differ per project: use positions).
 AppShell *make_db(const PageContext &ctx, Open open = Open::project) {
@@ -157,19 +165,22 @@ QWidget *make_db_confidence(const PageContext &ctx) {
 }
 
 /// Pending edits: an ICP run on the pair and a staged loop closure, plus a
-/// staged deletion when the project has stored edges.
+/// staged rejection when the project has stored edges.
 QWidget *make_db_pending(const PageContext &ctx) {
   auto *shell = make_db(ctx);
   FrameBrowser *f = shell->database()->frames();
   if (f->pair().empty())
     return shell;
   EdgeEditor &ed = shell->database()->editor();
-  if (!ed.edits().base().empty())
-    ed.remove(ed.edits().base().front().key);
+  for (const auto &e : ed.edits().base())
+    if (e.status != "rejected") {
+      ed.reject(e.key);
+      break;
+    }
   for (auto *b : f->findChildren<QPushButton *>())
     if (b->text() == "ICP-forfin")
       b->click();
-  ed.add({{f->pair().a_id(), f->pair().b_id(), "loop_closure"}, 0.0, 400.0});
+  ed.add(loop_closure(f->pair().a_id(), f->pair().b_id(), 400.0));
   return shell;
 }
 
@@ -180,7 +191,7 @@ QWidget *make_db_readonly(const PageContext &ctx) {
   if (f->pair().empty())
     return shell;
   shell->database()->editor().add(
-      {{f->pair().a_id(), f->pair().b_id(), "loop_closure"}, 0.0, 1.0});
+      loop_closure(f->pair().a_id(), f->pair().b_id(), 1.0));
   shell->database()->save_edits();
   return shell;
 }
@@ -194,7 +205,7 @@ QWidget *make_db_saved(const PageContext &ctx) {
   if (f->pair().empty())
     return shell;
   shell->database()->editor().add(
-      {{f->pair().a_id(), f->pair().b_id(), "loop_closure"}, 0.0, 250.0});
+      loop_closure(f->pair().a_id(), f->pair().b_id(), 250.0));
   shell->database()->save_edits();
   return shell;
 }
@@ -293,9 +304,9 @@ AppShell *make_pg(const PageContext &ctx) {
                           static_cast<std::size_t>(t * ids.size()))];
     };
     auto &ed = shell->database()->editor();
-    ed.add({{at(0.05), at(0.62), "loop_closure"}, 0.0, 400.0});
-    ed.add({{at(0.30), at(0.81), "loop_closure"}, 0.0, 400.0});
-    ed.add({{at(0.45), at(0.97), "loop_closure"}, 0.0, 400.0});
+    ed.add(loop_closure(at(0.05), at(0.62), 400.0));
+    ed.add(loop_closure(at(0.30), at(0.81), 400.0));
+    ed.add(loop_closure(at(0.45), at(0.97), 400.0));
     f->set_a(at(0.30));
     f->set_b(at(0.81));
   }
@@ -366,7 +377,7 @@ QWidget *make_posegraf_stress(const PageContext &ctx) {
     t.restart();
     if (ids.size() > 2)
       shell->database()->editor().add(
-          {{ids.front(), ids[ids.size() / 2], "loop_closure"}, 0.0, 9.0});
+          loop_closure(ids.front(), ids[ids.size() / 2], 9.0));
     QApplication::processEvents();
     const double edit_ms = static_cast<double>(t.nsecsElapsed()) / 1e6;
     std::fprintf(

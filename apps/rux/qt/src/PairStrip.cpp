@@ -36,6 +36,22 @@ QString dec(double v, int decimals) {
   return QString::fromStdString(format_decimal_da(v, decimals));
 }
 
+QString residual_text(double r) {
+  return std::isfinite(r) ? dec(r, 4) : QString("—");
+}
+
+QString status_da(const std::string &status) {
+  return status == "confirmed"  ? QString("Bekræftet")
+         : status == "rejected" ? QString("Afvist")
+                                : QString("Auto");
+}
+
+QString status_tone(const std::string &status) {
+  return status == "confirmed"  ? QString("good")
+         : status == "rejected" ? QString("crit")
+                                : QString("outline");
+}
+
 QString weight_text(double w) {
   if (!std::isfinite(w))
     return "—";
@@ -68,15 +84,12 @@ Selection edge_selection(const EdgeView &v, int a, int b) {
   s.kind = "Kant";
   s.title = QString::fromStdString(edge_type_da(v.edge.key.type));
   s.subtitle = QString("%1 → %2").arg(v.edge.key.from).arg(v.edge.key.to);
-  if (v.pending_add) {
-    s.pill = "Ny — ikke gemt";
+  if (v.pending != EdgeView::Pending::none) {
+    s.pill = "Ikke gemt";
     s.pill_tone = "accent";
-  } else if (v.pending_delete) {
-    s.pill = "Slettes ved gem";
-    s.pill_tone = "crit";
   } else {
-    s.pill = "Gemt";
-    s.pill_tone = "good";
+    s.pill = status_da(v.edge.status);
+    s.pill_tone = status_tone(v.edge.status);
   }
   SelectionSection e{"Kant", {}, {}};
   e.rows.push_back({"Fra", QString::number(v.edge.key.from)});
@@ -84,7 +97,12 @@ Selection edge_selection(const EdgeView &v, int a, int b) {
   e.rows.push_back({"Type", QString::fromStdString(v.edge.key.type),
                     SelectionRow::Style::mono});
   e.rows.push_back({"Vægt", weight_text(v.edge.weight)});
-  e.rows.push_back({"Residual", dec(v.edge.residual, 4)});
+  e.rows.push_back({"Residual", residual_text(v.edge.residual)});
+  e.rows.push_back(
+      {"Status", status_da(v.edge.status), SelectionRow::Style::value});
+  if (!v.edge.source.empty())
+    e.rows.push_back({"Kilde", QString::fromStdString(v.edge.source),
+                      SelectionRow::Style::mono});
   e.rows.push_back({"Retning",
                     v.reversed ? QString("B → A (%1 → %2)").arg(b).arg(a)
                                : QString("A → B (%1 → %2)").arg(a).arg(b),
@@ -215,9 +233,9 @@ void PairStrip::rebuild() {
   for (const EdgeView &v : views) {
     auto *row = new EdgeRow(
         [this, v] { emit edge_selected(edge_selection(v, a_, b_)); });
-    row->setProperty("state", v.pending_add      ? "add"
-                              : v.pending_delete ? "delete"
-                                                 : "stored");
+    row->setProperty("state", v.pending != EdgeView::Pending::none ? "add"
+                              : v.edge.status == "rejected"        ? "delete"
+                                                                   : "stored");
     auto *h = new QHBoxLayout(row);
     h->setContentsMargins(t.px("--space-2"), t.px("--space-1"),
                           t.px("--space-1"), t.px("--space-1"));
@@ -232,34 +250,34 @@ void PairStrip::rebuild() {
     auto *w = new QLabel(QString("Vægt %1").arg(weight_text(v.edge.weight)));
     w->setObjectName("edgeMeta");
     h->addWidget(w);
-    auto *r = new QLabel(
-        v.pending_add ? QString("Residual —")
-                      : QString("Residual %1").arg(dec(v.edge.residual, 4)));
+    auto *r =
+        new QLabel(QString("Residual %1").arg(residual_text(v.edge.residual)));
     r->setObjectName("edgeMeta");
     r->setToolTip("½ · hvidet kvadratfejl efter seneste optimering");
     h->addWidget(r);
     h->addStretch(1);
-    if (v.pending_add)
-      h->addWidget(new Pill("Ny", "accent"));
-    if (v.pending_delete)
-      h->addWidget(new Pill("Slettes", "crit"));
-    auto *act = new QPushButton(v.pending_delete || v.pending_add
-                                    ? QString("Fortryd")
-                                    : QString("Slet kant"));
-    act->setProperty("kind", "ghost");
-    act->setObjectName("edgeAction");
-    act->setCursor(Qt::PointingHandCursor);
+    h->addWidget(
+        new Pill(status_da(v.edge.status), status_tone(v.edge.status)));
+    if (v.pending != EdgeView::Pending::none)
+      h->addWidget(new Pill("Ikke gemt", "accent"));
     const EdgeKey key = v.edge.key;
-    const bool restore = v.pending_delete;
-    const EdgeRecord record = v.edge;
-    connect(act, &QPushButton::clicked, this, [this, key, restore, record] {
-      if (restore)
-        editor_.add(record); // re-adding a deleted edge restores it
-      else
-        editor_.remove(key);
-    });
-    act->setMinimumHeight(act->sizeHint().height());
-    h->addWidget(act);
+    auto action = [&](const QString &text, auto fn) {
+      auto *b = new QPushButton(NavItem::escape_mnemonic(text));
+      b->setProperty("kind", "ghost");
+      b->setObjectName("edgeAction");
+      b->setCursor(Qt::PointingHandCursor);
+      connect(b, &QPushButton::clicked, this,
+              [this, key, fn] { fn(editor_, key); });
+      b->setMinimumHeight(b->sizeHint().height());
+      h->addWidget(b);
+    };
+    if (v.pending != EdgeView::Pending::none)
+      action("Fortryd", [](EdgeEditor &e, const EdgeKey &k) { e.revert(k); });
+    else if (v.edge.status == "rejected")
+      action("Fortryd afvisning",
+             [](EdgeEditor &e, const EdgeKey &k) { e.unreject(k); });
+    else
+      action("Afvis", [](EdgeEditor &e, const EdgeKey &k) { e.reject(k); });
     row->setMinimumHeight(h->sizeHint().height());
     rows_layout_->addWidget(row);
   }
@@ -323,7 +341,7 @@ void PairStrip::rebuild() {
   const QString ro = editor_.read_only_reason();
   note_->setText(ro.isEmpty() ? QString()
                               : QString("Skrivebeskyttet: kanter kan "
-                                        "tilføjes og slettes her, men ikke "
+                                        "tilføjes og afvises her, men ikke "
                                         "gemmes."));
   note_->setVisible(!ro.isEmpty());
 }
@@ -333,15 +351,14 @@ void PairStrip::add_edge() {
     return;
   EdgeRecord e;
   e.key = {a_, b_, type_->currentData().toString().toStdString()};
-  e.residual = 0.0;
   e.weight = 1.0;
   // An ICP fit of this pair makes the weight honest: 1/σ² from its RMS.
   if (auto it = icp_results_.find({a_, b_});
       it != icp_results_.end() && it->second.ok && it->second.converged)
     e.weight = weight_from_icp_fitness(it->second.fitness);
   const auto r = editor_.add(e);
-  if (r == PendingEdgeEdits::Result::duplicate) {
-    note_->setText("Den kant findes allerede mellem A og B.");
+  if (r == PendingEdgeEdits::Result::replaced) {
+    note_->setText("Kanten findes — den nye måling erstatter den ved gem.");
     note_->setVisible(true);
   }
 }

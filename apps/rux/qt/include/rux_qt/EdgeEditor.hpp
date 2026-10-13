@@ -5,7 +5,9 @@
 
 // The pose-graph edits of the Database workspace: staged in memory
 // (PendingEdgeEdits, rux_qt_core) until "Gem ændringer", then written in ONE
-// ProjectDB transaction — deletions first, then additions.
+// ProjectDB transaction — status changes first, then measurements
+// (apply_edge_ops, edge_store.hpp). A "delete" is a rejection: the edge stays
+// in the file as a tombstone that discover and optimize respect.
 //
 // The save runs OFF the GUI thread: a locked project waits out sqlite's 5 s
 // busy timeout, which must not freeze the window. save() snapshots ops() and
@@ -48,7 +50,10 @@ class EdgeEditor : public QObject {
   QString read_only_reason() const;
 
   PendingEdgeEdits::Result add(const EdgeRecord &edge);
-  PendingEdgeEdits::Result remove(const EdgeKey &key);
+  PendingEdgeEdits::Result confirm(const EdgeKey &key);
+  PendingEdgeEdits::Result reject(const EdgeKey &key);
+  PendingEdgeEdits::Result unreject(const EdgeKey &key);
+  PendingEdgeEdits::Result revert(const EdgeKey &key);
   void discard();
 
   /// Start writing every pending edit (see the header). False when it cannot

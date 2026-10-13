@@ -929,9 +929,9 @@ void FrameBrowser::refresh_strip_marks() {
   QHash<int, int> degrees;
   for (const auto &[frame, n] : editor_.edits().degrees())
     degrees.insert(frame, n);
-  // Frames whose edges were all staged for deletion show a 0 mark.
-  for (const auto &op : editor_.edits().ops())
-    for (int f : {op.edge.key.from, op.edge.key.to})
+  // Frames whose edges are all rejected (stored or staged) show a 0 mark.
+  for (const auto &v : editor_.edits().effective())
+    for (int f : {v.edge.key.from, v.edge.key.to})
       if (!degrees.contains(f))
         degrees.insert(f, 0);
   film_model_->set_degrees(std::move(degrees));

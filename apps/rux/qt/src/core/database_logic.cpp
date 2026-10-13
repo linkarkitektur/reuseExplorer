@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <iterator>
+#include <limits>
 #include <numeric>
 
 namespace rux::qt {
@@ -122,172 +123,278 @@ double weight_from_icp_fitness(double rms_m) {
   return 1.0 / (sigma * sigma);
 }
 
+namespace {
+bool same_number(double a, double b) {
+  return a == b || (std::isnan(a) && std::isnan(b));
+}
+
+/// The store's canonical key: (min(from, to), max(from, to), type).
+bool same_edge(const EdgeKey &a, const EdgeKey &b) {
+  return a.type == b.type && std::min(a.from, a.to) == std::min(b.from, b.to) &&
+         std::max(a.from, a.to) == std::max(b.from, b.to);
+}
+} // namespace
+
+bool same_record(const EdgeRecord &a, const EdgeRecord &b) {
+  return a.key == b.key && same_number(a.residual, b.residual) &&
+         same_number(a.weight, b.weight) && a.transform == b.transform &&
+         a.information == b.information && a.source == b.source &&
+         a.status == b.status &&
+         a.seed_disagreement_m == b.seed_disagreement_m &&
+         a.seed_disagreement_deg == b.seed_disagreement_deg &&
+         a.deviation_m == b.deviation_m && a.deviation_deg == b.deviation_deg;
+}
+
 void PendingEdgeEdits::set_base(std::vector<EdgeRecord> edges) {
   base_ = std::move(edges);
-  discard();
+  pending_.clear();
 }
 
-bool PendingEdgeEdits::removed(const EdgeKey &k) const {
-  return std::find(removes_.begin(), removes_.end(), k) != removes_.end();
+const EdgeRecord *PendingEdgeEdits::stored(const EdgeKey &k) const {
+  for (const auto &e : base_)
+    if (same_edge(e.key, k))
+      return &e;
+  return nullptr;
 }
 
-bool PendingEdgeEdits::in_base(const EdgeKey &k) const {
-  return std::any_of(base_.begin(), base_.end(),
-                     [&](const EdgeRecord &e) { return e.key == k; });
+int PendingEdgeEdits::pending_index(const EdgeKey &k) const {
+  for (std::size_t i = 0; i < pending_.size(); ++i)
+    if (same_edge(pending_[i].edge.key, k))
+      return static_cast<int>(i);
+  return -1;
 }
 
 PendingEdgeEdits::Result PendingEdgeEdits::add(const EdgeRecord &edge) {
-  const EdgeKey &k = edge.key;
-  if (k.from == k.to || !is_edge_type(k.type) || !std::isfinite(edge.weight) ||
+  if (edge.key.from == edge.key.to || !is_edge_type(edge.key.type) ||
       edge.weight <= 0.0)
     return Result::invalid;
-  if (removed(k)) {
-    removes_.erase(std::find(removes_.begin(), removes_.end(), k));
-    return Result::restored;
+  Op op;
+  op.kind = Op::Kind::upsert;
+  op.edge = edge;
+  op.edge.status = "confirmed";
+  op.edge.residual = std::numeric_limits<double>::quiet_NaN();
+  op.edge.seed_disagreement_m.reset();
+  op.edge.seed_disagreement_deg.reset();
+  op.edge.deviation_m.reset();
+  op.edge.deviation_deg.reset();
+  const EdgeRecord *s = stored(edge.key);
+  op.overwrite_rejected = s && s->status == "rejected";
+  if (const int i = pending_index(edge.key); i >= 0) {
+    const bool was_upsert = pending_[i].kind == Op::Kind::upsert;
+    pending_[static_cast<std::size_t>(i)] = op;
+    if (was_upsert || !s)
+      return Result::replaced;
+    return op.overwrite_rejected ? Result::revived : Result::replaced;
   }
-  if (in_base(k) ||
-      std::any_of(adds_.begin(), adds_.end(),
-                  [&](const EdgeRecord &e) { return e.key == k; }))
-    return Result::duplicate;
-  adds_.push_back(edge);
-  return Result::added;
+  pending_.push_back(op);
+  if (!s)
+    return Result::added;
+  return op.overwrite_rejected ? Result::revived : Result::replaced;
 }
 
-PendingEdgeEdits::Result PendingEdgeEdits::remove(const EdgeKey &key) {
-  const auto staged =
-      std::find_if(adds_.begin(), adds_.end(),
-                   [&](const EdgeRecord &e) { return e.key == key; });
-  if (staged != adds_.end()) {
-    adds_.erase(staged);
+PendingEdgeEdits::Result
+PendingEdgeEdits::stage_status(const EdgeKey &k, const std::string &status,
+                               Result on_change) {
+  const EdgeRecord *s = stored(k);
+  const int i = pending_index(k);
+  if (i >= 0)
+    pending_.erase(pending_.begin() + i);
+  if (s->status == status)
+    return i >= 0 ? Result::unstaged : Result::unchanged;
+  Op op;
+  op.kind = Op::Kind::set_status;
+  op.edge.key = k;
+  op.edge.status = status;
+  pending_.push_back(op);
+  return on_change;
+}
+
+PendingEdgeEdits::Result PendingEdgeEdits::confirm(const EdgeKey &k) {
+  if (const int i = pending_index(k);
+      i >= 0 && pending_[static_cast<std::size_t>(i)].kind == Op::Kind::upsert)
+    return Result::unchanged; // a staged measurement is confirmed already
+  if (!stored(k))
+    return Result::not_found;
+  return stage_status(k, "confirmed", Result::confirmed);
+}
+
+PendingEdgeEdits::Result PendingEdgeEdits::reject(const EdgeKey &k) {
+  const EdgeRecord *s = stored(k);
+  const int i = pending_index(k);
+  if (!s) {
+    if (i < 0)
+      return Result::not_found;
+    pending_.erase(pending_.begin() + i); // a staged new edge: just drop it
     return Result::unstaged;
   }
-  if (!in_base(key) || removed(key))
+  return stage_status(k, "rejected", Result::rejected);
+}
+
+PendingEdgeEdits::Result PendingEdgeEdits::unreject(const EdgeKey &k) {
+  const EdgeRecord *s = stored(k);
+  if (!s)
     return Result::not_found;
-  removes_.push_back(key);
-  return Result::removed;
+  const int i = pending_index(k);
+  if (s->status != "rejected") {
+    if (i >= 0 &&
+        pending_[static_cast<std::size_t>(i)].kind == Op::Kind::set_status &&
+        pending_[static_cast<std::size_t>(i)].edge.status == "rejected") {
+      pending_.erase(pending_.begin() + i);
+      return Result::unstaged;
+    }
+    return Result::unchanged;
+  }
+  return stage_status(k, "auto", Result::unrejected);
 }
 
-void PendingEdgeEdits::discard() {
-  adds_.clear();
-  removes_.clear();
-}
-
-int PendingEdgeEdits::count() const {
-  return static_cast<int>(adds_.size() + removes_.size());
+PendingEdgeEdits::Result PendingEdgeEdits::revert(const EdgeKey &k) {
+  const int i = pending_index(k);
+  if (i < 0)
+    return Result::unchanged;
+  pending_.erase(pending_.begin() + i);
+  return Result::unstaged;
 }
 
 std::vector<PendingEdgeEdits::Op> PendingEdgeEdits::ops() const {
   std::vector<Op> out;
-  for (const EdgeKey &k : removes_) {
-    EdgeRecord r;
-    r.key = k;
-    for (const auto &b : base_)
-      if (b.key == k) {
-        r = b;
-        break;
+  out.reserve(pending_.size());
+  for (const auto &o : pending_)
+    if (o.kind == Op::Kind::set_status)
+      out.push_back(o);
+  for (const auto &o : pending_)
+    if (o.kind == Op::Kind::upsert)
+      out.push_back(o);
+  return out;
+}
+
+std::vector<EdgeView> PendingEdgeEdits::effective() const {
+  std::vector<EdgeView> out;
+  out.reserve(base_.size() + pending_.size());
+  for (const auto &e : base_) {
+    EdgeView v;
+    v.edge = e;
+    v.stored_status = e.status;
+    if (const int i = pending_index(e.key); i >= 0) {
+      const Op &o = pending_[static_cast<std::size_t>(i)];
+      if (o.kind == Op::Kind::set_status) {
+        v.edge.status = o.edge.status;
+        v.pending = EdgeView::Pending::status;
+      } else {
+        v.edge = o.edge;
+        v.pending = EdgeView::Pending::replaced;
       }
-    out.push_back({Op::Kind::remove, r});
+    }
+    out.push_back(std::move(v));
   }
-  for (const auto &a : adds_)
-    out.push_back({Op::Kind::add, a});
+  for (const auto &o : pending_)
+    if (o.kind == Op::Kind::upsert && !stored(o.edge.key)) {
+      EdgeView v;
+      v.edge = o.edge;
+      v.pending = EdgeView::Pending::added;
+      out.push_back(std::move(v));
+    }
   return out;
 }
 
 std::vector<EdgeView> PendingEdgeEdits::between(int a, int b) const {
   std::vector<EdgeView> out;
-  auto match = [&](const EdgeKey &k) {
-    return (k.from == a && k.to == b) || (k.from == b && k.to == a);
-  };
-  std::vector<EdgeKey> seen;
-  for (const auto &e : base_) {
-    if (!match(e.key) ||
-        std::find(seen.begin(), seen.end(), e.key) != seen.end())
-      continue; // duplicated rows of one key show once
-    seen.push_back(e.key);
-    out.push_back({e, false, removed(e.key), e.key.from != a});
+  for (auto &v : effective()) {
+    const auto &k = v.edge.key;
+    if ((k.from == a && k.to == b) || (k.from == b && k.to == a)) {
+      v.reversed = k.from == b && a != b;
+      out.push_back(std::move(v));
+    }
   }
-  for (const auto &e : adds_)
-    if (match(e.key))
-      out.push_back({e, true, false, e.key.from != a});
   return out;
 }
 
 std::map<int, int> PendingEdgeEdits::degrees() const {
-  using Key = std::tuple<int, int, std::string>;
-  std::set<Key> removed_keys;
-  for (const auto &k : removes_)
-    removed_keys.emplace(k.from, k.to, k.type);
-  std::set<Key> seen;
+  std::set<std::tuple<int, int, std::string>> seen;
   std::map<int, int> out;
-  for (const auto &e : base_) {
-    Key k{e.key.from, e.key.to, e.key.type};
-    if (removed_keys.count(k) || !seen.insert(k).second)
+  for (const auto &v : effective()) {
+    if (v.edge.status == "rejected")
       continue;
-    ++out[e.key.from];
-    if (e.key.to != e.key.from)
-      ++out[e.key.to];
-  }
-  for (const auto &e : adds_) {
-    ++out[e.key.from];
-    if (e.key.to != e.key.from)
-      ++out[e.key.to];
+    const auto &k = v.edge.key;
+    if (!seen.insert({std::min(k.from, k.to), std::max(k.from, k.to), k.type})
+             .second)
+      continue;
+    ++out[k.from];
+    ++out[k.to];
   }
   return out;
 }
 
 int PendingEdgeEdits::degree(int frame) const {
-  int n = 0;
-  std::vector<EdgeKey> seen;
-  for (const auto &e : base_)
-    if ((e.key.from == frame || e.key.to == frame) && !removed(e.key) &&
-        std::find(seen.begin(), seen.end(), e.key) == seen.end()) {
-      seen.push_back(e.key);
-      ++n;
-    }
-  for (const auto &e : adds_)
-    if (e.key.from == frame || e.key.to == frame)
-      ++n;
-  return n;
-}
-
-void PendingEdgeEdits::commit_succeeded() {
-  base_.erase(
-      std::remove_if(base_.begin(), base_.end(),
-                     [&](const EdgeRecord &e) { return removed(e.key); }),
-      base_.end());
-  base_.insert(base_.end(), adds_.begin(), adds_.end());
-  discard();
+  const auto all = degrees();
+  const auto it = all.find(frame);
+  return it == all.end() ? 0 : it->second;
 }
 
 void PendingEdgeEdits::commit_saved(const std::vector<Op> &saved) {
-  // What is pending now, as ops; the saved snapshot is applied to the base.
-  const std::vector<Op> now = ops();
-  for (const Op &op : saved) {
-    if (op.kind == Op::Kind::remove)
-      base_.erase(std::remove_if(base_.begin(), base_.end(),
-                                 [&](const EdgeRecord &e) {
-                                   return e.key == op.edge.key;
-                                 }),
-                  base_.end());
-    else
-      base_.push_back(op.edge);
+  for (const Op &o : saved) {
+    EdgeRecord *s = nullptr;
+    for (auto &e : base_)
+      if (same_edge(e.key, o.edge.key))
+        s = &e;
+    if (o.kind == Op::Kind::set_status) {
+      if (s)
+        s->status = o.edge.status;
+    } else if (s) {
+      // Until the next reload the base may hold it as staged (to > from);
+      // the store keeps it canonical with the measurement inverted.
+      *s = o.edge;
+    } else {
+      base_.push_back(o.edge);
+    }
+    if (const int i = pending_index(o.edge.key); i >= 0) {
+      const Op &p = pending_[static_cast<std::size_t>(i)];
+      if (p.kind == o.kind && p.overwrite_rejected == o.overwrite_rejected &&
+          same_record(p.edge, o.edge))
+        pending_.erase(pending_.begin() + i);
+    }
   }
-  auto in = [](const std::vector<Op> &v, const Op &op) {
-    return std::any_of(v.begin(), v.end(), [&](const Op &o) {
-      return o.kind == op.kind && o.edge.key == op.edge.key;
-    });
-  };
-  adds_.clear();
-  removes_.clear();
-  // Pending ops that were not part of the save stay pending.
-  for (const Op &op : now)
-    if (!in(saved, op))
-      (void)(op.kind == Op::Kind::add ? add(op.edge) : remove(op.edge.key));
-  // A saved op the user undid during the save (staged add removed, staged
-  // removal restored) must now be undone against the new base.
-  for (const Op &op : saved)
-    if (!in(now, op))
-      (void)(op.kind == Op::Kind::add ? remove(op.edge.key) : add(op.edge));
+  // Whatever is still pending is re-staged against the new base.
+  std::vector<Op> rest;
+  rest.swap(pending_);
+  for (Op &o : rest) {
+    const EdgeRecord *s = stored(o.edge.key);
+    if (o.kind == Op::Kind::set_status) {
+      if (s && s->status != o.edge.status)
+        pending_.push_back(o);
+    } else {
+      o.overwrite_rejected = s && s->status == "rejected";
+      pending_.push_back(o);
+    }
+  }
+}
+
+std::string pending_summary_da(const std::vector<PendingEdgeEdits::Op> &ops) {
+  int measured = 0, rejected = 0, confirmed = 0, unrejected = 0;
+  for (const auto &o : ops) {
+    if (o.kind == PendingEdgeEdits::Op::Kind::upsert)
+      ++measured;
+    else if (o.edge.status == "rejected")
+      ++rejected;
+    else if (o.edge.status == "confirmed")
+      ++confirmed;
+    else
+      ++unrejected;
+  }
+  std::vector<std::string> parts;
+  if (measured)
+    parts.push_back(measured == 1
+                        ? "1 ny eller målt kant"
+                        : std::to_string(measured) + " nye eller målte kanter");
+  if (rejected)
+    parts.push_back(std::to_string(rejected) + " afvist");
+  if (confirmed)
+    parts.push_back(std::to_string(confirmed) + " bekræftet");
+  if (unrejected)
+    parts.push_back(std::to_string(unrejected) + " genoplivet");
+  std::string out;
+  for (std::size_t i = 0; i < parts.size(); ++i)
+    out += (i ? ", " : "") + parts[i];
+  return out;
 }
 
 // --------------------------------------------------------------- paging --

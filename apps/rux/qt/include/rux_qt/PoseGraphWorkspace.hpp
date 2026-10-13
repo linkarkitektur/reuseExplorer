@@ -113,8 +113,7 @@ class PoseGraphWorkspace : public QWidget {
   struct DrawnEdge {
     GraphEdge edge;
     std::string type;
-    bool pending_add = false;
-    bool pending_delete = false;
+    bool pending_add = false; ///< anything staged on it (not saved)
     double residual = 0, weight = 0;
   };
   std::vector<DrawnEdge> edges_;

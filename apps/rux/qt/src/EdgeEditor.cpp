@@ -3,9 +3,9 @@
 
 #include <rux_qt/EdgeEditor.hpp>
 #include <rux_qt/ProjectSession.hpp>
+#include <rux_qt/edge_store.hpp>
 
 #include <reusex/core/ProjectDB.hpp>
-#include <reusex/core/pose_graph.hpp>
 
 #include <rux_qt/background.hpp>
 
@@ -43,8 +43,29 @@ PendingEdgeEdits::Result EdgeEditor::add(const EdgeRecord &edge) {
   return r;
 }
 
-PendingEdgeEdits::Result EdgeEditor::remove(const EdgeKey &key) {
-  const auto r = edits_.remove(key);
+PendingEdgeEdits::Result EdgeEditor::confirm(const EdgeKey &key) {
+  const auto r = edits_.confirm(key);
+  error_.clear();
+  emit changed();
+  return r;
+}
+
+PendingEdgeEdits::Result EdgeEditor::reject(const EdgeKey &key) {
+  const auto r = edits_.reject(key);
+  error_.clear();
+  emit changed();
+  return r;
+}
+
+PendingEdgeEdits::Result EdgeEditor::unreject(const EdgeKey &key) {
+  const auto r = edits_.unreject(key);
+  error_.clear();
+  emit changed();
+  return r;
+}
+
+PendingEdgeEdits::Result EdgeEditor::revert(const EdgeKey &key) {
+  const auto r = edits_.revert(key);
   error_.clear();
   emit changed();
   return r;
@@ -104,27 +125,7 @@ bool EdgeEditor::save() {
     if (!busy)
       try {
         reusex::ProjectDB db(path, /*readOnly=*/false);
-        reusex::ProjectDB::Transaction tx(db);
-        for (const auto &op : snapshot) {
-          const auto &e = op.edge;
-          if (op.kind == PendingEdgeEdits::Op::Kind::remove) {
-            db.set_pose_graph_edge_status(
-                e.key.from, e.key.to, e.key.type,
-                reusex::core::pose_graph::kStatusRejected);
-          } else {
-            reusex::ProjectDB::PoseGraphEdge row;
-            row.from_node_id = e.key.from;
-            row.to_node_id = e.key.to;
-            row.edge_type = e.key.type;
-            row.residual = e.residual;
-            row.weight = e.weight;
-            row.source = std::string(reusex::core::pose_graph::kSourceManual);
-            row.status =
-                std::string(reusex::core::pose_graph::kStatusConfirmed);
-            db.upsert_pose_graph_edge(row, /*overwrite_rejected=*/true);
-          }
-        }
-        tx.commit();
+        apply_edge_ops(db, snapshot);
         ok = true;
       } catch (const std::exception &ex) {
         what = QString::fromUtf8(ex.what());
@@ -214,13 +215,10 @@ void EdgeEditor::reload() {
   std::vector<EdgeRecord> base;
   if (reusex::ProjectDB *db = session_.db()) {
     try {
-      for (const auto &e : db->list_pose_graph_edges()) {
-        if (e.status == reusex::core::pose_graph::kStatusRejected)
-          continue;
-        base.push_back({{e.from_node_id, e.to_node_id, e.edge_type},
-                        e.residual,
-                        e.weight});
-      }
+      // Every status: rejected edges are part of the base (tombstones the
+      // views hide or show, and un-reject).
+      for (const auto &e : db->list_pose_graph_edges())
+        base.push_back(edge_record_from_row(e));
     } catch (const std::exception &ex) {
       error_ = "Posegrafens kanter kunne ikke læses.";
       error_detail_ = QString::fromUtf8(ex.what());

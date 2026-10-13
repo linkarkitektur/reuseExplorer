@@ -377,8 +377,7 @@ PoseGraphWorkspace::PoseGraphWorkspace(ProjectSession &session,
   for (const auto &[token, name] : std::vector<std::pair<QString, QString>>{
            {"--color-text-faint", "Odometri"},
            {"--color-accent", "Løkkelukning"},
-           {"--color-star", "Panorama"},
-           {"--color-status-failed", "Slettes"}}) {
+           {"--color-star", "Panorama"}}) {
     auto *item = new QWidget;
     auto *il = new QHBoxLayout(item);
     il->setContentsMargins(0, 0, 0, 0);
@@ -563,28 +562,16 @@ void PoseGraphWorkspace::rebuild_edges() {
   edge_items_.clear();
   edges_.clear();
   const auto &edits = editor_.edits();
-  for (const auto &e : edits.base()) {
+  for (const auto &v : edits.effective()) {
+    if (v.edge.status == "rejected")
+      continue; // Task 10 adds the "Vis afviste" toggle
     DrawnEdge d;
-    d.edge = {e.key.from, e.key.to};
-    d.type = e.key.type;
-    d.residual = e.residual;
-    d.weight = e.weight;
+    d.edge = {v.edge.key.from, v.edge.key.to};
+    d.type = v.edge.key.type;
+    d.pending_add = v.pending != EdgeView::Pending::none;
+    d.residual = v.edge.residual;
+    d.weight = v.edge.weight;
     edges_.push_back(d);
-  }
-  for (const auto &op : edits.ops()) {
-    if (op.kind == PendingEdgeEdits::Op::Kind::add) {
-      DrawnEdge d;
-      d.edge = {op.edge.key.from, op.edge.key.to};
-      d.type = op.edge.key.type;
-      d.pending_add = true;
-      d.weight = op.edge.weight;
-      edges_.push_back(d);
-    } else {
-      for (auto &d : edges_)
-        if (!d.pending_add && d.edge.from == op.edge.key.from &&
-            d.edge.to == op.edge.key.to && d.type == op.edge.key.type)
-          d.pending_delete = true;
-    }
   }
   if (nodes_.empty())
     return;
@@ -593,17 +580,15 @@ void PoseGraphWorkspace::rebuild_edges() {
     at[n.id] = QPointF(n.x, -n.y);
   // Batches in draw order: odometry under the rest, staged edits on top.
   std::vector<EdgesItem::Batch> batches = {
-      {"--color-text-faint", 1.0, false, {}},    // odometry
-      {"--color-accent", 2.0, false, {}},        // loop closure
-      {"--color-star", 2.0, false, {}},          // panorama
-      {"--color-accent", 2.0, true, {}},         // staged addition
-      {"--color-status-failed", 2.0, true, {}}}; // staged deletion
+      {"--color-text-faint", 1.0, false, {}}, // odometry
+      {"--color-accent", 2.0, false, {}},     // loop closure
+      {"--color-star", 2.0, false, {}},       // panorama
+      {"--color-accent", 2.0, true, {}}};     // staged (not saved)
   for (const auto &d : edges_) {
     const auto a = at.find(d.edge.from), b = at.find(d.edge.to);
     if (a == at.end() || b == at.end())
       continue;
-    const std::size_t k = d.pending_delete           ? 4
-                          : d.pending_add            ? 3
+    const std::size_t k = d.pending_add              ? 3
                           : d.type == "loop_closure" ? 1
                           : d.type == "panorama"     ? 2
                                                      : 0;
@@ -687,16 +672,15 @@ void PoseGraphWorkspace::click_edge(int from, int to) {
     s.title = QString("%1 → %2").arg(from).arg(to);
     s.subtitle = edge_type_da(d.type);
     if (d.pending_add) {
-      s.pill = "Ny · ikke gemt";
+      s.pill = "Ikke gemt";
       s.pill_tone = "warn";
-    } else if (d.pending_delete) {
-      s.pill = "Slettes";
-      s.pill_tone = "crit";
     }
     SelectionSection p{"Kant", {}, {}};
     p.rows.push_back(
         {"Type", edge_type_da(d.type), SelectionRow::Style::value});
-    p.rows.push_back({"Residual", da().toString(d.residual, 'g', 4)});
+    p.rows.push_back({"Residual", std::isnan(d.residual)
+                                      ? QString("—")
+                                      : da().toString(d.residual, 'g', 4)});
     p.rows.push_back({"Vægt", std::isnan(d.weight)
                                   ? QString("—")
                                   : da().toString(d.weight, 'g', 4)});
@@ -717,17 +701,11 @@ void PoseGraphWorkspace::update_meta() {
     meta_->setText("Læser poserne …");
     return;
   }
-  int stored = 0, adds = 0, dels = 0;
-  for (const auto &d : edges_) {
-    stored += !d.pending_add;
-    adds += d.pending_add;
-    dels += d.pending_delete;
-  }
   QString m = QString("%1 billeder · %2 kanter")
                   .arg(format_count(nodes_.size()))
-                  .arg(format_count(static_cast<qulonglong>(stored)));
-  if (adds || dels)
-    m += QString(" · %1 ny, %2 slettes (ikke gemt)").arg(adds).arg(dels);
+                  .arg(format_count(static_cast<qulonglong>(edges_.size())));
+  if (const int n = editor_.pending())
+    m += QString(" · %1 ikke gemt").arg(n);
   meta_->setText(m);
 }
 

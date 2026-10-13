@@ -532,22 +532,13 @@ void DatabaseWorkspace::sync_banner() {
   const QString error = editor_->last_error();
   const bool saving = editor_->is_saving();
   banner_->setVisible(n > 0 || !error.isEmpty() || saving);
-  int adds = 0, removes = 0;
-  for (const auto &op : editor_->edits().ops())
-    (op.kind == PendingEdgeEdits::Op::Kind::add ? adds : removes)++;
-  QStringList parts;
-  if (adds)
-    parts << (adds == 1 ? QString("1 ny kant")
-                        : QString("%1 nye kanter").arg(adds));
-  if (removes)
-    parts << (removes == 1 ? QString("1 slettet")
-                           : QString("%1 slettede").arg(removes));
   banner_text_->setText(
       saving  ? QString("Gemmer ændringer i posegrafen …")
       : n > 0 ? QString("%1 i posegrafen venter på at blive gemt — %2")
                     .arg(n == 1 ? QString("1 ændring")
                                 : QString("%1 ændringer").arg(n),
-                         parts.join(", "))
+                         QString::fromStdString(
+                             pending_summary_da(editor_->edits().ops())))
               : QString("Posegrafen"));
   banner_error_->setText(error);
   banner_error_->setToolTip(editor_->last_error_detail());
