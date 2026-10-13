@@ -85,3 +85,12 @@ path = [
 ]
 SPDX-FileCopyrightText = "2026 Povl Filip Sonne-Frederiksen"
 SPDX-License-Identifier = "GPL-3.0-or-later"
+
+# Synthetic sample data for the PDF report template
+# (apps/rux/resources/report.typ): data.json is invented, the JPEGs are
+# labelled gradients made by scripts/report-sample-images.sh. JSON cannot
+# carry an SPDX header.
+[[annotations]]
+path = "apps/rux/resources/report-sample/**"
+SPDX-FileCopyrightText = "2026 Povl Filip Sonne-Frederiksen"
+SPDX-License-Identifier = "GPL-3.0-or-later"

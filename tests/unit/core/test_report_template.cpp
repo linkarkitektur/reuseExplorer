@@ -16,6 +16,7 @@
 
 #include "../../support/survey_fixture.hpp"
 #include "../../support/temp_path.hpp"
+#include "../../support/typst.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -26,6 +27,7 @@
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -43,10 +45,6 @@ using Catch::Matchers::ContainsSubstring;
 using reusex::ProjectDB;
 using reusex::test_support::TempDir;
 using reusex::test_support::TempPath;
-
-bool have_typst_on_path() {
-  return std::system("command -v typst > /dev/null 2>&1") == 0;
-}
 
 /// Sets an environment variable for one scope. Each TEST_CASE runs in its
 /// own ctest process, so this cannot leak into another test.
@@ -158,7 +156,7 @@ TEST_CASE("ReportPdf_UnknownTemplateIdAndMissingFile_ReportsTheIdFirst",
 }
 
 TEST_CASE("ReportPdf_TemplateOverride_IsTheFileCompiled", "[report][typst]") {
-  if (!have_typst_on_path())
+  if (!reusex::test_support::have_typst())
     SKIP("typst is not on PATH (the nix devshell provides it)");
   TempPath tmp("test_report_template");
   TempDir dir("test_report_template_dir");
@@ -170,7 +168,7 @@ TEST_CASE("ReportPdf_TemplateOverride_IsTheFileCompiled", "[report][typst]") {
 }
 
 TEST_CASE("ReportPdf_TemplateEnvVar_IsTheFileCompiled", "[report][typst]") {
-  if (!have_typst_on_path())
+  if (!reusex::test_support::have_typst())
     SKIP("typst is not on PATH (the nix devshell provides it)");
   TempPath tmp("test_report_template");
   TempDir dir("test_report_template_dir");
@@ -182,7 +180,7 @@ TEST_CASE("ReportPdf_TemplateEnvVar_IsTheFileCompiled", "[report][typst]") {
 }
 
 TEST_CASE("ReportPdf_OptionAndEnvVar_OptionWins", "[report][typst]") {
-  if (!have_typst_on_path())
+  if (!reusex::test_support::have_typst())
     SKIP("typst is not on PATH (the nix devshell provides it)");
   TempPath tmp("test_report_template");
   TempDir dir("test_report_template_dir");
@@ -326,7 +324,7 @@ TEST_CASE("ReportDump_TargetIsRegularFile_Throws", "[report][dump]") {
 TEST_CASE("ReportPdf_ProjectWithThumbnail_Compiles", "[report][typst]") {
   // The PDF run uses the same images/ layout and the template's default
   // data-dir "." — an image reference that resolves wrongly fails here.
-  if (!have_typst_on_path())
+  if (!reusex::test_support::have_typst())
     SKIP("typst is not on PATH (the nix devshell provides it)");
   TempPath tmp("test_report_dump");
   ProjectDB db(tmp.path);
@@ -352,4 +350,67 @@ TEST_CASE("ReportPdf_ProjectWithThumbnail_Compiles", "[report][typst]") {
   const auto pdf = reusex::generate_ressourcekortlaegning_pdf(db);
   REQUIRE(pdf.size() > 4);
   CHECK(std::string(pdf.begin(), pdf.begin() + 4) == "%PDF");
+}
+
+namespace {
+const fs::path kSampleDir =
+    fs::path(REUSEX_SOURCE_DIR) / "apps/rux/resources/report-sample";
+}
+
+TEST_CASE("ReportSample_DataJson_ExercisesTheTemplate", "[report][sample]") {
+  // The spec's checklist for the committed sample, so it cannot quietly
+  // shrink into something that no longer stresses the template.
+  const auto text = slurp(kSampleDir / "data.json");
+  const auto data = nlohmann::json::parse(text);
+
+  const auto &mats = data.at("materials");
+  CHECK(mats.size() >= 15);
+  int without_image = 0;
+  std::size_t longest_name = 0;
+  std::set<std::string> referenced;
+  for (const auto &m : mats) {
+    longest_name =
+        std::max(longest_name,
+                 m.at("properties").at("Betegnelse").get<std::string>().size());
+    if (!m.at("has_thumbnail").get<bool>()) {
+      ++without_image;
+      continue;
+    }
+    const auto rel = m.at("thumbnail_path").get<std::string>();
+    referenced.insert(rel);
+    REQUIRE(fs::is_regular_file(kSampleDir / rel));
+    CHECK(fs::file_size(kSampleDir / rel) <= 60 * 1024);
+  }
+  CHECK(without_image >= 2);
+  CHECK(longest_name >= 100); // one very long name (bytes, UTF-8)
+
+  // No unreferenced images: every file in images/ is used.
+  for (const auto &e : fs::directory_iterator(kSampleDir / "images"))
+    CHECK(referenced.count("images/" + e.path().filename().string()) == 1);
+
+  CHECK(data.at("survey").at("rows").size() >= 5);
+  CHECK(data.at("survey").at("blocking").get<int>() > 0); // draft state
+
+  // One template with many fields: Betegnelse + >= 15 others.
+  std::set<std::string> keys;
+  for (const auto &t : data.at("resources").at("tables"))
+    for (const auto &h : t.at("headers"))
+      keys.insert(h.get<std::string>());
+  CHECK(keys.size() >= 16);
+
+  for (const char *ch : {"æ", "ø", "å", "Æ", "Ø"})
+    CHECK(text.find(ch) != std::string::npos);
+}
+
+TEST_CASE("ReportSample_CommittedData_Compiles", "[report][typst][sample]") {
+  if (!reusex::test_support::have_typst())
+    SKIP("typst is not on PATH (the nix devshell provides it)");
+  TempDir out("test_report_sample");
+  const auto pdf = out.path / "sample.pdf";
+  const auto log = out.path / "typst.stderr";
+  const int rc =
+      reusex::test_support::typst_compile_report(kSampleDir, pdf, log);
+  INFO(slurp(log));
+  REQUIRE(rc == 0);
+  CHECK(slurp(pdf).rfind("%PDF", 0) == 0);
 }
