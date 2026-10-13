@@ -7,15 +7,13 @@
 #include "core/ProjectDB.hpp"
 #include "core/logging.hpp"
 
+#include "instance_points.hpp"
+
 #include <Eigen/Dense>
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
 
 #include <algorithm>
 #include <cmath>
 #include <numbers>
-#include <stdexcept>
-#include <string>
 
 namespace reusex::core {
 
@@ -33,57 +31,25 @@ bool finite(const std::array<double, 16> &pose) {
 std::map<std::uint32_t, InstanceProbe>
 instance_probes(const ProjectDB &db, std::string_view label_cloud,
                 std::string_view positions_cloud, std::size_t samples) {
-  if (!db.has_point_cloud(label_cloud))
-    throw std::invalid_argument("instance_probes: no point cloud '" +
-                                std::string(label_cloud) + "'");
-  if (!db.has_point_cloud(positions_cloud))
-    throw std::invalid_argument("instance_probes: no positions cloud '" +
-                                std::string(positions_cloud) + "'");
-
-  const auto positions = db.point_cloud_xyzrgb(positions_cloud);
-  const auto labels = db.point_cloud_label(label_cloud);
-  if (!positions || !labels)
-    throw std::runtime_error("instance_probes: could not load '" +
-                             std::string(positions_cloud) + "' or '" +
-                             std::string(label_cloud) + "'");
-  if (positions->size() != labels->size())
-    throw CloudMisalignedError(
-        "instance-label cloud '" + std::string(label_cloud) + "' has " +
-        std::to_string(labels->size()) + " points but base cloud '" +
-        std::string(positions_cloud) + "' has " +
-        std::to_string(positions->size()) + " — they are not index-aligned");
-
-  // Finite point indices per instance; label 0 is unlabeled (STANDARDS §3).
-  std::map<std::uint32_t, std::vector<std::size_t>> members;
-  for (std::size_t i = 0; i < labels->size(); ++i) {
-    const auto label = labels->points[i].label;
-    if (label == 0)
-      continue;
-    const auto &p = positions->points[i];
-    // One NaN must not poison the average.
-    if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z))
-      continue;
-    members[label].push_back(i);
-  }
+  // Finite points per instance; label 0 is unlabeled (STANDARDS §3).
+  const auto members = detail::load_instance_points(
+      db, label_cloud, positions_cloud, "instance_probes");
 
   std::map<std::uint32_t, InstanceProbe> out;
-  for (const auto &[label, idx] : members) {
+  for (const auto &[label, points] : members) {
     InstanceProbe probe;
     Eigen::Vector3d sum = Eigen::Vector3d::Zero();
-    for (const auto i : idx) {
-      const auto &p = positions->points[i];
-      sum += Eigen::Vector3d(p.x, p.y, p.z);
-    }
-    probe.centroid.point_count = idx.size();
-    probe.centroid.centroid = sum / static_cast<double>(idx.size());
+    for (const auto &p : points)
+      sum += p.cast<double>();
+    probe.centroid.point_count = points.size();
+    probe.centroid.centroid = sum / static_cast<double>(points.size());
 
-    const std::size_t k = std::min(samples, idx.size());
+    const std::size_t k = std::min(samples, points.size());
     probe.samples.reserve(k);
     for (std::size_t j = 0; j < k; ++j) {
       // Middle of the j-th of k equal slices of the point list.
-      const auto &p =
-          positions->points[idx[(2 * j + 1) * idx.size() / (2 * k)]];
-      probe.samples.emplace_back(p.x, p.y, p.z);
+      const auto &p = points[(2 * j + 1) * points.size() / (2 * k)];
+      probe.samples.emplace_back(p.x(), p.y(), p.z());
     }
     out.emplace(label, std::move(probe));
   }
