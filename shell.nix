@@ -147,6 +147,7 @@ in
         tig # Text-mode interface for git
         git-filter-repo # Advanced git history rewriting
         gitui # Terminal UI for git (alternative)
+        beads
 
         #qt6.full
         #qtcreator
@@ -212,5 +213,17 @@ in
         if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
           git config --local core.hooksPath "$(git rev-parse --path-format=absolute --git-common-dir)/hooks"
         fi
+
+        # beads: inject bd's hook sections into the hooks git-hooks.nix just
+        # (re)installed, above pre-commit's final `exec`, so both run. The pin
+        # above already undoes a core.hooksPath=.beads/hooks left by `bd init`.
+        # Idempotent and quiet (CLAUDE.md "Beads: git hooks").
+        if command -v bd >/dev/null 2>&1 \
+          && _bd_wt=$(git rev-parse --show-toplevel 2>/dev/null) \
+          && [ -d "$_bd_wt/.beads" ]; then
+          bd hooks install >/dev/null 2>&1 \
+            || echo "beads: 'bd hooks install' failed; run it by hand" >&2
+        fi
+        unset _bd_wt
       '';
   }

@@ -354,6 +354,35 @@ in [python/](python/README.md); the full write-up is in
 
 This project is licensed under the GNU General Public License v3.0 or later - see the [LICENSE.md](LICENSE.md) file for details.
 
+## Issue tracking (beads)
+
+Work is tracked with [beads](https://github.com/gastownhall/beads) (`bd`). The
+issues live in a local Dolt database under `.beads/` (git-ignored) and sync
+through `refs/dolt/data` on this remote, so a plain `git clone` does not bring
+them along. The nix dev shell provides `bd`; without nix, install it from
+upstream (any of these):
+
+```bash
+brew install beads                # macOS / Linux
+npm install -g @beads/bd          # Node.js
+curl -fsSL https://raw.githubusercontent.com/gastownhall/beads/main/scripts/install.sh | bash
+# or a release binary: https://github.com/gastownhall/beads/releases
+# or Go, with cgo for the embedded database:
+#   CGO_ENABLED=1 GOFLAGS=-tags=gms_pure_go go install github.com/steveyegge/beads/cmd/bd@latest
+```
+
+Then, once per clone:
+
+```bash
+bd bootstrap                       # pull the issues from refs/dolt/data
+git config beads.role maintainer   # or: contributor
+bd ready                           # what's unblocked
+```
+
+`bd dolt push` / `bd dolt pull` sync from then on. Outside the nix shell, also
+run `bd hooks install` once; it adds bd's sections to your existing git hooks
+without replacing them (CLAUDE.md, "Beads: git hooks").
+
 ## Contributing
 
 Contributions are welcome! This project follows the REUSE specification for license compliance.
