@@ -1842,7 +1842,7 @@ class ProjectDB::Impl {
         residual = excluded.residual, weight = excluded.weight,
         transform = excluded.transform, information = excluded.information,
         source = excluded.source, status = excluded.status,
-        created_at = excluded.created_at,
+        created_at = COALESCE(NULLIF(?10, ''), pose_graph_edges.created_at),
         seed_disagreement_m = excluded.seed_disagreement_m,
         seed_disagreement_deg = excluded.seed_disagreement_deg,
         deviation_m = excluded.deviation_m,

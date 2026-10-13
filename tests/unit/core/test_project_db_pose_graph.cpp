@@ -281,6 +281,15 @@ TEST_CASE("PoseGraphUpsert_NewEdge_RoundTripsEveryField",
   CHECK(e.created_at.back() == 'Z');
   CHECK(e.seed_disagreement_m == Approx(0.25));
   CHECK_FALSE(e.deviation_m.has_value());
+
+  // A second upsert of the same key with an empty created_at (the normal
+  // caller path) must keep the first write's created_at, not reset it.
+  auto again = measured_edge(3, 7, "loop_closure");
+  REQUIRE(again.created_at.empty());
+  REQUIRE(db.upsert_pose_graph_edge(again));
+  const auto out2 = db.list_pose_graph_edges();
+  REQUIRE(out2.size() == 1);
+  CHECK(out2[0].created_at == e.created_at);
 }
 
 TEST_CASE("PoseGraphUpsert_ReversedDirection_StoresCanonicalInverse",
