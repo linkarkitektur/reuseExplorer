@@ -14,6 +14,8 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -70,59 +72,11 @@ struct SubcommandOptimizeOptions {
   int iterations = 100;
   unsigned seed = 42;
 
-  // Wide-baseline loop closure (P2; off by default). Defaults mirror the
-  // LoopClosureOptions in the library header.
-  bool loop_closure = false;
-  std::string loop_proposal =
-      "auto"; // auto | spatial | appearance | exhaustive
-  int loop_min_frame_gap = 50;
-  float loop_max_distance = 2.5f;
-  float loop_max_view_angle = 45.0f;
-  int loop_max_candidates = 5;
-  int loop_min_inliers = 60;
-  int loop_max_features = 3000;
-  float loop_ratio_test = 0.85f;
-  float loop_ransac_inlier_dist = 0.10f;
-  float loop_max_seed_disagreement = 0.0f;  // 0 = disabled (correct drift)
-  float loop_min_seed_disagreement = 0.10f; // absolute FLOOR of the gate (#339)
-  float loop_min_seed_disagreement_fraction =
-      0.00555f; // scale-relative part: fraction of trajectory extent (#339)
-  // Trust loop edges: give them their own generous-but-finite GNC-TLS inlier
-  // threshold (Huber under --no-gnc) instead of the shared --gnc-inlier-cost.
+  // Loop-edge solver handling (the edges themselves come from the stored
+  // graph — `rux graph discover`). Defaults mirror PlaneGraphOptions.
   bool loop_trust = false;
   float loop_trust_inlier_cost =
       reusex::geometry::PlaneGraphOptions{}.loop_trust_inlier_cost;
-  bool loop_no_pcm = false; // disable pairwise-consistency filtering
-
-  // Panorama-derived wide-baseline loop edges (#236; off by default). Defaults
-  // mirror reusex::geometry::PlaneGraphOptions::panorama_loops so the library
-  // stays the single source of truth (docs/STANDARDS.md §4).
-  bool use_panoramas = false;
-  int pano_max_frames =
-      reusex::geometry::PlaneGraphOptions{}.panorama_loops.max_frames;
-  int pano_min_inliers =
-      reusex::geometry::PlaneGraphOptions{}.panorama_loops.min_frame_inliers;
-  int pano_max_edges = reusex::geometry::PlaneGraphOptions{}
-                           .panorama_loops.max_edges_per_panorama;
-  int pano_n_yaw = reusex::geometry::PlaneGraphOptions{}.panorama_loops.n_yaw;
-  int pano_max_features =
-      reusex::geometry::PlaneGraphOptions{}.panorama_loops.max_features;
-  double pano_max_distance =
-      reusex::geometry::PlaneGraphOptions{}.panorama_loops.max_pano_distance;
-
-  // External loop edges (license-clean learned-matcher bridge). Path to a JSON
-  // file (schema "reusex.loop_edges.v1") produced by an out-of-process matcher
-  // (XFeat / EfficientLoFTR / MapAnything, or an offline MASt3R ceiling
-  // oracle). Unioned with any internally-detected --loop-closure edges. Empty =
-  // none.
-  std::string loop_edges_file;
-  // Seed-disagreement gate for external edges (drop edges agreeing with the
-  // seed within this many m; keeps the bridge a no-op on a well-posed scan).
-  // Absolute FLOOR; the effective gate is max(fraction * extent, floor) (#339).
-  double loop_edges_min_disagreement = 0.0;
-  // Scale-relative part of that gate: fraction of the trajectory's extent.
-  // 0.0278 == 0.50 m on the 18.01 m office scan (#339).
-  double loop_edges_min_disagreement_fraction = 0.0278;
 
   // Surfel extraction (shared with `rux register`).
   float surfel_voxel = 0.03f;
@@ -147,3 +101,11 @@ void setup_subcommand_optimize(CLI::App &app,
                                std::shared_ptr<RuxOptions> global_opt);
 int run_subcommand_optimize(SubcommandOptimizeOptions const &opt,
                             const RuxOptions &global_opt);
+
+/// Flags that moved to `rux graph discover` on 2026-10-13, with whether they
+/// take a value. `rux optimize` registers them hidden and refuses them.
+const std::vector<std::pair<std::string, bool>> &optimize_moved_flags();
+
+/// The refusal `rux optimize` prints for a moved @p flag: names the flag and
+/// points at `rux graph discover`.
+std::string optimize_moved_flag_message(const std::string &flag);

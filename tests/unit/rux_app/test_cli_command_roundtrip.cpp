@@ -319,7 +319,7 @@ TEST_CASE("CliCommandRoundTrip_MeshAndOptimize_ShareTheStageReader",
 namespace {
 
 /// Everything differing between two PlaneGraphOptions, field by field,
-/// including nested surfel/loop_closure/panorama_loops — a readable mismatch
+/// including nested surfel — a readable mismatch
 /// report for CHECK's INFO, without hand-listing fields a second time (that
 /// hand list is exactly the bug the integration review's finding 4 flagged).
 ///
@@ -349,7 +349,7 @@ TEST_CASE("CliCommandRoundTrip_OptimizeFlagDefaults_MatchTheStageBase",
   // min_depth, max_depth, pcm_trans_threshold, pcm_rot_threshold,
   // pcm_max_edges and seed with no matching CHECK, so a CLI default
   // diverging on any of them would have passed silently. PlaneGraphOptions
-  // and its three nested option structs now each carry a defaulted,
+  // and its nested `surfel` struct now each carry a defaulted,
   // memberwise `operator==` (`= default`, C++20) right next to their field
   // list, so a newly added field is compared automatically — by the
   // compiler, not by whoever remembers to update this test.
@@ -357,7 +357,5 @@ TEST_CASE("CliCommandRoundTrip_OptimizeFlagDefaults_MatchTheStageBase",
   const auto cli = plane_graph_options(SubcommandOptimizeOptions{});
 
   INFO(describe("surfel", cli.surfel, lib.surfel));
-  INFO(describe("loop_closure", cli.loop_closure, lib.loop_closure));
-  INFO(describe("panorama_loops", cli.panorama_loops, lib.panorama_loops));
   CHECK(cli == lib);
 }

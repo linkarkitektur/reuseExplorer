@@ -32,7 +32,6 @@
 #include "reusex/segmentation/Surfel.hpp"
 #include "reusex/segmentation/surfel_extraction.hpp"
 #include "reusex/slam/LoopClosure.hpp"
-#include "reusex/slam/PanoramaLoopEdges.hpp"
 
 #include <string>
 #include <vector>
@@ -348,19 +347,6 @@ struct PlaneGraphOptions {
   /// without changing what the registration stage extracts.
   SurfelExtractionParams surfel{.sampling_factor = 6};
 
-  /// P2 wide-baseline loop closure (off by default). When enabled,
-  /// optimize_sensor_poses detects loop edges from the RGB-D frames and feeds
-  /// them into the same GNC graph as robust BetweenFactor<Pose3> constraints.
-  LoopClosureOptions loop_closure;
-  /// Panorama-derived wide-baseline loop edges (issue #236; off by default,
-  /// `--use-panoramas`). A 360 panorama is resected INDEPENDENTLY against each
-  /// frame it matches, in that frame's own optical coordinates, so the relative
-  /// pose it implies between two frames is a genuine measurement rather than a
-  /// restatement of the drifted seed trajectory. The resulting edges are the
-  /// same LoopEdge type, gated by the same `loop_closure` knobs
-  /// (`min_frame_gap`, min/max seed disagreement), PCM-filtered as part of the
-  /// UNION with the other sources, and solved in the same GNC graph.
-  PanoramaLoopOptions panorama_loops;
   /// How loop-edge factors are treated by the solver:
   ///   false (default, SAFE): loop edges are ordinary GNC candidates under the
   ///     shared `gnc_inlier_cost` threshold — a wrong edge is down-weighted.
@@ -388,53 +374,9 @@ struct PlaneGraphOptions {
   /// wrappers from every factor it is given, so a per-factor threshold is the
   /// only way to bound a loop edge under GNC.
   float loop_trust_inlier_cost = 200.0f;
-  /// Optional path to a JSON file of externally-computed loop edges (schema
-  /// "reusex.loop_edges.v1"; see load_loop_edges). Empty = none. These are the
-  /// license-clean bridge for learned matchers (XFeat / EfficientLoFTR /
-  /// MapAnything, or an offline MASt3R ceiling oracle): the external edges are
-  /// UNIONED with any internally-detected ORB edges (--loop-closure) and fed
-  /// into the SAME GNC graph, so a wrong external edge is handled by the same
-  /// robustness as an ORB one. Concretely, optimize_sensor_poses() applies to
-  /// the file's edges: the `loop_edges_min_seed_disagreement` gate, a (i,j)
-  /// dedup against the internal edges (one pair, one factor), PCM over the
-  /// UNION when `loop_closure.pcm` is set (`--loop-no-pcm` turns it off for
-  /// BOTH sources), and finally GNC in the solver. Works independently of
-  /// loop_closure.enable. loop_edges_trusted applies to these too — which is
-  /// precisely why the PCM step is not optional in practice: a trusted edge
-  /// gets the generous `loop_trust_inlier_cost` threshold, so consistency
-  /// filtering is the main defence left against a matcher false positive.
-  std::string loop_edges_file;
-  /// Seed-disagreement gate for the external (`loop_edges_file`) edges,
-  /// mirroring LoopClosureOptions::min_seed_disagreement for the internal path:
-  /// keep an external edge only if its relative translation disagrees with the
-  /// seed poses by at least this (m). Redundant edges that already agree with
-  /// the seed carry no drift-correction information and only inject
-  /// matcher+depth noise into already-correct poses (measured: honka laser-GT F
-  /// 0.7958 -> 0.62 when 1336 redundant edges were applied ungated). Dropping
-  /// them makes the bridge a no-op on a well-posed scan while keeping every
-  /// large-drift edge.
-  /// This field is the ABSOLUTE FLOOR of that gate; the gate applied is
-  /// `max(loop_edges_min_seed_disagreement_fraction * trajectory_extent,
-  /// loop_edges_min_seed_disagreement)` — see geometry::seed_disagreement_gate.
-  /// Both 0 disables the gate (apply every external edge).
-  ///
-  /// The floor defaults to 0 because, unlike the internal ORB path, this gate's
-  /// historical 0.50 m value was never a noise floor: it was a DRIFT threshold
-  /// measured on one 18 m scan (office 16.66 m of drift, NewOffice >20 m), and
-  /// issue #339 is exactly the bill for that. It is kept as an option so an
-  /// absolute gate can still be pinned when a capture's scale is known.
-  double loop_edges_min_seed_disagreement = 0.0;
-  /// Scale-relative seed-disagreement gate for external edges, as a fraction of
-  /// the seed trajectory's extent (#339). Default 0.0278 reproduces the
-  /// historical 0.50 m on the office scan (0.0278 * 18.01 m = 0.501 m, which
-  /// keeps all 163 of its drift edges) while scaling down to 0.05 m on a 1.8 m
-  /// ARKitScenes room scan — the setting measured in §9.4 to avoid the F@50mm
-  /// 0.29 collapse the absolute 0.50 m gate produced there by admitting only
-  /// the most-disagreeing (wrong) edges. Set 0 to use the floor alone.
-  double loop_edges_min_seed_disagreement_fraction = 0.0278;
 
-  /// Memberwise, covering every field above AND every field of `surfel`,
-  /// `loop_closure` and `panorama_loops` (their own defaulted operator==).
+  /// Memberwise, covering every field above AND every field of `surfel`
+  /// (its own defaulted operator==).
   /// Relied on by CliCommandRoundTrip_OptimizeFlagDefaults_MatchTheStageBase
   /// (tests/unit/rux_app/test_cli_command_roundtrip.cpp) to compare the whole
   /// struct through one comparison, so a field added here without a matching

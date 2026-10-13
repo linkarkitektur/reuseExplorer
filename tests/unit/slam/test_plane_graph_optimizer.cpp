@@ -852,14 +852,4 @@ TEST_CASE("PlaneGraphOptions operator== is memberwise through nested structs",
     b.surfel.sampling_factor = a.surfel.sampling_factor + 1;
     CHECK_FALSE(a == b);
   }
-  SECTION("a loop_closure field the old hand list never covered") {
-    // vocab_size had no CHECK in the pre-fix parity test.
-    b.loop_closure.vocab_size = a.loop_closure.vocab_size + 1;
-    CHECK_FALSE(a == b);
-  }
-  SECTION("a panorama_loops field the old hand list never covered") {
-    // refine_iterations had no CHECK in the pre-fix parity test.
-    b.panorama_loops.refine_iterations = a.panorama_loops.refine_iterations + 1;
-    CHECK_FALSE(a == b);
-  }
 }

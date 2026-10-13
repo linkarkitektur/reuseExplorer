@@ -84,8 +84,8 @@ enum class LoopProposal {
 
 /// Parameters for wide-baseline loop-edge detection.
 struct LoopClosureOptions {
-  bool enable =
-      false; ///< off by default; opt-in via `rux optimize --loop-closure`
+  /// Off by default here; on by default in `rux graph discover`.
+  bool enable = false;
 
   /// Candidate-proposal strategy (see LoopProposal). Default `automatic`.
   LoopProposal proposal = LoopProposal::automatic;
