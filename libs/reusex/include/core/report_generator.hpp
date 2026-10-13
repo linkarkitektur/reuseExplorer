@@ -77,12 +77,16 @@ int report_blocking_types(const ProjectDB &db);
 /// `rux export pdf --dump-data DIR` work with; the format is documented in
 /// docs/guides/report-template.md. ReportOptions::template_path is ignored.
 ///
-/// @p dir may be missing (it is created), empty, or a previous dump (it
-/// holds a data.json; its images/ is replaced, never merged).
+/// @p dir may be missing (it is created), empty, or a previous dump: a
+/// directory holding nothing but data.json and images/ as top-level
+/// entries, where data.json parses as a JSON object with "project_name",
+/// "materials" and "survey" keys. A previous dump's images/ is replaced,
+/// never merged. Anything else non-empty (an unrelated data.json, extra
+/// files, a parse failure) is refused rather than guessed at.
 /// @throws std::out_of_range when resource_template_id names no template
 ///         (nothing is written, @p dir is not created).
-/// @throws std::runtime_error when @p dir is a file, or a non-empty
-///         directory without a data.json (left untouched), or on I/O errors.
+/// @throws std::runtime_error when @p dir is a file, a non-empty directory
+///         that is not a previous dump (left untouched), or on I/O errors.
 void dump_report_data(ProjectDB &db, const ReportOptions &options,
                       const std::filesystem::path &dir);
 

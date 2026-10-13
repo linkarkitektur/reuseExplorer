@@ -19,7 +19,13 @@ A report data directory holds:
 The template reads it from `sys.inputs.at("data-dir", default: ".")`. The
 generator writes it into a temp dir next to the template (default `"."`);
 the preview scripts pass `--root / --input data-dir=<abs dir>`.
-`rux export pdf --dump-data DIR` writes exactly what the PDF run sees.
+`rux export pdf --dump-data DIR` writes exactly what the PDF run sees. `DIR`
+may be missing, empty, or a *previous* dump — a directory holding nothing but
+`data.json` and `images/`, with `data.json` parsing as an object that has
+`project_name`, `materials` and `survey` keys; its `images/` is then replaced
+wholesale. Any other non-empty directory (an unrelated `data.json`, stray
+files, a `data.json` that fails to parse or is missing those keys) is
+refused and left untouched, rather than guessed at.
 
 `data.json`:
 

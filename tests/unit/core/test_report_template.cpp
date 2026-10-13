@@ -277,6 +277,52 @@ TEST_CASE("ReportDump_IntoPreviousDump_ReplacesItsImages", "[report][dump]") {
   CHECK(fs::is_regular_file(out.path / "images" / "guid-with-thumb.jpg"));
 }
 
+TEST_CASE("ReportDump_ForeignDirWithDataJson_RefusedAndUntouched",
+          "[report][dump]") {
+  // A data.json that merely exists is not enough to call a directory a
+  // previous dump: it must carry the keys a dump always writes.
+  TempPath tmp("test_report_dump");
+  ProjectDB db(tmp.path);
+  TempDir out("test_report_dump_dir");
+  fs::create_directories(out.path / "images");
+  std::ofstream(out.path / "data.json") << R"({"name":"x"})";
+  std::ofstream(out.path / "images" / "x.jpg") << "jpeg-bytes";
+
+  CHECK_THROWS_WITH(reusex::dump_report_data(db, {}, out.path),
+                    ContainsSubstring(out.path.string()));
+
+  CHECK(entries(out.path) == std::vector<std::string>{"data.json", "images"});
+  CHECK(slurp(out.path / "data.json") == R"({"name":"x"})");
+  CHECK(fs::is_regular_file(out.path / "images" / "x.jpg"));
+}
+
+TEST_CASE("ReportDump_PreviousDumpWithExtraFile_Refused", "[report][dump]") {
+  TempPath tmp("test_report_dump");
+  ProjectDB db(tmp.path);
+  seed_report_project(db);
+  TempDir out("test_report_dump_dir");
+  reusex::dump_report_data(db, {}, out.path);
+  std::ofstream(out.path / "notes.txt") << "do not touch";
+
+  CHECK_THROWS_WITH(reusex::dump_report_data(db, {}, out.path),
+                    ContainsSubstring(out.path.string()));
+
+  CHECK(fs::is_regular_file(out.path / "notes.txt"));
+  CHECK(fs::is_regular_file(out.path / "images" / "guid-with-thumb.jpg"));
+}
+
+TEST_CASE("ReportDump_TargetIsRegularFile_Throws", "[report][dump]") {
+  TempPath tmp("test_report_dump");
+  ProjectDB db(tmp.path);
+  TempDir out("test_report_dump_dir");
+  const auto file_path = out.path / "not-a-dir";
+  std::ofstream(file_path) << "x";
+
+  CHECK_THROWS_AS(reusex::dump_report_data(db, {}, file_path),
+                  std::runtime_error);
+  CHECK(fs::is_regular_file(file_path));
+}
+
 TEST_CASE("ReportPdf_ProjectWithThumbnail_Compiles", "[report][typst]") {
   // The PDF run uses the same images/ layout and the template's default
   // data-dir "." — an image reference that resolves wrongly fails here.

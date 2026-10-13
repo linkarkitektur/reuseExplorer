@@ -127,6 +127,32 @@ nlohmann::json resources_json(const core::ResourceReportSection &s) {
   return {{"name", s.template_name}, {"tables", std::move(tables)}};
 }
 
+/// True if @p dir is a previous dump_report_data() output: nothing at the
+/// top level but data.json and images/, and data.json parses as a JSON
+/// object carrying the keys every dump writes. Anything else (an unrelated
+/// data.json, extra files, a parse failure) is not a previous dump, so the
+/// caller refuses rather than guessing.
+bool is_previous_report_dump(const std::filesystem::path &dir) {
+  namespace fs = std::filesystem;
+  for (const auto &entry : fs::directory_iterator(dir)) {
+    const auto name = entry.path().filename().string();
+    if (name != "data.json" && name != "images")
+      return false;
+  }
+
+  std::ifstream f(dir / "data.json", std::ios::binary);
+  if (!f)
+    return false;
+  nlohmann::json data;
+  try {
+    f >> data;
+  } catch (const nlohmann::json::parse_error &) {
+    return false;
+  }
+  return data.is_object() && data.contains("project_name") &&
+         data.contains("materials") && data.contains("survey");
+}
+
 // ── data assembly ─────────────────────────────────────────────────────────
 
 /// Write the report's data directory: data.json plus images/<guid><ext> for
@@ -330,16 +356,31 @@ void dump_report_data(ProjectDB &db, const ReportOptions &options,
         core::resource_report_section(db, *options.resource_template_id);
 
   std::error_code ec;
-  if (fs::exists(dir, ec)) {
-    if (!fs::is_directory(dir, ec))
+  const bool exists = fs::exists(dir, ec);
+  if (ec)
+    throw std::runtime_error(fmt::format("dump_report_data: cannot stat {}: {}",
+                                         dir.string(), ec.message()));
+
+  if (exists) {
+    const bool is_dir = fs::is_directory(dir, ec);
+    if (ec)
+      throw std::runtime_error(fmt::format(
+          "dump_report_data: cannot stat {}: {}", dir.string(), ec.message()));
+    if (!is_dir)
       throw std::runtime_error(fmt::format(
           "dump_report_data: {} exists and is not a directory", dir.string()));
-    const bool previous_dump = fs::is_regular_file(dir / "data.json", ec);
-    if (!previous_dump && !fs::is_empty(dir, ec))
+
+    const bool empty = fs::is_empty(dir, ec);
+    if (ec)
       throw std::runtime_error(fmt::format(
-          "dump_report_data: {} is not empty and holds no data.json; refusing "
-          "to write a report dump into it",
+          "dump_report_data: cannot stat {}: {}", dir.string(), ec.message()));
+
+    if (!empty && !is_previous_report_dump(dir))
+      throw std::runtime_error(fmt::format(
+          "dump_report_data: {} is not empty and is not a previous report "
+          "dump; refusing to write a report dump into it",
           dir.string()));
+
     // A previous dump's images: replace, never mix in stale files.
     fs::remove_all(dir / "images", ec);
     if (ec)
