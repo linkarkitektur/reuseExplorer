@@ -201,6 +201,9 @@ for page in "${PAGES[@]}"; do
       status=1
     else
       grep -E "ERROR" "$log" >&2 || true
+      # A page's own measurement lines ("rediger-stress: 1234 nodes …"),
+      # so they can be grepped from qt_shot.sh's stderr.
+      grep -E '^[a-z-]+: ' "$log" >&2 || true
       echo "$png"
     fi
   done
