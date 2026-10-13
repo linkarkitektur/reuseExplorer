@@ -1917,8 +1917,8 @@ class ProjectDB::Impl {
     requireV27PoseGraph("delete_pose_graph_edges_from_source");
     sqlite3_stmt *s = prepare_or_throw(
         db,
-        "DELETE FROM pose_graph_edges WHERE source = ?1 AND status <> "
-        "'rejected';",
+        "DELETE FROM pose_graph_edges WHERE source = ?1 AND status = "
+        "'auto';",
         "delete_pose_graph_edges_from_source");
     StmtGuard guard(s);
     const std::string src(source);

@@ -137,6 +137,35 @@ TEST_CASE("InitPoseGraph_Force_ReplacesOnlyInitEdges",
   CHECK(*kept->transform == *rtab.transform);
 }
 
+TEST_CASE("InitPoseGraph_Force_KeepsConfirmedOdometryInitEdges",
+          "[slam][pose_graph][init]") {
+  // Final review I4: --force (and perturb-poses through it) never deletes
+  // or downgrades a user's confirmation; the confirmed measurement stays.
+  TempPath tmp("test_graph_init_force_confirmed");
+  ProjectDB db(tmp.path);
+  for (int k = 1; k <= 4; ++k)
+    seed(db, k, pose_k(k));
+  slam::init_pose_graph(db);
+  REQUIRE(db.set_pose_graph_edge_status(2, 3, "odometry", "confirmed"));
+  const auto old_23 = *db.pose_graph_edge(2, 3, "odometry")->transform;
+
+  for (int k = 1; k <= 4; ++k)
+    db.update_sensor_frame_pose(k, pose_k(k + 10));
+  const auto r = slam::init_pose_graph(db, {.force = true});
+  CHECK(r.odometry_edges_removed == 2); // (1,2) and (3,4)
+  CHECK(r.odometry_edges_written == 2);
+  CHECK(r.pairs_with_existing_odometry == 1);
+  const auto e = db.pose_graph_edge(2, 3, "odometry");
+  REQUIRE(e.has_value());
+  CHECK(e->status == "confirmed");
+  CHECK(e->source == "odometry_init");
+  CHECK(*e->transform == old_23);
+  CHECK((pg::matrix_from_row_major(
+             *db.pose_graph_edge(3, 4, "odometry")->transform) -
+         rel(db, 3, 4))
+            .norm() < 1e-12);
+}
+
 TEST_CASE("InitPoseGraph_TwoScans_DoesNotChainAcrossScans",
           "[slam][pose_graph][init]") {
   TempPath tmp("test_graph_init_scans");

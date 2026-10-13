@@ -23,8 +23,9 @@ class PoseGraphExistsError : public std::runtime_error {
 };
 
 struct InitPoseGraphOptions {
-  /// Replace the `odometry_init` edges and re-snapshot every initial pose
-  /// from the current transforms. Loop edges, other odometry sources and
+  /// Replace the "auto" `odometry_init` edges and re-snapshot every initial
+  /// pose from the current transforms. Confirmed `odometry_init` edges keep
+  /// their status and measurement; loop edges, other odometry sources and
   /// tombstones are left alone.
   bool force = false;
 };

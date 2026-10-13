@@ -327,16 +327,23 @@ TEST_CASE("PoseGraphPurgeBySource_KeepsTombstonesAndOtherSources",
   b.source = "odometry_init";
   auto c = measured_edge(3, 4, "odometry");
   c.source = "rtabmap";
+  auto d = measured_edge(4, 5, "odometry");
+  d.source = "odometry_init";
   REQUIRE(db.upsert_pose_graph_edge(a));
   REQUIRE(db.upsert_pose_graph_edge(b));
   REQUIRE(db.upsert_pose_graph_edge(c));
+  REQUIRE(db.upsert_pose_graph_edge(d));
   REQUIRE(db.set_pose_graph_edge_status(2, 3, "odometry", "rejected"));
+  REQUIRE(db.set_pose_graph_edge_status(4, 5, "odometry", "confirmed"));
 
+  // Only "auto" rows go: tombstones and user confirmations stay (I4).
   CHECK(db.delete_pose_graph_edges_from_source("odometry_init") == 1);
   const auto rows = db.list_pose_graph_edges();
-  REQUIRE(rows.size() == 2);
+  REQUIRE(rows.size() == 3);
+  CHECK_FALSE(db.pose_graph_edge(1, 2, "odometry").has_value());
   CHECK(db.pose_graph_edge(2, 3, "odometry")->status == "rejected");
   CHECK(db.pose_graph_edge(3, 4, "odometry").has_value());
+  CHECK(db.pose_graph_edge(4, 5, "odometry")->status == "confirmed");
 }
 
 TEST_CASE("PoseGraphUpsert_InvalidInput_Throws", "[projectdb][pose_graph]") {

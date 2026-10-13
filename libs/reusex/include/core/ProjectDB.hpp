@@ -705,7 +705,8 @@ class ProjectDB {
   int update_pose_graph_edge_metrics(
       std::span<const PoseGraphEdgeMetrics> metrics);
 
-  /// Delete every NON-rejected row with this source; tombstones stay.
+  /// Delete every "auto" row with this source; tombstones and user
+  /// confirmations stay.
   /// @returns the number of rows deleted.
   int delete_pose_graph_edges_from_source(std::string_view source);
 

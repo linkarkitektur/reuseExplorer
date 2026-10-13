@@ -108,18 +108,24 @@ InitPoseGraphResult init_pose_graph(ProjectDB &db,
   const auto groups =
       posed_frames_by_scan(db, /*from_current=*/false, &skipped);
   r.scans = static_cast<int>(groups.size());
+  int stale_snapshots = 0; // force, but the current pose is unusable
   for (const auto &[scan, ids] : groups) {
     r.frames += static_cast<int>(ids.size());
-    for (int id : ids)
-      if ((options.force || !db.has_initial_pose(id)) &&
-          has_rigid_current_pose(db, id)) {
-        db.set_initial_pose(id, db.sensor_frame_pose(id));
-        ++r.snapshots_written;
+    for (int id : ids) {
+      if (!options.force && db.has_initial_pose(id))
+        continue;
+      if (!has_rigid_current_pose(db, id)) {
+        ++stale_snapshots; // only reachable under force
+        continue;
       }
+      db.set_initial_pose(id, db.sensor_frame_pose(id));
+      ++r.snapshots_written;
+    }
   }
 
-  // A pair already covered by an odometry measurement (rtabmap) or an
-  // odometry tombstone keeps it; legacy NULL-transform rows are overwritten.
+  // A pair already covered by an odometry measurement (rtabmap, or a
+  // confirmed odometry_init edge that force kept) or an odometry tombstone
+  // keeps it; legacy NULL-transform rows are overwritten.
   std::set<std::pair<int, int>> taken;
   for (const auto &e : db.list_pose_graph_edges())
     if (e.edge_type == pg::kTypeOdometry &&
@@ -135,6 +141,12 @@ InitPoseGraphResult init_pose_graph(ProjectDB &db,
   }
   tx.commit();
 
+  if (stale_snapshots > 0)
+    core::warn("GraphInit: {} frames have no usable current pose (missing or "
+               "non-rigid transform) and kept their previous initial pose; "
+               "fix their poses (rux get/rux set, or re-import) and re-run "
+               "'rux graph init --force' to re-snapshot them",
+               stale_snapshots);
   if (skipped > 0)
     core::warn("GraphInit: {} sensor frames carry no usable pose (missing or "
                "non-rigid transform) and were left out of the odometry chain; "
