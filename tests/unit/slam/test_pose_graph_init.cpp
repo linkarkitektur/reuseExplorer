@@ -104,16 +104,24 @@ TEST_CASE("InitPoseGraph_Force_ReplacesOnlyInitEdges",
   loop.status = "confirmed";
   REQUIRE(db.upsert_pose_graph_edge(loop));
   REQUIRE(db.set_pose_graph_edge_status(2, 3, "odometry", "rejected"));
+  // An importer's measured odometry edge replaces the init edge on (3,4).
+  ProjectDB::PoseGraphEdge rtab;
+  rtab.from_node_id = 3;
+  rtab.to_node_id = 4;
+  rtab.edge_type = "odometry";
+  rtab.transform = pg::row_major_from_matrix(rel(db, 3, 4));
+  rtab.source = "rtabmap";
+  REQUIRE(db.upsert_pose_graph_edge(rtab));
 
   // Move every frame differently (register/perturb), then re-init.
   for (int k = 1; k <= 5; ++k)
     db.update_sensor_frame_pose(k, pose_k(k + 10));
   const auto r = slam::init_pose_graph(db, {.force = true});
-  CHECK(r.odometry_edges_removed ==
-        3); // (1,2), (3,4), (4,5); (2,3) is a tombstone
+  // (1,2), (4,5); (2,3) is a tombstone, (3,4) is rtabmap's.
+  CHECK(r.odometry_edges_removed == 2);
   CHECK(r.snapshots_written == 5);
-  CHECK(r.odometry_edges_written == 3);
-  CHECK(r.pairs_with_existing_odometry == 1);
+  CHECK(r.odometry_edges_written == 2);
+  CHECK(r.pairs_with_existing_odometry == 2);
 
   CHECK(*db.initial_pose(3) == pose_k(13));
   CHECK((pg::matrix_from_row_major(
@@ -124,6 +132,9 @@ TEST_CASE("InitPoseGraph_Force_ReplacesOnlyInitEdges",
   CHECK(tomb->status == "rejected");
   CHECK(*tomb->transform == old_23);
   CHECK(db.pose_graph_edge(1, 5, "loop_closure")->status == "confirmed");
+  const auto kept = db.pose_graph_edge(3, 4, "odometry");
+  CHECK(kept->source == "rtabmap");
+  CHECK(*kept->transform == *rtab.transform);
 }
 
 TEST_CASE("InitPoseGraph_TwoScans_DoesNotChainAcrossScans",
@@ -203,4 +214,25 @@ TEST_CASE("OdometryInitEdges_FromCurrentTransform_IgnoresTheSnapshot",
   CHECK((pg::matrix_from_row_major(*from_initial[0].transform) - rel(db, 1, 2))
             .norm() > 1e-3);
   CHECK(db.list_pose_graph_edges().empty()); // planning writes nothing
+}
+
+TEST_CASE("InitPoseGraph_ExistingSnapshot_IsKeptWithoutForce",
+          "[slam][pose_graph][init]") {
+  TempPath tmp("test_graph_init_keep_snapshot");
+  ProjectDB db(tmp.path);
+  for (int k = 1; k <= 3; ++k)
+    seed(db, k, pose_k(k));
+  db.set_initial_pose(2, pose_k(7));
+
+  const auto r = slam::init_pose_graph(db);
+  CHECK(r.snapshots_written == 2); // frames 1 and 3
+  CHECK(*db.initial_pose(2) == pose_k(7));
+  CHECK(*db.initial_pose(1) == pose_k(1));
+  const Eigen::Matrix4d expected =
+      pg::matrix_from_row_major(pose_k(1)).inverse() *
+      pg::matrix_from_row_major(pose_k(7));
+  CHECK((pg::matrix_from_row_major(
+             *db.pose_graph_edge(1, 2, "odometry")->transform) -
+         expected)
+            .norm() < 1e-12);
 }

@@ -137,8 +137,16 @@ InitPoseGraphResult init_pose_graph(ProjectDB &db,
 
   if (skipped > 0)
     core::warn("GraphInit: {} sensor frames carry no usable pose (missing or "
-               "non-rigid transform) and were left out of the odometry chain",
+               "non-rigid transform) and were left out of the odometry chain; "
+               "fix their poses (rux get/rux set, or re-import) and re-run "
+               "'rux graph init --force'",
                skipped);
+  if (r.odometry_edges_written == 0 && r.pairs_with_existing_odometry == 0)
+    core::warn("GraphInit: no odometry edges written: {} posed frames in {} "
+               "scan(s) form no consecutive pair within a scan (need at least "
+               "two posed frames in one scan); import or re-pose frames and "
+               "re-run 'rux graph init'",
+               r.frames, r.scans);
   core::info("GraphInit: {} frames in {} scan(s): {} initial poses "
              "snapshotted, {} odometry edges written ({} pairs kept an "
              "existing edge), {} odometry_init edges replaced",
