@@ -53,3 +53,25 @@ bundled TTFs (`apps/rux/qt/resources/fonts`: Archivo, Oswald, JetBrains Mono,
 OFL-1.1) on `TYPST_FONT_PATHS`, but the generator inside ruxd / the nix
 package does not see them yet — a template that uses them must first make
 the generator pass a font path, or ruxd's PDF silently falls back.
+
+## Preview loop: `nix develop .#report`
+
+A light shell (typst, pdftoppm, ImageMagick; no C++ toolchain):
+
+```bash
+nix develop .#report
+report-watch                 # live: shots/report/report.pdf on every save of report.typ
+report-build [DATA_DIR]      # one-shot; non-zero exit on a Typst error
+report-shots [DATA_DIR]      # build + shots/report/page-NN.png at 110 dpi
+```
+
+`DATA_DIR` defaults to `apps/rux/resources/report-sample/` (committed,
+synthetic). The scripts compile the repo's `report.typ` in place with
+`--root / --input data-dir=<abs DATA_DIR>`, so edits are picked up without a
+build; `$REUSEX_REPORT_TEMPLATE` points them (and the generator) at another
+template file. Outputs under `shots/` are gitignored.
+
+The sample is hand-maintained: edit `data.json` directly; regenerate the
+JPEGs with `scripts/report-sample-images.sh`. `ReportSample_*` tests keep it
+compiling and keep it exercising long names, missing images, a 16-field
+template, a draft state and Danish characters.
