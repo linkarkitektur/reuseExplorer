@@ -60,6 +60,9 @@ std::optional<std::string> builtin_value(const ResourceKey &k,
     return p.note;
   if (f == "starred")
     return std::string(p.starred ? "true" : "false");
+  if (f == "view")
+    return p.view ? std::optional<std::string>(view_to_json(*p.view))
+                  : std::nullopt;
   return std::nullopt;
 }
 
@@ -76,6 +79,7 @@ Resource build(const ProjectDB &db, const Context &c,
                const ProjectDB::SurveyPartRecord &p,
                const std::optional<std::vector<std::string>> &keys) {
   Resource r{p.code, p.type_id, !p.instance_guid.has_value(), {}};
+  r.view = p.view;
   const auto &t = c.types.at(p.type_id);
   const auto e = c.env.at(p.type_id);
   const auto stored = p.material_guid
@@ -179,11 +183,25 @@ patch_resource(ProjectDB &db, std::string_view code,
       throw KeyValueError(w.key, "unknown key '" + w.key + "'");
     if (!seen.insert(w.key).second)
       throw KeyValueError(w.key, "key '" + w.key + "' is written twice");
-    plan.push_back({k, normalise_value(*k, w.value)});
+    auto value = normalise_value(*k, w.value);
+    if (k->id == kViewKey && value) {
+      // The setter checks this too, but inside the write transaction; refuse
+      // here so a bad view writes nothing (validate first, write second).
+      const auto view = parse_view(*value);
+      const bool frame = view.kind == ViewKind::frame;
+      if (frame ? !db.has_sensor_frame(view.id)
+                : !db.has_panoramic_image(view.id))
+        throw KeyValueError(k->id, "'" + k->id + "' names " +
+                                       (frame ? "sensor frame " : "panorama ") +
+                                       std::to_string(view.id) +
+                                       ", which does not exist");
+    }
+    plan.push_back({k, std::move(value)});
   }
 
   ProjectDB::SurveyTypePatch tp;
   ProjectDB::SurveyPartPatch pp;
+  std::optional<std::optional<ResourceView>> view_write;
   bool type_written = false;
   std::vector<Planned> passport;
   for (const auto &pl : plan) {
@@ -214,6 +232,9 @@ patch_resource(ProjectDB &db, std::string_view code,
       pp.note = v.value_or("");
     else if (f == "starred")
       pp.starred = *v == "true";
+    else if (f == "view")
+      view_write =
+          v ? std::optional<ResourceView>(parse_view(*v)) : std::nullopt;
     type_written = type_written || pl.key->scope == KeyScope::type;
   }
 
@@ -222,6 +243,8 @@ patch_resource(ProjectDB &db, std::string_view code,
     if (type_written)
       db.update_survey_type(part->type_id, tp);
     db.update_survey_part(code, pp); // no-op when the patch is empty
+    if (view_write)
+      db.set_survey_part_view(code, *view_write);
     if (!passport.empty()) {
       std::optional<std::string> guid = part->material_guid;
       const bool any_set =

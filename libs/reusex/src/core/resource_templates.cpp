@@ -94,8 +94,11 @@ std::vector<SeedTemplate> seed_templates() {
     full.members.push_back({MemberKind::category, std::move(c)});
   SeedTemplate screening{
       std::string(kSeedScreening), "Hurtig genbrugsscreening", {}};
+  // The screening seed lists the built-in keys a reader scans; the view
+  // record is an image, shown by the report itself (sub-project C).
   for (const auto &k : builtin_keys())
-    screening.members.push_back({MemberKind::key, k.id});
+    if (k.id != kViewKey)
+      screening.members.push_back({MemberKind::key, k.id});
   return {full, screening};
 }
 

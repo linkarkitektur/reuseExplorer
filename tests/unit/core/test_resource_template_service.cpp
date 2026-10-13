@@ -64,7 +64,7 @@ TEST_CASE("TemplateService_Update_Delete", "[templates]") {
   in.members = json::parse(R"([{"category":"Kortlægning"}])");
   const auto v = update_template(db, id, in);
   CHECK(v.record.name == "A");
-  CHECK(v.resolved.keys.size() == 11);
+  CHECK(v.resolved.keys.size() == 12);
   in.members.reset();
   in.name = "Hurtig genbrugsscreening";
   CHECK_THROWS_AS(update_template(db, id, in), NameConflictError);
@@ -78,7 +78,7 @@ TEST_CASE("TemplateService_Update_Delete", "[templates]") {
   CHECK(edited.csv.header == "key");
   CHECK(edited.csv.encoding == "utf-8-bom");
   CHECK(edited.record.name == "A");
-  CHECK(edited.resolved.keys.size() == 11);
+  CHECK(edited.resolved.keys.size() == 12);
   csv.csv = json::parse(R"({"delimiter":"|"})");
   CHECK_THROWS_AS(update_template(db, id, csv), std::invalid_argument);
   CHECK(template_view(db, id).csv.delimiter == "\t");

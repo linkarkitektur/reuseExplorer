@@ -32,6 +32,9 @@ struct Resource {
   int64_t type_id = 0;
   bool manual = false; ///< added by hand: no instance behind it
   std::vector<ResourceValue> values;
+  /// The part's view record (schema v27), filled whatever `keys` selects —
+  /// the GUI needs it even when a template leaves sys:view out.
+  std::optional<ResourceView> view{};
 };
 /// The value stored under @p key in @p r, or nullopt (absent or unset).
 std::optional<std::string> value_of(const Resource &r, std::string_view key);

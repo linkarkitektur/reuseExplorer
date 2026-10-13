@@ -12,6 +12,7 @@
 
 #include "reusex/core/ProjectDB.hpp"
 #include "reusex/core/materialepas_traits.hpp"
+#include "reusex/core/resource_view.hpp"
 
 #include <optional>
 #include <stdexcept>
@@ -30,6 +31,8 @@ std::string_view to_string(KeyScope); // "type" | "part"
 
 inline constexpr std::string_view kBuiltinCategory = "Kortlægning";
 inline constexpr std::string_view kColumnCategory = "Egne felter";
+/// The resource view record key (schema v27, core/resource_view.hpp).
+inline constexpr std::string_view kViewKey = "sys:view";
 
 struct ResourceKey {
   std::string id; ///< "sys:<name>" | "lex:<leksikon_guid>" | "col:<column id>"
@@ -64,7 +67,8 @@ std::vector<LeksikonField> leksikon_fields();
 /// Distinct categories of leksikon_fields(), in order.
 std::vector<std::string> leksikon_categories();
 
-std::vector<ResourceKey> builtin_keys(); ///< the 11 sys: keys, spec order
+std::vector<ResourceKey>
+builtin_keys(); ///< the 12 sys: keys, spec order (sys:view last)
 std::vector<ResourceKey> leksikon_keys();
 ResourceKey column_key(const ProjectDB::PropertyDefinition &def);
 /// Built-in, then leksikon, then user columns (in the given order) — the
@@ -98,6 +102,8 @@ std::string format_number(double v);
 /// (numbers with '.', booleans "true"/"false", multiselect arrays compact
 /// JSON); nullopt means clear. "" clears any key except a built-in text key
 /// (stored as ""); an empty multiselect array "[]" clears too.
+/// a view (sys:view) must be a parse_view-able JSON object, stored canonical
+/// (view_to_json).
 /// @throws KeyValueError when the key is read-only, the value does not fit
 ///         its data_type/options (a multiselect wants a JSON array of
 ///         distinct options; a leksikon whole number must fit an int),

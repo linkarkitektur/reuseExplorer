@@ -18,6 +18,7 @@
 #include "../../support/temp_path.hpp"
 
 #include <nlohmann/json.hpp>
+#include <opencv2/core.hpp>
 #include <sqlite3.h>
 
 #include <algorithm>
@@ -554,4 +555,48 @@ TEST_CASE("Resources_DeleteColumn_PurgesItsValues_NameReusable",
     CHECK(log.count(LogLevel::warn, "") == 0);
   }
   CHECK_THROWS_AS(delete_column(db, "nope"), std::out_of_range);
+}
+
+TEST_CASE("Resources_Patch_View_RoundTripsChecksSourceAndClears",
+          "[resources][view]") {
+  TempDB tmp;
+  ProjectDB db(tmp.path);
+  const auto t = make_type(db, "Døre");
+  make_part(db, "RX-001", t);
+  db.save_sensor_frame(7, cv::Mat(8, 8, CV_8UC3, cv::Scalar(1, 2, 3)));
+  // Unset: the key is listed (null) and Resource::view is empty.
+  const auto before = resource(db, "RX-001");
+  CHECK_FALSE(before.view);
+  CHECK(std::any_of(
+      before.values.begin(), before.values.end(),
+      [](const auto &v) { return v.key == "sys:view" && !v.value; }));
+
+  const std::string in =
+      R"({"region":[0.1,0.2,0.3,0.4],"kind":"frame","id":7})";
+  const auto out = patch_resource(db, "RX-001", {{"sys:view", in}});
+  CHECK(value_of(out.resource, "sys:view") ==
+        R"({"kind":"frame","id":7,"region":[0.1,0.2,0.3,0.4]})");
+  REQUIRE(out.resource.view);
+  CHECK(out.resource.view->id == 7);
+  CHECK(out.siblings.empty()); // part-scoped
+  CHECK(db.survey_part("RX-001")->view == out.resource.view);
+  // A keys filter without sys:view still carries Resource::view.
+  CHECK(resource(db, "RX-001", std::vector<std::string>{"sys:name"}).view);
+
+  // No such frame / bad shape: KeyValueError, nothing written.
+  CHECK_THROWS_AS(patch_resource(db, "RX-001",
+                                 {{"sys:note", "x"},
+                                  {"sys:view", R"({"kind":"frame","id":8})"}}),
+                  KeyValueError);
+  CHECK_THROWS_AS(
+      patch_resource(db, "RX-001",
+                     {{"sys:view", R"({"kind":"panorama","id":1})"}}),
+      KeyValueError);
+  CHECK_THROWS_AS(patch_resource(db, "RX-001", {{"sys:view", "nope"}}),
+                  KeyValueError);
+  CHECK(db.survey_part("RX-001")->note.empty());
+  CHECK(db.survey_part("RX-001")->view->id == 7);
+
+  patch_resource(db, "RX-001", {{"sys:view", std::nullopt}});
+  CHECK_FALSE(db.survey_part("RX-001")->view);
 }

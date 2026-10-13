@@ -45,7 +45,7 @@ TEST_CASE("ResourceKeys_Builtins_MatchTheSpecTable", "[resources][keys]") {
   CHECK(ids == std::vector<std::string>{
                    "sys:name", "sys:quantity", "sys:unit", "sys:eak",
                    "sys:bim7aa", "sys:treatment", "sys:environment", "sys:room",
-                   "sys:mass_t", "sys:note", "sys:starred"});
+                   "sys:mass_t", "sys:note", "sys:starred", "sys:view"});
   for (const auto &k : keys) {
     CHECK(k.category == "Kortlægning");
     CHECK(k.source == KeySource::builtin);
@@ -64,6 +64,10 @@ TEST_CASE("ResourceKeys_Builtins_MatchTheSpecTable", "[resources][keys]") {
                                                     "ren_proevesvar"});
   CHECK(keys[8].unit == "t");
   CHECK(keys[10].data_type == "boolean");
+  CHECK(keys[11].label == "Ressourcebillede");
+  CHECK(keys[11].scope == KeyScope::part);
+  CHECK(keys[11].data_type == "view");
+  CHECK(keys[11].editable);
   CHECK(to_string(KeyScope::type) == "type");
 }
 
@@ -225,4 +229,20 @@ TEST_CASE("ResourceKeys_Normalise_BlankClears_RequiredRefuses",
   CHECK(format_number(0.1) == "0.1");
   CHECK(parse_number("+4") == 4.0);
   CHECK_FALSE(parse_number("").has_value());
+}
+
+TEST_CASE("NormaliseValue_ViewKey_CanonicalisesAndRefusesBadShapes",
+          "[resources][keys]") {
+  const auto keys = builtin_keys();
+  const auto &k = *find_key(keys, "sys:view");
+  CHECK(normalise_value(k, std::string(R"({"id":3,"kind":"frame"})")) ==
+        R"({"kind":"frame","id":3,"region":null})");
+  CHECK_FALSE(normalise_value(k, std::string("")).has_value());
+  CHECK_FALSE(normalise_value(k, std::nullopt).has_value());
+  CHECK_THROWS_AS(normalise_value(k, std::string("Foto #3")), KeyValueError);
+  CHECK_THROWS_AS(
+      normalise_value(
+          k,
+          std::string(R"({"kind":"frame","id":3,"region":[0,0.9,0.5,0.5]})")),
+      KeyValueError);
 }
