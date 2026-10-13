@@ -460,6 +460,16 @@ void PipelineWorkspace::rebuild_stages() {
   }
   for (const auto &name : pl::job_stage_names()) {
     const auto s = *pl::parse_job_stage(name);
+    // `annotate` needs reusex_vision (ML inference), which this client does
+    // not link, and the Qt client only ever hands JobRunner
+    // stage_executor_with_optimize() (`rux::GuiLaunch`), which does not cover
+    // it either — running it here always ends in "annotate needs an executor
+    // with a vision backend" (pipeline/stages.cpp). `ruxd`, in its own repo,
+    // injects its gpu-worker executor instead, so annotate is runnable from
+    // the web GUI but not from this in-process list. Hide the row rather
+    // than show a stage that cannot work (final-review.md finding 4).
+    if (s == pl::JobStage::annotate)
+      continue;
     // A row is a button holding labels (qt-client.md: give it a minimum
     // height from its layout).
     auto *row = new QPushButton;

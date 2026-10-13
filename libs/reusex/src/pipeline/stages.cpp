@@ -53,7 +53,7 @@ struct StageName {
 // used in `ruxd`'s HTTP contract (docs/gui/openapi.yaml, in its own repo) and
 // `contract` selects the input check run before the stage executes
 // (docs/CONTRACTS.md).
-constexpr std::array<StageName, 6> kStages{{
+constexpr std::array<StageName, 7> kStages{{
     {JobStage::clouds, "clouds", "cloud_reconstruction",
      core::PipelineStage::clouds, false},
     {JobStage::planes, "planes", "segment_planes", core::PipelineStage::planes,
@@ -73,6 +73,17 @@ constexpr std::array<StageName, 6> kStages{{
     // compatibility.
     {JobStage::optimize, "optimize", "pose_optimization_plane_graph",
      core::PipelineStage::optimize, false},
+    // ML semantic labelling. Cancellable: a batch run iterates frames, so a
+    // cancel request can take effect between frames the way it does for
+    // planes/rooms/instances. `run_stage()` validates the
+    // core::PipelineStage::annotate contract (sensor_frames) before
+    // dispatch(), exactly like every other stage; dispatch() itself always
+    // refuses (see the comment there) because reusex_pipeline must not link
+    // reusex_vision (STANDARDS §1). A caller that wants this stage to
+    // actually run supplies its own executor, the way the GUI's custom
+    // executor already does for optimize (#464).
+    {JobStage::annotate, "annotate", "annotate", core::PipelineStage::annotate,
+     true},
 }};
 
 const StageName &descriptor(JobStage stage) {
@@ -571,6 +582,16 @@ StageResult dispatch(ProjectDB &db, const StageContext &ctx,
     return StageResult::failure(
         "the optimize stage requires the slam executor; register one via "
         "ServerOptions::stage_executor (see #464)");
+  case JobStage::annotate:
+    // ML inference (SAM3/YOLO) requires reusex_vision, which reusex_pipeline
+    // does not link (STANDARDS §1) — the same reasoning that keeps
+    // reusex_slam out for `optimize` above. Unlike optimize this is refused
+    // as invalid input rather than a failure: there is no "wrong input",
+    // just no in-process way to do the work, so a caller is meant to supply
+    // its own executor (the ruxd worker executor, docs/design/gpu-worker.md
+    // W0, ruxd repo) rather than retry the default one.
+    return StageResult::invalid(
+        "annotate needs an executor with a vision backend");
   }
   return StageResult::failure("unknown stage");
 }

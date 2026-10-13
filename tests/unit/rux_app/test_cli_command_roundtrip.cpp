@@ -48,6 +48,18 @@ namespace {
 /// the Qt client says so next to the command.
 const std::set<std::string> kNoFlag = {"rooms.propagate_k"};
 
+/// Stages known to have no `rux create`/`rux <stage>` CLI mapping at all —
+/// a job-only stage the Qt client cannot offer as "Kopiér som rux-kommando".
+/// Explicit by name (final-review.md finding 4) rather than "whatever
+/// build_cli_command() currently refuses", so a stage that loses its real
+/// CLI mapping by accident fails this test instead of silently being
+/// skipped: "annotate" has no mapping yet (gpu-worker W0); "gsplat" is not
+/// even a pipeline::JobStage (core::PipelineStage only) and never appears in
+/// job_stage_names(), but is listed for the same reason
+/// CliCommand_UnknownStage_IsUnsupported (test_workspace_logic.cpp) uses it:
+/// a byword for "a stage name with no CLI mapping".
+const std::set<std::string> kNoCliMapping = {"gsplat", "annotate"};
+
 struct Captured {
   std::string stage;
   json params;
@@ -168,6 +180,14 @@ std::string default_text(const pl::ParameterDescriptor &d) {
 TEST_CASE("CliCommandRoundTrip_EveryParameter_ReachesTheStageUnchanged",
           "[rux_app][cli][qt]") {
   for (const std::string &stage : pl::job_stage_names()) {
+    // See kNoCliMapping: a stage with no CLI mapping at all (annotate,
+    // gpu-worker W0) has nothing below this point in the loop that is
+    // meaningful. Any OTHER stage must have a mapping — REQUIRE rather than
+    // skip, so a real mapping regressing to unsupported fails loudly instead
+    // of quietly dropping out of this test (final-review.md finding 4).
+    if (kNoCliMapping.count(stage))
+      continue;
+    REQUIRE(rux::qt::build_cli_command(stage, "p.rux", {}).supported);
     const auto parsed = pl::parse_job_stage(stage);
     REQUIRE(parsed);
     for (const auto &d : pl::stage_parameters(*parsed)) {
@@ -196,6 +216,15 @@ TEST_CASE("CliCommandRoundTrip_AllParametersAtOnce_AndTheShellLine",
           "[rux_app][cli][qt]") {
   for (const std::string &stage : pl::job_stage_names()) {
     INFO(stage);
+    // See kNoCliMapping and the comment in
+    // CliCommandRoundTrip_EveryParameter_ReachesTheStageUnchanged: a stage
+    // with no CLI mapping at all (annotate, gpu-worker W0) has nothing to
+    // round-trip — build_cli_command() hands back an unsupported, empty
+    // command, which split_shell_words()/words.front() below is not meant
+    // to parse. Any other stage must be supported.
+    if (kNoCliMapping.count(stage))
+      continue;
+    REQUIRE(rux::qt::build_cli_command(stage, "p.rux", {}).supported);
     std::vector<CliParam> params;
     for (const auto &d : pl::stage_parameters(*pl::parse_job_stage(stage)))
       if (!rux::qt::cli_flag_for(stage, d.key).empty())
@@ -226,6 +255,11 @@ TEST_CASE("CliCommandRoundTrip_NoParameters_MeansTheStageDefaults",
   // must not send a presence-sensitive key (#214) that would pin it.
   for (const std::string &stage : pl::job_stage_names()) {
     const auto cmd = rux::qt::build_cli_command(stage, "p.rux", {});
+    // See kNoCliMapping and the comment in
+    // CliCommandRoundTrip_EveryParameter_ReachesTheStageUnchanged.
+    if (kNoCliMapping.count(stage))
+      continue;
+    REQUIRE(cmd.supported);
     const Captured got = parse_through_cli(cmd.args);
     for (const auto &d : pl::stage_parameters(*pl::parse_job_stage(stage))) {
       const std::string id = stage + "." + d.key;
