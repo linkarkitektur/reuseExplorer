@@ -33,6 +33,7 @@ add_library(rux_qt_core STATIC
     src/core/background.cpp
     src/core/database_logic.cpp
     src/core/edge_colouring.cpp
+    src/core/edge_table.cpp
     src/core/cli_command.cpp
     src/core/workspace_logic.cpp
     src/core/graph_view.cpp)
