@@ -5,10 +5,9 @@
 
 // The Posegraf workspace (Stream Q, Q3): every posed frame as a node at its
 // pose's x/y, the capture path through them, and the pose-graph edges —
-// stored ones by type, pending ones (the Database workspace's staged edits)
-// dashed. A click on a node sets the Database's A frame (Shift: B); a click
-// on an edge sets A and B to its ends. Either switches to Database. Wheel
-// zooms about the cursor, a drag pans, "Tilpas" (or F) fits.
+// stored ones by type, pending ones (Rediger's staged edits) dashed. A click
+// on a node is handed to Rediger's A/B picker; a click on an edge sets both.
+// Wheel zooms about the cursor, a drag pans, "Tilpas" (or F) fits.
 //
 // Positions are read off the GUI thread with a read-only ProjectDB of its
 // own, like every other bulk read of the client.
@@ -82,7 +81,7 @@ class PoseGraphWorkspace : public QWidget {
   void click_edge(int from, int to);
 
     signals:
-  /// A node was clicked: frame @p id becomes A (or B with @p as_b).
+  /// A node was clicked (@p as_b: Shift held); Rediger picks the slot.
   void frame_requested(int id, bool as_b);
   /// An edge was clicked: A and B become its ends.
   void pair_requested(int a_id, int b_id);

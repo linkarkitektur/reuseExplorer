@@ -7,7 +7,7 @@
 // reimagined: a project tree on the left (frames, panoramas, clouds, meshes,
 // the pose graph, survey data, the pipeline log and every sqlite table, with
 // counts); in the centre the frame browser, a table or the log, by what the
-// tree selects; and over it a banner while pose-graph edits wait to be saved.
+// tree selects. It only reads: pose-graph edits happen in Rediger.
 // Whatever is selected is described to the inspector (selection_changed).
 
 #include <rux_qt/selection.hpp>
@@ -62,16 +62,6 @@ class DatabaseWorkspace : public QWidget {
   /// The selection the inspector should show (empty: none).
   const Selection &selection() const { return selection_; }
 
-  /// Pending pose-graph edits not yet saved.
-  int pending_edits() const;
-  /// Start saving them (off the GUI thread); false when it cannot start.
-  /// The banner shows the progress and, on failure, why.
-  bool save_edits();
-  /// Save and wait for the outcome behind a small modal (quit, close).
-  bool save_edits_and_wait();
-  bool is_saving() const;
-  void discard_edits();
-
   /// Open a tree item as if clicked (the gallery, the palette).
   void open_item(ProjectTree::Kind kind, const QString &key = {});
 
@@ -82,7 +72,6 @@ class DatabaseWorkspace : public QWidget {
 
     private:
   void rebuild();
-  void sync_banner();
   void show_item(ProjectTree::Kind kind, const QString &key,
                  const QString &table, qint64 count);
   void set_selection(const Selection &s);
@@ -101,11 +90,6 @@ class DatabaseWorkspace : public QWidget {
   QLabel *empty_text_ = nullptr;
   QPushButton *empty_open_ = nullptr;
   QWidget *tree_pane_ = nullptr;
-  QFrame *banner_ = nullptr;
-  QLabel *banner_text_ = nullptr;
-  QLabel *banner_error_ = nullptr;
-  QPushButton *save_ = nullptr;
-  QPushButton *discard_ = nullptr;
   Selection selection_;
 };
 

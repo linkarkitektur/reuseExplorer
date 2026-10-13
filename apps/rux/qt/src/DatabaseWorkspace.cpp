@@ -237,41 +237,6 @@ DatabaseWorkspace::DatabaseWorkspace(ProjectSession &session,
   v->setContentsMargins(0, 0, 0, 0);
   v->setSpacing(0);
 
-  // ---- pending edits banner (the web's WriteBanner)
-  banner_ = new QFrame;
-  banner_->setObjectName("pendingBanner");
-  auto *bl = new QHBoxLayout(banner_);
-  bl->setContentsMargins(t.px("--space-4"), t.px("--space-2"),
-                         t.px("--space-4"), t.px("--space-2"));
-  bl->setSpacing(t.px("--space-3"));
-  auto *dot = new QLabel;
-  dot->setObjectName("bannerDot");
-  bl->addWidget(dot, 0, Qt::AlignVCenter);
-  auto *texts = new QVBoxLayout;
-  texts->setSpacing(0);
-  banner_text_ = new QLabel;
-  banner_text_->setObjectName("bannerText");
-  texts->addWidget(banner_text_);
-  banner_error_ = new QLabel;
-  banner_error_->setObjectName("bannerError");
-  banner_error_->setWordWrap(true);
-  texts->addWidget(banner_error_);
-  bl->addLayout(texts, 1);
-  discard_ = new QPushButton(NavItem::escape_mnemonic("Kassér"));
-  discard_->setProperty("kind", "ghost");
-  discard_->setCursor(Qt::PointingHandCursor);
-  bl->addWidget(discard_);
-  save_ = new QPushButton(NavItem::escape_mnemonic("Gem ændringer"));
-  save_->setProperty("kind", "primary");
-  save_->setCursor(Qt::PointingHandCursor);
-  save_->setShortcut(QKeySequence::Save);
-  bl->addWidget(save_);
-  // Buttons in a layout do not size their row by themselves (qt-client.md).
-  for (QPushButton *b : {save_, discard_})
-    b->setMinimumHeight(b->sizeHint().height());
-  banner_->setMinimumHeight(save_->sizeHint().height() + 2 * t.px("--space-2"));
-  v->addWidget(banner_);
-
   auto *body = new QHBoxLayout;
   body->setSpacing(0);
   v->addLayout(body, 1);
@@ -333,12 +298,8 @@ DatabaseWorkspace::DatabaseWorkspace(ProjectSession &session,
   connect(frames_, &FrameBrowser::selection_changed, this, from(frames_));
   connect(tables_, &TableBrowser::selection_changed, this, from(tables_));
   connect(log_, &PipelineLogView::selection_changed, this, from(log_));
-  connect(editor_, &EdgeEditor::changed, this, &DatabaseWorkspace::sync_banner);
   connect(editor_, &EdgeEditor::saved, this,
           [this] { tree_->rebuild(session_); }); // the edge count changed
-  connect(save_, &QPushButton::clicked, this, [this] { save_edits(); });
-  connect(discard_, &QPushButton::clicked, this,
-          &DatabaseWorkspace::discard_edits);
   connect(&session_, &ProjectSession::state_changed, this,
           &DatabaseWorkspace::rebuild);
   connect(&theme(), &Theme::changed, this, [this] {
@@ -348,24 +309,6 @@ DatabaseWorkspace::DatabaseWorkspace(ProjectSession &session,
 }
 
 DatabaseWorkspace::~DatabaseWorkspace() = default;
-
-int DatabaseWorkspace::pending_edits() const { return editor_->pending(); }
-
-bool DatabaseWorkspace::save_edits() {
-  const bool started = editor_->save();
-  sync_banner();
-  return started;
-}
-
-bool DatabaseWorkspace::save_edits_and_wait() {
-  const bool ok = editor_->save_and_wait(this);
-  sync_banner();
-  return ok;
-}
-
-bool DatabaseWorkspace::is_saving() const { return editor_->is_saving(); }
-
-void DatabaseWorkspace::discard_edits() { editor_->discard(); }
 
 void DatabaseWorkspace::rebuild() {
   const bool open = session_.is_open();
@@ -385,7 +328,6 @@ void DatabaseWorkspace::rebuild() {
   } else {
     open_item(ProjectTree::Kind::frames);
   }
-  sync_banner();
 }
 
 void DatabaseWorkspace::open_item(ProjectTree::Kind kind, const QString &key) {
@@ -525,47 +467,6 @@ Selection DatabaseWorkspace::mesh_selection(const QString &name) const {
 void DatabaseWorkspace::set_selection(const Selection &s) {
   selection_ = s;
   emit selection_changed(selection_);
-}
-
-void DatabaseWorkspace::sync_banner() {
-  const int n = editor_->pending();
-  const QString error = editor_->last_error();
-  const bool saving = editor_->is_saving();
-  banner_->setVisible(n > 0 || !error.isEmpty() || saving);
-  banner_text_->setText(
-      saving  ? QString("Gemmer ændringer i posegrafen …")
-      : n > 0 ? QString("%1 i posegrafen venter på at blive gemt — %2")
-                    .arg(n == 1 ? QString("1 ændring")
-                                : QString("%1 ændringer").arg(n),
-                         QString::fromStdString(
-                             pending_summary_da(editor_->edits().ops())))
-              : QString("Posegrafen"));
-  banner_error_->setText(error);
-  banner_error_->setToolTip(editor_->last_error_detail());
-  banner_error_->setVisible(!error.isEmpty());
-  // Read-only is a state, not a failure: the warning tone, like the title
-  // bar's "Skrivebeskyttet" pill. A failed write (locked, other) is critical.
-  const bool busy = !editor_->pipeline_busy().isEmpty();
-  // Read-only, and a pipeline stage holding the project, are states: warn.
-  const bool read_only_error =
-      !error.isEmpty() && (!editor_->read_only_reason().isEmpty() || busy);
-  banner_->setProperty("tone", error.isEmpty()   ? "pending"
-                               : read_only_error ? "warn"
-                                                 : "error");
-  repolish(banner_);
-  save_->setEnabled(n > 0 && editor_->can_save() && !saving && !busy);
-  save_->setToolTip(
-      !editor_->can_save() ? editor_->read_only_reason()
-      : busy ? QString("Et pipeline-trin (%1) skriver til projektet — gem, "
-                       "når det er færdigt.")
-                   .arg(editor_->pipeline_busy())
-             : QString("Skriv ændringerne til projektet (Ctrl+S)"));
-  if (busy && n > 0 && error.isEmpty()) {
-    banner_error_->setText(QString("Gem er sat på pause, mens %1 kører.")
-                               .arg(editor_->pipeline_busy()));
-    banner_error_->setVisible(true);
-  }
-  discard_->setEnabled(n > 0 && !saving);
 }
 
 } // namespace rux::qt

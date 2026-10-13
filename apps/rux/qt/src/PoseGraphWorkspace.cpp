@@ -368,6 +368,7 @@ PoseGraphWorkspace::PoseGraphWorkspace(ProjectSession &session,
   bl->addWidget(new CapsLabel("Posegraf", "panelTitle"));
   meta_ = new QLabel;
   meta_->setObjectName("toolbarMeta");
+  meta_->setWordWrap(true); // the counts must not set the pane's width
   bl->addWidget(meta_, 1);
   // Edge legend: the stroke colours of the canvas.
   legend_ = new QWidget;
@@ -416,10 +417,11 @@ PoseGraphWorkspace::PoseGraphWorkspace(ProjectSession &session,
   auto *sl = new QHBoxLayout(status);
   sl->setContentsMargins(t.px("--space-4"), t.px("--space-1"),
                          t.px("--space-4"), t.px("--space-1"));
-  auto *hint = new QLabel("Klik på en node: billede A · Shift+klik: billede B "
-                          "· klik på en kant: A og B · hjul: zoom · træk: "
-                          "panorér");
+  auto *hint = new QLabel("Klik på en node: A, så B · Shift+klik: B · klik "
+                          "på en kant: A og B · hjul: zoom · træk: panorér");
   hint->setObjectName("statusText");
+  // Wraps rather than widening Rediger's left column past a 1440 px window.
+  hint->setWordWrap(true);
   sl->addWidget(hint, 1);
   v->addWidget(status);
 
@@ -647,8 +649,7 @@ void PoseGraphWorkspace::click_node(int id, bool as_b) {
   Selection s;
   s.kind = "Node";
   s.title = QString("Billede %1").arg(id);
-  s.subtitle = as_b ? QString("Valgt som B i Database")
-                    : QString("Valgt som A i Database");
+  s.subtitle = QString("Billede i posegrafen");
   SelectionSection p{"Pose", {}, {}};
   p.rows.push_back({"X", da().toString(it->x, 'f', 2) + " m"});
   p.rows.push_back({"Y", da().toString(it->y, 'f', 2) + " m"});

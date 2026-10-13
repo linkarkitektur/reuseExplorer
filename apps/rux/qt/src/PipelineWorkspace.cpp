@@ -755,7 +755,7 @@ bool PipelineWorkspace::run() {
     box.setText(QString("%1 ændring(er) i posegrafen er ikke gemt.")
                     .arg(pending_edits_()));
     box.setInformativeText("Optimér poser og Find kanter bruger kun de gemte "
-                           "kanter. Gem dem i Database først, eller kør uden "
+                           "kanter. Gem dem i Rediger først, eller kør uden "
                            "dem.");
     auto *go = box.addButton(NavItem::escape_mnemonic("Kør uden dem"),
                              QMessageBox::AcceptRole);

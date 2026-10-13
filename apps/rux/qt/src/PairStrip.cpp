@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Povl Filip Sonne-Frederiksen
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// The A<->B pair strip of the frame browser: the pose-graph edges between the
+// The A<->B pair strip of Rediger: the pose-graph edges between the
 // two frames (stored and pending), how far apart the frames are, and the
 // three edits — ICP refine (slam::refine_frame_pair_icp, on a detached thread
 // with its own read-only connection), add an edge, delete one.
 
 #include <rux_qt/EdgeEditor.hpp>
-#include <rux_qt/FrameBrowser.hpp>
+#include <rux_qt/PairStrip.hpp>
 #include <rux_qt/ProjectSession.hpp>
 #include <rux_qt/Theme.hpp>
 #include <rux_qt/background.hpp>
@@ -131,31 +131,35 @@ PairStrip::PairStrip(ProjectSession &session, EdgeEditor &editor,
 
   auto *head = new QHBoxLayout;
   head->setSpacing(t.px("--space-3"));
+  // The ids are in Rediger's pair header just above.
   head->addWidget(new CapsLabel("Kant A ↔ B", "panelTitle"));
-  pair_ = new QLabel;
-  pair_->setObjectName("pairIds");
-  head->addWidget(pair_);
   delta_ = new QLabel;
   delta_->setObjectName("pairDelta");
+  delta_->setWordWrap(true);
   head->addWidget(delta_, 1);
+  v->addLayout(head);
 
+  // The edits on a line of their own, so the strip fits a narrow column.
+  auto *actions = new QHBoxLayout;
+  actions->setSpacing(t.px("--space-3"));
+  actions->addStretch(1);
   icp_ = new QPushButton(NavItem::escape_mnemonic("ICP-forfin"));
   icp_->setProperty("kind", "secondary");
   icp_->setCursor(Qt::PointingHandCursor);
   icp_->setToolTip("Justér B's dybdesky mod A's med ICP og vis, hvor godt "
                    "de passer. Ændrer ikke projektet.");
-  head->addWidget(icp_);
+  actions->addWidget(icp_);
   type_ = new QComboBox;
   type_->setObjectName("edgeType");
   for (const char *k : {"loop_closure", "odometry", "panorama"})
     type_->addItem(QString::fromStdString(edge_type_da(k)), QString(k));
   type_->setToolTip("Typen af den nye kant");
-  head->addWidget(type_);
+  actions->addWidget(type_);
   add_ = new QPushButton(NavItem::escape_mnemonic("Tilføj kant"));
   add_->setProperty("kind", "primary");
   add_->setCursor(Qt::PointingHandCursor);
-  head->addWidget(add_);
-  v->addLayout(head);
+  actions->addWidget(add_);
+  v->addLayout(actions);
 
   rows_ = new QWidget;
   rows_->setObjectName("edgeRows");
@@ -205,7 +209,6 @@ void PairStrip::rebuild() {
   const reusex::ProjectDB *db = session_.db();
   const bool pair_ok = db && a_ >= 0 && b_ >= 0;
   const bool same = pair_ok && a_ == b_;
-  pair_->setText(pair_ok ? QString("%1 ↔ %2").arg(a_).arg(b_) : QString("—"));
 
   // How far apart: distance, angle and time between the stored poses.
   QString delta;
@@ -237,10 +240,18 @@ void PairStrip::rebuild() {
                               : v.pending != EdgeView::Pending::none
                                   ? "add"
                                   : "stored");
-    auto *h = new QHBoxLayout(row);
-    h->setContentsMargins(t.px("--space-2"), t.px("--space-1"),
-                          t.px("--space-1"), t.px("--space-1"));
+    // Two lines, so the row fits Rediger's right column: what the edge is
+    // and its action, then its numbers and state.
+    auto *rv = new QVBoxLayout(row);
+    rv->setContentsMargins(t.px("--space-2"), t.px("--space-1"),
+                           t.px("--space-1"), t.px("--space-1"));
+    rv->setSpacing(t.px("--space-1"));
+    auto *h = new QHBoxLayout;
     h->setSpacing(t.px("--space-3"));
+    auto *h2 = new QHBoxLayout;
+    h2->setSpacing(t.px("--space-3"));
+    rv->addLayout(h);
+    rv->addLayout(h2);
     h->addWidget(
         new Pill(QString::fromStdString(edge_type_da(v.edge.key.type)),
                  v.edge.key.type == "loop_closure" ? "accent" : "outline"));
@@ -248,19 +259,20 @@ void PairStrip::rebuild() {
         new QLabel(QString("%1 → %2").arg(v.edge.key.from).arg(v.edge.key.to));
     dir->setObjectName("edgeMono");
     h->addWidget(dir);
+    h->addStretch(1);
     auto *w = new QLabel(QString("Vægt %1").arg(weight_text(v.edge.weight)));
     w->setObjectName("edgeMeta");
-    h->addWidget(w);
+    h2->addWidget(w);
     auto *r =
         new QLabel(QString("Residual %1").arg(residual_text(v.edge.residual)));
     r->setObjectName("edgeMeta");
     r->setToolTip("½ · hvidet kvadratfejl efter seneste optimering");
-    h->addWidget(r);
-    h->addStretch(1);
-    h->addWidget(
+    h2->addWidget(r);
+    h2->addStretch(1);
+    h2->addWidget(
         new Pill(status_da(v.edge.status), status_tone(v.edge.status)));
     if (v.pending != EdgeView::Pending::none)
-      h->addWidget(new Pill("Ikke gemt", "accent"));
+      h2->addWidget(new Pill("Ikke gemt", "accent"));
     const EdgeKey key = v.edge.key;
     auto action = [&](const QString &text, auto fn) {
       auto *b = new QPushButton(NavItem::escape_mnemonic(text));
@@ -279,7 +291,7 @@ void PairStrip::rebuild() {
              [](EdgeEditor &e, const EdgeKey &k) { e.unreject(k); });
     else
       action("Afvis", [](EdgeEditor &e, const EdgeKey &k) { e.reject(k); });
-    row->setMinimumHeight(h->sizeHint().height());
+    row->setMinimumHeight(rv->sizeHint().height());
     rows_layout_->addWidget(row);
   }
   if (views.empty()) {

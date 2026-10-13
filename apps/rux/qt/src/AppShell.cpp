@@ -232,29 +232,10 @@ AppShell::AppShell(ProjectSession &session, RecentProjects &recent,
             if (current_page() == Workspace::log)
               inspector_->set_selection(sel);
           });
-  // Posegraf -> Database: a node is frame A (B with Shift), an edge both.
-  connect(edit_->graph(), &PoseGraphWorkspace::frame_requested, this,
-          [this](int id, bool as_b) {
-            if (as_b)
-              database_->frames()->set_b(id);
-            else
-              database_->frames()->set_a(id);
-            database_->open_item(ProjectTree::Kind::frames);
-            show_page(Workspace::database);
-          });
-  connect(edit_->graph(), &PoseGraphWorkspace::pair_requested, this,
-          [this](int a, int b) {
-            database_->frames()->set_a(a);
-            database_->frames()->set_b(b);
-            database_->open_item(ProjectTree::Kind::frames);
-            show_page(Workspace::database);
-          });
-  connect(database_->frames(), &FrameBrowser::pair_changed, edit_->graph(),
-          &PoseGraphWorkspace::set_pair);
   // A pipeline run changed the project: re-read it, unless that would drop
   // pose-graph edits nobody has saved (then F5 does it when they are).
   connect(pipeline_, &PipelineWorkspace::project_changed, this, [this] {
-    if (database_->pending_edits() == 0 && !database_->is_saving())
+    if (edit_->pending_edits() == 0 && !edit_->is_saving())
       session_.reload();
   });
   connect(&session_, &ProjectSession::opened, log_, &PipelineLogView::reload);
@@ -262,7 +243,7 @@ AppShell::AppShell(ProjectSession &session, RecentProjects &recent,
   // writer lease too, so a stage started meanwhile still wins cleanly).
   edges_->set_runner_source([this] { return pipeline_->runner_handle(); });
   pipeline_->set_pending_edits_source(
-      [this] { return database_->pending_edits(); });
+      [this] { return edit_->pending_edits(); });
   connect(pipeline_, &PipelineWorkspace::job_started, this,
           [this](const QString &stage) { edges_->set_pipeline_busy(stage); });
   connect(pipeline_, &PipelineWorkspace::job_finished, this, [this] {
@@ -476,16 +457,16 @@ Selection AppShell::page_selection(Workspace w) const {
 }
 
 bool AppShell::resolve_pending_edits(const QString &action) {
-  if (!database_)
+  if (!edit_)
     return true;
   // A save already on its way: let it land first (and report a failure).
-  if (database_->is_saving() && !database_->save_edits_and_wait()) {
-    show_page(Workspace::database);
+  if (edit_->is_saving() && !edit_->save_edits_and_wait()) {
+    show_page(Workspace::edit);
     return false;
   }
-  if (database_->pending_edits() == 0)
+  if (edit_->pending_edits() == 0)
     return true;
-  const int n = database_->pending_edits();
+  const int n = edit_->pending_edits();
   QMessageBox box(this);
   box.setIcon(QMessageBox::Question);
   box.setWindowTitle("Ændringer er ikke gemt");
@@ -504,14 +485,14 @@ bool AppShell::resolve_pending_edits(const QString &action) {
   box.setEscapeButton(cancel);
   box.exec();
   if (box.clickedButton() == save) {
-    if (database_->save_edits_and_wait())
+    if (edit_->save_edits_and_wait())
       return true;
     // The banner says why; stay so the user can act on it.
-    show_page(Workspace::database);
+    show_page(Workspace::edit);
     return false;
   }
   if (box.clickedButton() == discard) {
-    database_->discard_edits();
+    edit_->discard_edits();
     return true;
   }
   return false;

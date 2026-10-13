@@ -732,9 +732,6 @@ FrameBrowser::FrameBrowser(ProjectSession &session, EdgeEditor &editor,
   sides->addWidget(side_b_, 1);
   bv->addLayout(sides, 1);
 
-  strip_ = new PairStrip(session_, editor_);
-  bv->addWidget(strip_);
-
   film_model_ = new FilmstripModel(loader_, this);
   film_ = new QListView;
   film_->setObjectName("filmstrip");
@@ -804,8 +801,6 @@ FrameBrowser::FrameBrowser(ProjectSession &session, EdgeEditor &editor,
           &FrameBrowser::frame_ready);
   connect(&editor_, &EdgeEditor::changed, this,
           &FrameBrowser::refresh_strip_marks);
-  connect(strip_, &PairStrip::edge_selected, this,
-          &FrameBrowser::selection_changed);
   qApp->installEventFilter(this);
   apply_view();
   reload();
@@ -902,7 +897,6 @@ void FrameBrowser::sync_side(bool side_b) {
       loader_.request(id);
     }
   }
-  strip_->set_pair(pair_.a_id(), pair_.b_id());
   film_model_->set_marks(pair_.a_id(), pair_.b_id());
   emit pair_changed(pair_.a_id(), pair_.b_id());
   if (!side_b && index >= 0)

@@ -12,6 +12,7 @@
 #include <rux_qt/EdgeEditor.hpp>
 #include <rux_qt/EditWorkspace.hpp>
 #include <rux_qt/FrameBrowser.hpp>
+#include <rux_qt/PairStrip.hpp>
 #include <rux_qt/PipelineWorkspace.hpp>
 #include <rux_qt/PoseGraphWorkspace.hpp>
 #include <rux_qt/ProjectSession.hpp>
@@ -166,52 +167,6 @@ QWidget *make_db_confidence(const PageContext &ctx) {
   return shell;
 }
 
-/// Pending edits: an ICP run on the pair and a staged loop closure, plus a
-/// staged rejection when the project has stored edges.
-QWidget *make_db_pending(const PageContext &ctx) {
-  auto *shell = make_db(ctx);
-  FrameBrowser *f = shell->database()->frames();
-  if (f->pair().empty())
-    return shell;
-  EdgeEditor &ed = shell->database()->editor();
-  for (const auto &e : ed.edits().base())
-    if (e.status != "rejected") {
-      ed.reject(e.key);
-      break;
-    }
-  for (auto *b : f->findChildren<QPushButton *>())
-    if (b->text() == "ICP-forfin")
-      b->click();
-  ed.add(loop_closure(f->pair().a_id(), f->pair().b_id(), 400.0));
-  return shell;
-}
-
-/// A save that cannot happen: the project is open read-only.
-QWidget *make_db_readonly(const PageContext &ctx) {
-  auto *shell = make_db(ctx, Open::read_only);
-  FrameBrowser *f = shell->database()->frames();
-  if (f->pair().empty())
-    return shell;
-  shell->database()->editor().add(
-      loop_closure(f->pair().a_id(), f->pair().b_id(), 1.0));
-  shell->database()->save_edits();
-  return shell;
-}
-
-/// A saved edit: stage a loop closure on the pair, then "Gem ændringer" —
-/// the stored edge comes back from the file marked "Gemt". WRITES to the
-/// project copy.
-QWidget *make_db_saved(const PageContext &ctx) {
-  auto *shell = make_db(ctx);
-  FrameBrowser *f = shell->database()->frames();
-  if (f->pair().empty())
-    return shell;
-  shell->database()->editor().add(
-      loop_closure(f->pair().a_id(), f->pair().b_id(), 250.0));
-  shell->database()->save_edits();
-  return shell;
-}
-
 QWidget *make_db_table(const PageContext &ctx) {
   auto *shell = make_db(ctx);
   shell->database()->open_item(ProjectTree::Kind::table, "sensor_frames");
@@ -305,12 +260,11 @@ AppShell *make_pg(const PageContext &ctx) {
       return ids[std::min(ids.size() - 1,
                           static_cast<std::size_t>(t * ids.size()))];
     };
-    auto &ed = shell->database()->editor();
+    auto &ed = shell->edges();
     ed.add(loop_closure(at(0.05), at(0.62), 400.0));
     ed.add(loop_closure(at(0.30), at(0.81), 400.0));
     ed.add(loop_closure(at(0.45), at(0.97), 400.0));
-    f->set_a(at(0.30));
-    f->set_b(at(0.81));
+    shell->edit()->set_pair(at(0.30), at(0.81));
   }
   shell->show_page(Workspace::edit);
   return shell;
@@ -323,6 +277,60 @@ QWidget *make_rediger_panes(const PageContext &ctx) {
   auto *shell = make_pg(ctx);
   shell->edit()->set_pane_visible(EditPane::edges, false);
   shell->edit()->set_pane_visible(EditPane::images, false);
+  return shell;
+}
+
+/// Rediger with A and B a few frames apart (ids differ per project).
+AppShell *rediger_shell(const PageContext &ctx, Open open = Open::project) {
+  auto *shell = sized(make_shell(ctx, open));
+  shell->show_page(Workspace::edit);
+  const auto &ids = shell->database()->frames()->pair().ids();
+  if (ids.size() > 1) {
+    const std::size_t a = ids.size() * 3 / 10;
+    shell->edit()->set_pair(ids[a], ids[std::min(ids.size() - 1, a + 12)]);
+  }
+  return shell;
+}
+
+/// Pending edits: an ICP run on the pair and a staged loop closure, plus a
+/// staged rejection when the project has stored edges.
+QWidget *make_rediger_pending(const PageContext &ctx) {
+  auto *shell = rediger_shell(ctx);
+  if (shell->edit()->a() < 0)
+    return shell;
+  EdgeEditor &ed = shell->edges();
+  for (const auto &e : ed.edits().base())
+    if (e.status != "rejected") {
+      ed.reject(e.key);
+      break;
+    }
+  for (auto *b : shell->edit()->strip()->findChildren<QPushButton *>())
+    if (b->text() == "ICP-forfin")
+      b->click();
+  ed.add(loop_closure(shell->edit()->a(), shell->edit()->b(), 400.0));
+  return shell;
+}
+
+/// A save that cannot happen: the project is open read-only.
+QWidget *make_rediger_readonly(const PageContext &ctx) {
+  auto *shell = rediger_shell(ctx, Open::read_only);
+  if (shell->edit()->a() < 0)
+    return shell;
+  shell->edges().add(loop_closure(shell->edit()->a(), shell->edit()->b(), 1.0));
+  shell->edit()->save_edits();
+  return shell;
+}
+
+/// A saved edit: stage a loop closure on the pair, then "Gem ændringer" —
+/// the stored edge comes back from the file marked "Gemt". WRITES to the
+/// project copy.
+QWidget *make_rediger_saved(const PageContext &ctx) {
+  auto *shell = rediger_shell(ctx);
+  if (shell->edit()->a() < 0)
+    return shell;
+  shell->edges().add(
+      loop_closure(shell->edit()->a(), shell->edit()->b(), 250.0));
+  shell->edit()->save_edits();
   return shell;
 }
 
@@ -407,7 +415,7 @@ QWidget *make_rediger_stress(const PageContext &ctx) {
   return shell;
 }
 
-/// A click on a staged edge: the Database opens with A and B on its ends.
+/// A click on a staged edge: A and B move to its ends.
 QWidget *make_rediger_click(const PageContext &ctx) {
   auto *shell = make_pg(ctx);
   settle();
@@ -572,20 +580,11 @@ void register_shell_pages() {
   register_page(
       {"shell-project", "Skallen med projekt på 3D", make_shell_project});
   register_page({"db-frames",
-                 "Database: A/B-billeder med mærkater, kant og filmstrimmel",
+                 "Database: A/B-billeder med mærkater og filmstrimmel",
                  make_db_frames});
   register_page({"db-depth", "Database: dybdelaget", make_db_depth});
   register_page(
       {"db-confidence", "Database: konfidenslaget", make_db_confidence});
-  register_page({"db-pending",
-                 "Database: ICP-resultat og ventende kantændringer",
-                 make_db_pending});
-  register_page({"db-readonly",
-                 "Database: gem afvist på et skrivebeskyttet projekt",
-                 make_db_readonly});
-  register_page({"db-saved",
-                 "Database: en gemt kant (skriver til projektkopien)",
-                 make_db_saved});
   register_page(
       {"db-table", "Database: tabelvisning af sensor_frames", make_db_table});
   register_page({"db-log", "Database: pipeline-loggen", make_db_log});
@@ -606,12 +605,20 @@ void register_shell_pages() {
                  "Rediger: kantliste og billeder skjult, kun grafen og "
                  "højre kolonne",
                  make_rediger_panes});
+  register_page({"rediger-pending",
+                 "Rediger: ICP-resultat og ventende kantændringer",
+                 make_rediger_pending});
+  register_page({"rediger-readonly",
+                 "Rediger: gem afvist på et skrivebeskyttet projekt",
+                 make_rediger_readonly});
+  register_page({"rediger-saved",
+                 "Rediger: en gemt kant (skriver til projektkopien)",
+                 make_rediger_saved});
   register_page({"rediger-stress",
                  "Rediger: 10.000 kanter (skriver til projektkopien), måler "
                  "tegnetid",
                  make_rediger_stress});
-  register_page({"rediger-click",
-                 "Rediger: klik på en kant åbner Oversigt med A og B",
+  register_page({"rediger-click", "Rediger: klik på en kant sætter A og B",
                  make_rediger_click});
   register_page({"rediger-zoom",
                  "Rediger: zoomer ind på én node og tæller dens pixels "

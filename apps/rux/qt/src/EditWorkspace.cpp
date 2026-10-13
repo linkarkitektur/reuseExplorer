@@ -3,6 +3,8 @@
 
 #include <rux_qt/EdgeEditor.hpp>
 #include <rux_qt/EditWorkspace.hpp>
+#include <rux_qt/PairStrip.hpp>
+#include <rux_qt/PendingBanner.hpp>
 #include <rux_qt/PoseGraphWorkspace.hpp>
 #include <rux_qt/ProjectSession.hpp>
 #include <rux_qt/Theme.hpp>
@@ -46,6 +48,8 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   v->setContentsMargins(0, 0, 0, 0);
   v->setSpacing(0);
   v->addWidget(make_toolbar());
+  banner_ = new PendingBanner(editor_);
+  v->addWidget(banner_);
 
   graph_ = new PoseGraphWorkspace(session_, editor_);
   panes_[0] = new PaneFrame("Graf");
@@ -70,7 +74,36 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   auto *rc = new QVBoxLayout(right_column_);
   rc->setContentsMargins(0, 0, 0, 0);
   rc->setSpacing(0);
+  auto *head = new QFrame;
+  head->setObjectName("paneHeader");
+  auto *hl = new QHBoxLayout(head);
+  hl->setContentsMargins(t.px("--space-3"), t.px("--space-2"),
+                         t.px("--space-3"), t.px("--space-2"));
+  hl->setSpacing(t.px("--space-3"));
+  hl->addWidget(new CapsLabel("Par", "panelTitle"));
+  pair_a_ = new QLabel;
+  pair_a_->setObjectName("pairIds");
+  pair_b_ = new QLabel;
+  pair_b_->setObjectName("pairIds");
+  hl->addWidget(pair_a_);
+  hl->addWidget(pair_b_);
+  next_hint_ = new QLabel;
+  next_hint_->setObjectName("toolbarMeta");
+  next_hint_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+  next_hint_->setWordWrap(true); // wraps instead of widening the column
+  hl->addWidget(next_hint_, 1);
+  auto *swap = new QPushButton(NavItem::escape_mnemonic("Byt A og B"));
+  swap->setProperty("kind", "ghost");
+  swap->setCursor(Qt::PointingHandCursor);
+  connect(swap, &QPushButton::clicked, this, [this] { set_pair(b(), a()); });
+  hl->addWidget(swap);
+  rc->addWidget(head);
   rc->addWidget(right_, 1);
+  strip_ = new PairStrip(session_, editor_);
+  rc->addWidget(strip_);
+  // Takes the column's spare height when both panes are hidden (a stretch
+  // of 0 gets none while right_ is shown with 1).
+  rc->addStretch(0);
   main_ = new QSplitter(Qt::Horizontal);
   main_->addWidget(left_);
   main_->addWidget(right_column_);
@@ -100,8 +133,20 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
             selection_ = s;
             emit selection_changed(s);
           });
+  connect(graph_, &PoseGraphWorkspace::frame_requested, this,
+          &EditWorkspace::node_clicked);
+  connect(graph_, &PoseGraphWorkspace::pair_requested, this,
+          &EditWorkspace::set_pair);
+  connect(strip_, &PairStrip::edge_selected, this, [this](const Selection &s) {
+    selection_ = s;
+    emit selection_changed(s);
+  });
+  connect(&session_, &ProjectSession::state_changed, this, [this] {
+    slots_.clear();
+    apply_pair();
+  });
   restore_layout();
-  sync_panes();
+  apply_pair();
 }
 
 EditWorkspace::~EditWorkspace() = default;
@@ -139,6 +184,42 @@ QWidget *EditWorkspace::make_toolbar() {
 
 void EditWorkspace::activate() { graph_->activate(); }
 
+void EditWorkspace::node_clicked(int id, bool force_b) {
+  if (slots_.click(id, force_b))
+    apply_pair();
+}
+
+void EditWorkspace::set_pair(int a, int b) {
+  slots_.set_pair(a, b);
+  apply_pair();
+}
+
+void EditWorkspace::apply_pair() {
+  graph_->set_pair(slots_.a(), slots_.b());
+  strip_->set_pair(slots_.a(), slots_.b());
+  pair_complete_ = slots_.complete();
+  sync_pair_header();
+  sync_panes();
+  emit pair_changed(slots_.a(), slots_.b());
+}
+
+void EditWorkspace::sync_pair_header() {
+  auto id = [](int v) { return v >= 0 ? QString::number(v) : QString("—"); };
+  pair_a_->setText("A  " + id(slots_.a()));
+  pair_b_->setText("B  " + id(slots_.b()));
+  next_hint_->setText(slots_.next() == Slot::a
+                          ? QString("Næste klik: A · Shift+klik: B")
+                          : QString("Næste klik: B"));
+}
+
+int EditWorkspace::pending_edits() const { return editor_.pending(); }
+bool EditWorkspace::save_edits() { return editor_.save(); }
+bool EditWorkspace::save_edits_and_wait() {
+  return editor_.save_and_wait(this);
+}
+bool EditWorkspace::is_saving() const { return editor_.is_saving(); }
+void EditWorkspace::discard_edits() { editor_.discard(); }
+
 void EditWorkspace::set_pane_visible(EditPane p, bool on) {
   const int i = static_cast<int>(p);
   wanted_[i] = on;
@@ -159,7 +240,10 @@ void EditWorkspace::sync_panes() {
   left_->setVisible(wanted_[0] || wanted_[1]);
   const bool right_shown = !panes_[2]->isHidden() || !panes_[3]->isHidden();
   right_->setVisible(right_shown);
-  right_column_->setVisible(right_shown);
+  // The right column also holds the pair header and the pair strip, outside
+  // the splitter and not hideable: it stays while the strip shows, so hiding
+  // both panes leaves the pair and its edges on screen.
+  right_column_->setVisible(right_shown || (strip_ && !strip_->isHidden()));
 }
 
 void EditWorkspace::restore_layout() {

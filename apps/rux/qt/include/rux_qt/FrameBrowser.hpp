@@ -6,8 +6,8 @@
 // The frame browser of the Database workspace — RTABMap's DatabaseViewer A/B
 // compare, made calm: two sides (A, B) each with a slider, the image in one
 // of three layers (colour, depth, confidence) with the label overlay and its
-// legend, and the frame's pose, intrinsics and time; the pair strip for the
-// A<->B pose-graph link; and a filmstrip (click = A, Shift+click = B).
+// legend, and the frame's pose, intrinsics and time; and a filmstrip
+// (click = A, Shift+click = B).
 //
 // Keys: ←/→ move A, Shift+←/→ move B (Ctrl: 10 frames), while the focus is
 // in the browser and not in a text field (rux_qt/database_logic.hpp).
@@ -163,48 +163,6 @@ class FilmstripDelegate : public QStyledItemDelegate {
   static int thumb_height();
 };
 
-/// The A<->B link: the stored and pending edges between the two frames, how
-/// far apart they are, ICP refine, add and delete.
-class PairStrip : public QFrame {
-  Q_OBJECT
-    public:
-  PairStrip(ProjectSession &session, EdgeEditor &editor,
-            QWidget *parent = nullptr);
-  void set_pair(int a_id, int b_id);
-
-    signals:
-  /// An edge row was clicked: show it in the inspector.
-  void edge_selected(const rux::qt::Selection &selection);
-
-    private:
-  struct IcpOutcome {
-    bool ok = false;
-    QString error;
-    double fitness = 0, inliers = 0;
-    bool converged = false;
-    int source_points = 0, target_points = 0;
-    double center_shift_m = 0, rotation_deg = 0;
-  };
-  void rebuild();
-  void run_icp();
-  void icp_finished(int a, int b, IcpOutcome outcome);
-  void add_edge();
-  ProjectSession &session_;
-  EdgeEditor &editor_;
-  int a_ = -1, b_ = -1;
-  QLabel *pair_ = nullptr;
-  QLabel *delta_ = nullptr;
-  QWidget *rows_ = nullptr;
-  QVBoxLayout *rows_layout_ = nullptr;
-  QPushButton *icp_ = nullptr;
-  QComboBox *type_ = nullptr;
-  QPushButton *add_ = nullptr;
-  QLabel *icp_line_ = nullptr;
-  QLabel *note_ = nullptr;
-  std::map<std::pair<int, int>, IcpOutcome> icp_results_;
-  std::pair<int, int> icp_running_{-1, -1};
-};
-
 class FrameBrowser : public QWidget {
   Q_OBJECT
     public:
@@ -223,7 +181,7 @@ class FrameBrowser : public QWidget {
   Selection frame_selection(bool side_b) const;
 
     signals:
-  /// A or B moved (the Posegraf marks them).
+  /// A or B moved.
   void pair_changed(int a_id, int b_id);
   void selection_changed(const rux::qt::Selection &selection);
 
@@ -256,7 +214,6 @@ class FrameBrowser : public QWidget {
   QSlider *opacity_slider_ = nullptr;
   FrameSide *side_a_ = nullptr;
   FrameSide *side_b_ = nullptr;
-  PairStrip *strip_ = nullptr;
   QListView *film_ = nullptr;
   FilmstripModel *film_model_ = nullptr;
   QLabel *empty_ = nullptr;
