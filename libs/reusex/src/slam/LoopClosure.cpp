@@ -22,6 +22,8 @@
 
 #include <Eigen/Geometry>
 
+#include <fmt/format.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -31,6 +33,7 @@
 #include <numeric>
 #include <random>
 #include <set>
+#include <stdexcept>
 #include <utility>
 
 namespace reusex::geometry {
@@ -456,6 +459,18 @@ consistent_loop_edge_indices(const std::vector<LoopEdge> &edges,
   std::vector<bool> fixed = fixed_in;
   fixed.resize(edges.size(), false);
 
+  // Indices may come from a database (rux graph discover); an out-of-range
+  // one would read past @p seed inside pcm_consistent.
+  const auto n_seed = static_cast<long long>(seed.size());
+  for (size_t k = 0; k < edges.size(); ++k) {
+    const auto &e = edges[k];
+    if (e.i < 0 || e.j < 0 || e.i >= n_seed || e.j >= n_seed)
+      throw std::invalid_argument(fmt::format(
+          "consistent_loop_edge_indices: edge {} addresses frame index "
+          "({}, {}) outside the {} seed poses",
+          k, e.i, e.j, seed.size()));
+  }
+
   // Fixed first, then by inlier support; stable so ties keep input order.
   std::vector<size_t> order(edges.size());
   std::iota(order.begin(), order.end(), size_t{0});
@@ -467,9 +482,8 @@ consistent_loop_edge_indices(const std::vector<LoopEdge> &edges,
   const size_t n_fixed =
       static_cast<size_t>(std::count(fixed.begin(), fixed.end(), true));
   if (opt.pcm_max_edges > 0) {
-    // The cap never drops a fixed edge.
-    const size_t cap =
-        std::max(static_cast<size_t>(opt.pcm_max_edges), n_fixed);
+    // The cap counts candidates only: fixed edges come on top of it.
+    const size_t cap = static_cast<size_t>(opt.pcm_max_edges) + n_fixed;
     if (order.size() > cap)
       order.resize(cap);
   }
@@ -480,6 +494,20 @@ consistent_loop_edge_indices(const std::vector<LoopEdge> &edges,
     for (int b = a + 1; b < M; ++b)
       if (detail::pcm_consistent(edges[order[a]], edges[order[b]], seed, opt))
         adj[a][b] = adj[b][a] = 1;
+
+  // Mutually inconsistent confirmed edges: all are kept (the user's call),
+  // but no candidate can agree with every one of them.
+  int fixed_conflicts = 0;
+  for (size_t a = 0; a < n_fixed; ++a)
+    for (size_t b = a + 1; b < n_fixed; ++b)
+      if (!adj[a][b])
+        ++fixed_conflicts;
+  if (fixed_conflicts > 0)
+    core::warn("PCM: {} pairs of confirmed loop edges are mutually "
+               "inconsistent (of {} confirmed); every new candidate that "
+               "contradicts one of them is rejected. Review or reject one of "
+               "the confirmed edges in Rediger / `rux graph prune --pair`",
+               fixed_conflicts, n_fixed);
 
   // Fixed-edge filter BEFORE the small-set shortcut (ruling R9): a single
   // candidate that contradicts a confirmed edge must still be rejected.

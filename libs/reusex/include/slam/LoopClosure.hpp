@@ -332,11 +332,14 @@ filter_consistent_loop_edges(std::vector<LoopEdge> edges,
 /// discover` passes the user-confirmed stored edges as fixed (spec §4.3).
 /// A non-fixed edge inconsistent with any fixed edge is never kept, even
 /// when it belongs to a larger clique or the set is too small for a clique
-/// search; fixed edges are always kept, and the `pcm_max_edges` cap never
-/// drops one. Greedy max-clique like pcm_filter, with deterministic (stable)
-/// ordering. With no fixed edge, sets of <= 2 edges are kept whole (a pair
-/// cannot outvote itself). @p fixed shorter than @p edges is padded with
-/// false.
+/// search; fixed edges are always kept. The `pcm_max_edges` cap counts the
+/// NON-fixed edges only (effective cap = pcm_max_edges + number of fixed),
+/// keeping the strongest by inlier count. Mutually inconsistent fixed edges
+/// are all kept and logged at warn with their count. Greedy max-clique like
+/// pcm_filter, with deterministic (stable) ordering. With no fixed edge,
+/// sets of <= 2 edges are kept whole (a pair cannot outvote itself).
+/// @p fixed shorter than @p edges is padded with false.
+/// @throws std::invalid_argument when an edge index is outside @p seed.
 std::vector<size_t>
 consistent_loop_edge_indices(const std::vector<LoopEdge> &edges,
                              const std::vector<Eigen::Matrix4d> &seed,
