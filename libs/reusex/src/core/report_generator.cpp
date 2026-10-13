@@ -21,8 +21,11 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <vector>
 
 #include <sys/wait.h>
@@ -62,6 +65,36 @@ std::string ext_for_mime(const std::string &mime) {
   if (mime == "image/gif")
     return ".gif";
   return ".jpg";
+}
+
+constexpr const char *kTemplateEnvVar = "REUSEX_REPORT_TEMPLATE";
+
+/// The Typst source this run compiles: options.template_path, else the file
+/// named by $REUSEX_REPORT_TEMPLATE, else the copy of
+/// apps/rux/resources/report.typ embedded at build time. A named file that
+/// is missing is an error — never a silent fallback to the embedded copy.
+std::string resolve_template(const ReportOptions &options) {
+  std::filesystem::path path = options.template_path;
+  std::string origin = "ReportOptions::template_path";
+  if (path.empty()) {
+    const char *env =
+        std::getenv(kTemplateEnvVar); // NOLINT(concurrency-mt-unsafe)
+    if (env == nullptr || *env == '\0')
+      return core::detail::kDefaultReportTemplate;
+    path = env;
+    origin = std::string("$") + kTemplateEnvVar;
+  }
+  std::error_code ec;
+  if (!std::filesystem::is_regular_file(path, ec))
+    throw std::runtime_error(fmt::format(
+        "report template {} (from {}) does not exist or is not a regular file",
+        path.string(), origin));
+  std::ifstream f(path, std::ios::binary);
+  if (!f)
+    throw std::runtime_error(fmt::format(
+        "report template {} (from {}) cannot be read", path.string(), origin));
+  reusex::info("report template: {} (from {})", path.string(), origin);
+  return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>{}};
 }
 
 // ── RAII temp directory ───────────────────────────────────────────────────
@@ -185,22 +218,27 @@ nlohmann::json assemble_report_data(ProjectDB &db,
 
 // ── Typst invocation ──────────────────────────────────────────────────────
 
-std::vector<std::uint8_t> run_typst(const std::filesystem::path &tmpdir) {
+std::vector<std::uint8_t> run_typst(const std::filesystem::path &tmpdir,
+                                    const std::string &template_text) {
   const auto typ_path = tmpdir / "report.typ";
   const auto out_path = tmpdir / "out.pdf";
   const auto err_path = tmpdir / "typst.stderr";
 
   {
-    std::ofstream f(typ_path);
-    f << core::detail::kDefaultReportTemplate;
+    std::ofstream f(typ_path, std::ios::binary);
+    f << template_text;
     if (!f.good())
       throw std::runtime_error(
           "report_generator: failed to write template to " + typ_path.string());
   }
 
-  const std::string cmd = "typst compile '" + typ_path.string() + "' '" +
-                          out_path.string() + "' --root '" + tmpdir.string() +
-                          "' 2>'" + err_path.string() + "'";
+  // --ignore-system-fonts: the PDF must come out the same in the devshell,
+  // CI, ruxd and the nix package, so only fonts embedded in typst (or named
+  // via $TYPST_FONT_PATHS) are used.
+  const std::string cmd = "typst compile --ignore-system-fonts '" +
+                          typ_path.string() + "' '" + out_path.string() +
+                          "' --root '" + tmpdir.string() + "' 2>'" +
+                          err_path.string() + "'";
 
   const int status = std::system(cmd.c_str()); // NOLINT(cert-env33-c)
 
@@ -234,11 +272,14 @@ int report_blocking_types(const ProjectDB &db) {
 
 std::vector<std::uint8_t>
 generate_ressourcekortlaegning_pdf(ProjectDB &db,
-                                   std::optional<std::int64_t> template_id) {
-  // Resolve the template first: an unknown id fails fast, typst or not.
+                                   const ReportOptions &options) {
+  // Everything bad input can break is checked before any typst work: an
+  // unknown resource template first, then a missing template file.
   std::optional<core::ResourceReportSection> resources;
-  if (template_id)
-    resources = core::resource_report_section(db, *template_id);
+  if (options.resource_template_id)
+    resources =
+        core::resource_report_section(db, *options.resource_template_id);
+  const std::string template_text = resolve_template(options);
 
   TempDir tmpdir;
 
@@ -258,10 +299,18 @@ generate_ressourcekortlaegning_pdf(ProjectDB &db,
       data.at("materials").size(), data.at("columns").size(),
       resources ? resources->tables.size() : 0);
 
-  const auto pdf = run_typst(tmpdir.path);
+  const auto pdf = run_typst(tmpdir.path, template_text);
 
   reusex::info("generate_ressourcekortlaegning_pdf: {} bytes", pdf.size());
   return pdf;
+}
+
+std::vector<std::uint8_t>
+generate_ressourcekortlaegning_pdf(ProjectDB &db,
+                                   std::optional<std::int64_t> template_id) {
+  ReportOptions options;
+  options.resource_template_id = template_id;
+  return generate_ressourcekortlaegning_pdf(db, options);
 }
 
 } // namespace reusex
