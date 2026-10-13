@@ -205,3 +205,9 @@ scratch/
 # local dev service state (process-compose postgres/minio data from the
 # pre-split services devshell; ruxd's service stack now lives in ReUse-X/ruxd)
 .dev/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*

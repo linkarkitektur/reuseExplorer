@@ -72,3 +72,16 @@ SPDX-License-Identifier = "OFL-1.1"
 path = "apps/rux/qt/resources/fonts/JetBrainsMono-*.ttf"
 SPDX-FileCopyrightText = "2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)"
 SPDX-License-Identifier = "OFL-1.1"
+
+# Issue tracking (beads): config, hooks and agent integration files written by
+# `bd init` / `bd setup`. The issues themselves live in refs/dolt/data.
+[[annotations]]
+path = [
+  ".beads/**",
+  ".agents/skills/beads/**",
+  ".claude/settings.json",
+  ".codex/**",
+  ".cursor/**",
+]
+SPDX-FileCopyrightText = "2026 Povl Filip Sonne-Frederiksen"
+SPDX-License-Identifier = "GPL-3.0-or-later"

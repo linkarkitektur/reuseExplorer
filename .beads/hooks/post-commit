@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+# --- BEGIN HOOK CHAIN (repo-local; outside the beads markers, bd keeps it) ---
+# This copy only runs while core.hooksPath points at .beads/hooks, which
+# `bd init` and `bd hooks install --beads` set. That hides the hooks in the
+# shared git hooks dir (git-lfs, pre-commit / git-hooks.nix), so run those
+# first. If that hook already carries the beads section (`bd hooks install`,
+# which the nix dev shell runs), hand over to it so bd runs only once.
+_chain_hook="$(git rev-parse --path-format=absolute --git-common-dir)/hooks/${0##*/}"
+if [ -x "$_chain_hook" ] && ! [ "$_chain_hook" -ef "$0" ]; then
+  if grep -q 'BEGIN BEADS INTEGRATION' "$_chain_hook"; then
+    exec "$_chain_hook" "$@"
+  fi
+  "$_chain_hook" "$@" || exit $?
+fi
+# --- END HOOK CHAIN ---
