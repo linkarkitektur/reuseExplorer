@@ -64,8 +64,8 @@ TEST_CASE("MigrationV26_FreshProject_HasTombstoneTable",
   TempDB tmp;
   {
     ProjectDB db(tmp.path);
-    CHECK(db.schema_version() == 26);
-    CHECK(ProjectDB::latest_schema_version() == 26);
+    CHECK(db.schema_version() == ProjectDB::latest_schema_version());
+    CHECK(ProjectDB::latest_schema_version() >= 26);
     CHECK(db.dismissed_instances().empty());
     db.dismiss_instance("g-1");
     db.dismiss_instance("g-1"); // idempotent
@@ -98,7 +98,7 @@ TEST_CASE("MigrationV26_FromV25_KeepsSurveyData_AddsTable",
     CHECK(ro.dismissed_instances().empty());
   }
   ProjectDB db(tmp.path);
-  CHECK(db.schema_version() == 26);
+  CHECK(db.schema_version() == ProjectDB::latest_schema_version());
   CHECK(table_exists(tmp.path, "survey_dismissed_instances"));
   CHECK(db.survey_parts().size() == 2);
   CHECK(db.survey_part("RX-001")->instance_guid ==

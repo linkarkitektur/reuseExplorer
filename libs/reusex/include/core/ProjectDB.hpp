@@ -15,9 +15,11 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -590,35 +592,61 @@ class ProjectDB {
 
   // --- Pose Graph ---
   //
-  // Written by `rux optimize` after convergence; replaced atomically on each
-  // run.  The table always reflects the most-recent optimize invocation.
-  // A project that has never been optimized has an empty table.
-  //
-  // Node positions are read from `sensor_frames` (their current world poses),
-  // so there is no separate nodes table.
+  // The stored pose graph is the source of truth for `rux optimize` (schema
+  // v27, docs/superpowers/specs/2026-10-13-pose-graph-editor-design.md §3).
+  // Rows are canonical: from_node_id < to_node_id, UNIQUE(from, to, type).
+  // Node positions are read from `sensor_frames` (their current world poses,
+  // and the snapshot in `initial_transform`), so there is no nodes table.
 
-  /// One directed edge stored in `pose_graph_edges`.
+  /// One edge stored in `pose_graph_edges`. The first five members keep their
+  /// pre-v27 order so `{from, to, type, residual, weight}` still initialises.
   struct PoseGraphEdge {
     int from_node_id = 0;
     int to_node_id = 0;
-    /// "odometry" | "loop_closure" | "panorama"
+    /// "odometry" | "loop_closure" | "panorama" (other strings are stored
+    /// as given; ruxd may write them).
     std::string edge_type;
-    /// 0.5 × whitened squared residual after convergence (GTSAM convention).
-    double residual = 0.0;
-    /// Translational information weight (1 / sigma_trans²).  NaN when not
-    /// extractable for this edge type.
-    double weight = 1.0;
+    /// 0.5 x whitened squared residual after the last solve (GTSAM
+    /// convention). NaN <-> NULL (never solved).
+    double residual = std::numeric_limits<double>::quiet_NaN();
+    /// 1 / sigma_trans^2. Derived from `information` on write when that is
+    /// present. NaN <-> NULL.
+    double weight = std::numeric_limits<double>::quiet_NaN();
+    /// Measurement T_from^-1 * T_to in the sensor_frames.transform
+    /// convention, row-major. nullopt for migrated v15 rows.
+    std::optional<std::array<double, 16>> transform;
+    /// 6x6 information, GTSAM Pose3 order (rx, ry, rz, tx, ty, tz),
+    /// row-major. nullopt: the per-type default sigma of PlaneGraphOptions.
+    std::optional<std::array<double, 36>> information;
+    /// rtabmap | odometry_init | orb | panorama | file | icp | manual | legacy
+    std::string source = "manual";
+    /// auto | confirmed | rejected
+    std::string status = "auto";
+    /// ISO-8601 UTC; "" on write means "now".
+    std::string created_at;
+    std::optional<double> seed_disagreement_m;
+    std::optional<double> seed_disagreement_deg;
+    std::optional<double> deviation_m;
+    std::optional<double> deviation_deg;
+    /// Row id, filled by the readers; ignored on write.
+    int64_t id = 0;
   };
 
-  /// Replace the stored pose graph atomically (delete-then-insert inside one
-  /// transaction).  Calling with an empty vector clears the table.
+  /// Transitional (removed in Task 10 together with its only caller, the
+  /// pre-v27 optimize): delete every row and insert @p edges as legacy rows.
   void save_pose_graph_edges(const std::vector<PoseGraphEdge> &edges);
 
-  /// All stored edges, in insertion order.  Returns an empty vector when the
-  /// table does not exist (pre-v15 schema opened read-only).
+  /// All stored edges (every status), ordered by id. Empty when the table
+  /// does not exist. On a pre-v27 project opened read-only the rows carry
+  /// source "legacy", status "auto" and no measurement.
   std::vector<PoseGraphEdge> list_pose_graph_edges() const;
 
-  /// True when the pose graph table exists and has at least one edge.
+  /// The edge with key (from, to, type), given in either direction.
+  std::optional<PoseGraphEdge>
+  pose_graph_edge(int from_node_id, int to_node_id,
+                  std::string_view edge_type) const;
+
+  /// True when the pose graph table exists and has at least one row.
   bool has_pose_graph() const;
 
   /// Insert a single edge and return its row id.
