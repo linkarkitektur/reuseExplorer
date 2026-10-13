@@ -15,6 +15,7 @@
 
 #include <rtabmap/core/DBDriver.h>
 #include <rtabmap/core/Graph.h>
+#include <rtabmap/core/Memory.h>
 #include <rtabmap/core/Rtabmap.h>
 #include <rtabmap/core/util3d.h>
 
@@ -80,9 +81,9 @@ void import_rtabmap(ProjectDB &db,
 
   timer.reset();
   std::map<int, rtabmap::Transform> poses;
-  std::multimap<int, rtabmap::Link> links;
+  std::multimap<int, rtabmap::Link> graph_links; // unused: see link import
   std::map<int, rtabmap::Signature> nodes;
-  rtabmap.getGraph(poses, links,
+  rtabmap.getGraph(poses, graph_links,
                    /*optimized=*/true, /*global=*/true, &nodes,
                    /*withImages=*/true, /*withScan=*/true,
                    /*withUserData=*/true, /*withGrid=*/true);
@@ -187,8 +188,23 @@ void import_rtabmap(ProjectDB &db,
     }
 
     // ── Links -> pose_graph_edges (spec §4.2) ─────────────────────
+    // Every link stored in the database, not getGraph()'s links: getGraph
+    // returns only the links of its optimized graph and drops stored loop
+    // closures it did not keep. Null links are included so the converter
+    // counts them (invalid_transform) instead of RTABMap dropping them.
+    std::multimap<int, rtabmap::Link> links;
+    if (const rtabmap::Memory *memory = rtabmap.getMemory())
+      links = memory->getAllLinks(/*lookInDatabase=*/true,
+                                  /*ignoreNullLinks=*/false,
+                                  /*withLandmarks=*/false);
+    else
+      core::warn("RTABMap memory unavailable: no links imported, so the "
+                 "pose graph has no RTABMap edges. Check that {} is a valid "
+                 "RTABMap database",
+                 rtabmap_db_path);
     int odometry = 0, loops = 0, duplicates = 0;
     std::map<RtabmapLinkSkip, int> skipped;
+    std::map<int, int> unsupported_by_type; // rtabmap link type -> count
     std::set<std::tuple<int, int, std::string>> seen;
     {
       ProjectDB::Transaction tx(db);
@@ -209,6 +225,8 @@ void import_rtabmap(ProjectDB &db,
         const auto conv = convert_rtabmap_link(in, scan.id_offset, imported);
         if (!conv.edge) {
           ++skipped[conv.skip];
+          if (conv.skip == RtabmapLinkSkip::unsupported_type)
+            ++unsupported_by_type[in.type];
           continue;
         }
         const auto &e = *conv.edge;
@@ -223,19 +241,26 @@ void import_rtabmap(ProjectDB &db,
       }
       tx.commit();
     }
-    core::info("RTABMap links: {} odometry + {} loop-closure edges stored "
-               "in pose_graph_edges",
-               odometry, loops);
+    // Unsupported types (gravity, pose prior, landmark, virtual, ...) and
+    // the reverse copy of a link are expected in every RTABMap database.
     const int unsupported = skipped[RtabmapLinkSkip::unsupported_type];
+    core::info("RTABMap links: {} odometry + {} loop-closure edges stored "
+               "in pose_graph_edges; {} of an unused type (gravity, prior, "
+               "landmark, virtual) and {} reverse-direction duplicates "
+               "ignored",
+               odometry, loops, unsupported, duplicates);
+    for (const auto &[type, count] : unsupported_by_type)
+      core::debug("RTABMap links of type {} ignored: {}", type, count);
     const int self = skipped[RtabmapLinkSkip::self_link];
     const int dangling = skipped[RtabmapLinkSkip::endpoint_not_imported];
     const int invalid = skipped[RtabmapLinkSkip::invalid_transform];
-    if (unsupported + self + dangling + invalid + duplicates > 0)
-      core::warn("RTABMap links skipped: {} unsupported type (virtual, "
-                 "landmark, gravity, prior), {} self links, {} touching a "
-                 "node that was not imported, {} with a null/non-rigid "
-                 "transform, {} reverse-direction duplicates",
-                 unsupported, self, dangling, invalid, duplicates);
+    if (self + dangling + invalid > 0)
+      core::warn("RTABMap links skipped: {} self links, {} touching a node "
+                 "that was not imported, {} with a null/non-rigid transform. "
+                 "Links to nodes without colour data are expected to be "
+                 "dropped; re-export the RTABMap database if frames or "
+                 "links are missing",
+                 self, dangling, invalid);
 
     db.log_pipeline_end(logId, true);
   } catch (...) {
