@@ -58,7 +58,8 @@ struct FitFrame {
 /// @p rw x @p rh px corner is taken (the legend card): the content goes
 /// above the corner or right of it, whichever keeps the larger scale (above
 /// on a tie), centred in what is left. A corner that leaves no room, or
-/// would cost more than half the plain fit's scale, is ignored.
+/// would cost more than half the plain fit's scale, is ignored. A viewport or
+/// content without extent gives scale 1 at the content's centre.
 FitFrame fit_avoiding_corner(const FitRect &content, double vw, double vh,
                              double rw, double rh);
 
@@ -163,6 +164,9 @@ class SlotPicker {
   /// Both at once (an edge or a list row); the next click is A again.
   void set_pair(int a, int b);
   void clear();
+  /// After a reload of the same project: keep the pair while every chosen
+  /// frame is still among @p frame_ids, else clear it. True when kept.
+  bool forget_missing(const std::vector<int> &frame_ids);
 
     private:
   int a_ = -1;

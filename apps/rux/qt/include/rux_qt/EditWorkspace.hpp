@@ -16,12 +16,16 @@
 #include <rux_qt/palette_table.hpp>
 #include <rux_qt/selection.hpp>
 
+#include <reusex/pipeline/stages.hpp>
+
+#include <QString>
 #include <QWidget>
 
 #include <array>
 
 class QAction;
 class QLabel;
+class QPushButton;
 class QSplitter;
 
 namespace rux::qt {
@@ -71,9 +75,26 @@ class EditWorkspace : public QWidget {
   bool is_saving() const;
   void discard_edits();
 
+  /// A pipeline job started (any stage, from here or the Pipeline page):
+  /// "Find kanter" and "Optimer" wait, the toolbar says what runs.
+  void set_job_running(const QString &stage_da);
+  /// It ended: the buttons are back (the reload refreshes the graph).
+  void set_job_finished();
+  /// How a "Find kanter" or "Optimer" run went, in the toolbar (the counts
+  /// of a discover run); other stages are left to the Pipeline page.
+  void show_job_result(reusex::pipeline::JobStage stage, bool ok,
+                       const QString &message);
+  /// A run asked for from the toolbar did not start: @p reason (Danish),
+  /// when there is one to show.
+  void show_run_refused(reusex::pipeline::JobStage stage,
+                        const QString &reason);
+
     signals:
   void selection_changed(const rux::qt::Selection &selection);
   void pair_changed(int a, int b);
+  /// "Find kanter" (graph_discover) or "Optimer" (optimize) was clicked; the
+  /// shell runs it through the Pipeline workspace's runner.
+  void run_requested(reusex::pipeline::JobStage stage);
 
     protected:
   /// Show what is wanted, and the overlay only with a complete pair.
@@ -87,6 +108,8 @@ class EditWorkspace : public QWidget {
   void sync_pair_header();
   void restore_layout();
   void save_layout() const;
+  void on_session_state();
+  void sync_run_buttons();
 
   ProjectSession &session_;
   EdgeEditor &editor_;
@@ -108,6 +131,12 @@ class EditWorkspace : public QWidget {
   QLabel *pair_a_ = nullptr;
   QLabel *pair_b_ = nullptr;
   QLabel *next_hint_ = nullptr;
+  QPushButton *discover_ = nullptr;
+  QPushButton *optimize_ = nullptr;
+  /// Danish name of the pipeline stage running, or empty.
+  QString running_;
+  /// The project the pair was chosen in: a reload of it keeps the pair.
+  QString pair_path_;
 };
 
 } // namespace rux::qt

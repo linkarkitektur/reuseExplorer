@@ -92,5 +92,9 @@ vtk_module_autoinit(TARGETS rux_qt_lib MODULES ${VTK_LIBRARIES})
 file(GLOB rux_qt_gallery_SOURCES CONFIGURE_DEPENDS "gallery/*.cpp")
 add_executable(rux-qt-gallery ${rux_qt_gallery_SOURCES})
 set_target_properties(rux-qt-gallery PROPERTIES AUTOMOC ON)
-target_link_libraries(rux-qt-gallery PRIVATE rux_qt_lib ${VTK_LIBRARIES})
+# reusex_slam + reusex_pipeline: the gallery hands its shell
+# stage_executor_with_optimize() (header-only, pipeline/optimize_stage.hpp),
+# as `rux` does, so "Optimer" / "Find kanter" run in a shot.
+target_link_libraries(rux-qt-gallery
+    PRIVATE rux_qt_lib reusex_slam reusex_pipeline ${VTK_LIBRARIES})
 vtk_module_autoinit(TARGETS rux-qt-gallery MODULES ${VTK_LIBRARIES})

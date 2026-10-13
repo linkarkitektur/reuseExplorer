@@ -39,12 +39,16 @@ FitFrame fit_avoiding_corner(const FitRect &c, double vw, double vh, double rw,
                : 0.0;
   };
   const double plain = fit(vw, vh);
+  // A viewport not laid out yet, or content with no extent: nothing to fit
+  // (and every fit below would be 0, a divisor).
+  if (!(plain > 0.0))
+    return {1.0, c.cx, c.cy};
   const double above = rh > 0.0 ? fit(vw, vh - rh) : 0.0;
   const double right = rw > 0.0 ? fit(vw - rw, vh) : 0.0;
   // A corner that would cost more than half the scale (a large card in a
   // small pane) is ignored: a graph partly under it beats a speck.
   if (std::max(above, right) < kMinCornerFitRatio * plain)
-    return {plain > 0.0 ? plain : 1.0, c.cx, c.cy};
+    return {plain, c.cx, c.cy};
   // Centred in what is left: the viewport's centre is half the corner away
   // from the content's.
   if (above >= right)
@@ -253,5 +257,16 @@ void SlotPicker::set_pair(int a, int b) {
 }
 
 void SlotPicker::clear() { set_pair(-1, -1); }
+
+bool SlotPicker::forget_missing(const std::vector<int> &frame_ids) {
+  const auto gone = [&frame_ids](int id) {
+    return id >= 0 &&
+           std::find(frame_ids.begin(), frame_ids.end(), id) == frame_ids.end();
+  };
+  if (!gone(a_) && !gone(b_))
+    return true;
+  clear();
+  return false;
+}
 
 } // namespace rux::qt

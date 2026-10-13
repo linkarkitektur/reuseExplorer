@@ -27,6 +27,7 @@
 #include <rux_qt/graph_view.hpp>
 
 #include <reusex/core/ProjectDB.hpp>
+#include <reusex/pipeline/optimize_stage.hpp>
 
 #include <QAbstractButton>
 #include <QApplication>
@@ -74,6 +75,9 @@ AppShell *make_shell(const PageContext &ctx, Open open) {
   ShellOptions options;
   options.interactive_3d = ctx.interactive_3d;
   options.persist_layout = false; // a shot never touches QSettings
+  // What `rux` hands the client (rux::GuiLaunch): optimize and
+  // graph_discover run in-process.
+  options.stage_executor = reusex::pipeline::stage_executor_with_optimize();
   auto *shell = new AppShell(*session, *recent, options);
   session->setParent(shell);
   recent->setParent(shell);
@@ -589,6 +593,37 @@ QWidget *make_rediger_seed(const PageContext &ctx) {
   return make_rediger_colour(ctx, EdgeColourMode::seed);
 }
 
+/// Click a Rediger toolbar button (on the copy: the run WRITES to it) and
+/// wait for the job and the reload after it. The staged demo edits are
+/// dropped first, or the unsaved-edits prompt would block the shot.
+AppShell *run_from_rediger(const PageContext &ctx, const QString &button) {
+  auto *shell = make_pg(ctx);
+  settle();
+  shell->edit()->discard_edits();
+  for (auto *b : shell->edit()->findChildren<QPushButton *>())
+    if (b->text() == button)
+      b->click();
+  settle(600000);
+  return shell;
+}
+
+/// "Optimer" from the Rediger toolbar on the copy (WRITES poses and edge
+/// metrics), shown coloured by residual once it has finished; A and B
+/// survive the reload after it.
+QWidget *make_rediger_optimize(const PageContext &ctx) {
+  auto *shell = run_from_rediger(ctx, "Optimer");
+  shell->edit()->graph()->set_colour_mode(EdgeColourMode::residual);
+  return shell;
+}
+
+/// "Find kanter" from the Rediger toolbar on the copy (WRITES loop edges):
+/// the toolbar reports what the run added, skipped and rejected.
+QWidget *make_rediger_discover(const PageContext &ctx) {
+  auto *shell = run_from_rediger(ctx, "Find kanter");
+  shell->edit()->graph()->set_colour_mode(EdgeColourMode::type);
+  return shell;
+}
+
 /// A click on the first drawn stored loop closure of the seeded graph: it
 /// is highlighted, the inspector shows it and A and B move to its ends.
 QWidget *make_rediger_click(const PageContext &ctx) {
@@ -877,6 +912,14 @@ void register_shell_pages() {
                  "Rediger: klik på en kant fremhæver den og sætter A og B, "
                  "seedet graf (skriver til projektkopien)",
                  make_rediger_click});
+  register_page({"rediger-optimize",
+                 "Rediger: Optimer kørt fra værktøjslinjen, kanter farvet "
+                 "efter residual (skriver til projektkopien)",
+                 make_rediger_optimize});
+  register_page({"rediger-discover",
+                 "Rediger: Find kanter kørt fra værktøjslinjen, med "
+                 "optællingen (skriver til projektkopien)",
+                 make_rediger_discover});
   register_page({"rediger-type",
                  "Rediger: kanter farvet efter type, seedet graf (skriver "
                  "til projektkopien)",

@@ -4,14 +4,72 @@
 #include <rux_qt/workspace_logic.hpp>
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <set>
+#include <system_error>
 #include <utility>
 
 namespace rux::qt {
+
+namespace {
+
+/// A non-negative integer at the front of @p s; advances past it.
+std::optional<int> take_int(std::string_view &s) {
+  int v = 0;
+  const auto [end, ec] = std::from_chars(s.data(), s.data() + s.size(), v);
+  if (ec != std::errc() || end == s.data() || v < 0)
+    return std::nullopt;
+  s.remove_prefix(static_cast<std::size_t>(end - s.data()));
+  return v;
+}
+
+bool take(std::string_view &s, std::string_view prefix) {
+  if (!s.starts_with(prefix))
+    return false;
+  s.remove_prefix(prefix.size());
+  return true;
+}
+
+} // namespace
+
+std::optional<DiscoverCounts> parse_discover_summary(std::string_view s) {
+  // The wording of pipeline::run_graph_discover_stage; the real stage is run
+  // against this in tests/unit/rux_qt/test_discover_summary.cpp.
+  DiscoverCounts c;
+  c.dry_run = take(s, "dry run: ");
+  if (take(s, "no odometry stored: initialised ")) {
+    const auto n = take_int(s);
+    if (!n || !take(s, " odometry edges first; "))
+      return std::nullopt;
+    c.odometry_initialised = *n;
+  }
+  const std::pair<std::string_view, int DiscoverCounts::*> fields[] = {
+      {" proposed", &DiscoverCounts::proposed},
+      {" matched", &DiscoverCounts::matched},
+      {" PCM-rejected", &DiscoverCounts::pcm_rejected},
+      {" over the PCM cap", &DiscoverCounts::pcm_capped},
+      {" already stored", &DiscoverCounts::skipped_existing},
+      {" rejected before", &DiscoverCounts::skipped_rejected},
+      {" added", &DiscoverCounts::added},
+      {" stored rows given a measurement", &DiscoverCounts::filled}};
+  bool first = true;
+  for (const auto &[label, field] : fields) {
+    if (!first && !take(s, ", "))
+      return std::nullopt;
+    first = false;
+    const auto n = take_int(s);
+    if (!n || !take(s, label))
+      return std::nullopt;
+    c.*field = *n;
+  }
+  if (!s.empty())
+    return std::nullopt;
+  return c;
+}
 
 namespace {
 

@@ -10,6 +10,7 @@
 #include <rux_qt/ProjectSession.hpp>
 #include <rux_qt/Theme.hpp>
 #include <rux_qt/widgets.hpp>
+#include <rux_qt/workspace_logic.hpp>
 
 #include <QAction>
 #include <QHBoxLayout>
@@ -20,6 +21,8 @@
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QVBoxLayout>
+
+#include <algorithm>
 
 namespace rux::qt {
 namespace {
@@ -156,11 +159,43 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
     selection_ = s;
     emit selection_changed(s);
   });
-  connect(&session_, &ProjectSession::state_changed, this, [this] {
-    slots_.clear();
-    apply_pair();
-  });
+  connect(&session_, &ProjectSession::state_changed, this,
+          &EditWorkspace::on_session_state);
   restore_layout();
+  apply_pair();
+  sync_run_buttons();
+}
+
+void EditWorkspace::on_session_state() {
+  sync_run_buttons();
+  const QString path = session_.path();
+  switch (session_.state()) {
+  case ProjectSession::State::loading:
+    // A reload of the same project (F5, the one after "Optimer") keeps the
+    // pair to re-inspect; it is checked against the frames once open.
+    if (path == pair_path_)
+      return;
+    slots_.clear();
+    break;
+  case ProjectSession::State::open: {
+    if (path != pair_path_) {
+      slots_.clear();
+    } else if (const auto *db = session_.db()) {
+      try {
+        slots_.forget_missing(db->sensor_frame_ids());
+      } catch (const std::exception &) {
+        slots_.clear();
+      }
+    }
+    pair_path_ = path;
+    break;
+  }
+  case ProjectSession::State::empty:
+  case ProjectSession::State::failed:
+    slots_.clear();
+    pair_path_.clear();
+    break;
+  }
   apply_pair();
 }
 
@@ -177,6 +212,9 @@ QWidget *EditWorkspace::make_toolbar() {
   bl->addWidget(new CapsLabel("Rediger", "panelTitle"));
   meta_ = new QLabel;
   meta_->setObjectName("toolbarMeta");
+  // A long status (a discover run's counts) is cut, never widens the window;
+  // the tooltip holds all of it.
+  meta_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
   bl->addWidget(meta_, 1);
   auto *panes = new QPushButton(NavItem::escape_mnemonic("Paneler"));
   panes->setProperty("kind", "ghost");
@@ -193,8 +231,121 @@ QWidget *EditWorkspace::make_toolbar() {
   }
   panes->setMenu(menu);
   panes->setMinimumHeight(panes->sizeHint().height());
+
+  discover_ = new QPushButton(NavItem::escape_mnemonic("Find kanter"));
+  discover_->setProperty("kind", "secondary");
+  discover_->setCursor(Qt::PointingHandCursor);
+  discover_->setToolTip("rux graph discover: nye løkkelukninger fra de "
+                        "oprindelige poser (afviste kanter springes over)");
+  optimize_ = new QPushButton(NavItem::escape_mnemonic("Optimer"));
+  optimize_->setProperty("kind", "primary");
+  optimize_->setCursor(Qt::PointingHandCursor);
+  optimize_->setToolTip("rux optimize: løs den gemte posegraf");
+  for (QPushButton *b : {discover_, optimize_}) {
+    b->setMinimumHeight(b->sizeHint().height());
+    bl->addWidget(b);
+  }
+  connect(discover_, &QPushButton::clicked, this, [this] {
+    emit run_requested(reusex::pipeline::JobStage::graph_discover);
+  });
+  connect(optimize_, &QPushButton::clicked, this,
+          [this] { emit run_requested(reusex::pipeline::JobStage::optimize); });
   bl->addWidget(panes);
   return bar;
+}
+
+void EditWorkspace::sync_run_buttons() {
+  const bool can = session_.is_open() && running_.isEmpty();
+  discover_->setEnabled(can);
+  optimize_->setEnabled(can);
+}
+
+void EditWorkspace::set_job_running(const QString &stage_da) {
+  running_ = stage_da;
+  sync_run_buttons();
+  meta_->setToolTip({});
+  meta_->setText(
+      QString("%1 kører … — grafen opdateres, når trinnet er færdigt.")
+          .arg(stage_da));
+}
+
+void EditWorkspace::set_job_finished() {
+  // show_job_result (just before) replaces the running text with the
+  // outcome; any other stage's leaves nothing to say here.
+  if (!running_.isEmpty())
+    meta_->clear();
+  running_.clear();
+  sync_run_buttons();
+}
+
+void EditWorkspace::show_job_result(reusex::pipeline::JobStage stage, bool ok,
+                                    const QString &message) {
+  using reusex::pipeline::JobStage;
+  if (stage != JobStage::graph_discover && stage != JobStage::optimize)
+    return;
+  running_.clear(); // set_job_finished keeps this text
+  const QString name =
+      stage == JobStage::optimize ? QString("Optimer") : QString("Find kanter");
+  meta_->setToolTip(message);
+  if (!ok) {
+    meta_->setText(message.isEmpty()
+                       ? QString("%1 blev ikke gennemført.").arg(name)
+                       : QString("%1 fejlede: %2").arg(name, message));
+    return;
+  }
+  if (stage == JobStage::optimize) {
+    meta_->setText("Optimer er færdig — poser og kantmålinger er opdateret.");
+    return;
+  }
+  const auto c = parse_discover_summary(message.toStdString());
+  if (!c) {
+    meta_->setText("Find kanter er færdig.");
+    return;
+  }
+  const auto n = [](int v) {
+    return format_count(static_cast<qulonglong>(std::max(v, 0)));
+  };
+  // The line names what happened (new edges always, the rest when not 0);
+  // the tooltip every count.
+  const int skipped = c->skipped_existing + c->skipped_rejected;
+  QStringList line{QString("%1 nye").arg(n(c->added))};
+  if (skipped > 0)
+    line << QString("%1 sprunget over").arg(n(skipped));
+  if (c->pcm_rejected > 0)
+    line << QString("%1 afvist af PCM").arg(n(c->pcm_rejected));
+  if (c->pcm_capped > 0)
+    line << QString("%1 over PCM-loftet").arg(n(c->pcm_capped));
+  if (c->filled > 0)
+    line << QString("%1 fik en måling").arg(n(c->filled));
+  if (c->odometry_initialised > 0)
+    line << QString("%1 odometrikanter oprettet først")
+                .arg(n(c->odometry_initialised));
+  const QString prefix = QString("%1%2").arg(
+      c->dry_run ? QString("Prøvekørsel · ") : QString(), name);
+  meta_->setText(QString("%1: %2").arg(prefix, line.join(" · ")));
+  QStringList all{
+      QString("%1 foreslået, %2 matchet").arg(n(c->proposed), n(c->matched)),
+      QString("%1 nye kanter").arg(n(c->added)),
+      QString("%1 sprunget over: %2 findes, %3 afvist før")
+          .arg(n(skipped), n(c->skipped_existing), n(c->skipped_rejected)),
+      QString("%1 afvist af PCM, %2 over PCM-loftet")
+          .arg(n(c->pcm_rejected), n(c->pcm_capped)),
+      QString("%1 gemte kanter fik en måling").arg(n(c->filled))};
+  if (c->odometry_initialised > 0)
+    all << QString("%1 odometrikanter oprettet først (ingen graf)")
+               .arg(n(c->odometry_initialised));
+  meta_->setToolTip(prefix + "\n" + all.join("\n"));
+}
+
+void EditWorkspace::show_run_refused(reusex::pipeline::JobStage stage,
+                                     const QString &reason) {
+  if (reason.isEmpty())
+    return; // e.g. the unsaved-edits prompt was answered "Annullér"
+  const QString name = stage == reusex::pipeline::JobStage::optimize
+                           ? QString("Optimer")
+                           : QString("Find kanter");
+  meta_->setToolTip({});
+  meta_->setText(QString("%1 kan ikke køre: %2").arg(name, reason));
 }
 
 void EditWorkspace::activate() { graph_->activate(); }

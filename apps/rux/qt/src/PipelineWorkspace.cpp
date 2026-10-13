@@ -487,11 +487,13 @@ void PipelineWorkspace::rebuild_stages() {
     auto *n = new QLabel(stage_name_da(s));
     n->setObjectName("stageRowName");
     texts->addWidget(n);
-    const QString cmd = s == pl::JobStage::optimize ? QString("optimize")
-                        : s == pl::JobStage::graph_discover
-                            ? QString("graph discover")
-                            : QString("create %1").arg(qs(name));
-    auto *c = new QLabel(QString("rux %1").arg(cmd));
+    // The subcommand words from the CLI table (no project, no flags):
+    // `create planes`, `optimize`, `graph discover`.
+    const CliCommand words = build_cli_command(name, "", {});
+    QStringList parts;
+    for (const auto &w : words.args)
+      parts << QString::fromStdString(w);
+    auto *c = new QLabel("rux " + parts.join(' '));
     c->setObjectName("stageRowCmd");
     texts->addWidget(c);
     h->addLayout(texts, 1);
@@ -740,6 +742,15 @@ bool PipelineWorkspace::set_field(const QString &key, const QVariant &value) {
 
 bool PipelineWorkspace::is_running() const { return !job_id_.empty(); }
 
+bool PipelineWorkspace::run_stage(pl::JobStage stage) {
+  select_stage(stage);
+  return run();
+}
+
+QString PipelineWorkspace::blocked_reason() const {
+  return run_->isEnabled() || is_running() ? QString() : ready_->text();
+}
+
 bool PipelineWorkspace::run() {
   refresh_readiness();
   if (!run_->isEnabled())
@@ -754,9 +765,9 @@ bool PipelineWorkspace::run() {
     box.setWindowTitle("Ændringer i posegrafen er ikke gemt");
     box.setText(QString("%1 ændring(er) i posegrafen er ikke gemt.")
                     .arg(pending_edits_()));
-    box.setInformativeText("Optimér poser og Find kanter bruger kun de gemte "
-                           "kanter. Gem dem i Rediger først, eller kør uden "
-                           "dem.");
+    box.setInformativeText(QString("%1 bruger kun de gemte kanter. Gem dem i "
+                                   "Rediger først, eller kør uden dem.")
+                               .arg(stage_name_da(stage_)));
     auto *go = box.addButton(NavItem::escape_mnemonic("Kør uden dem"),
                              QMessageBox::AcceptRole);
     auto *stop = box.addButton(NavItem::escape_mnemonic("Annullér"),
@@ -902,6 +913,8 @@ void PipelineWorkspace::on_event(const pl::JobEvent &e) {
     emit selection_changed(selection_);
     if (ok && same_project)
       emit project_changed();
+    if (same_project)
+      emit job_result(job_stage_, ok, ok ? qs(j.result_summary) : qs(j.error));
     emit job_finished();
     rebuild_stages();
     refresh_readiness();

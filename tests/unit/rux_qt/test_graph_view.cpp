@@ -201,6 +201,34 @@ TEST_CASE("SlotPicker_TheSameFrameNeverFillsBothSlots",
   CHECK_FALSE(s.click(10, true).has_value());
 }
 
+TEST_CASE("SlotPicker_ForgetMissing_KeepsAPairWhoseFramesStillExist",
+          "[rux_qt][graphview][slots]") {
+  // A project reload (after "Optimer") keeps the pair to re-inspect it.
+  SlotPicker s;
+  s.set_pair(5, 9);
+  CHECK(s.forget_missing({1, 5, 7, 9}));
+  CHECK(s.a() == 5);
+  CHECK(s.b() == 9);
+  // Only A chosen: kept, and the next click still fills B.
+  SlotPicker half;
+  half.click(7, false);
+  CHECK(half.forget_missing({7}));
+  CHECK(half.a() == 7);
+  CHECK(half.next() == Slot::b);
+}
+
+TEST_CASE("SlotPicker_ForgetMissing_AVanishedFrameClearsThePair",
+          "[rux_qt][graphview][slots]") {
+  SlotPicker s;
+  s.set_pair(5, 9);
+  CHECK_FALSE(s.forget_missing({1, 5, 7}));
+  CHECK(s.a() == -1);
+  CHECK(s.b() == -1);
+  CHECK(s.next() == Slot::a);
+  SlotPicker none; // an empty pair survives anything
+  CHECK(none.forget_missing({}));
+}
+
 TEST_CASE("SlotPicker_SetPair_FromAnEdge", "[rux_qt][graphview][slots]") {
   SlotPicker s;
   s.click(1, false);
@@ -295,6 +323,20 @@ TEST_CASE("FitAvoidingCorner_CornerCostsOverHalfTheScale_PlainFit",
   CHECK(f.scale == Catch::Approx(20.0));
   CHECK(f.cx == Catch::Approx(1.0));
   CHECK(f.cy == Catch::Approx(2.0));
+}
+
+TEST_CASE("FitAvoidingCorner_DegenerateViewport_StaysFinite",
+          "[rux_qt][graphview][fit]") {
+  // A pane not laid out yet (0 x 0), with or without a legend, or content
+  // with no extent: every fit is 0 — no division by it.
+  for (const auto &[vw, vh, rw, rh, cw] : std::vector<std::array<double, 5>>{
+           {0, 0, 0, 0, 10}, {0, 0, 120, 40, 10}, {200, 200, 50, 40, 0}}) {
+    const FitFrame f = fit_avoiding_corner({1.0, 2.0, cw, cw}, vw, vh, rw, rh);
+    INFO(vw << " x " << vh << ", corner " << rw << " x " << rh);
+    CHECK(f.scale == Approx(1.0));
+    CHECK(f.cx == Approx(1.0));
+    CHECK(f.cy == Approx(2.0));
+  }
 }
 
 TEST_CASE("FitAvoidingCorner_ReserveFillsViewport_IgnoresIt",

@@ -250,6 +250,19 @@ AppShell::AppShell(ProjectSession &session, RecentProjects &recent,
       [this] { return edit_->pending_edits(); });
   connect(pipeline_, &PipelineWorkspace::job_started, this,
           [this](const QString &stage) { edges_->set_pipeline_busy(stage); });
+  // Rediger's "Find kanter" / "Optimer" run through this one runner (one
+  // writer lease); the reload after a run refreshes graph, list and colours.
+  connect(edit_, &EditWorkspace::run_requested, this,
+          [this](reusex::pipeline::JobStage s) {
+            if (!pipeline_->run_stage(s))
+              edit_->show_run_refused(s, pipeline_->blocked_reason());
+          });
+  connect(pipeline_, &PipelineWorkspace::job_started, edit_,
+          &EditWorkspace::set_job_running);
+  connect(pipeline_, &PipelineWorkspace::job_result, edit_,
+          &EditWorkspace::show_job_result);
+  connect(pipeline_, &PipelineWorkspace::job_finished, edit_,
+          &EditWorkspace::set_job_finished);
   connect(pipeline_, &PipelineWorkspace::job_finished, this, [this] {
     edges_->set_pipeline_busy({});
     if (after_job_) {
