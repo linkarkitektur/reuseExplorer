@@ -4,9 +4,14 @@
 
 #include "reusex/core/survey_service.hpp"
 
+#include "reusex/core/frame_projection.hpp"
 #include "reusex/core/guid.hpp"
+#include "reusex/core/instance_evidence.hpp"
 #include "reusex/core/label_semantics.hpp"
 #include "reusex/core/logging.hpp"
+#include "reusex/core/resource_view.hpp"
+
+#include <Eigen/Core>
 
 #include <algorithm>
 #include <climits>
@@ -173,6 +178,76 @@ std::size_t backfill_instance_rows(ProjectDB &db, const std::string &cloud) {
                cloud, rows.size(), classified);
   return rows.size();
 }
+
+/// Attach a view to every instance-backed part of opts.instances_cloud that
+/// has none: the best-ranked frame of one instance_evidence pass over all
+/// parts (as ruxd's PhotoEvidenceCache ranks them), region = the instance's
+/// padded bbox in it. Never overwrites a view.
+void attach_views(ProjectDB &db, const SurveySyncOptions &opts,
+                  SurveySyncReport &report) {
+  std::vector<ProjectDB::SurveyPartRecord> pending;
+  for (auto &p : db.survey_parts())
+    if (!p.view && p.instance_id && p.cloud_name == opts.instances_cloud)
+      pending.push_back(std::move(p));
+  if (pending.empty())
+    return;
+  const auto unavailable = [&](std::string_view why, bool loud) {
+    report.views_unavailable = pending.size();
+    if (loud)
+      reusex::warn("sync_survey: {}; {} part(s) get no resource image", why,
+                   pending.size());
+    else
+      reusex::info("sync_survey: {}; {} part(s) get no resource image", why,
+                   pending.size());
+  };
+  if (db.sensor_frame_ids().empty())
+    return unavailable("the project has no sensor frames", false);
+  if (!db.has_point_cloud(opts.positions_cloud))
+    return unavailable("no '" + opts.positions_cloud +
+                           "' cloud to place instances in frames (run `rux "
+                           "create clouds`)",
+                       true);
+  std::map<std::uint32_t, InstanceEvidence> evidence;
+  std::map<std::uint32_t, std::vector<Eigen::Vector3f>> points;
+  try {
+    evidence = instance_evidence(db, opts.instances_cloud, PhotoQuery{},
+                                 opts.positions_cloud);
+    points = instance_points(db, opts.instances_cloud, opts.positions_cloud);
+  } catch (const CloudMisalignedError &e) {
+    return unavailable(e.what(), true);
+  }
+  std::vector<std::pair<std::string, ResourceView>> writes;
+  for (const auto &p : pending) {
+    const auto ev = evidence.find(*p.instance_id);
+    if (ev == evidence.end() || ev->second.frames.empty()) {
+      ++report.views_unavailable;
+      continue;
+    }
+    const int frame = ev->second.frames.front().frame_id;
+    const auto pts = points.find(*p.instance_id);
+    writes.emplace_back(
+        p.code,
+        ResourceView{ViewKind::frame, frame,
+                     pts == points.end()
+                         ? std::nullopt
+                         : project_instance_bbox(db, frame, pts->second)});
+  }
+  if (!writes.empty()) {
+    ProjectDB::Transaction tx(db);
+    for (const auto &[code, view] : writes)
+      db.set_survey_part_view(code, view);
+    tx.commit();
+  }
+  report.views_attached = writes.size();
+  if (report.views_attached == 0)
+    reusex::warn("sync_survey: no sensor frame sees any of the {} part(s) "
+                 "without a resource image",
+                 report.views_unavailable);
+  else
+    reusex::info("sync_survey: attached {} resource image(s); {} part(s) "
+                 "seen by no frame keep none",
+                 report.views_attached, report.views_unavailable);
+}
 } // namespace
 
 SurveySyncReport sync_survey(ProjectDB &db, const SurveySyncOptions &opts) {
@@ -307,6 +382,8 @@ SurveySyncReport sync_survey(ProjectDB &db, const SurveySyncOptions &opts) {
                    "existing link(s) were left alone",
                    conflicting);
   }
+
+  attach_views(db, opts, report);
 
   // Parts whose instance_guid is set but no longer resolves to an instance
   // row: the instance was deleted, or recreated without carrying the guid

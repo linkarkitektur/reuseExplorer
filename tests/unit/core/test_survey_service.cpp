@@ -5,11 +5,15 @@
 // redistribution across parts, totals, and the checked sample edit.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <core/ProjectDB.hpp>
+#include <core/SensorIntrinsics.hpp>
+#include <core/resource_view.hpp>
 #include <core/survey_service.hpp>
 
 #include "../../support/temp_path.hpp"
 
+#include <opencv2/core.hpp>
 #include <pcl/point_types.h>
 
 #include <algorithm>
@@ -357,4 +361,112 @@ TEST_CASE("SyncSurvey_EmptyInstanceCloud_ReportsZeroSeen", "[survey][sync]") {
   CHECK(r.instances_backfilled == 0);
   CHECK(r.parts_created == 0);
   CHECK(db.instances("instances").empty());
+}
+
+namespace {
+reusex::core::SensorIntrinsics pinhole128() {
+  reusex::core::SensorIntrinsics i;
+  i.fx = i.fy = 100.0;
+  i.cx = i.cy = 64.0;
+  i.width = i.height = 128;
+  return i;
+}
+/// A frame at the origin looking down +z, no depth (frustum test only).
+void posed_frame(ProjectDB &db, int id) {
+  db.save_sensor_frame(id, cv::Mat(128, 128, CV_8UC3, cv::Scalar(40, 90, 160)),
+                       cv::Mat(), cv::Mat(),
+                       {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
+                       pinhole128(), static_cast<double>(id), -1);
+}
+/// Instance 1 in front of the camera (two points at z = 2), instance 2
+/// behind every camera. Both class 3.
+void seed_seen_scan(ProjectDB &db, bool with_positions = true) {
+  reusex::Cloud positions;
+  reusex::CloudL labels;
+  auto add = [&](float x, float y, float z, std::uint32_t label) {
+    pcl::PointXYZRGB p;
+    p.x = x;
+    p.y = y;
+    p.z = z;
+    positions.push_back(p);
+    pcl::Label l;
+    l.label = label;
+    labels.push_back(l);
+  };
+  add(-0.1F, 0.0F, 2.0F, 1);
+  add(0.1F, 0.0F, 2.0F, 1);
+  add(0.0F, 0.0F, -10.0F, 2);
+  if (with_positions)
+    db.save_point_cloud("cloud", positions, "test", "{}");
+  db.save_point_cloud("instances", labels, "test", "{}");
+  db.save_instances("instances", {{1, "g1", 3, 2}, {2, "g2", 3, 1}});
+}
+} // namespace
+
+TEST_CASE("SyncSurvey_AttachesBestFrameView_BackfillsAndNeverOverwrites",
+          "[survey][sync][view]") {
+  using Catch::Matchers::WithinAbs;
+  TempDB tmp;
+  ProjectDB db(tmp.path);
+  seed_seen_scan(db);
+
+  // No sensor frames yet: parts are created, no view anywhere.
+  const auto first = sync_survey(db);
+  CHECK(first.parts_created == 2);
+  CHECK(first.views_attached == 0);
+  CHECK(first.views_unavailable == 2);
+  CHECK_FALSE(db.survey_part("RX-001")->view);
+
+  // Frames arrive later (an old project): the next sync backfills.
+  posed_frame(db, 1);
+  const auto second = sync_survey(db);
+  CHECK(second.parts_created == 0);
+  CHECK(second.views_attached == 1);
+  CHECK(second.views_unavailable == 1); // instance 2 is seen by no frame
+  const auto view = db.survey_part("RX-001")->view;
+  REQUIRE(view);
+  CHECK(view->kind == ViewKind::frame);
+  CHECK(view->id == 1);
+  REQUIRE(view->region);
+  CHECK_THAT((*view->region)[0], WithinAbs(57.35 / 128.0, 1e-9));
+  CHECK_THAT((*view->region)[2], WithinAbs(14.3 / 128.0, 1e-9));
+  CHECK_FALSE(db.survey_part("RX-002")->view);
+
+  // The user's choice survives a rerun.
+  const ResourceView chosen{ViewKind::frame, 1, std::nullopt};
+  db.set_survey_part_view("RX-001", chosen);
+  const auto third = sync_survey(db);
+  CHECK(third.views_attached == 0);
+  CHECK(db.survey_part("RX-001")->view == chosen);
+}
+
+TEST_CASE("SyncSurvey_FramesButNoPositionsCloud_SucceedsWithoutViews",
+          "[survey][sync][view]") {
+  TempDB tmp;
+  ProjectDB db(tmp.path);
+  seed_seen_scan(db, /*with_positions=*/false);
+  posed_frame(db, 1);
+  const auto r = sync_survey(db);
+  CHECK(r.parts_created == 2);
+  CHECK(r.views_attached == 0);
+  CHECK(r.views_unavailable == 2);
+}
+
+TEST_CASE("SyncSurvey_MisalignedPositionsCloud_SucceedsWithoutViews",
+          "[survey][sync][view]") {
+  TempDB tmp;
+  ProjectDB db(tmp.path);
+  seed_seen_scan(db);
+  reusex::Cloud shorter; // 1 point vs. the instance cloud's 3
+  pcl::PointXYZRGB p;
+  p.x = p.y = 0.0F;
+  p.z = 2.0F;
+  shorter.push_back(p);
+  db.save_point_cloud("cloud", shorter, "test", "{}");
+  posed_frame(db, 1);
+  const auto r = sync_survey(db);
+  CHECK(r.parts_created == 2);
+  CHECK(r.views_attached == 0);
+  CHECK(r.views_unavailable == 2);
+  CHECK_FALSE(db.survey_part("RX-001")->view);
 }

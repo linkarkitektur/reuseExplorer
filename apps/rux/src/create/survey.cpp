@@ -25,6 +25,7 @@ DESCRIPTION:
   per semantic class and one bygningsdel (RX-###) per instance, each placed in
   the room most of its points fall in. Idempotent — re-running only adds
   instances that have no part yet and never overwrites edits made in the GUI.
+  Each part without a resource image gets the sensor frame that sees it best.
 
 EXAMPLES:
   rux create survey
@@ -72,12 +73,19 @@ int run_subcommand_create_survey(SubcommandCreateSurveyOptions const &opt,
             ? ", " + std::to_string(report.parts_dismissed) +
                   " deleted part(s) not re-created"
             : "";
+    const std::string views_note =
+        report.views_attached + report.views_unavailable > 0
+            ? ", " + std::to_string(report.views_attached) +
+                  " resource image(s) attached, " +
+                  std::to_string(report.views_unavailable) +
+                  " part(s) without one"
+            : "";
     spdlog::info(
         "Survey: {} type(s) and {} part(s) created, {} part(s) already "
-        "present{}{}{}",
+        "present{}{}{}{}",
         report.types_created, report.parts_created, report.parts_existing,
         report.rooms_assigned ? "" : " (no rooms assigned)", orphan_note,
-        dismissed_note);
+        dismissed_note, views_note);
     return RuxError::SUCCESS;
   } catch (const std::exception &e) {
     spdlog::error("create survey failed: {}", e.what());
