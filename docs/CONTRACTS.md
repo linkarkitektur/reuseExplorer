@@ -69,7 +69,7 @@ subcommand makes, so a stage that validates cannot then be refused when run.
 | | |
 |---|---|
 | Consumes | An external RTABMap scan file (not project data) |
-| Produces | `sensor_frames`, one row in `scans` |
+| Produces | `sensor_frames`, `pose_graph_edges` (RTABMap links; `rux import rtabmap` only), one row in `scans` |
 | Options  | import-specific CLI options (depth filters) |
 | Checks   | nothing in-project (reads an external scan) |
 
@@ -90,22 +90,44 @@ ID from any stored frame.
 referential integrity via `ON DELETE CASCADE / SET NULL` and SQLite FK
 enforcement (always on for write-mode opens).  They cannot hold references
 above the offset watermark.  The one table without a FK constraint
-(`pose_graph_edges`) is written only by `rux optimize`, which runs after all
-imports, so it is empty for any new session's ID range at import time.
+(`pose_graph_edges`) only receives edges for the importing session's own
+(offset) id range.
 
 **Re-import guard.** Importing the same `source_path` a second time creates a
 second scan by design (e.g. re-processing after editing the RTABMap DB).
 A `WARN` is logged; the import is not blocked.
 
-### `optimize` / `register` (`rux optimize`, `rux register`)
+**Pose graph.** `rux import rtabmap` also stores RTABMap's graph links in
+`pose_graph_edges` (Neighbor/NeighborMerged → `odometry`, Global/LocalSpace/
+LocalTime/User closures → `loop_closure`, source `rtabmap`, ids offset like the
+frames) and each imported pose in `sensor_frames.initial_transform`.
 
-Refine the stored per-frame sensor poses in place (plane-graph optimization or
-joint pairwise registration).
+### `graph_init` (`rux graph init`)
+
+Snapshot each frame's current pose into `sensor_frames.initial_transform` and
+store one odometry edge per consecutive pair of frames of each scan (source
+`odometry_init`). `rux optimize` runs it automatically when the graph has no
+odometry edge with a measurement.
 
 | | |
 |---|---|
 | Consumes | `sensor_frames` |
-| Produces | `sensor_frames` (updated poses) |
+| Produces | `pose_graph_edges` |
+| Options  | `InitPoseGraphOptions` (`libs/reusex/include/slam/pose_graph.hpp`) |
+| Checks   | ≥2 stored frames; refuses when odometry edges exist unless `--force` |
+
+### `optimize` / `register` (`rux optimize`, `rux register`)
+
+Solve the stored pose graph: seeds from `sensor_frames.initial_transform`, one
+factor per active `pose_graph_edges` row, writes poses to
+`sensor_frames.transform` and residual/deviation/seed-disagreement back to
+every edge. Repeatable; never adds, removes or re-statuses edges (`rux
+register`: joint pairwise registration, writes poses only).
+
+| | |
+|---|---|
+| Consumes | `sensor_frames` |
+| Produces | `sensor_frames` (updated poses), `pose_graph_edges` (per-edge metrics; `optimize` only) |
 | Options  | `PlaneGraphOptions` / `JprParams` (`libs/reusex/include/slam/`) |
 | Checks   | ≥2 stored frames, ≥2 of them carrying depth (refinement is depth-driven) |
 
@@ -376,7 +398,7 @@ rasterizer.
 ## Typical pipeline order
 
 ```
-import → (optimize|register) → clouds → planes → rooms → mesh → texture
+import → [graph_init] → (optimize|register) → clouds → planes → rooms → mesh → texture
                                   ↘ annotate → project → instances → windows
                                   ↘ gsplat (leaf: produces `splat`)
 ```

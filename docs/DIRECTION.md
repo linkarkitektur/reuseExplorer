@@ -190,6 +190,23 @@ changelog — that history is the point of keeping it in the repo.
 
 ## Direction changelog
 
+- **2026-10-13** — **Pose graph: the stored graph is the source of truth;
+  `rux optimize` is repeatable** ([spec](superpowers/specs/2026-10-13-pose-graph-editor-design.md)).
+  `pose_graph_edges` (schema v27) stores each edge's measurement, information,
+  source (`rtabmap | odometry_init | orb | panorama | file | icp | manual |
+  legacy`) and status (`auto | confirmed | rejected`; a rejection is a
+  tombstone), and `sensor_frames.initial_transform` snapshots the poses
+  optimize seeds from. `rux optimize` solves exactly the active stored edges,
+  writes poses plus per-edge residual/deviation, and never replaces the edge
+  set, so re-running gives the same poses instead of compounding. Odometry
+  comes from RTABMap links on `rux import rtabmap`, or from `rux graph init`
+  (run automatically when missing). **CLI break:** `--loop-closure`,
+  `--loop-*` (except `--loop-trust*`), `--use-panoramas`, `--pano-*` and
+  `--loop-edges*` moved from `rux optimize` to `rux graph discover`;
+  optimize refuses them with a pointer. Chaining `rux register` before
+  `rux optimize` now needs `rux graph init --force` in between (optimize
+  warns when it sees that order).
+
 - **2026-10-12** — **Deployment: Supabase auth, Docker/GHCR fleet, CPU only.**
   `ruxd`'s own username/password accounts (argon2id, `ruxd admin create-user`
   / `set-password` / `disable-user`, `POST /auth/login`) are gone. Accounts

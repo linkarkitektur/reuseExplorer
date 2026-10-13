@@ -163,8 +163,8 @@ rux import photos <path>               # Manual survey photos
 rux import csv|materialepas <path>     # Element / material passport data
 
 # Refine the stored per-frame sensor poses
-rux optimize                           # Plane-landmark pose graph
-rux optimize --loop-closure            # ...plus wide-baseline loop edges
+rux optimize                           # Plane-landmark pose graph (stored graph)
+rux graph discover && rux optimize     # ...plus wide-baseline loop edges
 rux register                           # Joint pairwise registration
 rux align 360                          # Content-based 360 panorama alignment
 

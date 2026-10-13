@@ -36,6 +36,7 @@ namespace reusex::core {
 /// is asserted by tests/unit/core/test_stage_contract.cpp.
 enum class PipelineStage {
   import,     ///< extract raw sensor frames from a scan
+  graph_init, ///< snapshot initial poses + odometry edges (rux graph init)
   optimize,   ///< refine per-frame sensor poses (a.k.a. register)
   clouds,     ///< back-project sensor frames into "cloud" + "normals"
   annotate,   ///< ML semantic labelling of the stored frames

@@ -437,10 +437,14 @@ and deleted the shims. `include/geometry/` now holds only the real
 - `quality_metrics.hpp` / `accuracy_metrics.hpp`: backing `rux analyze`
 
 **slam** (`include/slam/`):
-- `PlaneGraphOptimizer.hpp`: plane-landmark pose graph (GTSAM), `rux optimize`.
-  Also hosts the optional wide-baseline loop-closure front-end (ORB + depth →
-  RANSAC), enabled with `--loop-closure`; run `rux optimize --help` for the
-  current flag list rather than trusting a doc.
+- `PlaneGraphOptimizer.hpp`: plane-landmark pose graph (GTSAM).
+  Solves the stored pose graph (`pose_graph_edges`, seeded from
+  `sensor_frames.initial_transform`; `optimize_graph`); `slam/pose_graph.hpp`
+  is `rux graph init`, `slam/loop_candidates.hpp` the ORB / panorama / file
+  loop front-ends.
+- `pose_graph_conventions.hpp`: stored (`sensor_frames.transform`) ↔ optical
+  edge transforms and information; `core/pose_graph.hpp` holds the schema
+  vocabulary and SE(3) helpers.
 - `JointPairwiseRegistration.hpp`: `rux register`
 - `frame_pair_icp.hpp`: depth-cloud ICP between two stored frames, behind
   the Qt client's pair strip and (from the `ruxd` repo) the web GUI's
@@ -526,7 +530,13 @@ tree — if a doc mentions `RTABMapDatabase`, that doc is stale.
   category or individually, read via `resource_templates()`
   (`core/resource_templates.hpp`). Schema v26 adds the tombstone table
   `survey_dismissed_instances`: a deleted scan-backed survey part's instance
-  guid, which `sync_survey` skips so the part is not re-created
+  guid, which `sync_survey` skips so the part is not re-created. Schema v27
+  makes `pose_graph_edges` the stored pose graph (measurement, GTSAM-order
+  information, source, status, metrics; canonical `from < to`,
+  `UNIQUE(from, to, type)`; `upsert_pose_graph_edge` /
+  `set_pose_graph_edge_status` / `update_pose_graph_edge_metrics`), adds
+  `sensor_frames.initial_transform` and `project_settings` (`setting()` /
+  `set_setting()`)
 - Migrating schema; `LATEST_SCHEMA_VERSION` is defined in
   `src/core/ProjectDB.cpp` — read it there rather than trusting a doc (it moves
   most releases)
@@ -595,7 +605,8 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | `align` | `360` (content-based panorama pose refinement) | `src/align/` |
 | `edit` | `downsample`, `perturb-poses` (drift synthesis, #338) | `src/edit/` |
 | `analyze` | `quality`, `accuracy` | `src/analyze/` |
-| `optimize` | — (plane-landmark pose graph) | `src/optimize.cpp` |
+| `optimize` | — (solves the stored pose graph) | `src/optimize.cpp` |
+| `graph` | `init` (stored pose graph) | `src/graph/` |
 | `register` | — (joint pairwise registration) | `src/register.cpp` |
 | `validate` | — (`--stage`, `--json`) | `src/validate.cpp` |
 | `get` / `set` / `del` | path-based DB access (`src/database/*_router.cpp`) | `src/get.cpp`, `src/set.cpp`, `src/del.cpp` |
@@ -606,7 +617,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | `assemble` | — (multi-scan assembly) | `src/assemble.cpp` |
 
 With **no** subcommand, `rux` launches the Qt client (help without a display).
-`create`, `import`, `export`, `edit`, `analyze`, `align` all
+`create`, `import`, `export`, `edit`, `analyze`, `align`, `graph` all
 `require_subcommand(1)`.
 Global flags: `-v/-vv/-vvv`, `-V/--version`, `-L/--license`, `-D/--visualize`,
 `-p/--project <path.rux>` (defaults to `./project.rux`).

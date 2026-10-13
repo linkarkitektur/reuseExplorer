@@ -20,6 +20,9 @@ const std::vector<Artifact> &artifacts() {
        "per-frame color/depth/confidence/pose/intrinsics rows"},
       {"segmentation_images", ArtifactKind::table, Alignment::none,
        "per-frame 2D semantic label images"},
+      {"pose_graph_edges", ArtifactKind::table, Alignment::none,
+       "the stored pose graph: odometry and loop edges with measurements, "
+       "status and solve metrics (schema v27)"},
       {"cloud", ArtifactKind::point_cloud, Alignment::per_point,
        "the fused scan cloud (PointXYZRGB)"},
       {"normals", ArtifactKind::point_cloud, Alignment::per_point,
@@ -69,7 +72,17 @@ const std::vector<StageContract> &contracts() {
        "extract raw sensor frames from an external scan",
        // Reads an external scan file, so it has no in-project prerequisite.
        {},
-       {"sensor_frames"}},
+       // RTABMap links become pose_graph_edges (rtabmap only).
+       {"sensor_frames", "pose_graph_edges"}},
+
+      {PipelineStage::graph_init,
+       "graph_init",
+       {},
+       "rux graph init",
+       "snapshot the initial poses and freeze odometry edges between "
+       "consecutive frames",
+       {{{"sensor_frames"}, /*min_rows=*/2}},
+       {"pose_graph_edges"}},
 
       {PipelineStage::optimize,
        "optimize",
@@ -79,7 +92,7 @@ const std::vector<StageContract> &contracts() {
        // Both pose refiners are depth-driven and need two frames to have any
        // relative pose to refine at all.
        {{{"sensor_frames"}, /*min_rows=*/2, /*min_depth_frames=*/2}},
-       {"sensor_frames"}},
+       {"sensor_frames", "pose_graph_edges"}},
 
       {PipelineStage::clouds,
        "clouds",
