@@ -9,8 +9,10 @@
 
 #include "core/ProjectDB.hpp"
 #include "core/logging.hpp"
+#include "core/pose_graph.hpp"
 #include "geometry/transform_utils.hpp"
 #include "slam/LoopClosure.hpp"
+#include "slam/pose_graph.hpp"
 
 #include <Eigen/Geometry>
 
@@ -299,6 +301,36 @@ PoseDriftResult perturb_sensor_poses(ProjectDB &db, const PoseDriftOptions &opt,
     db.update_sensor_frame_pose(posed_ids[k], to_array16_double(poses[k]));
   core::info("PoseDrift: wrote {} drifted poses back to the database",
              posed_ids.size());
+
+  // The drifted trajectory stands in for a new INPUT capture: `rux optimize`
+  // seeds from initial_transform (spec 2026-10-13 §4.3), and odometry derived
+  // from the old poses would quietly undo the drift.
+  namespace pg = core::pose_graph;
+  const auto stored = db.list_pose_graph_edges();
+  const bool has_init_edges =
+      std::any_of(stored.begin(), stored.end(), [](const auto &e) {
+        return e.source == pg::kSourceOdometryInit &&
+               e.status != pg::kStatusRejected;
+      });
+  const auto foreign =
+      std::count_if(stored.begin(), stored.end(), [](const auto &e) {
+        return e.edge_type == pg::kTypeOdometry &&
+               e.source != pg::kSourceOdometryInit &&
+               e.status != pg::kStatusRejected && e.transform.has_value();
+      });
+  if (has_init_edges) {
+    slam::init_pose_graph(db, {.force = true});
+  } else {
+    for (size_t k = 0; k < posed_ids.size(); ++k)
+      db.set_initial_pose(posed_ids[k], to_array16_double(poses[k]));
+  }
+  if (foreign > 0)
+    core::warn("PoseDrift: {} stored odometry edges (e.g. from 'rux import "
+               "rtabmap') were measured on the undrifted capture and will "
+               "pull the solve back to it; reject them ('rux graph prune "
+               "--source rtabmap --type odometry') for an honest drift "
+               "benchmark",
+               foreign);
   return r;
 }
 
