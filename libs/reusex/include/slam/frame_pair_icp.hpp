@@ -10,6 +10,7 @@
 // surfaces report the same numbers for the same pair.
 
 #include <array>
+#include <optional>
 
 namespace reusex {
 class ProjectDB;
@@ -27,6 +28,11 @@ struct FramePairIcpOptions {
   int max_iterations = 50;           ///< STANDARDS §6: a deterministic bound
   double max_correspondence_m = 0.5; ///< initial correspondence window
   float inlier_threshold_m = 0.05f;  ///< gate for inlier_fraction
+  /// World-space correction applied to the "from" cloud before ICP starts
+  /// (row-major 4x4), e.g. a manual alignment from the pair panel. The
+  /// result's world_delta INCLUDES it. nullopt = identity (seeded by the
+  /// stored poses alone).
+  std::optional<std::array<double, 16>> initial_guess;
 };
 
 struct FramePairIcpResult {
@@ -52,6 +58,11 @@ struct FramePairIcpResult {
   bool converged = false;
   int source_points = 0; ///< back-projected points of the "from" frame
   int target_points = 0; ///< back-projected points of the "to" frame
+  /// pose_graph_edges.transform for the edge (from_id -> to_id) in the
+  /// sensor_frames.transform convention: (world_delta * T_from)^-1 * T_to,
+  /// i.e. relative_pose^-1.
+  std::array<double, 16> edge_transform{1, 0, 0, 0, 0, 1, 0, 0,
+                                        0, 0, 1, 0, 0, 0, 0, 1};
 };
 
 /// Back-project each frame's stored depth into world space (its stored pose
@@ -65,5 +76,11 @@ struct FramePairIcpResult {
 FramePairIcpResult refine_frame_pair_icp(const ProjectDB &db, int from_id,
                                          int to_id,
                                          const FramePairIcpOptions &opts = {});
+
+/// Diagonal 6x6 information (GTSAM order rx, ry, rz, tx, ty, tz, row-major)
+/// for a pose-graph edge measured by ICP: sigma_t = max(fitness, 0.01) m and
+/// sigma_r = max(fitness / 2.0, 0.005) rad (the RMS point error over a ~2 m
+/// lever arm).
+std::array<double, 36> icp_edge_information(const FramePairIcpResult &result);
 
 } // namespace reusex::slam

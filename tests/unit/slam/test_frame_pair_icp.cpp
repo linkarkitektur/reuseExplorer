@@ -19,6 +19,9 @@
 
 #include "../../support/temp_path.hpp"
 
+#include <Eigen/Core>
+
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -189,4 +192,64 @@ TEST_CASE("FramePairIcp_ShiftedFrame_ReportsTheCameraCentreShift",
   CHECK(r.rotation_deg < 1.0);
   CHECK(r.source_center_shift_m == Catch::Approx(0.05).margin(0.01));
   CHECK(r.world_delta[11] == Catch::Approx(0.05).margin(0.01));
+}
+
+TEST_CASE("FramePairIcp_InitialGuess_IsTheStartingPoint", "[slam][icp]") {
+  // Both frames at the identity pose; "from" sees a plane at 1.0 m, "to" at
+  // 1.1 m, so the correct world correction of "from" is +0.1 m in z. With a
+  // 2 cm correspondence window ICP cannot find it from identity, but starts
+  // right on it from the guess.
+  const TempPath project("frame_pair_icp_guess");
+  const auto intr = make_intr();
+  {
+    reusex::ProjectDB db(project.path, /*readOnly=*/false);
+    db.save_sensor_frame(1, dummy_color(), flat_depth(1000), full_confidence(),
+                         identity_pose(), intr, 0.0);
+    db.save_sensor_frame(2, dummy_color(), flat_depth(1100), full_confidence(),
+                         identity_pose(), intr, 1.0);
+  }
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+
+  reusex::slam::FramePairIcpOptions o;
+  o.max_correspondence_m = 0.02;
+  o.max_iterations = 5;
+  const auto no_guess = reusex::slam::refine_frame_pair_icp(db, 1, 2, o);
+  CHECK(std::abs(no_guess.world_delta[11]) < 0.01);
+
+  o.initial_guess =
+      std::array<double, 16>{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0.1, 0, 0, 0, 1};
+  const auto guessed = reusex::slam::refine_frame_pair_icp(db, 1, 2, o);
+  CHECK(guessed.converged);
+  CHECK(std::abs(guessed.world_delta[11] - 0.1) < 0.01);
+  CHECK(guessed.fitness < 0.03);
+  // edge (1 -> 2) = (delta * T_1)^-1 * T_2 = translate(0, 0, -0.1)
+  CHECK(std::abs(guessed.edge_transform[11] + 0.1) < 0.01);
+}
+
+TEST_CASE("FramePairIcp_EdgeTransform_IsInverseOfRelativePose", "[slam][icp]") {
+  const TempPath project("frame_pair_icp_edge_transform");
+  const auto intr = make_intr();
+  {
+    reusex::ProjectDB db(project.path, /*readOnly=*/false);
+    db.save_sensor_frame(1, dummy_color(), flat_depth(1000), full_confidence(),
+                         identity_pose(), intr, 0.0);
+    db.save_sensor_frame(2, dummy_color(), flat_depth(1000), full_confidence(),
+                         translate_pose(0.15), intr, 1.0);
+  }
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  const auto r = reusex::slam::refine_frame_pair_icp(db, 1, 2);
+  Eigen::Matrix4d rel, edge;
+  for (int i = 0; i < 16; ++i) {
+    rel(i / 4, i % 4) = r.relative_pose[static_cast<size_t>(i)];
+    edge(i / 4, i % 4) = r.edge_transform[static_cast<size_t>(i)];
+  }
+  CHECK((edge - rel.inverse()).norm() < 1e-9);
+
+  const auto info = reusex::slam::icp_edge_information(r);
+  for (int k = 0; k < 6; ++k)
+    CHECK(info[static_cast<size_t>(k * 6 + k)] > 0.0);
+  CHECK(info[1] == 0.0); // diagonal
+  // translation precision = 1 / max(fitness, 0.01)^2
+  const double st = std::max(r.fitness, 0.01);
+  CHECK(info[21] == Catch::Approx(1.0 / (st * st)));
 }

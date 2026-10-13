@@ -117,7 +117,13 @@ FramePairIcpResult refine_frame_pair_icp(const ProjectDB &db, int from_id,
   icp.setEuclideanFitnessEpsilon(1e-4);
 
   CloudT aligned;
-  icp.align(aligned);
+  if (opts.initial_guess) {
+    const Eigen::Matrix4f guess =
+        Eigen::Map<const RowMajor4d>(opts.initial_guess->data()).cast<float>();
+    icp.align(aligned, guess);
+  } else {
+    icp.align(aligned);
+  }
 
   const Eigen::Matrix4d delta = icp.getFinalTransformation().cast<double>();
   FramePairIcpResult result;
@@ -162,12 +168,25 @@ FramePairIcpResult refine_frame_pair_icp(const ProjectDB &db, int from_id,
         std::acos(std::clamp((tr - 1.0) / 2.0, -1.0, 1.0)) * 180.0 / M_PI;
   }
 
+  const Eigen::Matrix4d edge = rel.inverse();
   for (int i = 0; i < 4; ++i)
     for (int j = 0; j < 4; ++j) {
       result.relative_pose[static_cast<size_t>(i * 4 + j)] = rel(i, j);
       result.world_delta[static_cast<size_t>(i * 4 + j)] = delta(i, j);
+      result.edge_transform[static_cast<size_t>(i * 4 + j)] = edge(i, j);
     }
   return result;
+}
+
+std::array<double, 36> icp_edge_information(const FramePairIcpResult &result) {
+  const double st = std::max(result.fitness, 0.01);
+  const double sr = std::max(result.fitness / 2.0, 0.005);
+  std::array<double, 36> info{};
+  for (int k = 0; k < 3; ++k) {
+    info[static_cast<size_t>(k * 6 + k)] = 1.0 / (sr * sr);
+    info[static_cast<size_t>((k + 3) * 6 + (k + 3))] = 1.0 / (st * st);
+  }
+  return info;
 }
 
 } // namespace reusex::slam
