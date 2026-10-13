@@ -17,6 +17,7 @@
 #include <rux_qt/RecentProjects.hpp>
 #include <rux_qt/SceneView.hpp>
 #include <rux_qt/TableBrowser.hpp>
+#include <rux_qt/Theme.hpp>
 #include <rux_qt/Viewer3DWorkspace.hpp>
 #include <rux_qt/background.hpp>
 
@@ -34,6 +35,7 @@
 #include <QTimer>
 
 #include <cstdio>
+#include <cstdlib>
 #include <optional>
 #include <string>
 
@@ -395,6 +397,55 @@ QWidget *make_posegraf_click(const PageContext &ctx) {
   return shell;
 }
 
+/// Reproduces "the nodes disappear when zoomed in" (spec §5.2): zoom about
+/// the middle node by setting the view transform directly (no clamp), and
+/// count the pixels of the node's own colour within 6 px of where it should
+/// be. stderr gets one line per level; 0 means the node vanished.
+QWidget *make_posegraf_zoom(const PageContext &ctx) {
+  auto *shell = make_pg(ctx);
+  auto *probe = new QTimer(shell);
+  probe->setInterval(50);
+  QObject::connect(probe, &QTimer::timeout, shell, [shell, probe] {
+    PoseGraphWorkspace *pg = shell->posegraph();
+    PoseGraphView *v = pg->view();
+    if (!shell->isVisible() || pg->node_count() == 0)
+      return;
+    probe->stop();
+    const QPointF at = pg->node_scene_pos(pg->node_count() / 2);
+    const QColor ink = theme().color("--color-on-chrome-muted");
+    v->fit();
+    const double fit_px_per_unit = 1.0 / v->units_per_pixel();
+    for (const double level : {0.0625, 0.25, 1.0, 4.0, 16.0, 64.0, 256.0,
+                               1024.0, 4096.0, 16384.0, 65536.0}) {
+      v->setTransform(QTransform::fromScale(fit_px_per_unit * level,
+                                            fit_px_per_unit * level));
+      v->centerOn(at);
+      QApplication::processEvents();
+      const QPixmap shot = v->viewport()->grab();
+      const QImage img = shot.toImage();
+      const double dpr = shot.devicePixelRatio();
+      const QPoint c = v->mapFromScene(at);
+      int lit = 0;
+      for (int dy = -6; dy <= 6; ++dy)
+        for (int dx = -6; dx <= 6; ++dx) {
+          const QPoint p((c.x() + dx) * dpr, (c.y() + dy) * dpr);
+          if (!img.rect().contains(p))
+            continue;
+          const QColor px = img.pixelColor(p);
+          lit += std::abs(px.red() - ink.red()) +
+                     std::abs(px.green() - ink.green()) +
+                     std::abs(px.blue() - ink.blue()) <
+                 40;
+        }
+      std::fprintf(
+          stderr, "posegraf-zoom: x%g upp=%.3g centre=(%d,%d) node-pixels=%d\n",
+          level, v->units_per_pixel(), c.x(), c.y(), lit);
+    }
+  });
+  probe->start();
+  return shell;
+}
+
 QWidget *make_pipeline(const PageContext &ctx) {
   auto *shell = make_shell(ctx, Open::project);
   shell->show_page(Workspace::pipeline);
@@ -536,6 +587,10 @@ void register_shell_pages() {
   register_page({"posegraf-click",
                  "Posegraf: klik på en kant åbner Database med A og B",
                  make_posegraf_click});
+  register_page({"posegraf-zoom",
+                 "Posegraf: zoomer ind på én node og tæller dens pixels "
+                 "(reproduktion af forsvindende noder)",
+                 make_posegraf_zoom});
   register_page({"pipeline",
                  "Pipeline: planer med ændrede parametre og rux-kommandoen",
                  make_pipeline});

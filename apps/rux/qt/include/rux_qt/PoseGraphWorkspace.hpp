@@ -72,6 +72,11 @@ class PoseGraphWorkspace : public QWidget {
   const Selection &selection() const { return selection_; }
   PoseGraphView *view() const { return view_; }
   int node_count() const { return static_cast<int>(nodes_.size()); }
+  /// Scene position of node @p index (the gallery's zoom harness).
+  QPointF node_scene_pos(int index) const {
+    const auto &n = nodes_[static_cast<std::size_t>(index)];
+    return {n.x, -n.y};
+  }
   /// Click programmatically at a node / an edge (the gallery).
   void click_node(int id, bool as_b = false);
   void click_edge(int from, int to);

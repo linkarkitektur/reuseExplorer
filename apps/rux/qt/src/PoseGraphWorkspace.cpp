@@ -6,6 +6,7 @@
 #include <rux_qt/ProjectSession.hpp>
 #include <rux_qt/Theme.hpp>
 #include <rux_qt/background.hpp>
+#include <rux_qt/graph_view.hpp>
 #include <rux_qt/widgets.hpp>
 
 #include <reusex/core/ProjectDB.hpp>
@@ -21,6 +22,7 @@
 #include <QLocale>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPixmap>
 #include <QPointer>
 #include <QPushButton>
 #include <QScrollBar>
@@ -60,6 +62,9 @@ int label_slots() {
   return ok && n > 0 ? n : 8;
 }
 
+// "Nodes disappear when zoomed in" (posegraf-zoom): bounds_ was grown with
+// QRectF::united(zero-size rect), which ignores null rects, so the item's
+// bounding rect was the LAST node +-1 m and the scene culled it elsewhere.
 /// Every node in one item: thousands of QGraphicsEllipseItems would make
 /// the scene slow to build and to hit-test, and the dots must keep their
 /// size on screen at every zoom.
@@ -68,25 +73,46 @@ class NodesItem : public QGraphicsItem {
   NodesItem(const std::vector<GraphNode> &nodes, const std::vector<int> &scans)
       : scans_(scans) {
     points_.reserve(nodes.size());
+    double x0 = 0, y0 = 0, x1 = 0, y1 = 0;
     for (const auto &n : nodes) {
       const QPointF p(n.x, -n.y);
+      if (points_.empty()) {
+        x0 = x1 = p.x();
+        y0 = y1 = p.y();
+      }
+      x0 = std::min(x0, p.x());
+      x1 = std::max(x1, p.x());
+      y0 = std::min(y0, p.y());
+      y1 = std::max(y1, p.y());
       points_.push_back(p);
-      bounds_ = bounds_.isNull() ? QRectF(p, QSizeF(0, 0))
-                                 : bounds_.united(QRectF(p, QSizeF(0, 0)));
     }
+    bounds_ = QRectF(QPointF(x0, y0), QPointF(x1, y1));
     // The dots are screen-sized: at a far zoom a dot is wider than any fixed
-    // pad in metres. A tenth of the graph covers every zoom fit() allows.
+    // pad in metres. A tenth of the graph covers every zoom the wheel allows
+    // (zoom_limits: out to four graphs across the viewport).
     pad_ = 0.1 * std::max(bounds_.width(), bounds_.height()) + 1.0;
+    setFlag(ItemUsesExtendedStyleOption);
     setZValue(2);
   }
   QRectF boundingRect() const override {
     return bounds_.adjusted(-pad_, -pad_, pad_, pad_);
   }
-  void paint(QPainter *p, const QStyleOptionGraphicsItem *,
+  void paint(QPainter *p, const QStyleOptionGraphicsItem *opt,
              QWidget *) override {
-    // One drawPoints per scan with a round, cosmetic (pixel-wide) pen: no
-    // per-node ellipse path, and the size is the same at every zoom.
+    // Device-space dots of a fixed pixel size: each exposed node is mapped
+    // to pixels and gets a blit of one pre-rendered antialiased disc per
+    // colour. Neither a scene-space drawPoints (its point is a 1/63-unit
+    // stroke, so the dot's shape follows the zoom) nor a device-space one
+    // (the raster engine draws a wide cosmetic point as a sliver, round cap
+    // ignored) is a dot, and thousands of drawEllipse calls cost ~50 % more.
+    const QTransform to_device = p->worldTransform();
+    const double r = kNodePx;
+    const QRectF visible = to_device.mapRect(opt->exposedRect)
+                               .adjusted(-2 * r, -2 * r, 2 * r, 2 * r);
+    const double dpr = p->device() ? p->device()->devicePixelRatioF() : 1.0;
     const int nslots = label_slots();
+    p->save();
+    p->resetTransform();
     std::size_t begin = 0;
     while (begin < points_.size()) {
       const int scan = scans_.empty() ? 0 : scans_[begin];
@@ -95,20 +121,47 @@ class NodesItem : public QGraphicsItem {
         ++end;
       // The first scan in the chrome's muted ink, so the coloured edges read
       // on top; further scans take the --label-* scale in turn.
-      QPen pen(scan <= 1
-                   ? theme().color("--color-on-chrome-muted")
-                   : theme().color(QString("--label-%1").arg(scan % nslots)),
-               2.0 * kNodePx, Qt::SolidLine, Qt::RoundCap);
-      pen.setCosmetic(true);
-      p->setPen(pen);
-      p->drawPoints(points_.data() + begin, static_cast<int>(end - begin));
+      const QPixmap &dot = disc(
+          scan <= 1 ? theme().color("--color-on-chrome-muted")
+                    : theme().color(QString("--label-%1").arg(scan % nslots)),
+          dpr);
+      const QPointF half(dot.width() / dpr / 2.0, dot.height() / dpr / 2.0);
+      for (std::size_t i = begin; i < end; ++i) {
+        const QPointF d = to_device.map(points_[i]);
+        if (visible.contains(d))
+          p->drawPixmap(d - half, dot);
+      }
       begin = end;
     }
+    p->restore();
   }
 
     private:
   std::vector<QPointF> points_;
   std::vector<int> scans_;
+  /// One node disc of @p colour at @p dpr, rendered once and kept: the
+  /// cache key follows a theme switch.
+  const QPixmap &disc(const QColor &colour, double dpr) {
+    const auto key = std::make_pair(colour.rgba(), dpr);
+    auto it = discs_.find(key);
+    if (it == discs_.end()) {
+      const int side = static_cast<int>(std::ceil((2.0 * kNodePx + 2.0) * dpr));
+      QPixmap pm(side, side);
+      pm.setDevicePixelRatio(dpr);
+      pm.fill(Qt::transparent);
+      QPainter dp(&pm);
+      dp.setRenderHint(QPainter::Antialiasing);
+      dp.setPen(Qt::NoPen);
+      dp.setBrush(colour);
+      const double c = side / dpr / 2.0;
+      dp.drawEllipse(QPointF(c, c), kNodePx, kNodePx);
+      dp.end();
+      it = discs_.emplace(key, std::move(pm)).first;
+    }
+    return it->second;
+  }
+
+  std::map<std::pair<QRgb, double>, QPixmap> discs_;
   QRectF bounds_;
   double pad_ = 1.0;
 };
@@ -253,8 +306,13 @@ double PoseGraphView::units_per_pixel() const {
 }
 
 void PoseGraphView::wheelEvent(QWheelEvent *e) {
-  const double f = std::pow(1.0015, e->angleDelta().y());
-  scale(f, f);
+  const double want = std::pow(1.0015, e->angleDelta().y());
+  const double extent = std::max(content_.width(), content_.height());
+  const int px = std::max(viewport()->width(), viewport()->height());
+  const double f =
+      clamp_zoom_factor(units_per_pixel(), want, zoom_limits(extent, px));
+  if (f != 1.0)
+    scale(f, f);
   user_view_ = true;
   e->accept();
 }
