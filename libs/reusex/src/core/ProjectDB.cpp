@@ -3272,6 +3272,77 @@ class ProjectDB::Impl {
     return std::abs(det) > kDetEps;
   }
 
+  void setInitialPose(int nodeId, const std::array<double, 16> &pose) {
+    checkWritable();
+    if (!hasInitialTransform)
+      throw std::runtime_error("set_initial_pose: project schema predates "
+                               "v27; open it read-write once to migrate");
+    if (!core::pose_graph::is_rigid_transform(pose))
+      throw std::invalid_argument("set_initial_pose: frame " +
+                                  std::to_string(nodeId) +
+                                  ": not a rigid transform");
+    sqlite3_stmt *s = prepare_or_throw(
+        db, "UPDATE sensor_frames SET initial_transform = ? WHERE node_id = ?;",
+        "set_initial_pose");
+    StmtGuard guard(s);
+    sqlite3_bind_blob(s, 1, pose.data(), 16 * sizeof(double), SQLITE_TRANSIENT);
+    sqlite3_bind_int(s, 2, nodeId);
+    if (sqlite3_step(s) != SQLITE_DONE)
+      throw std::runtime_error("set_initial_pose: " +
+                               std::string(sqlite3_errmsg(db)));
+    if (sqlite3_changes(db) == 0)
+      throw std::runtime_error("set_initial_pose: no sensor frame with "
+                               "node_id " +
+                               std::to_string(nodeId));
+  }
+
+  std::optional<std::array<double, 16>> initialPose(int nodeId) const {
+    if (!hasInitialTransform)
+      return std::nullopt;
+    sqlite3_stmt *s = prepare_or_throw(
+        db, "SELECT initial_transform FROM sensor_frames WHERE node_id = ?;",
+        "initial_pose");
+    StmtGuard guard(s);
+    sqlite3_bind_int(s, 1, nodeId);
+    if (sqlite3_step(s) != SQLITE_ROW)
+      return std::nullopt;
+    auto pose = optionalBlob<16>(s, 0);
+    if (!pose || !core::pose_graph::is_rigid_transform(*pose))
+      return std::nullopt;
+    return pose;
+  }
+
+  std::optional<std::string> getSetting(std::string_view key) const {
+    if (!hasSettingsTable)
+      return std::nullopt;
+    sqlite3_stmt *s = prepare_or_throw(
+        db, "SELECT value FROM project_settings WHERE key = ?;", "setting");
+    StmtGuard guard(s);
+    const std::string k(key);
+    sqlite3_bind_text(s, 1, k.c_str(), -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(s) != SQLITE_ROW)
+      return std::nullopt;
+    return textOr(s, 0, "");
+  }
+
+  void putSetting(std::string_view key, std::string_view value) {
+    checkWritable();
+    if (!hasSettingsTable)
+      throw std::runtime_error("set_setting: project schema predates v27");
+    sqlite3_stmt *s = prepare_or_throw(
+        db,
+        "INSERT INTO project_settings (key, value) VALUES (?1, ?2) "
+        "ON CONFLICT (key) DO UPDATE SET value = excluded.value;",
+        "set_setting");
+    StmtGuard guard(s);
+    const std::string k(key), v(value);
+    sqlite3_bind_text(s, 1, k.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(s, 2, v.c_str(), -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(s) != SQLITE_DONE)
+      throw std::runtime_error("set_setting: " +
+                               std::string(sqlite3_errmsg(db)));
+  }
+
   reusex::core::SensorIntrinsics getSensorFrameIntrinsics(int nodeId) const {
     const char *sql =
         "SELECT camera_model FROM sensor_frames WHERE node_id = ?;";
@@ -7235,6 +7306,24 @@ std::array<double, 16> ProjectDB::sensor_frame_pose(int nodeId) const {
 
 bool ProjectDB::has_sensor_frame_pose(int nodeId) const {
   return impl_->hasSensorFramePose(nodeId);
+}
+
+void ProjectDB::set_initial_pose(int nodeId,
+                                 const std::array<double, 16> &pose) {
+  impl_->setInitialPose(nodeId, pose);
+}
+std::optional<std::array<double, 16>>
+ProjectDB::initial_pose(int nodeId) const {
+  return impl_->initialPose(nodeId);
+}
+bool ProjectDB::has_initial_pose(int nodeId) const {
+  return impl_->initialPose(nodeId).has_value();
+}
+std::optional<std::string> ProjectDB::setting(std::string_view key) const {
+  return impl_->getSetting(key);
+}
+void ProjectDB::set_setting(std::string_view key, std::string_view value) {
+  impl_->putSetting(key, value);
 }
 
 core::SensorIntrinsics ProjectDB::sensor_frame_intrinsics(int nodeId) const {

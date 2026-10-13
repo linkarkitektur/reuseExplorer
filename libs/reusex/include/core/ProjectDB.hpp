@@ -238,6 +238,20 @@ class ProjectDB {
   /// origin.
   bool has_sensor_frame_pose(int nodeId) const;
 
+  /// Snapshot of the pose `rux optimize` seeds from (schema v27,
+  /// sensor_frames.initial_transform). Written by `rux graph init` and
+  /// `rux import rtabmap`; never by optimize.
+  /// @throws std::invalid_argument if @p pose is not a rigid transform;
+  ///         std::runtime_error if there is no such frame or the project is
+  ///         read-only / pre-v27.
+  void set_initial_pose(int nodeId, const std::array<double, 16> &pose);
+
+  /// nullopt when NULL, not a rigid transform, the frame is missing, or the
+  /// project predates v27 (a read-only open never migrates).
+  std::optional<std::array<double, 16>> initial_pose(int nodeId) const;
+
+  bool has_initial_pose(int nodeId) const;
+
   core::SensorIntrinsics sensor_frame_intrinsics(int nodeId) const;
   bool has_sensor_frame(int nodeId) const;
 
@@ -706,6 +720,13 @@ class ProjectDB {
   [[deprecated("use set_pose_graph_edge_status(..., \"rejected\")")]]
   int delete_pose_graph_edges(int from_node_id, int to_node_id,
                               std::string_view edge_type = "");
+
+  // --- Project settings (schema v27) ---
+
+  /// nullopt for an unknown key or a pre-v27 project.
+  std::optional<std::string> setting(std::string_view key) const;
+  /// Insert or replace. @throws std::runtime_error on a read-only project.
+  void set_setting(std::string_view key, std::string_view value);
 
   // --- Scans (multi-session import, #129) ---
 
