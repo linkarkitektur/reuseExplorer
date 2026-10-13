@@ -21,7 +21,9 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -221,6 +223,47 @@ TEST_CASE("ReportDump_ProjectWithThumbnail_WritesDataReferencingExistingFiles",
   CHECK(data.at("survey").contains("blocking"));
 }
 
+TEST_CASE("ReportDump_HostileGuid_ImageStaysInsideDir", "[report][dump]") {
+  // The guid comes from the .rux and may be untrusted: one that is not a safe
+  // file name gets images/material-<index><ext>, never a path built from it.
+  TempPath tmp("test_report_dump");
+  ProjectDB db(tmp.path);
+  const std::vector<std::string> hostile = {"../../escape", "a/b"};
+  for (const auto &g : hostile) {
+    reusex::test_support::make_passport(db, g);
+    db.set_material_thumbnail(g, {0xFF, 0xD8, 0xFF, 0xD9}, "image/jpeg");
+  }
+  TempDir out("test_report_dump_dir");
+  const auto dir = out.path / "x" / "dump";
+
+  reusex::dump_report_data(db, {}, dir);
+
+  const auto data = nlohmann::json::parse(slurp(dir / "data.json"));
+  REQUIRE(data.at("materials").size() == hostile.size());
+  std::set<std::string> guids;
+  for (std::size_t i = 0; i < data.at("materials").size(); ++i) {
+    const auto &m = data.at("materials")[i];
+    guids.insert(m.at("guid").get<std::string>());
+    REQUIRE(m.at("has_thumbnail").get<bool>());
+    const auto rel = m.at("thumbnail_path").get<std::string>();
+    char want[32];
+    std::snprintf(want, sizeof(want), "images/material-%04zu.jpg", i);
+    CHECK(rel == want);
+    const auto file = fs::weakly_canonical(dir / rel);
+    CHECK(fs::is_regular_file(file));
+    CHECK(file.parent_path() == fs::weakly_canonical(dir / "images"));
+  }
+  CHECK(guids == std::set<std::string>(hostile.begin(), hostile.end()));
+  // Where the raw guids would have landed: dir/images/../../escape.jpg is
+  // out.path/x/escape.jpg; dir/images/a/b.jpg is dir/images/a/.
+  CHECK_FALSE(fs::exists(out.path / "x" / "escape.jpg"));
+  CHECK_FALSE(fs::exists(dir / "images" / "a"));
+  CHECK(entries(out.path) == std::vector<std::string>{"x"});
+  CHECK(entries(out.path / "x") == std::vector<std::string>{"dump"});
+  CHECK(entries(dir / "images") ==
+        std::vector<std::string>{"material-0000.jpg", "material-0001.jpg"});
+}
+
 TEST_CASE("ReportDump_WithResourceTemplate_WritesItsTables", "[report][dump]") {
   TempPath tmp("test_report_dump");
   ProjectDB db(tmp.path);
@@ -324,6 +367,9 @@ TEST_CASE("ReportDump_TargetIsRegularFile_Throws", "[report][dump]") {
 TEST_CASE("ReportPdf_ProjectWithThumbnail_Compiles", "[report][typst]") {
   // The PDF run uses the same images/ layout and the template's default
   // data-dir "." — an image reference that resolves wrongly fails here.
+  // Uses the embedded template: a developer's exported override must not
+  // change what this test compiles (own ctest process, so no leak).
+  ::unsetenv("REUSEX_REPORT_TEMPLATE");
   if (!reusex::test_support::have_typst())
     SKIP("typst is not on PATH (the nix devshell provides it)");
   TempPath tmp("test_report_dump");

@@ -16,6 +16,10 @@ A report data directory holds:
 <dir>/images/<name>.jpg      (or .png / .webp / .gif, from the stored MIME type)
 ```
 
+An image is named `images/<guid>.<ext>` when the guid is a safe file name
+(`[A-Za-z0-9][A-Za-z0-9._-]*`, no `..`); otherwise it is
+`images/material-NNNN.<ext>`, `NNNN` being the material's zero-padded index.
+
 The template reads it from `sys.inputs.at("data-dir", default: ".")`. The
 generator writes it into a temp dir next to the template (default `"."`);
 the preview scripts pass `--root / --input data-dir=<abs dir>`.

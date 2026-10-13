@@ -15,7 +15,9 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
@@ -24,7 +26,6 @@
 #include <iterator>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -65,6 +66,20 @@ std::string ext_for_mime(const std::string &mime) {
   if (mime == "image/gif")
     return ".gif";
   return ".jpg";
+}
+
+/// True when @p guid is safe as a file name stem: starts alphanumeric, only
+/// [A-Za-z0-9._-] after that, and no "..". The guid comes from the .rux,
+/// which may be untrusted, so anything else must not reach a path.
+bool is_safe_file_stem(const std::string &guid) {
+  if (guid.empty() || !std::isalnum(static_cast<unsigned char>(guid[0])))
+    return false;
+  for (const char c : guid) {
+    const auto u = static_cast<unsigned char>(c);
+    if (!(std::isalnum(u) || c == '.' || c == '_' || c == '-'))
+      return false;
+  }
+  return guid.find("..") == std::string::npos;
 }
 
 constexpr const char *kTemplateEnvVar = "REUSEX_REPORT_TEMPLATE";
@@ -184,8 +199,8 @@ write_report_data(ProjectDB &db,
   std::filesystem::create_directories(image_dir);
 
   nlohmann::json mats = nlohmann::json::array();
-  for (const auto &info : summary.materials) {
-    const auto &guid = info.guid;
+  for (std::size_t index = 0; index < summary.materials.size(); ++index) {
+    const auto &guid = summary.materials[index].guid;
 
     auto thumb_opt = db.material_thumbnail(guid);
     bool has_thumb = thumb_opt.has_value();
@@ -193,14 +208,25 @@ write_report_data(ProjectDB &db,
 
     if (has_thumb) {
       const auto &[blob, mime] = *thumb_opt;
-      const std::string fname = "images/" + guid + ext_for_mime(mime);
+      std::string stem = guid;
+      if (!is_safe_file_stem(guid)) {
+        stem = fmt::format("material-{:04d}", index);
+        reusex::warn("Material guid '{}' is not a safe file name; writing its "
+                     "thumbnail as images/{}{}",
+                     guid, stem, ext_for_mime(mime));
+      }
+      const std::string fname = "images/" + stem + ext_for_mime(mime);
       std::ofstream f(dir / fname, std::ios::binary);
       f.write(reinterpret_cast<const char *>(blob.data()),
               static_cast<std::streamsize>(blob.size()));
-      if (f.good())
+      if (f.good()) {
         thumb_path = fname;
-      else
+      } else {
+        reusex::warn("Could not write the thumbnail of material '{}' to {}; "
+                     "the report shows it without an image",
+                     guid, (dir / fname).string());
         has_thumb = false;
+      }
     }
 
     const auto props_map = db.passport_stored_properties(guid);

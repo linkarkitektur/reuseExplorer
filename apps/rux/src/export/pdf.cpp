@@ -73,6 +73,17 @@ int run_subcommand_export_pdf(SubcommandExportPdfOptions const &opt,
         spdlog::error("Output directory does not exist: {}", parent.string());
         return RuxError::INVALID_ARGUMENT;
       }
+      if (fs::is_directory(opt.output_path)) {
+        spdlog::error("Output path is a directory: {}",
+                      opt.output_path.string());
+        return RuxError::INVALID_ARGUMENT;
+      }
+      if (!opt.template_path.empty() &&
+          !fs::is_regular_file(opt.template_path)) {
+        spdlog::error("Template file not found (or not a regular file): {}",
+                      opt.template_path.string());
+        return RuxError::INVALID_ARGUMENT;
+      }
     }
 
     spdlog::info("Opening project database: {}",

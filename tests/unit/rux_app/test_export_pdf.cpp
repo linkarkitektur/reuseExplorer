@@ -19,6 +19,7 @@
 
 #include <CLI/CLI.hpp>
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -47,6 +48,9 @@ std::string slurp(const fs::path &p) {
 } // namespace
 
 TEST_CASE("ExportPdf_DumpData_IsAcceptedByTypst", "[rux][report]") {
+  // Uses the embedded template: a developer's exported override must not
+  // change what this test compiles (own ctest process, so no leak).
+  ::unsetenv("REUSEX_REPORT_TEMPLATE");
   TempPath db("export_pdf");
   seed(db.path);
   TempDir out("export_pdf_dump");
@@ -54,6 +58,9 @@ TEST_CASE("ExportPdf_DumpData_IsAcceptedByTypst", "[rux][report]") {
   global.project_db = db.path;
   SubcommandExportPdfOptions opt;
   opt.dump_dir = out.path / "dump";
+  // Inside the TempDir, so the "no PDF written" check below does not look at
+  // ctest's working directory.
+  opt.output_path = out.path / "report.pdf";
 
   REQUIRE(run_subcommand_export_pdf(opt, global) == RuxError::SUCCESS);
   REQUIRE(fs::is_regular_file(opt.dump_dir / "data.json"));
@@ -98,7 +105,25 @@ TEST_CASE("ExportPdf_OutputDirectoryMissing_FailsBeforeTypst",
   CHECK_FALSE(fs::exists(opt.output_path));
 }
 
+TEST_CASE("ExportPdf_OutputIsDirectory_FailsBeforeTypst", "[rux][report]") {
+  TempPath db("export_pdf");
+  seed(db.path);
+  TempDir out("export_pdf_out");
+  RuxOptions global;
+  global.project_db = db.path;
+  SubcommandExportPdfOptions opt;
+  opt.output_path = out.path / "a-directory";
+  fs::create_directories(opt.output_path);
+
+  CHECK(run_subcommand_export_pdf(opt, global) == RuxError::INVALID_ARGUMENT);
+  CHECK(fs::is_directory(opt.output_path));
+  CHECK(fs::is_empty(opt.output_path));
+}
+
 TEST_CASE("ExportPdf_Output_WritesPdf", "[rux][report][typst]") {
+  // Uses the embedded template: a developer's exported override must not
+  // change what this test compiles (own ctest process, so no leak).
+  ::unsetenv("REUSEX_REPORT_TEMPLATE");
   if (!reusex::test_support::have_typst())
     SKIP("typst is not on PATH (the nix devshell provides it)");
   TempPath db("export_pdf");
@@ -113,7 +138,8 @@ TEST_CASE("ExportPdf_Output_WritesPdf", "[rux][report][typst]") {
   CHECK(slurp(opt.output_path).rfind("%PDF", 0) == 0);
 }
 
-TEST_CASE("ExportPdf_MissingTemplateFile_IoErrorNoPdf", "[rux][report]") {
+TEST_CASE("ExportPdf_MissingTemplateFile_InvalidArgumentNoPdf",
+          "[rux][report]") {
   TempPath db("export_pdf");
   seed(db.path);
   TempDir out("export_pdf_out");
@@ -123,7 +149,7 @@ TEST_CASE("ExportPdf_MissingTemplateFile_IoErrorNoPdf", "[rux][report]") {
   opt.output_path = out.path / "report.pdf";
   opt.template_path = out.path / "missing.typ";
 
-  CHECK(run_subcommand_export_pdf(opt, global) == RuxError::IO);
+  CHECK(run_subcommand_export_pdf(opt, global) == RuxError::INVALID_ARGUMENT);
   CHECK_FALSE(fs::exists(opt.output_path));
 }
 

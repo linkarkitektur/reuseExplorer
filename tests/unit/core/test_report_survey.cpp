@@ -15,6 +15,7 @@
 #include <core/survey_service.hpp>
 
 #include "../../support/temp_path.hpp"
+#include "../../support/typst.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -169,7 +170,10 @@ TEST_CASE("DanishLabels_MatchTheFrontendVocabulary", "[report][survey]") {
 }
 
 TEST_CASE("ReportPdf_WithSurveySection_Compiles", "[report][typst]") {
-  if (std::system("command -v typst > /dev/null 2>&1") != 0)
+  // Uses the embedded template: a developer's exported override must not
+  // change what this test compiles (own ctest process, so no leak).
+  ::unsetenv("REUSEX_REPORT_TEMPLATE");
+  if (!reusex::test_support::have_typst())
     SKIP("typst is not on PATH (the nix devshell provides it)");
   TempDB tmp;
   ProjectDB db(tmp.path);
@@ -200,7 +204,10 @@ TEST_CASE("ReportPdf_UnknownResourceTemplate_ThrowsBeforeTypst",
 }
 
 TEST_CASE("ReportPdf_WithResourceTable_Compiles", "[report][typst]") {
-  if (std::system("command -v typst > /dev/null 2>&1") != 0)
+  // Uses the embedded template: a developer's exported override must not
+  // change what this test compiles (own ctest process, so no leak).
+  ::unsetenv("REUSEX_REPORT_TEMPLATE");
+  if (!reusex::test_support::have_typst())
     SKIP("typst is not on PATH (the nix devshell provides it)");
   TempDB tmp;
   ProjectDB db(tmp.path);
