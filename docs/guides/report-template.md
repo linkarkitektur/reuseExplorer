@@ -75,3 +75,18 @@ The sample is hand-maintained: edit `data.json` directly; regenerate the
 JPEGs with `scripts/report-sample-images.sh`. `ReportSample_*` tests keep it
 compiling and keep it exercising long names, missing images, a 16-field
 template, a draft state and Danish characters.
+
+## Real project data
+
+```bash
+rux -p x.rux export pdf --dump-data shots/report-data [--resource-template ID]
+nix develop .#report -c report-watch shots/report-data
+```
+
+`--dump-data` writes into a missing or empty directory, or replaces a
+previous dump (its `images/` is cleared first); any other non-empty
+directory is refused. A real project's photos stay out of git: dump under
+`shots/` (gitignored), never into `apps/rux/resources/`.
+
+`rux -p x.rux export pdf -o report.pdf [--resource-template ID] [--template FILE.typ]`
+renders the PDF the same way ruxd does.
