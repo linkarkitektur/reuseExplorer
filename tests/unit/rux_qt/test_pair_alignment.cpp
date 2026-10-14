@@ -11,6 +11,8 @@
 
 #include <rux_qt/pair_alignment.hpp>
 
+#include <cstddef>
+
 using namespace rux::qt;
 using Catch::Approx;
 
@@ -50,6 +52,18 @@ TEST_CASE("ManualOffset_RotatesAboutThePivot", "[rux_qt][pair]") {
   CHECK_FALSE(ManualOffset{0, 0, 0, 0.1, 0, 0}.is_zero());
 }
 
+TEST_CASE("ManualOffset_Yaw90_MapsXAxisToYAxisAboutThePivot",
+          "[rux_qt][pair]") {
+  const Vec3 pivot{2.0, -3.0, 0.4};
+  const Mat4 m = offset_matrix({0, 0, 0, 90.0, 0, 0}, pivot);
+  const Vec3 px{pivot[0] + 1.0, pivot[1], pivot[2]};
+  const Vec3 py{pivot[0], pivot[1] + 1.0, pivot[2]};
+  const Vec3 mapped = transform_point(m, px);
+  CHECK(mapped[0] == Approx(py[0]).margin(1e-9));
+  CHECK(mapped[1] == Approx(py[1]).margin(1e-9));
+  CHECK(mapped[2] == Approx(py[2]).margin(1e-9));
+}
+
 TEST_CASE("Nudge_FineAndCoarseSteps", "[rux_qt][pair]") {
   CHECK(nudge({}, NudgeKey::x_plus, false).x == Approx(kNudgeM));
   CHECK(nudge({}, NudgeKey::y_minus, true).y ==
@@ -63,8 +77,16 @@ TEST_CASE("EdgeMeasurement_IsTFromInverseDeltaTTo", "[rux_qt][pair]") {
   const Mat4 a = translate(1, 0, 0), b = translate(3, 0, 0);
   CHECK(edge_measurement(a, b, mat4_identity())[3] == Approx(2.0));
   CHECK(edge_measurement(a, b, translate(0.5, 0, 0))[3] == Approx(2.5));
-  const Mat4 d = offset_matrix({0.1, 0.2, 0, 20, 0, 0}, {3, 0, 0});
-  check_mat(edge_measurement(a, b, d),
-            mat4_mul(mat4_mul(rigid_inverse(a), d), b));
-  check_mat(mat4_mul(rigid_inverse(d), d), mat4_identity());
+}
+
+TEST_CASE("EdgeMeasurement_WithDeltaBridgingRotatedPoses_IsIdentity",
+          "[rux_qt][pair]") {
+  // Semantic check (not the formula restated): rotate+translate both ends,
+  // pick Delta T = TA . rigid_inverse(TB) (the world correction that makes B
+  // coincide with A), and edge_measurement(TA, TB, Delta T) must collapse to
+  // identity regardless of either pose's rotation.
+  const Mat4 ta = offset_matrix({1.0, 2.0, 0.5, 15.0, -10.0, 5.0}, {0, 0, 0});
+  const Mat4 tb = offset_matrix({-0.3, 0.4, 1.1, 40.0, 20.0, -8.0}, {0, 0, 0});
+  const Mat4 delta = mat4_mul(ta, rigid_inverse(tb));
+  check_mat(edge_measurement(ta, tb, delta), mat4_identity());
 }

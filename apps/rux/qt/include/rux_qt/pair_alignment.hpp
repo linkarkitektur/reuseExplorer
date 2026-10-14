@@ -33,6 +33,8 @@ struct ManualOffset {
 };
 
 Mat4 offset_matrix(const ManualOffset &o, const Vec3 &pivot);
+/// Inverse of offset_matrix(); ambiguous at pitch = +/-90 deg (gimbal lock:
+/// yaw and roll trade off and only their sum/difference is recoverable).
 ManualOffset offset_from_matrix(const Mat4 &m, const Vec3 &pivot);
 
 enum class NudgeKey {
