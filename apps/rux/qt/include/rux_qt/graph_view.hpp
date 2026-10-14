@@ -146,6 +146,26 @@ std::optional<double> parse_yaw_setting(std::string_view text);
 /// The stored text: normalised, one decimal, '.' separator ("-12.5").
 std::string format_yaw_setting(double deg);
 
+/// The latest yaw set on a project that the file may not hold yet (debounce
+/// pending, a write queued, running, or retrying behind the writer lease).
+/// Re-reading the project (a reload after Optimer, F5) must show this one,
+/// not the stale stored value.
+class UnsavedYaw {
+    public:
+  /// A yaw @p deg was set on @p path; @p seq increases with every change.
+  void changed(std::string path, unsigned seq, double deg);
+  /// The write of change @p seq ended (written, or given up on an error).
+  /// Clears only when it is the latest change.
+  void written(unsigned seq);
+  /// The unsaved yaw of @p path, if there is one.
+  std::optional<double> for_project(std::string_view path) const;
+
+    private:
+  std::string path_; ///< empty: nothing unsaved
+  unsigned seq_ = 0;
+  double deg_ = 0.0;
+};
+
 // --------------------------------------------------------------- slots --
 
 enum class Slot { a, b };

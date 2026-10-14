@@ -399,3 +399,23 @@ TEST_CASE("PairImageCaption_NamesTheSlotAndTheFrame",
   CHECK(pair_image_caption(Slot::a, -1) == "A");
   CHECK(pair_image_caption(Slot::b, -1) == "B");
 }
+
+TEST_CASE("UnsavedYaw_SameProjectReopened_WinsOverTheStoredValue",
+          "[rux_qt][graph][yaw]") {
+  // Turned while Optimer held the project: the write is still pending (or
+  // retrying) when Optimer's reload re-reads the old value. The unsaved yaw
+  // must win for that project, never for another one.
+  UnsavedYaw u;
+  CHECK_FALSE(u.for_project("/a.rux").has_value());
+  u.changed("/a.rux", 1, 30.0);
+  u.changed("/a.rux", 2, 35.0);
+  REQUIRE(u.for_project("/a.rux").has_value());
+  CHECK(*u.for_project("/a.rux") == 35.0);
+  CHECK_FALSE(u.for_project("/b.rux").has_value());
+  // An older write landing does not clear the newer value.
+  u.written(1);
+  CHECK(u.for_project("/a.rux").has_value());
+  // The latest one landing does: the file holds it now.
+  u.written(2);
+  CHECK_FALSE(u.for_project("/a.rux").has_value());
+}

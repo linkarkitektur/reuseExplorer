@@ -14,9 +14,12 @@
 // opening another or quitting writes it at once rather than dropping it.
 // Writes go through one worker at a time, so they land in the order they
 // were asked for; one asked while another runs is queued (only the latest
-// is kept) and written when it ends.
+// is kept) and written when it ends. Until the latest yaw has landed, a
+// re-open of the same project (Optimer's reload, F5) keeps it on screen
+// instead of the stale stored value (UnsavedYaw).
 
 #include <rux_qt/EdgeEditor.hpp>
+#include <rux_qt/graph_view.hpp>
 
 #include <QObject>
 
@@ -62,6 +65,7 @@ class ViewSettings : public QObject {
   /// Bumped by every yaw change: a busy write is retried only while it is
   /// still the latest.
   unsigned seq_ = 0;
+  UnsavedYaw unsaved_;
   std::shared_ptr<Writer> writer_;
 };
 

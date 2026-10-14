@@ -60,6 +60,16 @@ bool ViewSettings::persists() const {
 
 void ViewSettings::reload() {
   double yaw = 0.0;
+  // A yaw set on this project that the file does not hold yet wins: the
+  // worker (or its retry behind the writer lease) writes it shortly.
+  if (const auto unsaved =
+          session_.is_open()
+              ? unsaved_.for_project(session_.path().toStdString())
+              : std::nullopt) {
+    yaw_ = *unsaved;
+    emit yaw_changed(yaw_);
+    return;
+  }
   if (const reusex::ProjectDB *db = session_.db()) {
     try {
       if (const auto text = db->setting(kViewYawSetting))
@@ -82,6 +92,7 @@ void ViewSettings::set_yaw_deg(double deg) {
   if (persists()) {
     pending_path_ = session_.path().toStdString();
     pending_text_ = format_yaw_setting(yaw_);
+    unsaved_.changed(pending_path_, seq_, yaw_);
     debounce_->start();
   }
 }
@@ -127,13 +138,22 @@ void ViewSettings::write(std::string path, std::string text, unsigned seq) {
         lease = holder->try_acquire_writer(EdgeEditor::kLeaseTimeout);
         busy = !lease.owns_lock();
       }
-      if (!busy)
+      if (!busy) {
         try {
           reusex::ProjectDB db(job.path, /*readOnly=*/false);
           db.set_setting(kViewYawSetting, job.text);
         } catch (const std::exception &e) {
           reusex::warn("view yaw not saved: {}", e.what());
         }
+        // Landed (or given up): a re-open reads the file again.
+        QMetaObject::invokeMethod(
+            qApp,
+            [guard, seq = job.seq] {
+              if (guard)
+                guard->unsaved_.written(seq);
+            },
+            Qt::QueuedConnection);
+      }
       if (lease.owns_lock())
         lease.unlock();
       holder.reset();

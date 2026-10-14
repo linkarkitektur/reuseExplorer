@@ -8,6 +8,7 @@
 #include <cmath>
 #include <numbers>
 #include <system_error>
+#include <utility>
 
 namespace rux::qt {
 
@@ -291,6 +292,23 @@ std::string pair_image_caption(Slot side, int id) {
   if (id >= 0)
     s += " · billede " + std::to_string(id);
   return s;
+}
+
+void UnsavedYaw::changed(std::string path, unsigned seq, double deg) {
+  path_ = std::move(path);
+  seq_ = seq;
+  deg_ = deg;
+}
+
+void UnsavedYaw::written(unsigned seq) {
+  if (seq == seq_)
+    path_.clear();
+}
+
+std::optional<double> UnsavedYaw::for_project(std::string_view path) const {
+  if (path_.empty() || path != path_)
+    return std::nullopt;
+  return deg_;
 }
 
 } // namespace rux::qt
