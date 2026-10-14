@@ -43,10 +43,12 @@
 #include <QAbstractButton>
 #include <QApplication>
 #include <QButtonGroup>
+#include <QComboBox>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QGraphicsView>
+#include <QItemSelectionModel>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QTableView>
@@ -1040,6 +1042,91 @@ QWidget *make_rediger_reload(const PageContext &ctx) {
   return shell;
 }
 
+/// The Rediger round trip on the copy (WRITES edges, poses and metrics):
+/// pick the odometry edge between two consecutive frames in the edge list,
+/// move B by hand, ICP-forfin from there, "Erstat måling", Gem, Optimer.
+/// ICP stages B -> A with A < B, the reversed direction: the list row, the
+/// graph highlight, the inspector card and A/B must hold through staging,
+/// the save and Optimer's reload. stderr: each step, then the stored row.
+/// $RUX_ROUNDTRIP_A picks A (B is the next frame); $RUX_ROUNDTRIP_UNMOVED
+/// runs ICP from B's stored pose instead of a hand-moved one.
+QWidget *make_rediger_roundtrip(const PageContext &ctx) {
+  auto *shell = sized(make_shell(ctx, Open::project));
+  shell->show_page(Workspace::edit);
+  settle();
+  EditWorkspace *ed = shell->edit();
+  EdgeListPanel *list = ed->edges();
+  const auto &ids = shell->database()->frames()->pair().ids();
+  if (ids.size() < 2 || ctx.project_path.isEmpty())
+    return shell;
+  // The middle pair, or A from $RUX_ROUNDTRIP_A (a pair ICP can fit on a
+  // real capture) and the frame after it as B.
+  std::size_t at = ids.size() / 2;
+  if (const int want = qEnvironmentVariableIntValue("RUX_ROUNDTRIP_A");
+      want > 0) {
+    const auto it = std::find(ids.begin(), ids.end(), want);
+    if (it != ids.end() && it + 1 != ids.end())
+      at = static_cast<std::size_t>(it - ids.begin());
+  }
+  const int a = ids[at], b = ids[at + 1];
+  const EdgeKey key{a, b, "odometry"};
+  const auto report = [&](const char *step) {
+    const auto *sel = list->view()->selectionModel();
+    const QModelIndexList rows = sel ? sel->selectedRows() : QModelIndexList();
+    const QString row =
+        rows.isEmpty() ? QString("none") : rows.front().data().toString();
+    const auto h = ed->graph()->highlight();
+    QString strip;
+    for (const auto &v : ed->editor().edits().between(ed->a(), ed->b()))
+      strip += QString(" %1->%2/%3")
+                   .arg(v.edge.key.from)
+                   .arg(v.edge.key.to)
+                   .arg(QString::fromStdString(v.edge.key.type));
+    std::fprintf(
+        stderr,
+        "rediger-roundtrip: %s: A/B %d/%d, list row '%s', "
+        "highlight %s, strip%s, pending %d; inspector '%s' %s\n",
+        step, ed->a(), ed->b(), qPrintable(row),
+        h ? qPrintable(QString("%1->%2").arg(h->from).arg(h->to)) : "none",
+        qPrintable(strip), ed->editor().edits().count(),
+        qPrintable(ed->selection().title), qPrintable(ed->selection().pill));
+  };
+  list->select_edge(key);            // the row ...
+  if (!ed->graph()->click_edge(key)) // ... and what activating it does
+    ed->set_pair(a, b);              // (no such edge yet: a new one)
+  settle();                          // both clouds loaded
+  report("picked");
+  if (!qEnvironmentVariableIsSet("RUX_ROUNDTRIP_UNMOVED"))
+    ed->overlay()->set_offset({0.02, -0.01, 0.0, 1.0, 0.0, 0.0});
+  click_strip_button(shell, {"ICP-forfin"});
+  settle();
+  for (auto *c : ed->strip()->findChildren<QComboBox *>())
+    if (c->objectName() == "edgeType")
+      c->setCurrentIndex(c->findData(QString("odometry")));
+  click_strip_button(shell, {"Tilføj kant", "Erstat måling"});
+  report("staged");
+  ed->save_edits();
+  settle();
+  report("saved");
+  for (auto *btn : ed->findChildren<QPushButton *>())
+    if (btn->text() == "Optimer")
+      btn->click();
+  settle(600000);
+  report("optimized");
+  reusex::ProjectDB db(ctx.project_path.toStdString(), /*readOnly=*/true);
+  for (const auto &e : db.list_pose_graph_edges())
+    if (std::minmax(e.from_node_id, e.to_node_id) == std::minmax(a, b))
+      std::fprintf(stderr,
+                   "rediger-roundtrip: stored %d -> %d %s source=%s "
+                   "status=%s transform=%s information=%s weight=%g "
+                   "residual=%g deviation=%s\n",
+                   e.from_node_id, e.to_node_id, e.edge_type.c_str(),
+                   e.source.c_str(), e.status.c_str(),
+                   e.transform ? "yes" : "no", e.information ? "yes" : "no",
+                   e.weight, e.residual, e.deviation_m ? "yes" : "no");
+  return shell;
+}
+
 /// A yaw set and the project closed at once, inside the 500 ms debounce:
 /// the close writes it rather than dropping it (WRITES to the copy).
 QWidget *make_rediger_yaw_close(const PageContext &ctx) {
@@ -1280,6 +1367,10 @@ void register_shell_pages() {
                  "Rediger: kantlisten sorteret efter residual med første "
                  "række valgt, seedet graf (skriver til projektkopien)",
                  make_rediger_list});
+  register_page({"rediger-roundtrip",
+                 "Rediger: kant fra listen, flyt B, ICP-forfin, Erstat måling, "
+                 "Gem og Optimer (skriver til projektkopien)",
+                 make_rediger_roundtrip});
   register_page({"rediger-reload",
                  "Rediger: zoom, valgt kant, A/B og drejning overlever en "
                  "genindlæsning af projektet (skriver til projektkopien)",

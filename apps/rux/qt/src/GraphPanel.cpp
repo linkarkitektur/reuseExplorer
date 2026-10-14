@@ -693,6 +693,7 @@ GraphPanel::GraphPanel(ProjectSession &session, EdgeEditor &editor,
   connect(&editor_, &EdgeEditor::changed, this, [this] {
     rebuild_edges();
     update_meta();
+    refresh_edge_card();
   });
   connect(&session_, &ProjectSession::state_changed, this, &GraphPanel::reset);
   connect(&theme(), &Theme::changed, this, [this] {
@@ -753,6 +754,7 @@ void GraphPanel::reset() {
     // Another project (or none): its edges are not this one's.
     highlight_.reset();
     kept_view_.reset();
+    selection_ = {};
   } else if (!data_.empty()) {
     // A reload of the project on screen: keep the user's zoom on it.
     if (view_->user_view())
@@ -767,7 +769,6 @@ void GraphPanel::reset() {
   data_.clear();
   nodes_.clear();
   ticks_.clear();
-  selection_ = {};
   rebuild_scene();
   update_meta();
   if (active_)
@@ -1220,13 +1221,37 @@ void GraphPanel::click_node(int id, bool as_b) {
 bool GraphPanel::click_edge(const EdgeKey &key) { return select_edge(key); }
 
 bool GraphPanel::select_edge(const EdgeKey &key) {
+  auto card = edge_card(key);
+  if (!card)
+    return false;
+  const EdgeKey stored = card->stored;
+  selection_ = std::move(card->selection);
+  set_highlight(stored);
+  emit selection_changed(selection_);
+  emit pair_requested(stored.from, stored.to);
+  return true;
+}
+
+void GraphPanel::refresh_edge_card() {
+  // The inspector's card of the highlighted edge follows a staged edit, a
+  // save and a reload (source, status, figures); while the edge is not
+  // there (a reload in progress) the old card stays.
+  if (!highlight_ || selection_.kind != "Kant")
+    return;
+  if (auto card = edge_card(*highlight_)) {
+    selection_ = std::move(card->selection);
+    emit selection_changed(selection_);
+  }
+}
+
+std::optional<GraphPanel::EdgeCard> GraphPanel::edge_card(const EdgeKey &key) {
   const auto all = editor_.edits().effective();
   const auto it =
       std::find_if(all.begin(), all.end(), [&key](const EdgeView &v) {
         return same_edge_key(v.edge.key, key);
       });
   if (it == all.end())
-    return false;
+    return std::nullopt;
   const EdgeView v = *it;
   const EdgeKey &stored = v.edge.key; // canonical, as the list shows it
   Selection s;
@@ -1267,11 +1292,7 @@ bool GraphPanel::select_edge(const EdgeKey &key) {
   row("Vægt", std::isnan(v.edge.weight) ? QString("—")
                                         : da().toString(v.edge.weight, 'g', 4));
   s.sections.push_back(p);
-  selection_ = s;
-  set_highlight(stored);
-  emit selection_changed(selection_);
-  emit pair_requested(stored.from, stored.to);
-  return true;
+  return EdgeCard{std::move(s), stored};
 }
 
 void GraphPanel::update_meta() {

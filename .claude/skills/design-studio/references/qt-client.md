@@ -111,7 +111,9 @@ kanter run from the toolbar, with the discover count shown), and, all on a
 seeded graph: `rediger-type`, `rediger-status` (rejected edges shown),
 `rediger-residual`, `rediger-deviation`, `rediger-seed` (the five colour
 modes), `rediger-list` (edge list sorted by residual, top row selected),
-`rediger-reload` (zoom, a clicked edge, A/B and a yaw turned inside its
+`rediger-roundtrip` (an edge from the list, B moved, ICP-forfin, Erstat
+måling, Gem, Optimer — each step and the stored row logged; on a real
+copy pass `RUX_ROUNDTRIP_A=<id>` for a pair ICP can fit), `rediger-reload` (zoom, a clicked edge, A/B and a yaw turned inside its
 debounce all survive a same-project reload — logged), `rediger-zoom` (zoomed to one node, pixel count logged — the
 vanishing-node repro). `RUX_QT_PAGE=rediger rux -p <copy> --quit-after-ms N`
 smokes the workspace in the real binary (`posegraf` is gone, not an alias).

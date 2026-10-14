@@ -22,6 +22,8 @@
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSplitter>
+#include <QTableView>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -172,6 +174,17 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
           [this](const EdgeKey &k) { graph_->click_edge(k); });
   connect(graph_, &GraphPanel::edge_clicked, edges_,
           &EdgeListPanel::select_edge);
+  // A reload (Optimer, F5) empties the list before the edges come back,
+  // which drops its row; the graph keeps the highlighted edge across a
+  // reload of the same project, so the row follows it back. Queued: after
+  // the list's own rebuild for the same change.
+  connect(&editor_, &EdgeEditor::changed, this, [this] {
+    QTimer::singleShot(0, this, [this] {
+      if (const auto &h = graph_->highlight();
+          h && !edges_->view()->currentIndex().isValid())
+        edges_->select_edge(*h);
+    });
+  });
   connect(graph_, &GraphPanel::colour_mode_changed, edges_,
           [this](EdgeColourMode m) {
             edges_->set_sort(default_sort_column(m), true);

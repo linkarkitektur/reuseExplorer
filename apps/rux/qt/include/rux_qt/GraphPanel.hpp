@@ -162,6 +162,14 @@ class GraphPanel : public QWidget {
   /// Inspect, highlight and pair edge @p key (drawn or not: the list can
   /// show rejected edges the canvas hides).
   bool select_edge(const EdgeKey &key);
+  struct EdgeCard {
+    Selection selection;
+    EdgeKey stored; ///< the key as the store holds it (from < to)
+  };
+  /// The inspector card of @p key, or nullopt when there is no such edge.
+  std::optional<EdgeCard> edge_card(const EdgeKey &key);
+  /// Rebuild the highlighted edge's card after an edit, save or reload.
+  void refresh_edge_card();
   void update_meta();
 
   ProjectSession &session_;
