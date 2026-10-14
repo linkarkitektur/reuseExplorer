@@ -577,11 +577,14 @@ QWidget *make_rediger_saved(const PageContext &ctx) {
   return shell;
 }
 
-/// Stress: 10 000 stored edges (WRITTEN to the project copy) — odometry
-/// along the capture, then deterministic pseudo-random loop closures and
-/// panorama edges — and the paint and edit cost measured, on stderr.
+/// Stress: 10 000 edges written (to the project copy) — odometry along the
+/// capture, then deterministic pseudo-random loop closures and panorama
+/// edges — and the paint and edit cost measured, on stderr. Edges are
+/// canonical (from < to) and keyed by pair and type, so a capture with few
+/// frames stores far fewer distinct rows: the line reports what is stored.
 QWidget *make_rediger_stress(const PageContext &ctx) {
   constexpr std::size_t kEdges = 10000;
+  std::size_t stored = 0;
   if (!ctx.project_path.isEmpty()) {
     reusex::ProjectDB db(ctx.project_path.toStdString());
     const auto ids = db.sensor_frame_ids();
@@ -615,13 +618,14 @@ QWidget *make_rediger_stress(const PageContext &ctx) {
       db.upsert_pose_graph_edge(e, /*overwrite_rejected=*/true);
     }
     tx.commit();
+    stored = db.list_pose_graph_edges().size();
   }
   auto *shell = make_pg(ctx);
   // Measure once the graph is on screen at its shot size: poll until the
   // poses have loaded and the shell is shown by the gallery.
   auto *probe = new QTimer(shell);
   probe->setInterval(50);
-  QObject::connect(probe, &QTimer::timeout, shell, [shell, probe] {
+  QObject::connect(probe, &QTimer::timeout, shell, [shell, probe, stored] {
     QGraphicsView *v = shell->edit()->graph()->view();
     if (!shell->isVisible() || shell->edit()->graph()->node_count() == 0)
       return;
@@ -647,7 +651,7 @@ QWidget *make_rediger_stress(const PageContext &ctx) {
                            "%3x%4 px: %5 ms/frame (%6 fps); a staged edit "
                            "%7 ms")
                        .arg(shell->edit()->graph()->node_count())
-                       .arg(kEdges)
+                       .arg(stored)
                        .arg(v->viewport()->width())
                        .arg(v->viewport()->height())
                        .arg(paint_ms, 0, 'f', 2)

@@ -3,7 +3,7 @@
 
 #pragma once
 
-// The pose-graph edits of the Database workspace: staged in memory
+// The pose-graph edits of the Rediger workspace: staged in memory
 // (PendingEdgeEdits, rux_qt_core) until "Gem ændringer", then written in ONE
 // ProjectDB transaction — status changes first, then measurements
 // (apply_edge_ops, edge_store.hpp). A "delete" is a rejection: the edge stays

@@ -84,7 +84,7 @@ The Q3 pages: `3d`, `3d-pick` (rooms + legend + a picked point), `3d-plan`
 yaw to the project copy), `3d-labels`, `log`, `log-filter` — shoot these
 with `--project <copy of NewOffice>` — and `pipeline`, `pipeline-run` (runs
 `create planes` on the copy; the default office_corridor fixture is right
-for it). `viewport` is now an alias of `3d`. Pages that need off-thread work
+for it), `pipeline-cancel` (the same run cancelled mid-stage). `viewport` is now an alias of `3d`. Pages that need off-thread work
 done first (a pick, a run) pump the event loop until
 `background_work_in_flight()` is 0.
 `RUX_QT_PAGE=3d|pipeline|log rux -p <copy> --quit-after-ms N` smokes them in
