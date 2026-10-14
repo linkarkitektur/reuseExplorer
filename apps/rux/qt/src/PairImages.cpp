@@ -83,7 +83,8 @@ QPushButton *segment(const QString &text, int position, int count) {
 
 /// Run @p work on a detached thread with its own read-only connection and
 /// hand its result to @p done on the GUI thread, unless @p self is gone
-/// meanwhile. Counted (BackgroundWork), so quitting waits for it.
+/// meanwhile. Counted (BackgroundWork), so quitting waits for it. Nothing
+/// escapes the thread: any throw becomes the result's detail.
 template <class Result, class Work, class Done>
 void run_detached(PairImages *self, const std::string &path, Work work,
                   Done done) {
@@ -96,6 +97,10 @@ void run_detached(PairImages *self, const std::string &path, Work work,
       work(db, *r);
     } catch (const std::exception &e) {
       r->detail = QString::fromUtf8(e.what());
+    } catch (...) {
+      // Anything else escaping a detached thread would std::terminate the
+      // app: report it like a failure, with no message of its own to show.
+      r->detail = QStringLiteral("Ukendt fejl (ingen fejlbesked)");
     }
     QMetaObject::invokeMethod(
         qApp,
