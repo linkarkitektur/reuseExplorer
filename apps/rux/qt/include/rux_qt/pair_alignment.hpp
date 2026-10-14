@@ -52,7 +52,17 @@ enum class NudgeKey {
 inline constexpr double kNudgeM = 0.01;
 inline constexpr double kNudgeDeg = 0.5;
 inline constexpr double kNudgeCoarse = 10.0;
+/// The step, then normalized() (so a nudge past ±180° wraps).
 ManualOffset nudge(ManualOffset o, NudgeKey key, bool coarse);
+
+/// The overlay's offset fields span ±this many metres.
+inline constexpr double kOffsetMaxM = 50.0;
+/// Angles wrapped into (-180, 180], translation clamped to ±kOffsetMaxM:
+/// what the six fields can show, so they always equal the real ΔT.
+ManualOffset normalized(ManualOffset o);
+/// The rotation angle of @p m's rotation part, degrees in [0, 180]:
+/// acos((tr R - 1) / 2).
+double rotation_angle_deg(const Mat4 &m);
 
 /// T_from^-1 · @p world_delta_on_to · T_to.
 Mat4 edge_measurement(const Mat4 &pose_from, const Mat4 &pose_to,

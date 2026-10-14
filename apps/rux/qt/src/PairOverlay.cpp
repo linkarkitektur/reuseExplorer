@@ -47,10 +47,12 @@
 namespace rux::qt {
 namespace {
 
-constexpr double kPointPx = 2.0;
+constexpr double kPointPx = 2.0; ///< logical pixels
+const char *const kTokenA = "--label-1";
+const char *const kTokenB = "--label-0";
 
-vtkSmartPointer<vtkActor> points_actor(const CloudPoints &pts,
-                                       const QColor &c) {
+vtkSmartPointer<vtkActor> points_actor(const CloudPoints &pts, const QColor &c,
+                                       double point_px) {
   vtkNew<vtkPoints> p;
   p->SetNumberOfPoints(static_cast<vtkIdType>(pts.size()));
   vtkNew<vtkCellArray> verts;
@@ -67,7 +69,7 @@ vtkSmartPointer<vtkActor> points_actor(const CloudPoints &pts,
   auto actor = vtkSmartPointer<vtkActor>::New();
   actor->SetMapper(mapper);
   actor->GetProperty()->SetColor(c.redF(), c.greenF(), c.blueF());
-  actor->GetProperty()->SetPointSize(kPointPx);
+  actor->GetProperty()->SetPointSize(static_cast<float>(point_px));
   return actor;
 }
 
@@ -150,9 +152,10 @@ PairOverlay::PairOverlay(ProjectSession &session, bool interactive,
                         t.px("--space-2"));
   g->setHorizontalSpacing(t.px("--space-2"));
   g->setVerticalSpacing(t.px("--space-1"));
-  // Two rows of three — shift over turn — with the unit in the field, so
-  // the pane never widens the window: each label sits left of its field.
-  const char *labels[6] = {"X", "Y", "Z", "Drej", "Hæld", "Rul"};
+  // Two rows of three — shift over turn — each field under its label, so
+  // the pane never widens the window and a field has room for "-179,99".
+  const char *labels[6] = {"X [m]",    "Y [m]",    "Z [m]",
+                           "Drej [°]", "Hæld [°]", "Rul [°]"};
   const char *tips[6] = {"Flyt B langs verdens x-akse",
                          "Flyt B langs verdens y-akse",
                          "Flyt B langs verdens z-akse",
@@ -164,42 +167,44 @@ PairOverlay::PairOverlay(ProjectSession &session, bool interactive,
     s->setObjectName("offsetField");
     s->setButtonSymbols(QAbstractSpinBox::NoButtons);
     s->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    // Commit on Enter / focus out, not per keystroke: a per-keystroke
+    // valueChanged would reformat the very text being typed.
+    s->setKeyboardTracking(false);
     s->setLocale(QLocale(QLocale::Danish, QLocale::Denmark));
     if (i < 3) {
-      s->setRange(-50.0, 50.0);
+      s->setRange(-kOffsetMaxM, kOffsetMaxM);
       s->setDecimals(3);
-      s->setSuffix(" m");
       s->setSingleStep(kNudgeM);
     } else {
       s->setRange(-180.0, 180.0);
       s->setDecimals(2);
-      s->setSuffix(" °");
       s->setSingleStep(kNudgeDeg);
     }
     s->setToolTip(tips[i]);
     s->setMinimumWidth(t.px("--space-7") + t.px("--space-2"));
     s->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    const int row = i / 3, col = (i % 3) * 2;
+    const int row = (i / 3) * 2, col = i % 3;
     auto *label = new CapsLabel(labels[i], "fieldLabel");
-    label->setMinimumWidth(label->sizeHint().width()); // never elided
-    label->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
     label->setToolTip(tips[i]);
+    if (row > 0) // a little air between the shift and the turn rows
+      label->setContentsMargins(0, t.px("--space-1"), 0, 0);
     g->addWidget(label, row, col);
-    g->addWidget(s, row, col + 1);
-    g->setColumnStretch(col + 1, 1);
+    g->addWidget(s, row + 1, col);
+    g->setColumnStretch(col, 1);
     fields_[static_cast<std::size_t>(i)] = s;
     connect(s, &QDoubleSpinBox::valueChanged, this, [this, i](double val) {
       double *slot[6] = {&offset_.x,         &offset_.y,
                          &offset_.z,         &offset_.yaw_deg,
                          &offset_.pitch_deg, &offset_.roll_deg};
       *slot[i] = val;
+      offset_ = normalized(offset_);
       apply_offset(false);
     });
   }
   status_ = new QLabel;
   status_->setObjectName("statusText");
   status_->setWordWrap(true);
-  g->addWidget(status_, 2, 0, 1, 6);
+  g->addWidget(status_, 4, 0, 1, 3);
   v->addWidget(fields);
 
   setFocusPolicy(Qt::StrongFocus);
@@ -242,6 +247,8 @@ void PairOverlay::load() {
     vtk_->box->Off();
   vtk_->box = nullptr;
   vtk_->a = vtk_->b = nullptr;
+  delete legend_;
+  legend_ = nullptr;
   view_->clear_scene();
   apply_offset(false);
   if (!session_.is_open() || a_ < 0 || b_ < 0 || a_ == b_) {
@@ -289,8 +296,12 @@ void PairOverlay::loaded(std::shared_ptr<Clouds> c) {
   }
   const Theme &t = theme();
   pivot_ = c->pivot;
-  vtk_->a = points_actor(c->a, t.color("--color-accent"));
-  vtk_->b = points_actor(c->b, t.color("--color-on-chrome"));
+  // Okabe-Ito sky blue and orange: apart in hue and luminance, colour-blind
+  // safe, and drawn for the near-black canvas in both themes.
+  const double px = kPointPx * view_->devicePixelRatioF();
+  vtk_->a = points_actor(c->a, t.color(kTokenA), px);
+  vtk_->b = points_actor(c->b, t.color(kTokenB), px);
+  build_legend(c->a.size(), c->b.size());
   vtkRenderer *r = view_->renderer();
   r->AddActor(vtk_->a);
   r->AddActor(vtk_->b);
@@ -334,13 +345,18 @@ void PairOverlay::frame_camera() {
 }
 
 void PairOverlay::set_offset(const ManualOffset &o) {
-  offset_ = o;
+  offset_ = normalized(o);
   apply_offset(false);
 }
 
 void PairOverlay::widget_moved(const Mat4 &m) {
-  offset_ = offset_from_matrix(m, pivot_);
-  apply_offset(true);
+  const ManualOffset raw = offset_from_matrix(m, pivot_);
+  offset_ = normalized(raw);
+  // A drag past the fields' range is clamped: put the box back where the
+  // clamped ΔT has it, so box, cloud and fields agree.
+  const bool clamped =
+      raw.x != offset_.x || raw.y != offset_.y || raw.z != offset_.z;
+  apply_offset(/*from_widget=*/!clamped);
 }
 
 void PairOverlay::apply_offset(bool from_widget) {
@@ -369,10 +385,7 @@ void PairOverlay::apply_offset(bool from_widget) {
                 .arg(
                     QString::fromStdString(format_decimal_da(shift * 100.0, 1)),
                     QString::fromStdString(
-                        format_decimal_da(std::abs(offset_.yaw_deg) +
-                                              std::abs(offset_.pitch_deg) +
-                                              std::abs(offset_.roll_deg),
-                                          1))));
+                        format_decimal_da(rotation_angle_deg(delta()), 1))));
   emit offset_changed();
 }
 
@@ -424,7 +437,52 @@ bool PairOverlay::handle_key(int key, bool shift) {
   return true;
 }
 
+void PairOverlay::build_legend(std::size_t a_points, std::size_t b_points) {
+  delete legend_;
+  const Theme &t = theme();
+  legend_ = new QFrame(view_);
+  legend_->setObjectName("overlayLegend");
+  legend_->setAttribute(Qt::WA_TransparentForMouseEvents);
+  auto *g = new QGridLayout(legend_);
+  g->setContentsMargins(t.px("--space-2"), t.px("--space-1"), t.px("--space-2"),
+                        t.px("--space-1"));
+  g->setHorizontalSpacing(t.px("--space-2"));
+  g->setVerticalSpacing(t.px("--space-1"));
+  g->setSizeConstraint(QLayout::SetFixedSize);
+  const struct {
+    const char *token;
+    QString name;
+    std::size_t points;
+  } rows[2] = {{kTokenA, QString("A · %1").arg(a_), a_points},
+               {kTokenB, QString("B · %1").arg(b_), b_points}};
+  for (int r = 0; r < 2; ++r) {
+    g->addWidget(new Swatch(rows[r].token), r, 0, Qt::AlignVCenter);
+    auto *name = new QLabel(rows[r].name);
+    name->setObjectName("legendText");
+    g->addWidget(name, r, 1);
+    auto *count =
+        new QLabel(format_count(static_cast<qulonglong>(rows[r].points)));
+    count->setObjectName("legendCount");
+    count->setToolTip("Punkter tegnet");
+    count->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    g->addWidget(count, r, 2);
+  }
+  legend_->show();
+  place_legend();
+}
+
+void PairOverlay::place_legend() {
+  if (!legend_)
+    return;
+  legend_->adjustSize();
+  const int m = theme().px("--space-2");
+  legend_->move(m, view_->height() - legend_->height() - m);
+  legend_->raise();
+}
+
 bool PairOverlay::eventFilter(QObject *watched, QEvent *event) {
+  if (watched == view_ && event->type() == QEvent::Resize)
+    place_legend();
   if (event->type() == QEvent::KeyPress) {
     auto *k = static_cast<QKeyEvent *>(event);
     if (handle_key(k->key(), k->modifiers().testFlag(Qt::ShiftModifier)))

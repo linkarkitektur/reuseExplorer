@@ -1191,7 +1191,8 @@ QLabel#legendText {
 }
 /* Rediger's edge legend: a chrome card in the canvas's lower-left corner
    (chrome is dark in both themes, like the canvas under it). */
-QFrame#graphLegend {
+QFrame#graphLegend,
+QFrame#overlayLegend {
   background: var(--color-chrome);
   border: 1px solid var(--color-chrome-border);
   border-radius: var(--radius-sm);
@@ -1199,12 +1200,14 @@ QFrame#graphLegend {
 QFrame#graphLegend QWidget#legendHost {
   background: transparent;
 }
-QFrame#graphLegend QLabel#legendText {
+QFrame#graphLegend QLabel#legendText,
+QFrame#overlayLegend QLabel#legendText {
   color: var(--color-on-chrome);
   font-size: var(--font-size-xs);
   background: transparent;
 }
-QFrame#graphLegend QLabel#legendCount {
+QFrame#graphLegend QLabel#legendCount,
+QFrame#overlayLegend QLabel#legendCount {
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   color: var(--color-on-chrome-muted);

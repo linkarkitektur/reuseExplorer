@@ -31,6 +31,12 @@
 #include <reusex/core/ProjectDB.hpp>
 #include <reusex/pipeline/optimize_stage.hpp>
 
+#include <vtkActor.h>
+#include <vtkActorCollection.h>
+#include <vtkCommand.h>
+#include <vtkRenderWindowInteractor.h>
+#include <vtkRenderer.h>
+
 #include <QAbstractButton>
 #include <QApplication>
 #include <QButtonGroup>
@@ -323,6 +329,81 @@ QWidget *make_rediger_offset(const PageContext &ctx) {
   auto *shell = make_pg(ctx);
   settle(); // clouds loaded
   shell->edit()->overlay()->set_offset({0.20, 0.0, 0.0, 5.0, 0.0, 0.0});
+  return shell;
+}
+
+namespace {
+/// One left-button drag on the overlay's interactor, in render-window
+/// pixels (VTK's y is up), the way a mouse drives the box widget.
+void vtk_drag(vtkRenderWindowInteractor *iren, int x0, int y0, int x1, int y1) {
+  iren->SetEventInformation(x0, y0, 0, 0);
+  iren->InvokeEvent(vtkCommand::MouseMoveEvent);
+  iren->InvokeEvent(vtkCommand::LeftButtonPressEvent);
+  constexpr int kSteps = 8;
+  for (int i = 1; i <= kSteps; ++i) {
+    iren->SetEventInformation(x0 + (x1 - x0) * i / kSteps,
+                              y0 + (y1 - y0) * i / kSteps, 0, 0);
+    iren->InvokeEvent(vtkCommand::MouseMoveEvent);
+  }
+  iren->InvokeEvent(vtkCommand::LeftButtonReleaseEvent);
+}
+
+void log_offset(const char *what, const ManualOffset &o) {
+  std::fprintf(stderr,
+               "rediger-drag: %s -> x=%.4f y=%.4f z=%.4f yaw=%.3f "
+               "pitch=%.3f roll=%.3f\n",
+               what, o.x, o.y, o.z, o.yaw_deg, o.pitch_deg, o.roll_deg);
+}
+} // namespace
+
+/// The box widget driven by synthesized mouse events (needs --gl): a drag
+/// of the centre handle (translate), then a drag on a face (rotate). Logs
+/// the resulting ΔT; the shot shows the fields that followed the widget.
+QWidget *make_rediger_drag(const PageContext &ctx) {
+  auto *shell = make_pg(ctx);
+  shell->show();
+  settle(); // clouds loaded, GL initialised
+  PairOverlay *ov = shell->edit()->overlay();
+  vtkRenderWindowInteractor *iren = ov->view()->interactor();
+  if (!iren || !ov->ready()) {
+    std::fprintf(stderr, "rediger-drag: needs --gl and both clouds "
+                         "(no interactor or not ready)\n");
+    return shell;
+  }
+  vtkRenderer *r = ov->view()->renderer();
+  vtkActorCollection *actors = r->GetActors();
+  actors->InitTraversal();
+  actors->GetNextActor();               // A
+  vtkActor *b = actors->GetNextActor(); // B, still unmoved
+  double bb[6];
+  b->GetBounds(bb);
+  const auto to_display = [&](double x, double y, double z) {
+    r->SetWorldPoint(x, y, z, 1.0);
+    r->WorldToDisplay();
+    double d[3];
+    r->GetDisplayPoint(d);
+    return std::array<int, 2>{static_cast<int>(std::lround(d[0])),
+                              static_cast<int>(std::lround(d[1]))};
+  };
+  const double cx = (bb[0] + bb[1]) / 2, cy = (bb[2] + bb[3]) / 2,
+               cz = (bb[4] + bb[5]) / 2;
+  const auto c = to_display(cx, cy, cz);
+  const int step = 2 * theme().px("--space-7"); // a short, clear drag
+  vtk_drag(iren, c[0], c[1], c[0] + step, c[1]);
+  QApplication::processEvents();
+  log_offset("centre handle dragged right", ov->offset());
+  // A face: a third of the way from the (moved) centre to a top corner,
+  // inside the box outline and clear of the centre handle.
+  const Mat4 d = ov->delta();
+  const Vec3 corner = transform_point(d, {bb[1], bb[3], bb[5]});
+  const Vec3 centre = transform_point(d, {cx, cy, cz});
+  const auto f = to_display(centre[0] + (corner[0] - centre[0]) / 3,
+                            centre[1] + (corner[1] - centre[1]) / 3,
+                            centre[2] + (corner[2] - centre[2]) / 3);
+  vtk_drag(iren, f[0], f[1], f[0], f[1] + step);
+  QApplication::processEvents();
+  log_offset("face dragged up", ov->offset());
+  ov->view()->request_render();
   return shell;
 }
 
@@ -926,6 +1007,9 @@ void register_shell_pages() {
   register_page({"rediger-pair-half",
                  "Rediger: kun A valgt; B's side siger, hvad der mangler",
                  make_rediger_pair_half});
+  register_page({"rediger-drag",
+                 "Rediger: boksen trukket med musen (kræver --gl)",
+                 make_rediger_drag});
   register_page({"rediger-offset",
                  "Rediger: B flyttet 20 cm i x og drejet 5° i 3D-overlayet",
                  make_rediger_offset});

@@ -118,13 +118,39 @@ ManualOffset nudge(ManualOffset o, NudgeKey key, bool coarse) {
     o.yaw_deg += kNudgeDeg * f;
     break;
   }
-  return o;
+  return normalized(o);
 }
 
 Mat4 edge_measurement(const Mat4 &pose_from, const Mat4 &pose_to,
                       const Mat4 &world_delta_on_to) {
   return mat4_mul(mat4_mul(rigid_inverse(pose_from), world_delta_on_to),
                   pose_to);
+}
+
+namespace {
+/// @p deg wrapped into (-180, 180].
+double wrap_deg(double deg) {
+  double w = std::fmod(deg, 360.0); // (-360, 360)
+  if (w > 180.0)
+    w -= 360.0;
+  else if (w <= -180.0)
+    w += 360.0;
+  return w;
+}
+} // namespace
+
+ManualOffset normalized(ManualOffset o) {
+  for (double *t : {&o.x, &o.y, &o.z})
+    *t = std::clamp(*t, -kOffsetMaxM, kOffsetMaxM);
+  for (double *a : {&o.yaw_deg, &o.pitch_deg, &o.roll_deg})
+    *a = wrap_deg(*a);
+  return o;
+}
+
+double rotation_angle_deg(const Mat4 &m) {
+  const double trace = m[0] + m[5] + m[10];
+  const double c = std::clamp((trace - 1.0) / 2.0, -1.0, 1.0);
+  return std::acos(c) * 180.0 / std::numbers::pi;
 }
 
 CloudPoints thin_points(const CloudPoints &points, std::size_t max_count) {

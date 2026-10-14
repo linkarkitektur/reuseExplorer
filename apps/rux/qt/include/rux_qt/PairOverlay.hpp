@@ -18,9 +18,11 @@
 #include <QWidget>
 
 #include <array>
+#include <cstddef>
 #include <memory>
 
 class QDoubleSpinBox;
+class QFrame;
 class QLabel;
 
 namespace rux::qt {
@@ -60,6 +62,8 @@ class PairOverlay : public QWidget {
   void load();
   void loaded(std::shared_ptr<Clouds> c);
   void frame_camera();
+  void build_legend(std::size_t a_points, std::size_t b_points);
+  void place_legend();
   void apply_offset(bool from_widget);
   void sync_fields();
   bool handle_key(int key, bool shift);
@@ -67,6 +71,7 @@ class PairOverlay : public QWidget {
   SceneView *view_ = nullptr;
   std::array<QDoubleSpinBox *, 6> fields_{};
   QLabel *status_ = nullptr;
+  QFrame *legend_ = nullptr; ///< A / B swatches over the canvas
   std::unique_ptr<Vtk> vtk_;
   ManualOffset offset_;
   Vec3 pivot_{};

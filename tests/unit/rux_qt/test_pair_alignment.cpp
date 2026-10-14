@@ -119,3 +119,38 @@ TEST_CASE("Centroid_OfPoints_AndOfNone", "[rux_qt][pair]") {
   CHECK(none[1] == 0.0);
   CHECK(none[2] == 0.0);
 }
+
+TEST_CASE("Normalized_WrapsAnglesIntoMinus180To180", "[rux_qt][pair]") {
+  const ManualOffset o = normalized({0, 0, 0, 190.0, -190.0, 540.0});
+  CHECK(o.yaw_deg == Approx(-170.0));
+  CHECK(o.pitch_deg == Approx(170.0));
+  CHECK(o.roll_deg == Approx(180.0)); // (-180, 180]: +180 stays
+  CHECK(normalized({0, 0, 0, -180.0, 0, 0}).yaw_deg == Approx(180.0));
+  CHECK(normalized({0, 0, 0, 12.5, 0, 0}).yaw_deg == Approx(12.5));
+}
+
+TEST_CASE("Normalized_ClampsTranslationToTheFieldRange", "[rux_qt][pair]") {
+  const ManualOffset o = normalized({75.0, -60.0, 0.25, 0, 0, 0});
+  CHECK(o.x == Approx(kOffsetMaxM));
+  CHECK(o.y == Approx(-kOffsetMaxM));
+  CHECK(o.z == Approx(0.25));
+}
+
+TEST_CASE("Nudge_PastHalfATurn_Wraps", "[rux_qt][pair]") {
+  ManualOffset o{0, 0, 0, 179.8, 0, 0};
+  o = nudge(o, NudgeKey::yaw_plus, false); // 180.3 -> -179.7
+  CHECK(o.yaw_deg == Approx(-179.7));
+  ManualOffset far{kOffsetMaxM, 0, 0, 0, 0, 0};
+  CHECK(nudge(far, NudgeKey::x_plus, true).x == Approx(kOffsetMaxM));
+}
+
+TEST_CASE("RotationAngle_IsTheTrueAngleNotTheEulerSum", "[rux_qt][pair]") {
+  CHECK(rotation_angle_deg(mat4_identity()) == Approx(0.0).margin(1e-9));
+  CHECK(rotation_angle_deg(offset_matrix({0, 0, 0, 30.0, 0, 0}, {1, 2, 3})) ==
+        Approx(30.0));
+  // Two 90° turns about different axes make a 120° rotation, not 180°.
+  CHECK(rotation_angle_deg(offset_matrix({0, 0, 0, 90.0, 0, 90.0}, {})) ==
+        Approx(120.0));
+  CHECK(rotation_angle_deg(offset_matrix({0, 0, 0, 180.0, 0, 0}, {})) ==
+        Approx(180.0));
+}
