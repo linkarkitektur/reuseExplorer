@@ -98,5 +98,7 @@ set_target_properties(rux-qt-gallery PROPERTIES AUTOMOC ON)
 # stage_executor_with_optimize() (header-only, pipeline/optimize_stage.hpp),
 # as `rux` does, so "Optimer" / "Find kanter" run in a shot.
 target_link_libraries(rux-qt-gallery
-    PRIVATE rux_qt_lib reusex_slam reusex_pipeline ${VTK_LIBRARIES})
+    PRIVATE rux_qt_lib reusex_slam reusex_pipeline
+        # db-panorama writes a synthetic panorama (cv::imencode)
+        opencv_core opencv_imgcodecs ${VTK_LIBRARIES})
 vtk_module_autoinit(TARGETS rux-qt-gallery MODULES ${VTK_LIBRARIES})

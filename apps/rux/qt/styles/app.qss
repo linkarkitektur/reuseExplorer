@@ -895,6 +895,12 @@ QLabel#paletteHint, QLabel#paletteCount {
   background: var(--color-surface);
 }
 
+/* Oversigt's panorama preview: the image on the near-black canvas. */
+QGraphicsView#panoramaView {
+  background: var(--color-canvas);
+  border: none;
+}
+
 /* Toolbars over each centre view: a raised strip with a hairline. */
 QFrame#dbToolbar {
   background: var(--color-surface-raised);

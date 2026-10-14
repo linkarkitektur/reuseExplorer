@@ -471,6 +471,17 @@ std::int64_t Paging::count_to_reach(std::int64_t row) const {
 
 // ----------------------------------------------------------- formatting --
 
+ImageSize fit_within(int width, int height, int max_side) {
+  if (width <= 0 || height <= 0 || max_side <= 0)
+    return {std::max(width, 0), std::max(height, 0)};
+  const int longer = std::max(width, height);
+  if (longer <= max_side)
+    return {width, height};
+  const double s = static_cast<double>(max_side) / longer;
+  return {std::max(1, static_cast<int>(std::lround(width * s))),
+          std::max(1, static_cast<int>(std::lround(height * s)))};
+}
+
 std::string format_decimal_da(double v, int decimals) {
   char buf[64];
   std::snprintf(buf, sizeof buf, "%.*f", std::max(0, decimals), v);

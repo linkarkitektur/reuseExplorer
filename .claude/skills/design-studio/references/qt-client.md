@@ -57,6 +57,8 @@ apps/rux/qt/
 │   │                         (pose-graph edits moved to Rediger)
 │   ├── FrameBrowser.hpp      A/B sides, ImagePane, filmstrip
 │   ├── FrameImageLoader.hpp  off-thread decode (own read-only ProjectDBs)
+│   ├── PanoramaViewer.hpp    Oversigt's panorama: off-thread decode to
+│   │                         ≤ 4096 px, pan/zoom view (wheel, drag, F)
 │   ├── EdgeEditor.hpp        staged pose-graph edits -> one transaction
 │   ├── TableBrowser.hpp      any sqlite table (paged), pipeline log
 │   ├── selection.hpp         what the inspector shows for a selection
@@ -74,7 +76,10 @@ apps/rux/qt/
 The Database/Oversigt pages (Q2, read-only), best shot with a real project
 copy (`--project` <copy of a project with frames>; the default fixture has
 few frames): `db-frames`, `db-depth`, `db-confidence`, `db-table`, `db-log`,
-`db-cloud`. The gallery waits for `FrameImageLoader::busy()` and
+`db-cloud`, `db-panorama` (a panorama in the pan/zoom view; on a project
+without panoramas — the default fixture — it writes a synthetic 2:1 one to
+the copy; `--project <copy of NewOffice>` shows a real 5422 px one). The
+gallery waits for `FrameImageLoader::busy()` and
 `background_work_in_flight()` to reach 0 (twice) before it grabs.
 `RUX_QT_PAGE=oversigt rux -p <copy> --quit-after-ms N` smokes the workspace
 in the real binary (`database` is still accepted as an alias).

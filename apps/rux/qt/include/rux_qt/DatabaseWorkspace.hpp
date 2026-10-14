@@ -6,9 +6,10 @@
 // The Database workspace (Stream Q, Q2) — RTABMap's DatabaseViewer
 // reimagined: a project tree on the left (frames, panoramas, clouds, meshes,
 // the pose graph, survey data, the pipeline log and every sqlite table, with
-// counts); in the centre the frame browser, a table or the log, by what the
-// tree selects. It only reads: pose-graph edits happen in Rediger.
-// Whatever is selected is described to the inspector (selection_changed).
+// counts); in the centre the frame browser, a panorama (flat, pan/zoom), a
+// table or the log, by what the tree selects. It only reads: pose-graph edits
+// happen in Rediger. Whatever is selected is described to the inspector
+// (selection_changed).
 
 #include <rux_qt/selection.hpp>
 
@@ -25,6 +26,7 @@ namespace rux::qt {
 class EdgeEditor;
 class FrameBrowser;
 class FrameImageLoader;
+class PanoramaViewer;
 class PipelineLogView;
 class ProjectSession;
 class TableBrowser;
@@ -34,7 +36,7 @@ class ProjectTree : public QTreeWidget {
   Q_OBJECT
     public:
   /// What an item opens.
-  enum class Kind { none, frames, scan, table, cloud, mesh, log };
+  enum class Kind { none, frames, scan, table, cloud, mesh, log, panorama };
   enum Role { KindRole = Qt::UserRole + 1, KeyRole, CountRole, TableRole };
 
   explicit ProjectTree(QWidget *parent = nullptr);
@@ -58,6 +60,7 @@ class DatabaseWorkspace : public QWidget {
 
   EdgeEditor &editor() const { return *editor_; }
   FrameBrowser *frames() const { return frames_; }
+  PanoramaViewer *panorama() const { return panorama_; }
   ProjectTree *tree() const { return tree_; }
   /// The selection the inspector should show (empty: none).
   const Selection &selection() const { return selection_; }
@@ -86,6 +89,7 @@ class DatabaseWorkspace : public QWidget {
   FrameBrowser *frames_ = nullptr;
   TableBrowser *tables_ = nullptr;
   PipelineLogView *log_ = nullptr;
+  PanoramaViewer *panorama_ = nullptr;
   QWidget *empty_ = nullptr;
   QLabel *empty_text_ = nullptr;
   QPushButton *empty_open_ = nullptr;

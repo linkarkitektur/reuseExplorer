@@ -31,6 +31,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QStackedWidget>
 #include <QTextEdit>
@@ -759,10 +760,19 @@ void Inspector::show_selection() {
   if (!sel.pill.isEmpty())
     top->addWidget(new Pill(sel.pill, sel.pill_tone));
   hv->addLayout(top);
-  auto *title = new QLabel(sel.title);
+  // A title with nowhere to wrap (a file name like a panorama's) would widen
+  // the inspector past the window: elide its middle instead (the full name
+  // stays reachable through the label's "Kopiér værdi").
+  QLabel *title = nullptr;
+  if (sel.title.contains(QRegularExpression("\\s"))) {
+    title = new QLabel(sel.title);
+    title->setWordWrap(true);
+    title->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  } else {
+    title = new ElidedLabel(sel.title, Qt::ElideMiddle);
+    title->setToolTip(sel.title);
+  }
   title->setObjectName("selectionTitle");
-  title->setWordWrap(true);
-  title->setTextInteractionFlags(Qt::TextSelectableByMouse);
   hv->addWidget(title);
   if (!sel.subtitle.isEmpty()) {
     auto *sub = new QLabel(sel.subtitle);

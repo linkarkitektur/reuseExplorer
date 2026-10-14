@@ -31,6 +31,9 @@
 #include <reusex/core/ProjectDB.hpp>
 #include <reusex/pipeline/optimize_stage.hpp>
 
+#include <opencv2/core.hpp>
+#include <opencv2/imgcodecs.hpp>
+
 #include <vtkActor.h>
 #include <vtkActorCollection.h>
 #include <vtkCommand.h>
@@ -211,6 +214,37 @@ QWidget *make_db_cloud(const PageContext &ctx) {
   auto *shell = make_db(ctx);
   // The semantic label cloud if there is one (its legend), else any cloud.
   shell->database()->open_item(ProjectTree::Kind::cloud, "labels");
+  return shell;
+}
+
+/// A panorama in Oversigt. The fixture has none: a synthetic 2:1 grid is
+/// written to the COPY (so the shot shows the pan/zoom view, not real data).
+/// A project that has panoramas shows its first one, untouched.
+QWidget *make_db_panorama(const PageContext &ctx) {
+  if (!ctx.project_path.isEmpty()) {
+    reusex::ProjectDB db(ctx.project_path.toStdString());
+    if (db.panoramic_image_count() == 0) {
+      cv::Mat img(1024, 2048, CV_8UC3);
+      for (int y = 0; y < img.rows; ++y)
+        for (int x = 0; x < img.cols; ++x)
+          img.at<cv::Vec3b>(y, x) = {
+              static_cast<uchar>(x / 8), static_cast<uchar>(y / 4),
+              static_cast<uchar>((x / 64 + y / 64) % 2 ? 200 : 60)};
+      std::vector<uchar> jpg;
+      cv::imencode(".jpg", img, jpg);
+      db.save_panoramic_image("syntetisk_360.jpg", jpg, 0.0, -1);
+    }
+  }
+  auto *shell = make_db(ctx); // after the write, so the tree lists it
+  int id = -1;
+  if (!ctx.project_path.isEmpty()) {
+    reusex::ProjectDB db(ctx.project_path.toStdString(), /*readOnly=*/true);
+    const auto list = db.list_panoramic_images();
+    if (!list.empty())
+      id = list.front().id;
+  }
+  shell->database()->open_item(ProjectTree::Kind::panorama,
+                               QString::number(id));
   return shell;
 }
 
@@ -1088,6 +1122,10 @@ void register_shell_pages() {
   register_page({"db-log", "Database: pipeline-loggen", make_db_log});
   register_page({"db-cloud", "Database: en punktsky i træet og inspektøren",
                  make_db_cloud});
+  register_page({"db-panorama",
+                 "Oversigt: et panorama i pan/zoom-visning (skriver et "
+                 "syntetisk panorama til projektkopien)",
+                 make_db_panorama});
   register_page({"3d", "3D: punktskyen i perspektiv med snit", make_3d_page});
   register_page({"3d-pick",
                  "3D: farvet efter rum, med forklaring og et valgt punkt",

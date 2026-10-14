@@ -285,6 +285,17 @@ std::string format_decimal_da(double v, int decimals);
 std::string row_key_title(
     const std::vector<std::pair<std::string, std::string>> &key_columns);
 
+/// A pixel size.
+struct ImageSize {
+  int width = 0;
+  int height = 0;
+};
+/// The size to show a @p width x @p height image at so its longer side is
+/// at most @p max_side (aspect kept, never enlarged, never below 1 px).
+ImageSize fit_within(int width, int height, int max_side);
+/// The longest side a panorama is decoded to for the preview.
+inline constexpr int kPanoramaMaxSide = 4096;
+
 // --------------------------------------------------------- write errors --
 
 enum class WriteErrorKind { read_only, locked, other };

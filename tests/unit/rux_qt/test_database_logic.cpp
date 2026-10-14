@@ -597,3 +597,16 @@ TEST_CASE("PairAddReplaces_OnlyAnActiveEdgeOfThatType",
   CHECK_FALSE(pair_add_replaces(staged, "odometry"));
   CHECK(pair_add_replaces(staged, "panorama"));
 }
+
+// ------------------------------------------------------------- panorama --
+
+TEST_CASE("FitWithin_KeepsTheAspectAndNeverEnlarges",
+          "[rux_qt][database][panorama]") {
+  CHECK(fit_within(8192, 4096, 4096).width == 4096);
+  CHECK(fit_within(8192, 4096, 4096).height == 2048);
+  CHECK(fit_within(2048, 1024, 4096).width == 2048); // small: unchanged
+  CHECK(fit_within(1000, 3000, 1500).height == 1500);
+  CHECK(fit_within(1000, 3000, 1500).width == 500);
+  CHECK(fit_within(0, 100, 4096).width == 0);
+  CHECK(fit_within(7, 3, 2).height >= 1); // never collapses to 0
+}

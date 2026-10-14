@@ -5,10 +5,12 @@
 #include <rux_qt/EdgeEditor.hpp>
 #include <rux_qt/FrameBrowser.hpp>
 #include <rux_qt/FrameImageLoader.hpp>
+#include <rux_qt/PanoramaViewer.hpp>
 #include <rux_qt/ProjectSession.hpp>
 #include <rux_qt/TableBrowser.hpp>
 #include <rux_qt/Theme.hpp>
 #include <rux_qt/Viewer3DWorkspace.hpp>
+#include <rux_qt/database_logic.hpp>
 #include <rux_qt/widgets.hpp>
 
 #include <reusex/core/ProjectDB.hpp>
@@ -70,6 +72,8 @@ ProjectTree::ProjectTree(QWidget *parent) : QTreeWidget(parent) {
   setRootIsDecorated(true);
   setIndentation(theme().px("--space-4"));
   setUniformRowHeights(true);
+  // Names that share a prefix (IMG_20260310_0825…) differ at the end.
+  setTextElideMode(Qt::ElideMiddle);
   setFrameShape(QFrame::NoFrame);
   setSelectionMode(QAbstractItemView::SingleSelection);
   setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -165,8 +169,19 @@ void ProjectTree::rebuild(const ProjectSession &session) {
   }
   frames->setExpanded(true);
 
-  item(nullptr, "Panoramaer", s.panoramic_images.total_count, Kind::table, {},
-       "panoramic_images");
+  auto *panos = item(nullptr, "Panoramaer", s.panoramic_images.total_count,
+                     Kind::table, {}, "panoramic_images");
+  try {
+    const auto list = db->list_panoramic_images();
+    constexpr std::size_t kMaxListed = 500; // the table lists the rest
+    for (std::size_t i = 0; i < std::min(list.size(), kMaxListed); ++i) {
+      const auto &p = list[i];
+      auto *pi = item(panos, qs(p.filename), -1, Kind::panorama,
+                      QString::number(p.id), "panoramic_images");
+      pi->setFont(0, mono);
+    }
+  } catch (const std::exception &) {
+  }
 
   auto *clouds =
       item(nullptr, "Punktskyer", static_cast<qint64>(s.clouds.size()),
@@ -261,6 +276,7 @@ DatabaseWorkspace::DatabaseWorkspace(ProjectSession &session,
   frames_ = new FrameBrowser(session_, *editor_, *loader_);
   tables_ = new TableBrowser(session_);
   log_ = new PipelineLogView(session_);
+  panorama_ = new PanoramaViewer;
   empty_ = new QWidget;
   empty_->setObjectName("dbEmpty");
   {
@@ -282,6 +298,7 @@ DatabaseWorkspace::DatabaseWorkspace(ProjectSession &session,
   stack_->addWidget(frames_);
   stack_->addWidget(tables_);
   stack_->addWidget(log_);
+  stack_->addWidget(panorama_);
   stack_->addWidget(empty_);
   body->addWidget(stack_, 1);
 
@@ -315,6 +332,7 @@ void DatabaseWorkspace::rebuild() {
   tree_->rebuild(session_);
   frames_->reload();
   log_->reload();
+  panorama_->clear(); // drops a decode from the project that was open
   selection_ = {};
   tree_pane_->setVisible(open);
   if (!open) {
@@ -360,6 +378,46 @@ void DatabaseWorkspace::show_item(ProjectTree::Kind kind, const QString &key,
     stack_->setCurrentWidget(log_);
     log_->select_row(0);
     return;
+  case ProjectTree::Kind::panorama: {
+    stack_->setCurrentWidget(panorama_);
+    bool ok = false;
+    const int id = key.toInt(&ok);
+    Selection s;
+    s.kind = "Panorama";
+    s.pill = "Kun læsning";
+    try {
+      for (const auto &p : session_.db()->list_panoramic_images()) {
+        if (!ok || p.id != id)
+          continue;
+        s.title = qs(p.filename);
+        SelectionSection sec{"Panorama", {}, {}};
+        sec.rows.push_back({"Id", QString::number(p.id)});
+        sec.rows.push_back({"Billede", p.node_id >= 0
+                                           ? QString::number(p.node_id)
+                                           : QString("—")});
+        sec.rows.push_back({"Pose",
+                            p.pose_source == "aligned"
+                                ? QString("Justeret (rux align 360)")
+                                : QString("Fra tidsstempel"),
+                            SelectionRow::Style::value});
+        if (p.align_inliers >= 0)
+          sec.rows.push_back({"Inliers", count_text(p.align_inliers)});
+        if (p.align_rms >= 0)
+          sec.rows.push_back(
+              {"RMS", qs(format_decimal_da(p.align_rms, 2)) + " °"});
+        s.sections.push_back(sec);
+      }
+    } catch (const std::exception &) {
+    }
+    if (s.title.isEmpty()) {
+      panorama_->clear();
+      s.title = "Ukendt panorama";
+    } else {
+      panorama_->show_panorama(session_.path(), id, s.title);
+    }
+    set_selection(s);
+    return;
+  }
   case ProjectTree::Kind::table:
   case ProjectTree::Kind::cloud:
   case ProjectTree::Kind::mesh: {

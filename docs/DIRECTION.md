@@ -201,7 +201,8 @@ changelog — that history is the point of keeping it in the repo.
   zoomed in, and Find kanter / Optimer through the pipeline runner (Find
   kanter reports its discover counts — new/filled/capped/odometry edges —
   after it finishes). A user "delete" is now a rejection that later
-  discover/optimize runs keep.
+  discover/optimize runs keep. Oversigt previews 360° panoramas (flat
+  equirect, pan/zoom).
 
 - **2026-10-13** — **Pose graph: the stored graph is the source of truth;
   `rux optimize` is repeatable** ([spec](superpowers/specs/2026-10-13-pose-graph-editor-design.md)).
