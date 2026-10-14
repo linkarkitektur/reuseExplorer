@@ -29,4 +29,9 @@ void register_demo_pages();
 /// The real app shell's pages (shell_pages.cpp).
 void register_shell_pages();
 
+/// A page's own check failed (logged as "ERROR …" by the page): the
+/// gallery still writes the PNG, then exits 6 like a layout guard.
+void report_page_failure();
+bool page_failed();
+
 } // namespace rux::qt::gallery

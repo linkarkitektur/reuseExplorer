@@ -37,6 +37,7 @@
 #include <vtkActor.h>
 #include <vtkActorCollection.h>
 #include <vtkCommand.h>
+#include <vtkRenderWindow.h>
 #include <vtkRenderWindowInteractor.h>
 #include <vtkRenderer.h>
 
@@ -49,12 +50,14 @@
 #include <QFile>
 #include <QGraphicsView>
 #include <QItemSelectionModel>
+#include <QMouseEvent>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QTimer>
+#include <QVTKOpenGLNativeWidget.h>
 
 #include <algorithm>
 #include <array>
@@ -62,6 +65,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <initializer_list>
 #include <optional>
 #include <string>
@@ -482,6 +486,92 @@ QWidget *make_rediger_drag(const PageContext &ctx) {
   vtk_drag(iren, f[0], f[1], f[0], f[1] + step);
   QApplication::processEvents();
   log_offset("face dragged up", ov->offset());
+  ov->view()->request_render();
+  return shell;
+}
+
+namespace {
+/// One left-button drag sent to @p w as Qt mouse events (logical px), the
+/// way a real mouse reaches QVTKOpenGLNativeWidget — its interactor adapter
+/// and HiDPI mapping are part of the path, unlike vtk_drag.
+void qt_drag(QWidget *w, QPointF from, QPointF to,
+             const std::function<void()> &after_press = {}) {
+  const auto send = [w](QEvent::Type type, QPointF p, Qt::MouseButton b,
+                        Qt::MouseButtons held) {
+    QMouseEvent e(type, p, w->mapToGlobal(p), b, held, Qt::NoModifier);
+    QApplication::sendEvent(w, &e);
+  };
+  send(QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton);
+  send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+  if (after_press)
+    after_press();
+  constexpr int kSteps = 8;
+  for (int i = 1; i <= kSteps; ++i)
+    send(QEvent::MouseMove, from + (to - from) * (double(i) / kSteps),
+         Qt::NoButton, Qt::LeftButton);
+  send(QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton);
+  QApplication::processEvents();
+}
+
+const char *box_state_name(int s) {
+  // vtkBoxRepresentation::InteractionStateType
+  static const char *names[] = {"Outside",  "MoveF0", "MoveF1", "MoveF2",
+                                "MoveF3",   "MoveF4", "MoveF5", "Translating",
+                                "Rotating", "Scaling"};
+  return s >= 0 && s < 10 ? names[s] : "none";
+}
+} // namespace
+
+/// Drag B's centre handle with Qt mouse events (needs --gl), once exactly
+/// on the handle and once 6 logical px beside it (a realistic aim). Logs
+/// dpr, sizes, the handle radius, the state at the press and the ΔT; fails
+/// the shot (DRAG NOT TRANSLATED) when the on-handle drag does not move B
+/// by >= 1 cm without turning it. Shoot with --gl --scale 1 and --scale 2.
+QWidget *make_rediger_drag_qt(const PageContext &ctx) {
+  auto *shell = make_pg(ctx);
+  shell->show();
+  settle();
+  PairOverlay *ov = shell->edit()->overlay();
+  auto *gl = ov->view()->findChild<QVTKOpenGLNativeWidget *>();
+  const auto centre = ov->box_centre_px();
+  if (!gl || !ov->ready() || !centre) {
+    std::fprintf(stderr, "rediger-drag-qt: needs --gl and both clouds\n");
+    return shell;
+  }
+  const int *win = gl->renderWindow()->GetSize();
+  std::fprintf(stderr,
+               "rediger-drag-qt: dpr view=%.2f gl=%.2f gl-size=%dx%d "
+               "window=%dx%d handle=%.1f px centre=(%.1f,%.1f)\n",
+               ov->view()->devicePixelRatioF(), gl->effectiveDevicePixelRatio(),
+               gl->width(), gl->height(), win[0], win[1],
+               ov->handle_radius_px(), centre->x(), centre->y());
+  // box_centre_px() is in the render window's logical coordinates, i.e.
+  // the GL widget's (it fills the canvas).
+  const QPointF origin = *centre;
+  const double step = 2.0 * theme().px("--space-7");
+  bool failed = false;
+  for (const double aim : {0.0, 6.0}) {
+    ov->reset_offset();
+    QApplication::processEvents();
+    const QPointF from = origin + QPointF(aim, 0.0);
+    int state = -1;
+    qt_drag(gl, from, from + QPointF(step, 0.0),
+            [&] { state = ov->box_state(); });
+    const ManualOffset &o = ov->offset();
+    const double moved = std::sqrt(o.x * o.x + o.y * o.y + o.z * o.z);
+    const double turned = rotation_angle_deg(ov->delta());
+    std::fprintf(stderr,
+                 "rediger-drag-qt: aim +%.0f px state=%s -> moved %.4f m "
+                 "turned %.3f deg (x=%.4f y=%.4f z=%.4f)\n",
+                 aim, box_state_name(state), moved, turned, o.x, o.y, o.z);
+    if (aim == 0.0 && (moved < 0.01 || turned > 0.5))
+      failed = true;
+  }
+  if (failed) {
+    std::fprintf(stderr, "rux-qt-gallery: ERROR DRAG NOT TRANSLATED: a drag "
+                         "on the centre handle did not move B\n");
+    report_page_failure();
+  }
   ov->view()->request_render();
   return shell;
 }
@@ -1333,6 +1423,10 @@ void register_shell_pages() {
   register_page({"rediger-drag",
                  "Rediger: boksen trukket med musen (kræver --gl)",
                  make_rediger_drag});
+  register_page({"rediger-drag-qt",
+                 "Rediger: midterhåndtaget trukket med Qt-musehændelser "
+                 "(kræver --gl)",
+                 make_rediger_drag_qt});
   register_page({"rediger-offset",
                  "Rediger: B flyttet 20 cm i x og drejet 5° i 3D-overlayet",
                  make_rediger_offset});

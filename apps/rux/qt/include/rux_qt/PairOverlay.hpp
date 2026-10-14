@@ -15,11 +15,13 @@
 
 #include <rux_qt/pair_alignment.hpp>
 
+#include <QPointF>
 #include <QWidget>
 
 #include <array>
 #include <cstddef>
 #include <memory>
+#include <optional>
 
 class QDoubleSpinBox;
 class QFrame;
@@ -53,6 +55,13 @@ class PairOverlay : public QWidget {
   QWidget *status_label() const;
   /// The box widget moved B (called by its VTK observer).
   void widget_moved(const Mat4 &m);
+  /// Test probes for the gallery's Qt-level drag (rediger-drag-qt): the
+  /// box centre in the GL widget's logical coordinates (nullopt without
+  /// a box), the centre handle's projected radius in logical px (0 without
+  /// a box), and the box representation's interaction state (-1 without).
+  std::optional<QPointF> box_centre_px() const;
+  double handle_radius_px() const;
+  int box_state() const;
 
     signals:
   void offset_changed();

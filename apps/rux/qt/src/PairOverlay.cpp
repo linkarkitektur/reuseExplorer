@@ -28,6 +28,7 @@
 #include <vtkBoxRepresentation.h>
 #include <vtkBoxWidget2.h>
 #include <vtkCallbackCommand.h>
+#include <vtkCamera.h>
 #include <vtkCellArray.h>
 #include <vtkCommand.h>
 #include <vtkMatrix4x4.h>
@@ -36,9 +37,11 @@
 #include <vtkPolyData.h>
 #include <vtkPolyDataMapper.h>
 #include <vtkProperty.h>
+#include <vtkRenderWindow.h>
 #include <vtkRenderWindowInteractor.h>
 #include <vtkRenderer.h>
 #include <vtkSmartPointer.h>
+#include <vtkSphereSource.h>
 #include <vtkTransform.h>
 
 #include <cmath>
@@ -101,6 +104,11 @@ class RigidBoxRepresentation : public vtkBoxRepresentation {
       this->Handle[i]->PickableOff();
     }
   }
+  /// World radius of the centre (translate) handle.
+  double centre_handle_radius() const {
+    return this->HandleGeometry[6]->GetRadius();
+  }
+  const double *centre() const { return this->Points->GetPoint(14); }
 
     protected:
   RigidBoxRepresentation() = default;
@@ -497,6 +505,56 @@ bool PairOverlay::eventFilter(QObject *watched, QEvent *event) {
       return true;
   }
   return QWidget::eventFilter(watched, event);
+}
+
+namespace {
+/// World point -> logical widget px of the overlay canvas (VTK's display
+/// origin is bottom-left, in device pixels).
+std::optional<QPointF> to_logical(SceneView *view, const double w[3]) {
+  vtkRenderer *r = view->renderer();
+  if (!r || !r->GetRenderWindow())
+    return std::nullopt;
+  r->SetWorldPoint(w[0], w[1], w[2], 1.0);
+  r->WorldToDisplay();
+  double d[3];
+  r->GetDisplayPoint(d);
+  const double dpr = view->devicePixelRatioF();
+  const int h = r->GetRenderWindow()->GetSize()[1];
+  return QPointF(d[0] / dpr, (h - d[1]) / dpr);
+}
+} // namespace
+
+std::optional<QPointF> PairOverlay::box_centre_px() const {
+  if (!vtk_->box)
+    return std::nullopt;
+  auto *rep =
+      static_cast<RigidBoxRepresentation *>(vtk_->box->GetRepresentation());
+  const double *c = rep->centre();
+  const double w[3] = {c[0], c[1], c[2]};
+  return to_logical(view_, w);
+}
+
+double PairOverlay::handle_radius_px() const {
+  if (!vtk_->box)
+    return 0.0;
+  auto *rep =
+      static_cast<RigidBoxRepresentation *>(vtk_->box->GetRepresentation());
+  const double *c = rep->centre();
+  double up[3];
+  view_->renderer()->GetActiveCamera()->GetViewUp(up);
+  const double r = rep->centre_handle_radius();
+  const double a[3] = {c[0], c[1], c[2]};
+  const double b[3] = {c[0] + up[0] * r, c[1] + up[1] * r, c[2] + up[2] * r};
+  const auto pa = to_logical(view_, a), pb = to_logical(view_, b);
+  if (!pa || !pb)
+    return 0.0;
+  return std::hypot(pb->x() - pa->x(), pb->y() - pa->y());
+}
+
+int PairOverlay::box_state() const {
+  if (!vtk_->box)
+    return -1;
+  return vtk_->box->GetRepresentation()->GetInteractionState();
 }
 
 } // namespace rux::qt

@@ -8,7 +8,8 @@
 // Exit codes: 0 ok, 2 bad command line, 3 a token or a bundled font family
 // was missing (the PNG is still written, with magenta where the token was), 4
 // project or page could not be opened, 5 the PNG could not be written, 6 a
-// layout regression (TOO WIDE, OVERLAY TOO SMALL, STRIP CLIPPED).
+// layout regression (TOO WIDE, OVERLAY TOO SMALL, STRIP CLIPPED) or a page's
+// own check (DRAG NOT TRANSLATED).
 
 #include "demo_pages.hpp"
 
@@ -43,6 +44,14 @@
 #include <memory>
 
 using namespace rux::qt;
+
+namespace rux::qt::gallery {
+namespace {
+bool g_page_failed = false;
+}
+void report_page_failure() { g_page_failed = true; }
+bool page_failed() { return g_page_failed; }
+} // namespace rux::qt::gallery
 
 namespace {
 
@@ -295,7 +304,7 @@ int main(int argc, char **argv) {
                  args.screenshot.c_str());
     return 5;
   }
-  if (too_wide || too_small || strip_cut)
+  if (too_wide || too_small || strip_cut || gallery::page_failed())
     return 6;
   if (!missing.isEmpty() || !fonts.isEmpty()) {
     for (const QString &m : missing)
