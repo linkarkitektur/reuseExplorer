@@ -37,7 +37,8 @@ add_library(rux_qt_core STATIC
     src/core/cli_command.cpp
     src/core/workspace_logic.cpp
     src/core/graph_view.cpp
-    src/core/pair_alignment.cpp)
+    src/core/pair_alignment.cpp
+    src/core/match_editor.cpp)
 target_include_directories(rux_qt_core PUBLIC include)
 target_compile_features(rux_qt_core PUBLIC cxx_std_20)
 
