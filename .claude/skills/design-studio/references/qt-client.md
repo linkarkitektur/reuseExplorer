@@ -120,6 +120,8 @@ copy pass `RUX_ROUNDTRIP_A=<id>` for a pair ICP can fit), `rediger-reload` (zoom
 debounce all survive a same-project reload — logged), `rediger-zoom` (zoomed to one node, pixel count logged — the
 vanishing-node repro). `RUX_QT_PAGE=rediger rux -p <copy> --quit-after-ms N`
 smokes the workspace in the real binary (`posegraf` is gone, not an alias).
+The overlay has no ΔT fields: B is moved by the box widget, the keys, the
+match editor or ICP-forfin, and its header reads out the move.
 
 The app shell's gallery pages: `start`, `start-readonly`, `start-empty`,
 `start-error`, `shell-empty`, `shell-project`, `palette-open` (query "pro"),

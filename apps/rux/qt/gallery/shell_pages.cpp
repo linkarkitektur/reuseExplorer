@@ -376,8 +376,8 @@ void click_strip_button(AppShell *shell, std::initializer_list<QString> texts) {
       }
 }
 
-/// B moved by hand: 20 cm in x, 5° yaw. The interactive box widget needs
-/// --gl (xvfb); the offscreen shot shows the fields and the moved cloud.
+/// B moved by hand: 20 cm in x, 5° yaw (the moved cloud and the header
+/// read-out).
 QWidget *make_rediger_offset(const PageContext &ctx) {
   auto *shell = make_pg(ctx);
   settle(); // clouds loaded
@@ -470,7 +470,7 @@ void log_offset(const char *what, const ManualOffset &o) {
 
 /// The box widget driven by synthesized mouse events (needs --gl): a drag
 /// of the centre handle (translate), then a drag on a face (rotate). Logs
-/// the resulting ΔT; the shot shows the fields that followed the widget.
+/// the resulting ΔT; the shot shows the read-out that followed the widget.
 QWidget *make_rediger_drag(const PageContext &ctx) {
   auto *shell = make_pg(ctx);
   shell->show();

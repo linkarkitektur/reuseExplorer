@@ -15,13 +15,11 @@
 
 #include <QApplication>
 #include <QButtonGroup>
-#include <QDoubleSpinBox>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
-#include <QLocale>
 #include <QPointer>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -206,74 +204,17 @@ PairOverlay::PairOverlay(ProjectSession &session, bool interactive,
                          QWidget *parent)
     : QWidget(parent), session_(session), vtk_(std::make_unique<Vtk>()) {
   setObjectName("pairOverlay");
-  const Theme &t = theme();
   auto *v = new QVBoxLayout(this);
   v->setContentsMargins(0, 0, 0, 0);
   v->setSpacing(0);
   view_ = new SceneView(interactive);
   v->addWidget(view_, 1);
 
-  auto *fields = new QFrame;
-  fields->setObjectName("offsetFields");
-  auto *g = new QGridLayout(fields);
-  g->setContentsMargins(t.px("--space-3"), t.px("--space-2"), t.px("--space-3"),
-                        t.px("--space-2"));
-  g->setHorizontalSpacing(t.px("--space-2"));
-  g->setVerticalSpacing(t.px("--space-1"));
-  // Two rows of three — shift over turn — each label beside its field and
-  // the unit in the field, so the fields take two lines of the overlay's
-  // height, not four, and the pane never widens the window.
-  const char *labels[6] = {"X", "Y", "Z", "Drej", "Hæld", "Rul"};
-  const char *tips[6] = {"Flyt B langs verdens x-akse",
-                         "Flyt B langs verdens y-akse",
-                         "Flyt B langs verdens z-akse",
-                         "Drej B om lodret (z) gennem dens midtpunkt",
-                         "Hæld B om y-aksen gennem dens midtpunkt",
-                         "Rul B om x-aksen gennem dens midtpunkt"};
-  for (int i = 0; i < 6; ++i) {
-    auto *s = new QDoubleSpinBox;
-    s->setObjectName("offsetField");
-    s->setButtonSymbols(QAbstractSpinBox::NoButtons);
-    s->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    // Commit on Enter / focus out, not per keystroke: a per-keystroke
-    // valueChanged would reformat the very text being typed.
-    s->setKeyboardTracking(false);
-    s->setLocale(QLocale(QLocale::Danish, QLocale::Denmark));
-    if (i < 3) {
-      s->setRange(-kOffsetMaxM, kOffsetMaxM);
-      s->setDecimals(3);
-      s->setSingleStep(kNudgeM);
-      s->setSuffix(" m");
-    } else {
-      s->setRange(-180.0, 180.0);
-      s->setDecimals(2);
-      s->setSingleStep(kNudgeDeg);
-      s->setSuffix(" °");
-    }
-    s->setToolTip(tips[i]);
-    s->setMinimumWidth(t.px("--space-7") + t.px("--space-2"));
-    s->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    const int row = i / 3, col = (i % 3) * 2;
-    auto *label = new CapsLabel(labels[i], "fieldLabel");
-    label->setToolTip(tips[i]);
-    g->addWidget(label, row, col, Qt::AlignVCenter);
-    g->addWidget(s, row, col + 1);
-    g->setColumnStretch(col + 1, 1);
-    fields_[static_cast<std::size_t>(i)] = s;
-    connect(s, &QDoubleSpinBox::valueChanged, this, [this, i](double val) {
-      double *slot[6] = {&offset_.x,         &offset_.y,
-                         &offset_.z,         &offset_.yaw_deg,
-                         &offset_.pitch_deg, &offset_.roll_deg};
-      *slot[i] = val;
-      offset_ = normalized(offset_);
-      apply_offset(false);
-    });
-  }
-  // Shown in the pane header (status_label()), not under the fields.
+  // Shown in the pane header (status_label()); the overlay's whole height
+  // is canvas.
   status_ = new ElidedLabel(QString(), Qt::ElideRight);
   status_->setObjectName("statusText");
   status_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-  v->addWidget(fields);
 
   // "Farve: Tint | RGB", floating in the canvas' top-right corner like the
   // legend in its bottom-left: at 1440 px the pane header has no room for
@@ -517,15 +458,14 @@ void PairOverlay::set_offset(const ManualOffset &o) {
 void PairOverlay::widget_moved(const Mat4 &m) {
   const ManualOffset raw = offset_from_matrix(m, pivot_);
   offset_ = normalized(raw);
-  // A drag past the fields' range is clamped: put the box back where the
-  // clamped ΔT has it, so box, cloud and fields agree.
+  // A drag past ΔT's range is clamped: put the box back where the clamped
+  // ΔT has it, so the box and the cloud agree.
   const bool clamped =
       raw.x != offset_.x || raw.y != offset_.y || raw.z != offset_.z;
   apply_offset(/*from_widget=*/!clamped);
 }
 
 void PairOverlay::apply_offset(bool from_widget) {
-  sync_fields();
   if (vtk_->b) {
     vtkNew<vtkMatrix4x4> m;
     to_vtk(delta(), m);
@@ -564,18 +504,6 @@ void PairOverlay::apply_offset(bool from_widget) {
 }
 
 QWidget *PairOverlay::status_label() const { return status_; }
-
-void PairOverlay::sync_fields() {
-  const double values[6] = {offset_.x,         offset_.y,
-                            offset_.z,         offset_.yaw_deg,
-                            offset_.pitch_deg, offset_.roll_deg};
-  for (int i = 0; i < 6; ++i) {
-    QDoubleSpinBox *s = fields_[static_cast<std::size_t>(i)];
-    const QSignalBlocker b(s);
-    s->setValue(values[i]);
-    s->setEnabled(ready_);
-  }
-}
 
 bool PairOverlay::handle_key(int key, bool shift) {
   NudgeKey k;

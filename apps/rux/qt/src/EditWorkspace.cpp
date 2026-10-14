@@ -109,7 +109,7 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   right_->addWidget(panes_[3]);
   // The overlay is where B is moved by hand (spec §5.2): it gets the
   // column's height first, the images a reference strip above it.
-  right_->setStretchFactor(0, 1);
+  right_->setStretchFactor(0, 2);
   right_->setStretchFactor(1, 3);
   right_column_ = new QWidget;
   auto *rc = new QVBoxLayout(right_column_);
@@ -162,10 +162,12 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   main_->setSizes({3 * kUnit, 2 * kUnit});
   // The edge list gets room for a screenful of suspicious rows.
   left_->setSizes({3 * kUnit, 2 * kUnit});
-  // The images over the overlay, 1:3: the overlay's fields take a fixed
-  // share of its part, and its canvas must stay usable at 1440x900 with
-  // the pending banner and a few edge rows (an even split left ~30 px).
-  right_->setSizes({kUnit, 3 * kUnit});
+  // The images (now the match editor) over the overlay, 2:3: without the
+  // ΔT fields the overlay is all canvas, but an even 1:1 split still left
+  // it under the gallery's 250 px OVERLAY TOO SMALL floor at 1440x900 with
+  // the pending banner and a few edge rows (measured as low as 230 px), so
+  // the overlay keeps the larger share.
+  right_->setSizes({2 * kUnit, 3 * kUnit});
 
   for (int i = 0; i < kEditPaneCount; ++i)
     connect(panes_[i], &PaneFrame::hide_requested, this,

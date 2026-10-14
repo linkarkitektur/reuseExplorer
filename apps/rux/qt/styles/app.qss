@@ -535,16 +535,6 @@ QLabel#viewportEmpty {
   color: var(--color-on-chrome-muted);
   font-size: var(--font-size-md);
 }
-QFrame#offsetFields {
-  background: var(--color-surface-raised);
-  border-top: 1px solid var(--color-border);
-}
-/* Six offset fields in a narrow pane: mono digits, tight padding. */
-QDoubleSpinBox#offsetField {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
-  padding: var(--space-1) var(--space-1);
-}
 QFrame#statusBar {
   background: var(--color-surface-raised);
   border-top: 1px solid var(--color-border);
