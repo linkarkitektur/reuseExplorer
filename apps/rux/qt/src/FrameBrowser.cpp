@@ -267,15 +267,19 @@ void ImagePane::paintEvent(QPaintEvent *) {
     p.setOpacity(1.0);
   }
 
-  // Caption chip, bottom left, on a scrim so it reads over any image.
-  if (!caption.isEmpty()) {
-    const QFont f =
-        t.font(FontRole::sans, "--font-size-xs", "--font-weight-medium");
-    p.setFont(f);
-    const QFontMetrics fm(f);
+  // Caption chip, bottom left, on a scrim so it reads over any image —
+  // but not over a thumbnail it would mostly cover (Rediger's pair images
+  // yield their height to the 3D overlay; its header names the layer).
+  const QFont chip_font =
+      t.font(FontRole::sans, "--font-size-xs", "--font-weight-medium");
+  const QFontMetrics fm(chip_font);
+  const QRect text_rect(0, 0,
+                        fm.horizontalAdvance(caption) + 2 * t.px("--space-2"),
+                        fm.height() + t.px("--space-1") * 2);
+  if (!caption.isEmpty() && target.height() >= 4 * text_rect.height() &&
+      target.width() >= 2 * text_rect.width()) {
+    p.setFont(chip_font);
     const int pad = t.px("--space-2");
-    const QRect text_rect(0, 0, fm.horizontalAdvance(caption) + 2 * pad,
-                          fm.height() + t.px("--space-1") * 2);
     const QRect chip = text_rect.translated(
         target.left() + pad, target.bottom() - pad - text_rect.height());
     QColor scrim = t.color("--color-scrim");
@@ -732,9 +736,6 @@ FrameBrowser::FrameBrowser(ProjectSession &session, EdgeEditor &editor,
   sides->addWidget(side_b_, 1);
   bv->addLayout(sides, 1);
 
-  strip_ = new PairStrip(session_, editor_);
-  bv->addWidget(strip_);
-
   film_model_ = new FilmstripModel(loader_, this);
   film_ = new QListView;
   film_->setObjectName("filmstrip");
@@ -804,8 +805,6 @@ FrameBrowser::FrameBrowser(ProjectSession &session, EdgeEditor &editor,
           &FrameBrowser::frame_ready);
   connect(&editor_, &EdgeEditor::changed, this,
           &FrameBrowser::refresh_strip_marks);
-  connect(strip_, &PairStrip::edge_selected, this,
-          &FrameBrowser::selection_changed);
   qApp->installEventFilter(this);
   apply_view();
   reload();
@@ -902,7 +901,6 @@ void FrameBrowser::sync_side(bool side_b) {
       loader_.request(id);
     }
   }
-  strip_->set_pair(pair_.a_id(), pair_.b_id());
   film_model_->set_marks(pair_.a_id(), pair_.b_id());
   emit pair_changed(pair_.a_id(), pair_.b_id());
   if (!side_b && index >= 0)
@@ -929,9 +927,9 @@ void FrameBrowser::refresh_strip_marks() {
   QHash<int, int> degrees;
   for (const auto &[frame, n] : editor_.edits().degrees())
     degrees.insert(frame, n);
-  // Frames whose edges were all staged for deletion show a 0 mark.
-  for (const auto &op : editor_.edits().ops())
-    for (int f : {op.edge.key.from, op.edge.key.to})
+  // Frames whose edges are all rejected (stored or staged) show a 0 mark.
+  for (const auto &v : editor_.edits().effective())
+    for (int f : {v.edge.key.from, v.edge.key.to})
       if (!degrees.contains(f))
         degrees.insert(f, 0);
   film_model_->set_degrees(std::move(degrees));

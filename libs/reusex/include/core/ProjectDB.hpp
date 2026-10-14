@@ -16,9 +16,11 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -236,6 +238,20 @@ class ProjectDB {
   /// stored identity pose IS valid — a scan may put its first frame at the
   /// origin.
   bool has_sensor_frame_pose(int nodeId) const;
+
+  /// Snapshot of the pose `rux optimize` seeds from (schema v28,
+  /// sensor_frames.initial_transform). Written by `rux graph init` and
+  /// `rux import rtabmap`; never by optimize.
+  /// @throws std::invalid_argument if @p pose is not a rigid transform;
+  ///         std::runtime_error if there is no such frame or the project is
+  ///         read-only / pre-v28.
+  void set_initial_pose(int nodeId, const std::array<double, 16> &pose);
+
+  /// nullopt when NULL, not a rigid transform, the frame is missing, or the
+  /// project predates v28 (a read-only open never migrates).
+  std::optional<std::array<double, 16>> initial_pose(int nodeId) const;
+
+  bool has_initial_pose(int nodeId) const;
 
   core::SensorIntrinsics sensor_frame_intrinsics(int nodeId) const;
   bool has_sensor_frame(int nodeId) const;
@@ -593,53 +609,131 @@ class ProjectDB {
 
   // --- Pose Graph ---
   //
-  // Written by `rux optimize` after convergence; replaced atomically on each
-  // run.  The table always reflects the most-recent optimize invocation.
-  // A project that has never been optimized has an empty table.
-  //
-  // Node positions are read from `sensor_frames` (their current world poses),
-  // so there is no separate nodes table.
+  // The stored pose graph is the source of truth for `rux optimize` (schema
+  // v28, docs/superpowers/specs/2026-10-13-pose-graph-editor-design.md §3).
+  // Rows are canonical: from_node_id < to_node_id, UNIQUE(from, to, type).
+  // Node positions are read from `sensor_frames` (their current world poses,
+  // and the snapshot in `initial_transform`), so there is no nodes table.
 
-  /// One directed edge stored in `pose_graph_edges`.
+  /// One edge stored in `pose_graph_edges`. The first five members keep their
+  /// pre-v28 order so `{from, to, type, residual, weight}` still initialises.
   struct PoseGraphEdge {
     int from_node_id = 0;
     int to_node_id = 0;
-    /// "odometry" | "loop_closure" | "panorama"
+    /// "odometry" | "loop_closure" | "panorama" (other strings are stored
+    /// as given; ruxd may write them).
     std::string edge_type;
-    /// 0.5 × whitened squared residual after convergence (GTSAM convention).
-    double residual = 0.0;
-    /// Translational information weight (1 / sigma_trans²).  NaN when not
-    /// extractable for this edge type.
-    double weight = 1.0;
+    /// 0.5 x whitened squared residual after the last solve (GTSAM
+    /// convention). NaN <-> NULL (never solved).
+    double residual = std::numeric_limits<double>::quiet_NaN();
+    /// 1 / sigma_trans^2. Derived from `information` on write when that is
+    /// present. NaN <-> NULL.
+    double weight = std::numeric_limits<double>::quiet_NaN();
+    /// Measurement T_from^-1 * T_to in the sensor_frames.transform
+    /// convention, row-major. nullopt for migrated v15 rows.
+    std::optional<std::array<double, 16>> transform;
+    /// 6x6 information, GTSAM Pose3 order (rx, ry, rz, tx, ty, tz),
+    /// row-major. nullopt: the per-type default sigma of PlaneGraphOptions.
+    std::optional<std::array<double, 36>> information;
+    /// rtabmap | odometry_init | orb | panorama | file | icp | manual | legacy
+    std::string source = "manual";
+    /// auto | confirmed | rejected
+    std::string status = "auto";
+    /// ISO-8601 UTC; "" on write means "now".
+    std::string created_at;
+    std::optional<double> seed_disagreement_m;
+    std::optional<double> seed_disagreement_deg;
+    std::optional<double> deviation_m;
+    std::optional<double> deviation_deg;
+    /// Row id, filled by the readers; ignored on write.
+    int64_t id = 0;
   };
 
-  /// Replace the stored pose graph atomically (delete-then-insert inside one
-  /// transaction).  Calling with an empty vector clears the table.
-  void save_pose_graph_edges(const std::vector<PoseGraphEdge> &edges);
-
-  /// All stored edges, in insertion order.  Returns an empty vector when the
-  /// table does not exist (pre-v15 schema opened read-only).
+  /// All stored edges (every status), ordered by id. Empty when the table
+  /// does not exist. On a pre-v28 project opened read-only the rows carry
+  /// source "legacy", status "auto" and no measurement.
   std::vector<PoseGraphEdge> list_pose_graph_edges() const;
 
-  /// True when the pose graph table exists and has at least one edge.
+  /// The edge with key (from, to, type), given in either direction.
+  std::optional<PoseGraphEdge>
+  pose_graph_edge(int from_node_id, int to_node_id,
+                  std::string_view edge_type) const;
+
+  /// True when the pose graph table exists and has at least one row.
   bool has_pose_graph() const;
 
-  /// Insert a single edge and return its row id.
+  /// Per-edge solve metrics, written by `rux optimize`. The key may be given
+  /// in either direction. nullopt writes NULL.
+  struct PoseGraphEdgeMetrics {
+    int from_node_id = 0;
+    int to_node_id = 0;
+    std::string edge_type;
+    std::optional<double> residual;
+    std::optional<double> deviation_m;
+    std::optional<double> deviation_deg;
+    std::optional<double> seed_disagreement_m;
+    std::optional<double> seed_disagreement_deg;
+  };
+
+  /// Insert @p edge, or replace every column of the row with the same
+  /// canonical key (from < to, edge_type). An edge given with from > to is
+  /// canonicalised: transform inverted, information mapped through the
+  /// adjoint (core::pose_graph::reverse_edge_information); metric magnitudes
+  /// are kept as given. `weight` is derived from `information` when present.
   ///
-  /// Used by the GUI editor to add manual loop-closure edges without disturbing
-  /// the rest of the graph.  Unlike save_pose_graph_edges(), this does not
-  /// replace the whole table — it appends exactly one row.
+  /// An upsert WITHOUT a measurement (`transform` nullopt) onto an existing
+  /// row only changes its status: the stored transform, information, weight,
+  /// residual, metrics and source are kept, and status "auto" never
+  /// downgrades a "confirmed" row. A new key is inserted as given.
+  ///
+  /// @returns false — and writes nothing — when the stored row is "rejected"
+  ///          and @p overwrite_rejected is false (tombstones survive
+  ///          `rux graph discover`).
+  /// @throws std::invalid_argument for from == to, an empty edge_type or
+  ///         source, an invalid status, a non-rigid transform or an invalid
+  ///         information; std::runtime_error on a read-only project.
+  bool upsert_pose_graph_edge(const PoseGraphEdge &edge,
+                              bool overwrite_rejected = false);
+
+  /// Set "auto" | "confirmed" | "rejected" on the edge (either direction).
+  /// @returns false when no such edge exists.
+  /// @throws std::invalid_argument for any other status string.
+  bool set_pose_graph_edge_status(int from_node_id, int to_node_id,
+                                  std::string_view edge_type,
+                                  std::string_view status);
+
+  /// Write residual / deviation / seed-disagreement for many edges inside one
+  /// SAVEPOINT (nests in a ProjectDB::Transaction). Unknown keys are skipped.
+  /// @returns the number of rows updated.
+  int update_pose_graph_edge_metrics(
+      std::span<const PoseGraphEdgeMetrics> metrics);
+
+  /// Delete every "auto" row with this source; tombstones and user
+  /// confirmations stay.
+  /// @returns the number of rows deleted.
+  int delete_pose_graph_edges_from_source(std::string_view source);
+
+  /// Superseded by upsert_pose_graph_edge (kept for ruxd, which builds against
+  /// the installed package). Upserts with overwrite_rejected = true and
+  /// source "manual" when the edge has none; returns the row id. Never
+  /// downgrades a "confirmed" row to "auto", and (without a measurement)
+  /// never touches a stored measurement.
+  [[deprecated("use upsert_pose_graph_edge")]]
   int add_pose_graph_edge(const PoseGraphEdge &edge);
 
-  /// Delete edges matching @p from_node_id and @p to_node_id.
-  ///
-  /// When @p edge_type is non-empty, only edges of that type are removed so
-  /// the caller can target a single loop-closure without touching an odometry
-  /// edge that happens to share the same endpoint pair.
-  ///
-  /// @returns the number of rows deleted (0 when nothing matched).
+  /// Superseded by set_pose_graph_edge_status: marks the matching edges
+  /// "rejected" (every type on the pair when @p edge_type is empty) instead
+  /// of deleting them. @returns the number of rows marked.
+  [[deprecated("use set_pose_graph_edge_status(..., \"rejected\")")]]
   int delete_pose_graph_edges(int from_node_id, int to_node_id,
                               std::string_view edge_type = "");
+
+  // --- Project settings (schema v28) ---
+
+  /// nullopt for an unknown key or a pre-v28 project.
+  std::optional<std::string> setting(std::string_view key) const;
+  /// Insert or replace. @throws std::runtime_error on a read-only project.
+  void set_setting(std::string_view key, std::string_view value);
 
   // --- Scans (multi-session import, #129) ---
 

@@ -9,7 +9,8 @@
 # §8 so you can validate the spatial proposal mode on any project in one command:
 #
 #   1. Generate spatial loop edges via a matcher venv
-#   2. Run rux optimize --loop-edges on a COPY of the project (non-destructive)
+#   2. Run rux graph discover --loop-edges + rux optimize on a COPY of the
+#      project (non-destructive)
 #   3. Rebuild the point cloud and render before/after top-down PNGs
 #
 # USAGE
@@ -255,8 +256,10 @@ fi
 # --------------------------------------------------------------------------- #
 echo "[3/4] Copying project and running optimizer on working copy..."
 cp "$PROJECT" "$WORK_RUX"
-"$RUX" -p "$WORK_RUX" optimize \
+"$RUX" -p "$WORK_RUX" graph discover --no-loop-closure \
     --loop-edges "$EDGES_JSON" \
+    2>&1 | sed 's/^/  [rux graph discover] /'
+"$RUX" -p "$WORK_RUX" optimize \
     --loop-trust \
     --odometry-sigma-trans "$SIGMA_TRANS" \
     2>&1 | sed 's/^/  [rux optimize] /'

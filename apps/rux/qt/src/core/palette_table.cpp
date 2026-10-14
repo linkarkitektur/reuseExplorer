@@ -32,13 +32,61 @@ std::string lower_ascii(std::string s) {
 const std::vector<PageEntry> &page_entries() {
   static const std::vector<PageEntry> pages = {
       {"Start", "forside velkomst start"},
-      {"Database", "db tabeller billeder frames databaseviewer data"},
+      {"Oversigt", "database db tabeller billeder frames databaseviewer data "
+                   "oversigt panoramaer"},
       {"3D", "punktsky viewer vtk mesh scene"},
-      {"Posegraf", "pose graph kanter loop closure graf"},
+      {"Rediger", "posegraf pose graph kanter loop closure graf rediger edit "
+                  "icp løkkelukning"},
       {"Pipeline", "kør trin stage job parametre"},
       {"Log", "kørselslog pipeline-log historik"},
   };
   return pages;
+}
+
+std::string_view edit_pane_key(EditPane p) {
+  switch (p) {
+  case EditPane::graph:
+    return "graph";
+  case EditPane::edges:
+    return "edges";
+  case EditPane::images:
+    return "images";
+  case EditPane::overlay:
+    return "overlay";
+  }
+  return "graph";
+}
+
+std::string edit_pane_name_da(EditPane p) {
+  switch (p) {
+  case EditPane::graph:
+    return "Graf";
+  case EditPane::edges:
+    return "Kantliste";
+  case EditPane::images:
+    return "Billeder";
+  case EditPane::overlay:
+    return "3D-overlay";
+  }
+  return {};
+}
+
+std::optional<EditPane> parse_edit_pane(std::string_view key) {
+  for (int i = 0; i < kEditPaneCount; ++i)
+    if (edit_pane_key(static_cast<EditPane>(i)) == key)
+      return static_cast<EditPane>(i);
+  return std::nullopt;
+}
+
+int smoke_page_index(std::string_view name) {
+  static constexpr std::string_view kNames[] = {"start",   "oversigt", "3d",
+                                                "rediger", "pipeline", "log"};
+  if (name == "database")
+    return 1;
+  for (int i = 0; i < 6; ++i)
+    if (kNames[i] == name)
+      return i;
+  return -1;
 }
 
 std::string action_shortcut(const std::string &id) {
@@ -99,6 +147,20 @@ std::vector<PaletteEntry> build_palette(const PaletteState &s) {
   action("theme", s.dark_theme ? "Skift til lyst tema" : "Skift til mørkt tema",
          "theme lys mørk dark light");
   action("quit", "Afslut", "quit exit");
+  if (s.project_open) {
+    // Titles in the definite form ("grafen"), one per EditPane.
+    static constexpr const char *kPaneTitles[kEditPaneCount] = {
+        "grafen", "kantlisten", "billederne", "3D-overlay"};
+    for (int i = 0; i < kEditPaneCount; ++i) {
+      const auto p = static_cast<EditPane>(i);
+      PaletteEntry e;
+      e.id = "pane:" + std::string(edit_pane_key(p));
+      e.group = "Handlinger";
+      e.title = std::string("Vis eller skjul ") + kPaneTitles[i];
+      e.keywords = "rediger panel vis skjul " + edit_pane_name_da(p);
+      out.push_back(std::move(e));
+    }
+  }
 
   for (const auto &r : s.recent) {
     PaletteEntry e;

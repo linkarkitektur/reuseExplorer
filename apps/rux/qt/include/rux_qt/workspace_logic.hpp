@@ -12,11 +12,32 @@
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace rux::qt {
+
+// -------------------------------------------------------- Find kanter --
+
+/// The counts of a `graph_discover` run, read back from its result summary
+/// (pipeline::run_graph_discover_stage) for Rediger's status line.
+struct DiscoverCounts {
+  bool dry_run = false;
+  int odometry_initialised = 0; ///< odometry edges created first (no graph)
+  int proposed = 0;
+  int matched = 0;
+  int pcm_rejected = 0;
+  int pcm_capped = 0;
+  int skipped_existing = 0;
+  int skipped_rejected = 0;
+  int added = 0;
+  int filled = 0; ///< stored rows given a measurement
+};
+
+/// nullopt unless @p summary is a whole graph_discover summary.
+std::optional<DiscoverCounts> parse_discover_summary(std::string_view summary);
 
 // ---------------------------------------------------------------- Log --
 

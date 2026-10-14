@@ -471,6 +471,7 @@ TEST_CASE("StageSupportsCancellation_KnownStages_MatchesRealPlumbing",
   // W0) — even though the default executor never gets that far (see
   // stages.cpp's dispatch()).
   CHECK(stage_supports_cancellation(JobStage::annotate));
+  CHECK_FALSE(stage_supports_cancellation(JobStage::graph_discover));
 }
 
 TEST_CASE("StageContext_IsCancelled_ReadsTokenSafely", "[pipeline][jobs]") {

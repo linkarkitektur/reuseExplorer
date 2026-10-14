@@ -10,6 +10,7 @@
 #include <edit.hpp>
 #include <export.hpp>
 #include <get.hpp>
+#include <graph.hpp>
 #include <import.hpp>
 #include <info.hpp>
 #include <log.hpp>
@@ -197,6 +198,7 @@ int run(int argc, char **argv, GuiLauncher launch_gui) {
   setup_subcommand_register(app, opt);
   setup_subcommand_render(app, opt);
   setup_subcommand_optimize(app, opt);
+  setup_subcommand_graph(app, opt);
 
   // Unified path-based database commands (replaces old get/add/set/remove)
   setup_subcommand_get(app, opt);

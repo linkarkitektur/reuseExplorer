@@ -65,6 +65,7 @@ TEST_CASE("MigrationV26_FreshProject_HasTombstoneTable",
   {
     ProjectDB db(tmp.path);
     CHECK(db.schema_version() == ProjectDB::latest_schema_version());
+    CHECK(ProjectDB::latest_schema_version() >= 26);
     CHECK(db.dismissed_instances().empty());
     db.dismiss_instance("g-1");
     db.dismiss_instance("g-1"); // idempotent

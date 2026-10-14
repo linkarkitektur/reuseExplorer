@@ -4,7 +4,9 @@ The second surface of the one design system. Status: **in progress** (Stream
 Q of `docs/superpowers/specs/2026-10-08-ruxd-multiuser-and-qt-client-design.md`).
 Q0 — this loop, the theme loader, the gallery and two demo pages — Q1 —
 the app shell plain `rux` opens — Q2 — the Database workspace — and Q3 —
-3D, Posegraf, Pipeline and Log — are done.
+3D, Rediger, Pipeline and Log — are done. P4 renamed Posegraf to Rediger
+(now the only place pose-graph edits happen; Database/Oversigt is read-only)
+and gave it its own edge list.
 
 ## 1. Where things live
 
@@ -21,11 +23,27 @@ apps/rux/qt/
 │   ├── SceneView.hpp         3D canvas: QVTKOpenGLNativeWidget or EGL
 │   │                         offscreen image; LOD swap; hardware picking
 │   ├── Viewer3DWorkspace.hpp Q3: layers, colour-by + legend, cut, presets
-│   ├── PoseGraphWorkspace.hpp Q3: QGraphicsView of frames and edges
+│   ├── EditWorkspace.hpp     Rediger: GraphPanel + EdgeListPanel left, the
+│   │                         selected pair (images, 3D overlay) + PairStrip
+│   │                         right, under PendingBanner
+│   ├── GraphPanel.hpp        Rediger graph pane: XY/XZ/YZ, view yaw, ticks,
+│   │                         edges coloured by type/status/residual/…
+│   ├── EdgeListPanel.hpp     Rediger edge list: sortable/filterable QTableView
+│   │                         over rux_qt_core's edge_table()
+│   ├── PendingBanner.hpp     pending pose-graph edits banner (count, Gem/Kassér)
+│   ├── PairStrip.hpp         A<->B edges between the selected pair: ICP
+│   │                         refine, add, delete
+│   ├── ViewSettings.hpp      project display settings (view yaw)
 │   ├── PipelineWorkspace.hpp Q3: stage form, JobRunner, log tail, CLI line
 │   ├── pipeline_ui.hpp       Danish stage/field names, JSON -> rux line
 │   ├── cli_command.hpp       Qt-free: "Kopiér som rux-kommando"
 │   ├── workspace_logic.hpp   Qt-free: log filter, graph hit tests, log tap
+│   ├── graph_view.hpp        Qt-free: Rediger canvas geometry (zoom, view
+│   │                         yaw projection, heading tick, A/B node-click rule)
+│   ├── edge_colouring.hpp    Qt-free: edge colour modes, legends, percentiles
+│   ├── edge_table.hpp        Qt-free: edge list columns, Danish cell text,
+│   │                         sort, type/status filter
+│   ├── edge_store.hpp        Qt-free: pose-graph store <-> staged edit model
 │   ├── pages.hpp             page registry (name -> factory(PageContext))
 │   ├── fuzzy.hpp recent.hpp  Qt-free: palette ranking, recent list,
 │   │   launch.hpp            what plain `rux` does, open-error text (Danish)
@@ -35,10 +53,13 @@ apps/rux/qt/
 │   ├── StartPage.hpp         open / drop / recent / summary / error cards
 │   ├── CommandPalette.hpp    Ctrl+K overlay
 │   ├── workspaces.hpp        page order, names, palette aliases
-│   ├── DatabaseWorkspace.hpp Q2: ProjectTree + stack + pending banner
-│   ├── FrameBrowser.hpp      A/B sides, ImagePane, filmstrip, PairStrip
+│   ├── DatabaseWorkspace.hpp Q2/Oversigt: ProjectTree + stack, read-only
+│   │                         (pose-graph edits moved to Rediger)
+│   ├── FrameBrowser.hpp      A/B sides, ImagePane, filmstrip
 │   ├── FrameImageLoader.hpp  off-thread decode (own read-only ProjectDBs)
-│   ├── EdgeEditor.hpp        pending pose-graph edits -> one transaction
+│   ├── PanoramaViewer.hpp    Oversigt's panorama: off-thread decode to
+│   │                         ≤ 4096 px, pan/zoom view (wheel, drag, F)
+│   ├── EdgeEditor.hpp        staged pose-graph edits -> one transaction
 │   ├── TableBrowser.hpp      any sqlite table (paged), pipeline log
 │   ├── selection.hpp         what the inspector shows for a selection
 │   ├── database_logic.hpp    Qt-free: A/B pair, keys, pending edits,
@@ -52,26 +73,52 @@ apps/rux/qt/
                               shell_pages.cpp (the real AppShell)
 ```
 
-The Database pages (Q2), best shot with a real project copy (`--project`
-<copy of a project with frames>; the default fixture has few frames):
-`db-frames`, `db-depth`, `db-confidence`, `db-pending` (an ICP run plus a
-staged edge), `db-readonly` (a save refused, Danish banner), `db-saved`
-(WRITES an edge to the copy), `db-table`, `db-log`, `db-cloud`. The
+The Database/Oversigt pages (Q2, read-only), best shot with a real project
+copy (`--project` <copy of a project with frames>; the default fixture has
+few frames): `db-frames`, `db-depth`, `db-confidence`, `db-table`, `db-log`,
+`db-cloud`, `db-panorama` (a panorama in the pan/zoom view; on a project
+without panoramas — the default fixture — it writes a synthetic 2:1 one to
+the copy; `--project <copy of NewOffice>` shows a real 5422 px one). The
 gallery waits for `FrameImageLoader::busy()` and
 `background_work_in_flight()` to reach 0 (twice) before it grabs.
-`RUX_QT_PAGE=database rux -p <copy> --quit-after-ms N` smokes the
-workspace in the real binary.
+`RUX_QT_PAGE=oversigt rux -p <copy> --quit-after-ms N` smokes the workspace
+in the real binary (`database` is still accepted as an alias).
 
-The Q3 pages: `3d`, `3d-pick` (rooms + legend + a picked point),
-`3d-plan` (planes, frustums, plan view), `3d-labels`, `posegraf` (staged
-loop closures, A/B), `posegraf-click` (an edge click lands on Database),
-`log`, `log-filter` — shoot these with `--project <copy of NewOffice>` —
-and `pipeline`, `pipeline-run` (runs `create planes` on the copy; the
-default office_corridor fixture is right for it). `viewport` is now an
-alias of `3d`. Pages that need off-thread work done first (a pick, a run)
-pump the event loop until `background_work_in_flight()` is 0.
-`RUX_QT_PAGE=3d|posegraf|pipeline|log rux -p <copy> --quit-after-ms N`
-smokes them in the real binary (under xvfb for the GL widget).
+The Q3 pages: `3d`, `3d-pick` (rooms + legend + a picked point), `3d-plan`
+(planes, frustums, plan view), `3d-yaw` (plan view rotated 30°, writes the
+yaw to the project copy), `3d-labels`, `log`, `log-filter` — shoot these
+with `--project <copy of NewOffice>` — and `pipeline`, `pipeline-run` (runs
+`create planes` on the copy; the default office_corridor fixture is right
+for it), `pipeline-cancel` (the same run cancelled mid-stage). `viewport` is now an alias of `3d`. Pages that need off-thread work
+done first (a pick, a run) pump the event loop until
+`background_work_in_flight()` is 0.
+`RUX_QT_PAGE=3d|pipeline|log rux -p <copy> --quit-after-ms N` smokes them in
+the real binary (under xvfb for the GL widget).
+
+The Rediger pages (P4; all write their edits to the project **copy**, never
+the tracked fixture): `rediger` (graph + A/B + pending loop closures),
+`rediger-xz` / `rediger-yz` (elevations), `rediger-yaw` /
+`rediger-yaw-zoomed` / `rediger-yaw-close` (the view yaw rotated 30°; zoom
+scale and centre survive the rotation; the yaw is written even when the
+page closes immediately), `rediger-panes` (edge list and images hidden),
+`rediger-pending` (an ICP result plus staged edits), `rediger-readonly`
+(save refused on a read-only project, Danish banner — `rediger/-readonly`
+replaces the old `db-readonly`), `rediger-saved` (a saved edge — replaces
+`db-saved`), `rediger-stress` (10 000 edges; measures paint time),
+`rediger-click` (an edge click fills A/B on a seeded graph), `rediger-optimize`
+(Optimer run from the toolbar, edges by residual), `rediger-discover` (Find
+kanter run from the toolbar, with the discover count shown), and, all on a
+seeded graph: `rediger-type`, `rediger-status` (rejected edges shown),
+`rediger-residual`, `rediger-deviation`, `rediger-seed` (the five colour
+modes), `rediger-list` (edge list sorted by residual, top row selected),
+`rediger-strip` (a pair with four edges in the strip — auto, confirmed with a
+staged un-confirm, rejected, pending — every row's actions in view),
+`rediger-roundtrip` (an edge from the list, B moved, ICP-forfin, Erstat
+måling, Gem, Optimer — each step and the stored row logged; on a real
+copy pass `RUX_ROUNDTRIP_A=<id>` for a pair ICP can fit), `rediger-reload` (zoom, a clicked edge, A/B and a yaw turned inside its
+debounce all survive a same-project reload — logged), `rediger-zoom` (zoomed to one node, pixel count logged — the
+vanishing-node repro). `RUX_QT_PAGE=rediger rux -p <copy> --quit-after-ms N`
+smokes the workspace in the real binary (`posegraf` is gone, not an alias).
 
 The app shell's gallery pages: `start`, `start-readonly`, `start-empty`,
 `start-error`, `shell-empty`, `shell-project`, `palette-open` (query "pro"),
@@ -141,7 +188,15 @@ bundled font family that did not register (`MISSING font family …`) fails the
 same way. In CI, `AppQss_EveryVarReference_ResolvesAgainstRealTokens` and
 `QtSources_EveryTokenStringLiteral_ExistsInRealTokens` (light ctest) catch a
 design-side rename that `app.qss` or a `theme().color("--…")` still uses. Other
-exit codes: 2 bad flags, 4 project/page not found, 5 PNG not written.
+exit codes: 2 bad flags, 4 project/page not found, 5 PNG not written, 6 a
+layout regression: the page's minimum width is wider than the window
+(`TOO WIDE` — the inspector would be off a 1440 px screen), or, at 1440x900,
+Rediger's 3D overlay canvas with A and B loaded is under 250 px tall
+(`OVERLAY TOO SMALL`; every shot logs `overlay canvas WxH`), or Rediger's
+pair strip is clipped (`STRIP CLIPPED`: an edge row's action button runs past
+the rows' right edge, the edge list shows less than its first row, or the
+strip ends below the window; every shot logs `pair strip bottom Y of H`).
+`qt_shot.sh` fails on all three.
 `RUX_QT_DUMP_QSS=<file>` writes the resolved stylesheet for debugging.
 
 ## 3. Token mapping

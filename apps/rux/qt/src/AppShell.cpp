@@ -4,14 +4,15 @@
 #include <rux_qt/AppShell.hpp>
 #include <rux_qt/DatabaseWorkspace.hpp>
 #include <rux_qt/EdgeEditor.hpp>
+#include <rux_qt/EditWorkspace.hpp>
 #include <rux_qt/FrameBrowser.hpp>
 #include <rux_qt/PipelineWorkspace.hpp>
-#include <rux_qt/PoseGraphWorkspace.hpp>
 #include <rux_qt/ProjectSession.hpp>
 #include <rux_qt/RecentProjects.hpp>
 #include <rux_qt/StartPage.hpp>
 #include <rux_qt/TableBrowser.hpp>
 #include <rux_qt/Theme.hpp>
+#include <rux_qt/ViewSettings.hpp>
 #include <rux_qt/Viewer3DWorkspace.hpp>
 #include <rux_qt/palette_table.hpp>
 #include <rux_qt/widgets.hpp>
@@ -30,6 +31,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QStackedWidget>
 #include <QTextEdit>
@@ -181,14 +183,18 @@ AppShell::AppShell(ProjectSession &session, RecentProjects &recent,
   stack_->setObjectName("workspaceStack");
   start_ = new StartPage(session_, recent_);
   stack_->addWidget(start_);
-  database_ = new DatabaseWorkspace(session_);
+  edges_ = new EdgeEditor(session_, this);
+  view_settings_ = new ViewSettings(session_, this);
+  database_ = new DatabaseWorkspace(session_, *edges_);
   connect(database_, &DatabaseWorkspace::browse_requested, this,
           &AppShell::browse);
   stack_->addWidget(database_);
-  viewer_ = new Viewer3DWorkspace(session_, options.interactive_3d);
+  viewer_ =
+      new Viewer3DWorkspace(session_, *view_settings_, options.interactive_3d);
   stack_->addWidget(viewer_);
-  posegraph_ = new PoseGraphWorkspace(session_, database_->editor());
-  stack_->addWidget(posegraph_);
+  edit_ = new EditWorkspace(session_, *edges_, *view_settings_,
+                            options.persist_layout, options.interactive_3d);
+  stack_->addWidget(edit_);
   pipeline_ = new PipelineWorkspace(session_, options.stage_executor);
   stack_->addWidget(pipeline_);
   log_ = new PipelineLogView(session_, /*filters=*/true);
@@ -220,8 +226,8 @@ AppShell::AppShell(ProjectSession &session, RecentProjects &recent,
   };
   connect(viewer_, &Viewer3DWorkspace::selection_changed, this,
           follow(Workspace::viewer3d));
-  connect(posegraph_, &PoseGraphWorkspace::selection_changed, this,
-          follow(Workspace::posegraph));
+  connect(edit_, &EditWorkspace::selection_changed, this,
+          follow(Workspace::edit));
   connect(pipeline_, &PipelineWorkspace::selection_changed, this,
           follow(Workspace::pipeline));
   connect(log_, &PipelineLogView::selection_changed, this,
@@ -230,44 +236,37 @@ AppShell::AppShell(ProjectSession &session, RecentProjects &recent,
             if (current_page() == Workspace::log)
               inspector_->set_selection(sel);
           });
-  // Posegraf -> Database: a node is frame A (B with Shift), an edge both.
-  connect(posegraph_, &PoseGraphWorkspace::frame_requested, this,
-          [this](int id, bool as_b) {
-            if (as_b)
-              database_->frames()->set_b(id);
-            else
-              database_->frames()->set_a(id);
-            database_->open_item(ProjectTree::Kind::frames);
-            show_page(Workspace::database);
-          });
-  connect(posegraph_, &PoseGraphWorkspace::pair_requested, this,
-          [this](int a, int b) {
-            database_->frames()->set_a(a);
-            database_->frames()->set_b(b);
-            database_->open_item(ProjectTree::Kind::frames);
-            show_page(Workspace::database);
-          });
-  connect(database_->frames(), &FrameBrowser::pair_changed, posegraph_,
-          &PoseGraphWorkspace::set_pair);
   // A pipeline run changed the project: re-read it, unless that would drop
   // pose-graph edits nobody has saved (then F5 does it when they are).
   connect(pipeline_, &PipelineWorkspace::project_changed, this, [this] {
-    if (database_->pending_edits() == 0 && !database_->is_saving())
+    if (edit_->pending_edits() == 0 && !edit_->is_saving())
       session_.reload();
   });
   connect(&session_, &ProjectSession::opened, log_, &PipelineLogView::reload);
   // While a stage runs, pose-graph saves wait (they take the runner's
   // writer lease too, so a stage started meanwhile still wins cleanly).
-  database_->editor().set_runner_source(
+  edges_->set_runner_source([this] { return pipeline_->runner_handle(); });
+  view_settings_->set_runner_source(
       [this] { return pipeline_->runner_handle(); });
   pipeline_->set_pending_edits_source(
-      [this] { return database_->pending_edits(); });
+      [this] { return edit_->pending_edits(); });
   connect(pipeline_, &PipelineWorkspace::job_started, this,
-          [this](const QString &stage) {
-            database_->editor().set_pipeline_busy(stage);
+          [this](const QString &stage) { edges_->set_pipeline_busy(stage); });
+  // Rediger's "Find kanter" / "Optimer" run through this one runner (one
+  // writer lease); the reload after a run refreshes graph, list and colours.
+  connect(edit_, &EditWorkspace::run_requested, this,
+          [this](reusex::pipeline::JobStage s) {
+            if (!pipeline_->run_stage(s))
+              edit_->show_run_refused(s, pipeline_->blocked_reason());
           });
+  connect(pipeline_, &PipelineWorkspace::job_started, edit_,
+          &EditWorkspace::set_job_running);
+  connect(pipeline_, &PipelineWorkspace::job_result, edit_,
+          &EditWorkspace::show_job_result);
+  connect(pipeline_, &PipelineWorkspace::job_finished, edit_,
+          &EditWorkspace::set_job_finished);
   connect(pipeline_, &PipelineWorkspace::job_finished, this, [this] {
-    database_->editor().set_pipeline_busy({});
+    edges_->set_pipeline_busy({});
     if (after_job_) {
       auto next = std::move(after_job_);
       after_job_ = nullptr;
@@ -428,6 +427,12 @@ QVector<Command> AppShell::commands() {
     } else if (id == "copy-path" || id == "copy-cli") {
       const QString text = c.subtitle;
       c.run = [text] { QApplication::clipboard()->setText(text); };
+    } else if (id.startsWith("pane:")) {
+      if (const auto p = parse_edit_pane(id.mid(5).toStdString()))
+        c.run = [this, p = *p] {
+          show_page(Workspace::edit);
+          edit_->toggle_pane(p);
+        };
     } else if (QAction *a = actions.value(id)) {
       c.run = [a] { a->trigger(); };
     }
@@ -447,8 +452,8 @@ void AppShell::show_page(Workspace w) {
   // Pages load lazily: a million-point cloud is read when 3D is first shown.
   if (w == Workspace::viewer3d)
     viewer_->activate();
-  else if (w == Workspace::posegraph)
-    posegraph_->activate();
+  else if (w == Workspace::edit)
+    edit_->activate();
   inspector_->set_selection(page_selection(w));
 }
 
@@ -458,8 +463,8 @@ Selection AppShell::page_selection(Workspace w) const {
     return database_->selection();
   case Workspace::viewer3d:
     return viewer_->selection();
-  case Workspace::posegraph:
-    return posegraph_->selection();
+  case Workspace::edit:
+    return edit_->selection();
   case Workspace::pipeline:
     return pipeline_->selection();
   case Workspace::log:
@@ -471,16 +476,16 @@ Selection AppShell::page_selection(Workspace w) const {
 }
 
 bool AppShell::resolve_pending_edits(const QString &action) {
-  if (!database_)
+  if (!edit_)
     return true;
   // A save already on its way: let it land first (and report a failure).
-  if (database_->is_saving() && !database_->save_edits_and_wait()) {
-    show_page(Workspace::database);
+  if (edit_->is_saving() && !edit_->save_edits_and_wait()) {
+    show_page(Workspace::edit);
     return false;
   }
-  if (database_->pending_edits() == 0)
+  if (edit_->pending_edits() == 0)
     return true;
-  const int n = database_->pending_edits();
+  const int n = edit_->pending_edits();
   QMessageBox box(this);
   box.setIcon(QMessageBox::Question);
   box.setWindowTitle("Ændringer er ikke gemt");
@@ -499,14 +504,14 @@ bool AppShell::resolve_pending_edits(const QString &action) {
   box.setEscapeButton(cancel);
   box.exec();
   if (box.clickedButton() == save) {
-    if (database_->save_edits_and_wait())
+    if (edit_->save_edits_and_wait())
       return true;
     // The banner says why; stay so the user can act on it.
-    show_page(Workspace::database);
+    show_page(Workspace::edit);
     return false;
   }
   if (box.clickedButton() == discard) {
-    database_->discard_edits();
+    edit_->discard_edits();
     return true;
   }
   return false;
@@ -755,10 +760,19 @@ void Inspector::show_selection() {
   if (!sel.pill.isEmpty())
     top->addWidget(new Pill(sel.pill, sel.pill_tone));
   hv->addLayout(top);
-  auto *title = new QLabel(sel.title);
+  // A title with nowhere to wrap (a file name like a panorama's) would widen
+  // the inspector past the window: elide its middle instead (the full name
+  // stays reachable through the label's "Kopiér værdi").
+  QLabel *title = nullptr;
+  if (sel.title.contains(QRegularExpression("\\s"))) {
+    title = new QLabel(sel.title);
+    title->setWordWrap(true);
+    title->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  } else {
+    title = new ElidedLabel(sel.title, Qt::ElideMiddle);
+    title->setToolTip(sel.title);
+  }
   title->setObjectName("selectionTitle");
-  title->setWordWrap(true);
-  title->setTextInteractionFlags(Qt::TextSelectableByMouse);
   hv->addWidget(title);
   if (!sel.subtitle.isEmpty()) {
     auto *sub = new QLabel(sel.subtitle);

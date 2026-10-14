@@ -7,7 +7,9 @@
 #include "core/ProjectDB.hpp"
 #include "core/SensorIntrinsics.hpp"
 #include "core/logging.hpp"
+#include "core/pose_graph.hpp"
 #include "geometry/transform_utils.hpp"
+#include "utils/parse_number.hpp"
 #include "visualize/offscreen_gl.hpp"
 #include "visualize/scene.hpp"
 
@@ -277,6 +279,14 @@ cv::Mat render_view(const ProjectDB &db, const RenderOptions &opts) {
     framing.margin = opts.margin;
     framing.aspect =
         static_cast<double>(opts.width) / static_cast<double>(opts.height);
+    double yaw = 0.0;
+    if (opts.yaw_deg) {
+      yaw = *opts.yaw_deg;
+    } else if (const auto text =
+                   db.setting(core::pose_graph::kSettingViewYawDeg)) {
+      yaw = utils::parse_number<double>(*text).value_or(0.0);
+    }
+    framing.yaw_deg = yaw;
     place_preset_camera(renderer, framing, bounds);
   }
 

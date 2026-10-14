@@ -67,6 +67,12 @@ class PipelineWorkspace : public QWidget {
   bool set_field(const QString &key, const QVariant &value);
   /// Start the selected stage. False when it cannot run (and why is shown).
   bool run();
+  /// Select @p stage and start it with the form's values (Rediger's "Find
+  /// kanter" / "Optimer"). False when it did not start.
+  bool run_stage(reusex::pipeline::JobStage stage);
+  /// Why the selected stage cannot start now (Danish), or empty when it can
+  /// or a job is running.
+  QString blocked_reason() const;
   bool is_running() const;
   /// Danish name of the running stage, or empty.
   QString running_stage() const;
@@ -89,6 +95,10 @@ class PipelineWorkspace : public QWidget {
   void job_started(const QString &stage);
   /// The job ended (any outcome).
   void job_finished();
+  /// Just before job_finished, for a job on the project still open: how it
+  /// went, with the stage's result summary (ok) or its error.
+  void job_result(reusex::pipeline::JobStage stage, bool ok,
+                  const QString &message);
 
     private:
   struct Field;

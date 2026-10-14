@@ -19,6 +19,11 @@ namespace reusex::io {
 /// stores everything in the project database. Images are stored in their native
 /// orientation without rotation.
 ///
+/// Also stores RTABMap's graph links in `pose_graph_edges`
+/// (Neighbor/NeighborMerged → odometry, Global/LocalSpace/LocalTime/User
+/// closures → loop_closure, source `rtabmap`) and each imported pose in
+/// `sensor_frames.initial_transform`.
+///
 /// No heavy processing (voxelization, normal estimation, etc.) is performed.
 /// Point cloud generation is handled separately by
 /// reusex::geometry::reconstruct_point_clouds().

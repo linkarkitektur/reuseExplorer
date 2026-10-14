@@ -15,6 +15,49 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
+const std::vector<std::pair<std::string, bool>> &optimize_moved_flags() {
+  static const std::vector<std::pair<std::string, bool>> flags = {
+      {"--loop-closure", false},
+      {"--loop-proposal", true},
+      {"--loop-min-frame-gap", true},
+      {"--loop-max-distance", true},
+      {"--loop-max-view-angle", true},
+      {"--loop-max-candidates", true},
+      {"--loop-min-inliers", true},
+      {"--loop-max-features", true},
+      {"--loop-ratio-test", true},
+      {"--loop-ransac-inlier-dist", true},
+      {"--loop-max-seed-disagreement", true},
+      {"--loop-min-seed-disagreement", true},
+      {"--loop-min-seed-disagreement-fraction", true},
+      {"--loop-no-pcm", false},
+      {"--use-panoramas", false},
+      {"--pano-max-frames", true},
+      {"--pano-min-inliers", true},
+      {"--pano-max-edges", true},
+      {"--pano-slices", true},
+      {"--pano-max-features", true},
+      {"--pano-max-distance", true},
+      {"--loop-edges", true},
+      {"--loop-edges-min-disagreement", true},
+      {"--loop-edges-min-disagreement-fraction", true},
+  };
+  return flags;
+}
+
+std::string optimize_moved_flag_message(const std::string &flag) {
+  // Discover runs ORB loop closure unless --no-loop-closure: it has no
+  // --loop-closure flag to suggest.
+  if (flag == "--loop-closure")
+    return "'--loop-closure' moved to 'rux graph discover', where ORB loop "
+           "closure is on by default: rux optimize now solves the stored pose "
+           "graph. Run 'rux graph discover' first, then 'rux optimize'.";
+  return fmt::format("'{}' moved to 'rux graph discover': rux optimize now "
+                     "solves the stored pose graph. Run 'rux graph discover "
+                     "{} ...' first, then 'rux optimize'.",
+                     flag, flag);
+}
+
 void setup_subcommand_optimize(CLI::App &app,
                                std::shared_ptr<RuxOptions> global_opt) {
   auto opt = std::make_shared<SubcommandOptimizeOptions>();
@@ -39,28 +82,29 @@ DESCRIPTION:
     4. solve it with Graduated Non-Convexity (GNC) so a handful of bad plane
        associations are down-weighted rather than corrupting the solution.
 
-  Optimized poses overwrite the stored transforms in place — re-import the
-  RTABMap database to recover the originals, or use --dry-run to preview.
+  The solve always starts from the initial poses (sensor_frames.
+  initial_transform, snapshotted by 'rux graph init' or 'rux import rtabmap'),
+  so re-running is repeatable. Odometry and loop edges come from the stored
+  pose graph: 'rux graph discover' adds loop edges, 'rux graph prune' rejects
+  bad ones. A project without odometry edges is initialised automatically.
 
   Plane factors are weighted by their inlier support (a wall fit from thousands
   of surfels pulls harder than a small patch); disable with
-  --no-plane-inlier-weight. Optionally, wide-baseline loop-closure edges (P2)
-  can be detected from the RGB-D frames (ORB matches + stored depth -> RANSAC
-  relative pose) and added as robust factors via --loop-closure.
+  --no-plane-inlier-weight. Wide-baseline loop edges are found by
+  'rux graph discover'.
 
 EXAMPLES:
   rux optimize                        # Defaults (GNC on, inlier-weighted planes)
   rux optimize --dry-run              # Report statistics without writing
-  rux optimize --loop-closure         # Add wide-baseline loop edges (P2, ORB)
-  rux optimize --loop-closure --use-panoramas   # ...plus 360-panorama loop edges (#236)
-  rux optimize --use-panoramas        # Panorama loop edges alone (no ORB pair search)
-  rux optimize --loop-edges edges.json --loop-trust  # External learned-matcher edges
+  rux graph discover && rux optimize  # Add ORB loop edges, then solve
+  rux graph discover --no-loop-closure --loop-edges edges.json \
+    && rux optimize --loop-trust      # External learned-matcher edges
   rux optimize --min-observations 3 --assoc-distance 0.15
   rux optimize --no-gnc               # Plain Levenberg-Marquardt (no robustness)
 
 WORKFLOW:
   1. rux import rtabmap scan.db       # Import sensor frames
-  2. rux optimize                     # Global pose optimization (this command)
+  2. rux graph discover; rux optimize   # Loop edges, then global pose optimization
   3. rux create clouds                # Regenerate clouds with optimized poses
 
 NOTES:
@@ -225,146 +269,38 @@ NOTES:
   sub->add_option("--seed", opt->seed, "RANSAC seed (determinism)")
       ->default_val(opt->seed);
 
-  // --- Wide-baseline loop closure (P2) ---
-  sub->add_flag("--loop-closure", opt->loop_closure,
-                "Detect wide-baseline loop edges (ORB + depth -> RANSAC "
-                "relative pose) and add them as robust factors to the graph");
-  sub->add_option(
-         "--loop-proposal", opt->loop_proposal,
-         "Loop-candidate proposal: auto (exhaustive on small scans, "
-         "else appearance), appearance (pose-independent bag-of-words), "
-         "spatial (seed-pose proximity; only for good poses), or "
-         "exhaustive (all pairs; small scans)")
-      ->default_val(opt->loop_proposal)
-      ->check(CLI::IsMember({"auto", "appearance", "spatial", "exhaustive"}));
-  sub->add_option("--loop-min-frame-gap", opt->loop_min_frame_gap,
-                  "Only pair frames at least this far apart in index")
-      ->default_val(opt->loop_min_frame_gap);
-  sub->add_option("--loop-max-distance", opt->loop_max_distance,
-                  "Max seed camera-centre distance to propose a loop pair (m)")
-      ->default_val(opt->loop_max_distance);
-  sub->add_option("--loop-max-view-angle", opt->loop_max_view_angle,
-                  "Max viewing-direction angle to propose a loop pair (deg)")
-      ->default_val(opt->loop_max_view_angle);
-  sub->add_option("--loop-max-candidates", opt->loop_max_candidates,
-                  "Max loop candidates per frame (nearest first)")
-      ->default_val(opt->loop_max_candidates);
-  sub->add_option("--loop-min-inliers", opt->loop_min_inliers,
-                  "Reject a loop edge below this many RANSAC inliers")
-      ->default_val(opt->loop_min_inliers);
-  sub->add_option("--loop-max-features", opt->loop_max_features,
-                  "ORB features per frame for loop matching")
-      ->default_val(opt->loop_max_features);
-  sub->add_option("--loop-ratio-test", opt->loop_ratio_test,
-                  "Lowe ratio threshold for loop descriptor matches")
-      ->default_val(opt->loop_ratio_test);
-  sub->add_option("--loop-ransac-inlier-dist", opt->loop_ransac_inlier_dist,
-                  "3D-3D RANSAC inlier threshold for loop relative pose (m)")
-      ->default_val(opt->loop_ransac_inlier_dist);
-  sub->add_option(
-         "--loop-max-seed-disagreement", opt->loop_max_seed_disagreement,
-         "Reject a loop edge whose translation disagrees with the seed "
-         "poses by more than this (m; <=0 disables)")
-      ->default_val(opt->loop_max_seed_disagreement);
-  sub->add_option(
-         "--loop-min-seed-disagreement", opt->loop_min_seed_disagreement,
-         "Keep only loop edges that disagree with the seed poses by at "
-         "least this (m) — drops redundant edges that would just add "
-         "noise to already-good poses. This is the absolute FLOOR of the gate; "
-         "the applied gate is max(fraction * trajectory extent, floor). 0 "
-         "leaves only the fraction term)")
-      ->default_val(opt->loop_min_seed_disagreement);
-  sub->add_option("--loop-min-seed-disagreement-fraction",
-                  opt->loop_min_seed_disagreement_fraction,
-                  "Scale-relative part of the lower seed-disagreement gate, as "
-                  "a fraction of the trajectory's extent (#339). Drift scales "
-                  "with the capture, matcher noise does not — a gate in metres "
-                  "alone does not transfer between a 2 m room and an 18 m "
-                  "walk. 0 uses the absolute floor alone.")
-      ->default_val(opt->loop_min_seed_disagreement_fraction);
+  // --- Loop-edge solver handling ---
   sub->add_flag(
       "--loop-trust", opt->loop_trust,
       "Trust loop edges: give them their own relaxed GNC-TLS inlier "
       "threshold (--loop-trust-inlier-cost) instead of --gnc-inlier-cost, so "
-      "large-drift corrections actually apply while a grossly-wrong edge is "
-      "still truncated (a Huber kernel under --no-gnc). Needs PCM / a "
-      "discriminative matcher to be safe, and looser --odometry-sigma-trans");
+      "a genuine large-drift correction is not discarded as an outlier "
+      "(Huber kernel under --no-gnc)");
   sub->add_option("--loop-trust-inlier-cost", opt->loop_trust_inlier_cost,
                   "GNC-TLS inlier threshold for --loop-trust loop edges "
-                  "(0.5*chi^2; generous but finite — an edge above it is "
-                  "still down-weighted to zero)")
+                  "(0.5 * whitened squared residual)")
       ->default_val(opt->loop_trust_inlier_cost);
-  sub->add_flag("--loop-no-pcm", opt->loop_no_pcm,
-                "Disable pairwise-consistency (PCM) filtering of loop edges "
-                "(governs ALL edge sources: --loop-closure, --use-panoramas "
-                "and --loop-edges)");
+  sub->add_option("--loop-default-sigma-rot", opt->loop_default_sigma_rot,
+                  "Rotation std (rad) of a stored loop edge without an "
+                  "information matrix")
+      ->default_val(opt->loop_default_sigma_rot);
+  sub->add_option("--loop-default-sigma-trans", opt->loop_default_sigma_trans,
+                  "Translation std (m) of a stored loop edge without an "
+                  "information matrix")
+      ->default_val(opt->loop_default_sigma_trans);
 
-  // --- Panorama-derived loop edges (#236) ---
-  sub->add_flag(
-      "--use-panoramas", opt->use_panoramas,
-      "Derive wide-baseline loop edges from the project's 360 panoramas "
-      "(issue #236). Each panorama is resected INDEPENDENTLY against every "
-      "frame it matches, in that frame's own optical coordinates, so the "
-      "relative pose it implies between two frames is a real measurement and "
-      "not a restatement of the drifted seed poses. One panorama sees all "
-      "directions at once, so it ties temporally distant frames that do not "
-      "overlap each other. Unioned with --loop-closure / --loop-edges and "
-      "gated by the same --loop-min-frame-gap / --loop-*-seed-disagreement / "
-      "PCM machinery. Does NOT require 'rux align 360' — panorama poses are "
-      "neither read nor written");
-  sub->add_option("--pano-max-frames", opt->pano_max_frames,
-                  "Frames swept across the whole trajectory and matched "
-                  "against each panorama (the dominant cost)")
-      ->default_val(opt->pano_max_frames);
-  sub->add_option("--pano-min-inliers", opt->pano_min_inliers,
-                  "Accept a panorama's per-frame resection above this many "
-                  "gated bearing inliers")
-      ->default_val(opt->pano_min_inliers);
-  sub->add_option("--pano-max-edges", opt->pano_max_edges,
-                  "Max loop edges contributed per panorama (highest joint "
-                  "support first); caps the O(F^2) edges one panorama would "
-                  "otherwise add from a single shared resection error")
-      ->default_val(opt->pano_max_edges);
-  sub->add_option("--pano-slices", opt->pano_n_yaw,
-                  "Perspective slices rendered around the panorama equator")
-      ->default_val(opt->pano_n_yaw);
-  sub->add_option("--pano-max-features", opt->pano_max_features,
-                  "ORB features per panorama slice / sensor frame")
-      ->default_val(opt->pano_max_features);
-  sub->add_option("--pano-max-distance", opt->pano_max_distance,
-                  "Reject a resection placing the panorama further than this "
-                  "from the frame (m; ill-conditioned bearing solve). <=0 "
-                  "disables")
-      ->default_val(opt->pano_max_distance);
-  sub->add_option(
-         "--loop-edges", opt->loop_edges_file,
-         "Load externally-computed loop edges from a JSON file (schema "
-         "reusex.loop_edges.v1) produced by an out-of-process matcher "
-         "(XFeat / EfficientLoFTR / MapAnything, or an offline MASt3R oracle) "
-         "and add them to the graph. Unioned with --loop-closure edges, "
-         "de-duplicated per frame pair, then PCM-filtered as one set (unless "
-         "--loop-no-pcm); the license-clean way to feed a learned matcher "
-         "without linking it into the binary. Pair with --loop-trust to apply "
-         "large-drift corrections.")
-      ->check(CLI::ExistingFile);
-  sub->add_option(
-         "--loop-edges-min-disagreement", opt->loop_edges_min_disagreement,
-         "Drop external (--loop-edges) edges whose relative translation agrees "
-         "with the seed poses within this (m) — non-informative redundant "
-         "edges "
-         "that would only add matcher noise to already-correct poses (keeps "
-         "the "
-         "bridge a no-op on a well-posed scan). Absolute FLOOR; the applied "
-         "gate is max(fraction * trajectory extent, floor).")
-      ->default_val(opt->loop_edges_min_disagreement);
-  sub->add_option("--loop-edges-min-disagreement-fraction",
-                  opt->loop_edges_min_disagreement_fraction,
-                  "Scale-relative part of the external-edge seed-disagreement "
-                  "gate, as a fraction of the trajectory's extent (#339). "
-                  "Default 0.0278 == the historical 0.50 m on an 18 m capture, "
-                  "and 0.05 m on a 1.8 m room scan where the absolute gate was "
-                  "measured to admit only the wrong edges. 0 uses the floor.")
-      ->default_val(opt->loop_edges_min_disagreement_fraction);
+  // --- Flags that moved to `rux graph discover` (2026-10-13) ---
+  // Registered hidden so a stale script gets a pointer instead of
+  // "unknown option" (spec D5).
+  auto moved_sink = std::make_shared<std::string>();
+  auto moved =
+      std::make_shared<std::vector<std::pair<std::string, CLI::Option *>>>();
+  for (const auto &[flag, takes_value] : optimize_moved_flags()) {
+    CLI::Option *o =
+        takes_value ? sub->add_option(flag, *moved_sink) : sub->add_flag(flag);
+    o->group(""); // hidden from --help
+    moved->emplace_back(flag, o);
+  }
 
   // --- Surfel extraction ---
   sub->add_option("--surfel-voxel", opt->surfel_voxel,
@@ -384,7 +320,12 @@ NOTES:
   sub->add_flag("--dry-run", opt->dry_run,
                 "Compute and report statistics without writing poses back");
 
-  sub->callback([opt, global_opt]() {
+  sub->callback([opt, global_opt, moved, moved_sink]() {
+    for (const auto &[flag, o] : *moved)
+      if (o->count() > 0) {
+        spdlog::error("{}", optimize_moved_flag_message(flag));
+        rux::finish(RuxError::INVALID_ARGUMENT);
+      }
     spdlog::trace("calling run_subcommand_optimize");
     if (rux::capture_stage_params("optimize", optimize_stage_parameters(*opt)))
       return;
@@ -454,43 +395,10 @@ plane_graph_options(SubcommandOptimizeOptions const &opt) {
   options.surfel.sampling_factor = opt.sampling_factor;
   options.surfel.confidence_threshold = opt.confidence_threshold;
   options.surfel.voxel_size = opt.surfel_voxel;
-  options.loop_closure.enable = opt.loop_closure;
-  options.loop_closure.proposal =
-      opt.loop_proposal == "spatial"
-          ? reusex::geometry::LoopProposal::spatial
-          : (opt.loop_proposal == "exhaustive"
-                 ? reusex::geometry::LoopProposal::exhaustive
-                 : (opt.loop_proposal == "appearance"
-                        ? reusex::geometry::LoopProposal::appearance
-                        : reusex::geometry::LoopProposal::automatic));
-  options.loop_closure.min_frame_gap = opt.loop_min_frame_gap;
-  options.loop_closure.max_candidate_distance = opt.loop_max_distance;
-  options.loop_closure.max_view_angle = opt.loop_max_view_angle;
-  options.loop_closure.max_candidates_per_frame = opt.loop_max_candidates;
-  options.loop_closure.min_match_inliers = opt.loop_min_inliers;
-  options.loop_closure.max_features = opt.loop_max_features;
-  options.loop_closure.ratio_test = opt.loop_ratio_test;
-  options.loop_closure.ransac_inlier_dist = opt.loop_ransac_inlier_dist;
-  options.loop_closure.max_seed_disagreement = opt.loop_max_seed_disagreement;
-  options.loop_closure.min_seed_disagreement = opt.loop_min_seed_disagreement;
-  options.loop_closure.min_seed_disagreement_fraction =
-      opt.loop_min_seed_disagreement_fraction;
-  options.loop_closure.pcm = !opt.loop_no_pcm;
   options.loop_edges_trusted = opt.loop_trust;
   options.loop_trust_inlier_cost = opt.loop_trust_inlier_cost;
-  options.loop_closure.seed = opt.seed;
-  options.loop_edges_file = opt.loop_edges_file;
-  options.loop_edges_min_seed_disagreement = opt.loop_edges_min_disagreement;
-  options.loop_edges_min_seed_disagreement_fraction =
-      opt.loop_edges_min_disagreement_fraction;
-  options.panorama_loops.enable = opt.use_panoramas;
-  options.panorama_loops.max_frames = opt.pano_max_frames;
-  options.panorama_loops.min_frame_inliers = opt.pano_min_inliers;
-  options.panorama_loops.max_edges_per_panorama = opt.pano_max_edges;
-  options.panorama_loops.n_yaw = opt.pano_n_yaw;
-  options.panorama_loops.max_features = opt.pano_max_features;
-  options.panorama_loops.max_pano_distance = opt.pano_max_distance;
-  options.panorama_loops.seed = opt.seed;
+  options.loop_default_sigma_rot = opt.loop_default_sigma_rot;
+  options.loop_default_sigma_trans = opt.loop_default_sigma_trans;
   return options;
 }
 
@@ -531,15 +439,12 @@ int run_subcommand_optimize(SubcommandOptimizeOptions const &opt,
     int logId = db.log_pipeline_start(
         "pose_optimization_plane_graph",
         fmt::format(
-            R"({{"min_observations":{},"assoc_rounds":{},"no_gnc":{},"assoc_normal_angle":{},"assoc_distance":{},"max_planes_per_frame":{},"min_plane_inliers":{},"plane_noise":"{}","use_gnc":{},"iterations":{},"seed":{},"dry_run":{},"loop_closure":{},"loop_trust":{},"pcm":{},"loop_edges_file":"{}","loop_edges_min_disagreement":{},"use_panoramas":{},"pano_max_frames":{},"pano_min_inliers":{}}})",
+            R"({{"min_observations":{},"assoc_rounds":{},"no_gnc":{},"assoc_normal_angle":{},"assoc_distance":{},"max_planes_per_frame":{},"min_plane_inliers":{},"plane_noise":"{}","use_gnc":{},"iterations":{},"seed":{},"dry_run":{},"loop_trust":{}}})",
             opt.min_observations, opt.assoc_rounds, opt.no_gnc,
             opt.assoc_normal_angle, opt.assoc_distance,
             opt.max_planes_per_frame, opt.min_plane_inliers,
             opt.no_plane_inlier_weight ? "uniform" : opt.plane_noise,
-            !opt.no_gnc, opt.iterations, opt.seed, dry_run, opt.loop_closure,
-            opt.loop_trust, !opt.loop_no_pcm, opt.loop_edges_file,
-            opt.loop_edges_min_disagreement, opt.use_panoramas,
-            opt.pano_max_frames, opt.pano_min_inliers));
+            !opt.no_gnc, opt.iterations, opt.seed, dry_run, opt.loop_trust));
 
     auto result = reusex::geometry::optimize_sensor_poses(db, options, dry_run);
 
@@ -552,16 +457,25 @@ int run_subcommand_optimize(SubcommandOptimizeOptions const &opt,
     spdlog::info("Factor-graph error {:.4f} -> {:.4f}, max pose shift {:.4f} m",
                  result.initial_error, result.final_error,
                  result.max_pose_shift);
+    spdlog::info("Pose graph: {} stored edges in the solve{}{}",
+                 result.graph_edges,
+                 result.bridge_edges > 0
+                     ? fmt::format(", {} bridging edges from the initial "
+                                   "poses",
+                                   result.bridge_edges)
+                     : std::string(),
+                 result.graph_initialised
+                     ? " (odometry initialised from the current poses)"
+                     : "");
     if (result.median_fit_sigma_normal > 0.0)
       spdlog::info(
           "Plane measurement noise: median fit sigma {:.5f} rad / {:.5f} m; "
           "{} strong and {} weak observations hit the sigma-scale clamp",
           result.median_fit_sigma_normal, result.median_fit_sigma_distance,
           result.plane_noise_clamped_low, result.plane_noise_clamped_high);
-    if (opt.loop_closure || !opt.loop_edges_file.empty() || opt.use_panoramas)
-      spdlog::info("Loop closure: {} wide-baseline edges added to the graph "
-                   "({} of them panorama-derived)",
-                   result.loop_edges, result.panorama_loop_edges);
+    if (result.loop_edges > 0)
+      spdlog::info("Loop closure: {} wide-baseline edges added to the graph",
+                   result.loop_edges);
 
     // Mirrors the library guard (PlaneGraphOptimizer::optimize): the poses are
     // only left untouched when there is NEITHER a landmark NOR a loop edge to

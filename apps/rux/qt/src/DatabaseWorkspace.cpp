@@ -5,10 +5,12 @@
 #include <rux_qt/EdgeEditor.hpp>
 #include <rux_qt/FrameBrowser.hpp>
 #include <rux_qt/FrameImageLoader.hpp>
+#include <rux_qt/PanoramaViewer.hpp>
 #include <rux_qt/ProjectSession.hpp>
 #include <rux_qt/TableBrowser.hpp>
 #include <rux_qt/Theme.hpp>
 #include <rux_qt/Viewer3DWorkspace.hpp>
+#include <rux_qt/database_logic.hpp>
 #include <rux_qt/widgets.hpp>
 
 #include <reusex/core/ProjectDB.hpp>
@@ -70,6 +72,8 @@ ProjectTree::ProjectTree(QWidget *parent) : QTreeWidget(parent) {
   setRootIsDecorated(true);
   setIndentation(theme().px("--space-4"));
   setUniformRowHeights(true);
+  // Names that share a prefix (IMG_20260310_0825…) differ at the end.
+  setTextElideMode(Qt::ElideMiddle);
   setFrameShape(QFrame::NoFrame);
   setSelectionMode(QAbstractItemView::SingleSelection);
   setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -165,8 +169,19 @@ void ProjectTree::rebuild(const ProjectSession &session) {
   }
   frames->setExpanded(true);
 
-  item(nullptr, "Panoramaer", s.panoramic_images.total_count, Kind::table, {},
-       "panoramic_images");
+  auto *panos = item(nullptr, "Panoramaer", s.panoramic_images.total_count,
+                     Kind::table, {}, "panoramic_images");
+  try {
+    const auto list = db->list_panoramic_images();
+    constexpr std::size_t kMaxListed = 500; // the table lists the rest
+    for (std::size_t i = 0; i < std::min(list.size(), kMaxListed); ++i) {
+      const auto &p = list[i];
+      auto *pi = item(panos, qs(p.filename), -1, Kind::panorama,
+                      QString::number(p.id), "panoramic_images");
+      pi->setFont(0, mono);
+    }
+  } catch (const std::exception &) {
+  }
 
   auto *clouds =
       item(nullptr, "Punktskyer", static_cast<qint64>(s.clouds.size()),
@@ -226,51 +241,16 @@ void ProjectTree::select(Kind kind, const QString &key) {
 // --------------------------------------------------------- DatabaseWorkspace
 // --
 
-DatabaseWorkspace::DatabaseWorkspace(ProjectSession &session, QWidget *parent)
-    : QWidget(parent), session_(session) {
+DatabaseWorkspace::DatabaseWorkspace(ProjectSession &session,
+                                     EdgeEditor &editor, QWidget *parent)
+    : QWidget(parent), session_(session), editor_(&editor) {
   setObjectName("databaseWorkspace");
   const Theme &t = theme();
-  editor_ = new EdgeEditor(session_, this);
   loader_ = new FrameImageLoader(this);
 
   auto *v = new QVBoxLayout(this);
   v->setContentsMargins(0, 0, 0, 0);
   v->setSpacing(0);
-
-  // ---- pending edits banner (the web's WriteBanner)
-  banner_ = new QFrame;
-  banner_->setObjectName("pendingBanner");
-  auto *bl = new QHBoxLayout(banner_);
-  bl->setContentsMargins(t.px("--space-4"), t.px("--space-2"),
-                         t.px("--space-4"), t.px("--space-2"));
-  bl->setSpacing(t.px("--space-3"));
-  auto *dot = new QLabel;
-  dot->setObjectName("bannerDot");
-  bl->addWidget(dot, 0, Qt::AlignVCenter);
-  auto *texts = new QVBoxLayout;
-  texts->setSpacing(0);
-  banner_text_ = new QLabel;
-  banner_text_->setObjectName("bannerText");
-  texts->addWidget(banner_text_);
-  banner_error_ = new QLabel;
-  banner_error_->setObjectName("bannerError");
-  banner_error_->setWordWrap(true);
-  texts->addWidget(banner_error_);
-  bl->addLayout(texts, 1);
-  discard_ = new QPushButton(NavItem::escape_mnemonic("Kassér"));
-  discard_->setProperty("kind", "ghost");
-  discard_->setCursor(Qt::PointingHandCursor);
-  bl->addWidget(discard_);
-  save_ = new QPushButton(NavItem::escape_mnemonic("Gem ændringer"));
-  save_->setProperty("kind", "primary");
-  save_->setCursor(Qt::PointingHandCursor);
-  save_->setShortcut(QKeySequence::Save);
-  bl->addWidget(save_);
-  // Buttons in a layout do not size their row by themselves (qt-client.md).
-  for (QPushButton *b : {save_, discard_})
-    b->setMinimumHeight(b->sizeHint().height());
-  banner_->setMinimumHeight(save_->sizeHint().height() + 2 * t.px("--space-2"));
-  v->addWidget(banner_);
 
   auto *body = new QHBoxLayout;
   body->setSpacing(0);
@@ -296,6 +276,7 @@ DatabaseWorkspace::DatabaseWorkspace(ProjectSession &session, QWidget *parent)
   frames_ = new FrameBrowser(session_, *editor_, *loader_);
   tables_ = new TableBrowser(session_);
   log_ = new PipelineLogView(session_);
+  panorama_ = new PanoramaViewer;
   empty_ = new QWidget;
   empty_->setObjectName("dbEmpty");
   {
@@ -317,6 +298,7 @@ DatabaseWorkspace::DatabaseWorkspace(ProjectSession &session, QWidget *parent)
   stack_->addWidget(frames_);
   stack_->addWidget(tables_);
   stack_->addWidget(log_);
+  stack_->addWidget(panorama_);
   stack_->addWidget(empty_);
   body->addWidget(stack_, 1);
 
@@ -333,12 +315,8 @@ DatabaseWorkspace::DatabaseWorkspace(ProjectSession &session, QWidget *parent)
   connect(frames_, &FrameBrowser::selection_changed, this, from(frames_));
   connect(tables_, &TableBrowser::selection_changed, this, from(tables_));
   connect(log_, &PipelineLogView::selection_changed, this, from(log_));
-  connect(editor_, &EdgeEditor::changed, this, &DatabaseWorkspace::sync_banner);
   connect(editor_, &EdgeEditor::saved, this,
           [this] { tree_->rebuild(session_); }); // the edge count changed
-  connect(save_, &QPushButton::clicked, this, [this] { save_edits(); });
-  connect(discard_, &QPushButton::clicked, this,
-          &DatabaseWorkspace::discard_edits);
   connect(&session_, &ProjectSession::state_changed, this,
           &DatabaseWorkspace::rebuild);
   connect(&theme(), &Theme::changed, this, [this] {
@@ -349,29 +327,12 @@ DatabaseWorkspace::DatabaseWorkspace(ProjectSession &session, QWidget *parent)
 
 DatabaseWorkspace::~DatabaseWorkspace() = default;
 
-int DatabaseWorkspace::pending_edits() const { return editor_->pending(); }
-
-bool DatabaseWorkspace::save_edits() {
-  const bool started = editor_->save();
-  sync_banner();
-  return started;
-}
-
-bool DatabaseWorkspace::save_edits_and_wait() {
-  const bool ok = editor_->save_and_wait(this);
-  sync_banner();
-  return ok;
-}
-
-bool DatabaseWorkspace::is_saving() const { return editor_->is_saving(); }
-
-void DatabaseWorkspace::discard_edits() { editor_->discard(); }
-
 void DatabaseWorkspace::rebuild() {
   const bool open = session_.is_open();
   tree_->rebuild(session_);
   frames_->reload();
   log_->reload();
+  panorama_->clear(); // drops a decode from the project that was open
   selection_ = {};
   tree_pane_->setVisible(open);
   if (!open) {
@@ -385,7 +346,6 @@ void DatabaseWorkspace::rebuild() {
   } else {
     open_item(ProjectTree::Kind::frames);
   }
-  sync_banner();
 }
 
 void DatabaseWorkspace::open_item(ProjectTree::Kind kind, const QString &key) {
@@ -418,6 +378,46 @@ void DatabaseWorkspace::show_item(ProjectTree::Kind kind, const QString &key,
     stack_->setCurrentWidget(log_);
     log_->select_row(0);
     return;
+  case ProjectTree::Kind::panorama: {
+    stack_->setCurrentWidget(panorama_);
+    bool ok = false;
+    const int id = key.toInt(&ok);
+    Selection s;
+    s.kind = "Panorama";
+    s.pill = "Kun læsning";
+    try {
+      for (const auto &p : session_.db()->list_panoramic_images()) {
+        if (!ok || p.id != id)
+          continue;
+        s.title = qs(p.filename);
+        SelectionSection sec{"Panorama", {}, {}};
+        sec.rows.push_back({"Id", QString::number(p.id)});
+        sec.rows.push_back({"Billede", p.node_id >= 0
+                                           ? QString::number(p.node_id)
+                                           : QString("—")});
+        sec.rows.push_back({"Pose",
+                            p.pose_source == "aligned"
+                                ? QString("Justeret (rux align 360)")
+                                : QString("Fra tidsstempel"),
+                            SelectionRow::Style::value});
+        if (p.align_inliers >= 0)
+          sec.rows.push_back({"Inliers", count_text(p.align_inliers)});
+        if (p.align_rms >= 0)
+          sec.rows.push_back(
+              {"RMS", qs(format_decimal_da(p.align_rms, 2)) + " °"});
+        s.sections.push_back(sec);
+      }
+    } catch (const std::exception &) {
+    }
+    if (s.title.isEmpty()) {
+      panorama_->clear();
+      s.title = "Ukendt panorama";
+    } else {
+      panorama_->show_panorama(session_.path(), id, s.title);
+    }
+    set_selection(s);
+    return;
+  }
   case ProjectTree::Kind::table:
   case ProjectTree::Kind::cloud:
   case ProjectTree::Kind::mesh: {
@@ -525,56 +525,6 @@ Selection DatabaseWorkspace::mesh_selection(const QString &name) const {
 void DatabaseWorkspace::set_selection(const Selection &s) {
   selection_ = s;
   emit selection_changed(selection_);
-}
-
-void DatabaseWorkspace::sync_banner() {
-  const int n = editor_->pending();
-  const QString error = editor_->last_error();
-  const bool saving = editor_->is_saving();
-  banner_->setVisible(n > 0 || !error.isEmpty() || saving);
-  int adds = 0, removes = 0;
-  for (const auto &op : editor_->edits().ops())
-    (op.kind == PendingEdgeEdits::Op::Kind::add ? adds : removes)++;
-  QStringList parts;
-  if (adds)
-    parts << (adds == 1 ? QString("1 ny kant")
-                        : QString("%1 nye kanter").arg(adds));
-  if (removes)
-    parts << (removes == 1 ? QString("1 slettet")
-                           : QString("%1 slettede").arg(removes));
-  banner_text_->setText(
-      saving  ? QString("Gemmer ændringer i posegrafen …")
-      : n > 0 ? QString("%1 i posegrafen venter på at blive gemt — %2")
-                    .arg(n == 1 ? QString("1 ændring")
-                                : QString("%1 ændringer").arg(n),
-                         parts.join(", "))
-              : QString("Posegrafen"));
-  banner_error_->setText(error);
-  banner_error_->setToolTip(editor_->last_error_detail());
-  banner_error_->setVisible(!error.isEmpty());
-  // Read-only is a state, not a failure: the warning tone, like the title
-  // bar's "Skrivebeskyttet" pill. A failed write (locked, other) is critical.
-  const bool busy = !editor_->pipeline_busy().isEmpty();
-  // Read-only, and a pipeline stage holding the project, are states: warn.
-  const bool read_only_error =
-      !error.isEmpty() && (!editor_->read_only_reason().isEmpty() || busy);
-  banner_->setProperty("tone", error.isEmpty()   ? "pending"
-                               : read_only_error ? "warn"
-                                                 : "error");
-  repolish(banner_);
-  save_->setEnabled(n > 0 && editor_->can_save() && !saving && !busy);
-  save_->setToolTip(
-      !editor_->can_save() ? editor_->read_only_reason()
-      : busy ? QString("Et pipeline-trin (%1) skriver til projektet — gem, "
-                       "når det er færdigt.")
-                   .arg(editor_->pipeline_busy())
-             : QString("Skriv ændringerne til projektet (Ctrl+S)"));
-  if (busy && n > 0 && error.isEmpty()) {
-    banner_error_->setText(QString("Gem er sat på pause, mens %1 kører.")
-                               .arg(editor_->pipeline_busy()));
-    banner_error_->setVisible(true);
-  }
-  discard_->setEnabled(n > 0 && !saving);
 }
 
 } // namespace rux::qt

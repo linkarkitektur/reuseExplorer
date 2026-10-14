@@ -5,7 +5,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 # `tools/loop_edges` — external wide-baseline loop-edge exporter
 
-Out-of-process producer for `rux optimize --loop-edges` (issues #221 / #225 P2).
+Out-of-process producer for `rux graph discover --loop-edges` (issues #221 / #225 P2).
 Runs an image matcher in Python, lifts the 2D matches to metric 3D using the
 scan's own stored depth, estimates a robust relative pose per candidate pair,
 and writes a JSON file (schema `reusex.loop_edges.v1`) that the C++ optimizer
@@ -127,8 +127,8 @@ $MA_PY tools/loop_edges/visualize_matches.py PROJECT.rux \
     -o matches.jpg --pair 7:231 --pair 11:224 --matchers orb,mapanything
 
 # Feed edges into the pose graph (license-clean; C++ never links a matcher)
-rux -p PROJECT.rux optimize --loop-edges edges-xfeat.json --loop-trust \
-    --odometry-sigma-trans 0.05
+rux -p PROJECT.rux graph discover --no-loop-closure --loop-edges edges-xfeat.json
+rux -p PROJECT.rux optimize --loop-trust --odometry-sigma-trans 0.05
 rux -p PROJECT.rux create clouds
 ```
 

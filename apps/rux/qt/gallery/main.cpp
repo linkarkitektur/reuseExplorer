@@ -7,11 +7,13 @@
 //
 // Exit codes: 0 ok, 2 bad command line, 3 a token or a bundled font family
 // was missing (the PNG is still written, with magenta where the token was), 4
-// project or page could not be opened, 5 the PNG could not be written.
+// project or page could not be opened, 5 the PNG could not be written, 6 a
+// layout regression (TOO WIDE, OVERLAY TOO SMALL, STRIP CLIPPED).
 
 #include "demo_pages.hpp"
 
 #include <rux_qt/FrameImageLoader.hpp>
+#include <rux_qt/PairOverlay.hpp>
 #include <rux_qt/Theme.hpp>
 #include <rux_qt/background.hpp>
 #include <rux_qt/fonts.hpp>
@@ -25,13 +27,17 @@
 
 #include <QApplication>
 #include <QElapsedTimer>
+#include <QFrame>
 #include <QImage>
 #include <QPointer>
+#include <QPushButton>
+#include <QScrollArea>
 #include <QSurfaceFormat>
 #include <QThread>
 #include <QVBoxLayout>
 #include <QVTKOpenGLNativeWidget.h>
 
+#include <algorithm>
 #include <clocale>
 #include <cstdio>
 #include <memory>
@@ -182,6 +188,91 @@ int main(int argc, char **argv) {
     pump(6, 0);
   }
 
+  // The shell must fit the window it is shot at: a workspace whose minimum
+  // width pushes the inspector off a 1440 px laptop screen fails the shot
+  // (qt_shot.sh greps TOO WIDE), never passes silently as a wider PNG.
+  const int min_w = current ? current->minimumSizeHint().width() : 0;
+  const bool too_wide = min_w > args.width;
+  if (too_wide)
+    std::fprintf(stderr,
+                 "rux-qt-gallery: ERROR TOO WIDE: the page needs %d px, the "
+                 "window is %d px\n",
+                 min_w, args.width);
+  // Rediger's 3D overlay is where B is moved by hand: with A and B loaded
+  // its canvas must stay usable at the default 1440x900 (pending banner and
+  // edge rows included).
+  constexpr int kMinOverlayCanvas = 250;
+  bool too_small = false;
+  for (auto *o : host.findChildren<rux::qt::PairOverlay *>()) {
+    const QWidget *canvas = o->findChild<QWidget *>("viewport");
+    if (!canvas || !o->isVisible() || !o->ready())
+      continue;
+    std::fprintf(stderr, "rux-qt-gallery: overlay canvas %dx%d\n",
+                 canvas->width(), canvas->height());
+    if (args.width >= 1440 && args.height >= 900 &&
+        canvas->height() < kMinOverlayCanvas) {
+      too_small = true;
+      std::fprintf(stderr,
+                   "rux-qt-gallery: ERROR OVERLAY TOO SMALL: %d px tall, "
+                   "needs %d\n",
+                   canvas->height(), kMinOverlayCanvas);
+    }
+  }
+  // Rediger's pair strip: every edge row's actions are fully visible (the
+  // rows scroll vertically only, so a row wider than the viewport is cut
+  // off at the right), and the strip ends inside the window — its rows
+  // scroll, they never run off the bottom.
+  bool strip_cut = false;
+  for (auto *scroll : host.findChildren<QScrollArea *>("edgeRowsScroll")) {
+    if (!scroll->isVisible())
+      continue;
+    const QWidget *port = scroll->viewport();
+    for (auto *b : scroll->widget()->findChildren<QPushButton *>()) {
+      if (!b->isVisible())
+        continue;
+      const QRect r(b->mapTo(port, QPoint(0, 0)), b->size());
+      if (r.left() < 0 || r.right() >= port->width()) {
+        strip_cut = true;
+        std::fprintf(stderr,
+                     "rux-qt-gallery: ERROR STRIP CLIPPED: \"%s\" spans "
+                     "x %d..%d, the rows are %d px wide\n",
+                     qPrintable(b->text()), r.left(), r.right(), port->width());
+      }
+    }
+    // The first row is in full view (a rebuild while shown once measured
+    // the rows before they were shown and left a 0 px tall list).
+    const auto rows = scroll->widget()->findChildren<QFrame *>("edgeRow");
+    {
+      const QFrame *first = nullptr;
+      for (const QFrame *r : rows)
+        if (r->isVisible() && (!first || r->y() < first->y()))
+          first = r;
+      if (first && port->height() < first->height()) {
+        strip_cut = true;
+        std::fprintf(stderr,
+                     "rux-qt-gallery: ERROR STRIP CLIPPED: the edge rows "
+                     "show %d px of a %d px row\n",
+                     port->height(), first->height());
+      }
+    }
+    // Everything in the strip ends inside the window.
+    if (QWidget *strip = scroll->parentWidget()) {
+      int bottom = strip->mapTo(&host, QPoint(0, strip->height())).y();
+      for (QObject *c : strip->children())
+        if (auto *w = qobject_cast<QWidget *>(c); w && w->isVisible())
+          bottom =
+              std::max(bottom, w->mapTo(&host, QPoint(0, w->height())).y());
+      std::fprintf(stderr, "rux-qt-gallery: pair strip bottom %d of %d\n",
+                   bottom, host.height());
+      if (bottom > host.height()) {
+        strip_cut = true;
+        std::fprintf(stderr,
+                     "rux-qt-gallery: ERROR STRIP CLIPPED: the pair strip "
+                     "ends at y %d, below the %d px window\n",
+                     bottom, host.height());
+      }
+    }
+  }
   const QImage img = host.grab().toImage();
   const bool saved = img.save(QString::fromStdString(args.screenshot));
   const QStringList missing = theme().missing();
@@ -204,6 +295,8 @@ int main(int argc, char **argv) {
                  args.screenshot.c_str());
     return 5;
   }
+  if (too_wide || too_small || strip_cut)
+    return 6;
   if (!missing.isEmpty() || !fonts.isEmpty()) {
     for (const QString &m : missing)
       std::fprintf(stderr, "rux-qt-gallery: ERROR MISSING token %s\n",

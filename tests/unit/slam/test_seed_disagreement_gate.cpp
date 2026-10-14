@@ -19,6 +19,7 @@
 
 #include <reusex/slam/LoopClosure.hpp>
 #include <reusex/slam/PlaneGraphOptimizer.hpp>
+#include <reusex/slam/loop_candidates.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -30,9 +31,9 @@
 using Catch::Matchers::WithinAbs;
 using Catch::Matchers::WithinRel;
 using reusex::geometry::LoopClosureOptions;
-using reusex::geometry::PlaneGraphOptions;
 using reusex::geometry::seed_disagreement_gate;
 using reusex::geometry::trajectory_extent;
+using reusex::slam::LoopCandidateOptions;
 
 namespace {
 
@@ -171,7 +172,7 @@ TEST_CASE("PlaneGraphOptions_OfficeScaleTrajectory_ReproducesShipped500mmGate",
   // The whole point of the #339 default: on the capture the absolute 0.50 m
   // gate was tuned on, the relative default must reproduce it, so the office
   // loop-closure numbers recorded in §9 stay valid.
-  const PlaneGraphOptions opt;
+  const LoopCandidateOptions opt;
   const double gate = seed_disagreement_gate(
       kOfficeExtent, opt.loop_edges_min_seed_disagreement_fraction,
       opt.loop_edges_min_seed_disagreement);
@@ -184,7 +185,7 @@ TEST_CASE("PlaneGraphOptions_ShortTrajectory_ScalesGateDownFromOfficeValue",
   // absolute gate admitted only the most-disagreeing (wrong) edges and dropped
   // F@50mm to 0.29; the relative gate lands at ~0.05 m instead — the setting
   // §9.4 measured at 0.73-0.76 on the same scans.
-  const PlaneGraphOptions opt;
+  const LoopCandidateOptions opt;
   const double gate = seed_disagreement_gate(
       kArkitScenesExtent, opt.loop_edges_min_seed_disagreement_fraction,
       opt.loop_edges_min_seed_disagreement);
@@ -196,7 +197,7 @@ TEST_CASE("PlaneGraphOptions_ExplicitAbsoluteFloor_PinsGateOnShortTrajectory",
           "[slam][loop][gate]") {
   // An operator who knows their capture's scale can still pin an absolute gate
   // by raising the floor; the relative term never lowers a gate below it.
-  PlaneGraphOptions opt;
+  LoopCandidateOptions opt;
   opt.loop_edges_min_seed_disagreement = 0.50;
   const double gate = seed_disagreement_gate(
       kArkitScenesExtent, opt.loop_edges_min_seed_disagreement_fraction,

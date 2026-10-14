@@ -111,7 +111,7 @@ a `workstream: *` label so alignment can be queried with
 | SLAM / reconstruction quality | `workstream: slam-quality` | #221, #225 | Reach ~10 mm plane flatness via an owned global pose-optimization stage (plane landmarks + GNC), measured against fixture scans — not by tuning RTABMap forever |
 | GUI application | `workstream: gui` | #265 | `ruxd` serving a designed web frontend — `ruxd --local` for one person, and a multi-user server (logins, roles per case, Postgres) over the same API contract (`/api/v1/cases/{cid}`); a native Qt client (plain `rux`) alongside; visual language authored in Claude Design, behaviour owned by the repo |
 | Gaussian splatting | `workstream: gsplat` | #240 | Native C++/CUDA 3DGS trained from `ProjectDB` — point-cloud-seeded Gaussians, sensor frames and sliced 360 panoramas as views, Apache-licensed gsplat kernels under a GPL trainer |
-| 360 integration | `workstream: 360-integration` | #236 | Turn panoramas into wide-baseline pose-graph constraints; a panorama that sees many temporally-distant frames supplies exactly the loop closures the plane-landmark back-end cannot. Mechanism landed and tested (`rux optimize --use-panoramas`); **blocked on matcher quality** — cross-camera ORB resections are too weak to help, see [`research/panorama-loop-closure.md`](research/panorama-loop-closure.md) |
+| 360 integration | `workstream: 360-integration` | #236 | Turn panoramas into wide-baseline pose-graph constraints; a panorama that sees many temporally-distant frames supplies exactly the loop closures the plane-landmark back-end cannot. Mechanism landed and tested (`rux graph discover --use-panoramas`); **blocked on matcher quality** — cross-camera ORB resections are too weak to help, see [`research/panorama-loop-closure.md`](research/panorama-loop-closure.md) |
 | Agent-driven modeling | `workstream: agent-modeling` | #267 | Evaluate an agent + MCP gateway + Blender path to a simplified, tagged building model as a complement to the geometric pipeline; requires headless rendering so the agent has eyes |
 | Solid model / scan-to-BIM | `workstream: solid-model` | beads `reusex-z1v` | Replace the one-envelope MIP mesh with a typed building model — storeys, walls with measured thickness, spaces with polygons, openings — stored in `ProjectDB` with evidence, deterministic GUIDs and re-run-safe manual edits; exported as IFC4, DXF, Rhino, Speckle; feeding the survey with measured quantities. Design: [`superpowers/specs/2026-10-13-solid-model-floor-plan-design.md`](superpowers/specs/2026-10-13-solid-model-floor-plan-design.md); research: [`research/solid-model-scan-to-bim.md`](research/solid-model-scan-to-bim.md). The MIP stays as an optional refinement |
 | Infrastructure & test health | `workstream: infra` | #268 | Keep the build, test and coverage loop fast and trustworthy so agents can iterate — includes #262 (parallel-ctest flakiness) and hosted CI (#202) |
@@ -200,6 +200,38 @@ changelog — that history is the point of keeping it in the repo.
 ---
 
 ## Direction changelog
+
+- **2026-10-13** — **Qt client: Posegraf becomes Rediger** ([spec](superpowers/specs/2026-10-13-pose-graph-editor-design.md), P4).
+  The rail is Start · Oversigt · 3D · Rediger · Pipeline · Log. Oversigt
+  (formerly Database) is read-only; every pose-graph edit happens in Rediger:
+  graph in XY/XZ/YZ with a project-wide view yaw (`project_settings`
+  `view.yaw_deg`, also used by 3D and `rux render`) that keeps zoom level and
+  centre when it changes, edges coloured by type, status, residual (fixed χ²
+  scale), deviation or seed disagreement, a sortable/filterable edge list
+  that hides the degree columns by default and shows ticks on nodes once
+  zoomed in, and Find kanter / Optimer through the pipeline runner (Find
+  kanter reports its discover counts — new/filled/capped/odometry edges —
+  after it finishes). A user "delete" is now a rejection that later
+  discover/optimize runs keep. Oversigt previews 360° panoramas (flat
+  equirect, pan/zoom).
+
+- **2026-10-13** — **Pose graph: the stored graph is the source of truth;
+  `rux optimize` is repeatable** ([spec](superpowers/specs/2026-10-13-pose-graph-editor-design.md)).
+  `pose_graph_edges` (schema v28; v27 on the branch, renumbered when main's
+  resource view record took v27) stores each edge's measurement, information,
+  source (`rtabmap | odometry_init | orb | panorama | file | icp | manual |
+  legacy`) and status (`auto | confirmed | rejected`; a rejection is a
+  tombstone), and `sensor_frames.initial_transform` snapshots the poses
+  optimize seeds from. `rux optimize` solves exactly the active stored edges,
+  writes poses plus per-edge residual/deviation, and never replaces the edge
+  set, so re-running gives the same poses instead of compounding. Odometry
+  comes from RTABMap links on `rux import rtabmap`, or from `rux graph init`
+  (run automatically when missing). **CLI break:** `--loop-closure`,
+  `--loop-*` (except `--loop-trust*`), `--use-panoramas`, `--pano-*` and
+  `--loop-edges*` moved from `rux optimize` to `rux graph discover`;
+  optimize refuses them with a pointer. Chaining `rux register` before
+  `rux optimize` now needs `rux graph init --force` in between (optimize
+  warns when it sees that order).
 
 - **2026-10-13** — **New workstream: solid model / scan-to-BIM, priority 2**
   (maintainer decision D1, beads `reusex-z1v.1.1`; GUI, 3DGS and infra each

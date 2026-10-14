@@ -7,6 +7,7 @@
 #include <rux_qt/Theme.hpp>
 #include <rux_qt/app.hpp>
 #include <rux_qt/fonts.hpp>
+#include <rux_qt/palette_table.hpp>
 
 #include <reusex/core/logging.hpp>
 
@@ -179,14 +180,12 @@ int run_app(int argc, char **argv, const AppOptions &options) {
   window.show();
   if (!options.project.isEmpty())
     window.shell()->open_project(options.project);
-  // Smoke tests: RUX_QT_PAGE=database|3d|posegraf|pipeline|log lands on
-  // that workspace once the project is open, so `--quit-after-ms` exercises
-  // it for real.
-  const QString smoke_page = qEnvironmentVariable("RUX_QT_PAGE").toLower();
-  const QStringList smoke_pages = {"start",    "database", "3d",
-                                   "posegraf", "pipeline", "log"};
-  if (const int page = static_cast<int>(smoke_pages.indexOf(smoke_page));
-      page > 0)
+  // Smoke tests: RUX_QT_PAGE=oversigt|3d|rediger|pipeline|log lands on that
+  // workspace once the project is open, so `--quit-after-ms` exercises it
+  // for real (rux_qt/palette_table.hpp).
+  const std::string smoke =
+      qEnvironmentVariable("RUX_QT_PAGE").toLower().toStdString();
+  if (const int page = smoke_page_index(smoke); page > 0)
     QObject::connect(&session, &ProjectSession::opened, &window,
                      [&window, page] {
                        window.shell()->show_page(static_cast<Workspace>(page));

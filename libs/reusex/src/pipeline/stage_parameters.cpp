@@ -337,6 +337,43 @@ const std::vector<ParameterDescriptor> &annotate_parameters() {
   return table;
 }
 
+const std::vector<ParameterDescriptor> &graph_discover_parameters() {
+  // Defaults mirror slam::GraphDiscoverOptions (slam/graph_discover.hpp).
+  // reusex_pipeline must not link reusex_slam (#464), so they are hard-coded
+  // here and pinned by tests/unit/slam/test_discover_parameters.cpp.
+  static const std::vector<ParameterDescriptor> table{
+      boolean("loop_closure", "ORB loop closure",
+              "Match temporally distant frame pairs (ORB features + depth, "
+              "RANSAC) and propose loop edges.",
+              true),
+      boolean("use_panoramas", "Panorama loop edges",
+              "Derive loop edges from the project's 360 panoramas (#236).",
+              false),
+      text("loop_edges_file", "External edge file",
+           "Path to a reusex.loop_edges.v1 JSON file from an out-of-process "
+           "matcher. Empty means none.",
+           ""),
+      text("loop_proposal", "Candidate proposal",
+           "How candidate pairs are proposed: auto, appearance, spatial or "
+           "exhaustive.",
+           "auto"),
+      integer("loop_min_frame_gap", "Min frame gap",
+              "Skip pairs closer than this in frame index (odometry covers "
+              "them).",
+              50, 1.0, 100000.0),
+      integer("loop_min_inliers", "Min RANSAC inliers",
+              "Reject an ORB pair below this many RANSAC inliers.", 60, 3.0,
+              100000.0),
+      boolean("pcm", "Consistency filter (PCM)",
+              "Keep only loop edges consistent with each other and with the "
+              "stored active edges; confirmed edges are fixed inliers.",
+              true),
+      boolean("dry_run", "Dry run",
+              "Report what would be added without writing edges.", false),
+  };
+  return table;
+}
+
 } // namespace
 
 std::string_view to_string(ParameterType type) {
@@ -373,6 +410,8 @@ const std::vector<ParameterDescriptor> &stage_parameters(JobStage stage) {
     return optimize_parameters();
   case JobStage::annotate:
     return annotate_parameters();
+  case JobStage::graph_discover:
+    return graph_discover_parameters();
   }
   throw std::logic_error("unhandled JobStage in stage_parameters()");
 }

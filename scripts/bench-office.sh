@@ -79,6 +79,7 @@ mkdir -p "$out"
 # The pose stage(s) under test. `work` is a disposable copy.
 run_config() {
   local cfg=$1 work=$2
+  # optimize seeds from initial_transform (2026-10-13): re-snapshot after register so it chains.
   case "$cfg" in
     none)         : ;;  # no pose stage: the baseline
     optimize)     "$rux" -v -p "$work" optimize ;;
@@ -90,7 +91,7 @@ run_config() {
     register-tuned) "$rux" -v -p "$work" register \
                        --prior-weight 0.1 --neighbor-window 10 --iterations 50 ;;
     opt-register) "$rux" -v -p "$work" optimize && "$rux" -v -p "$work" register ;;
-    register-opt) "$rux" -v -p "$work" register && "$rux" -v -p "$work" optimize ;;
+    register-opt) "$rux" -v -p "$work" register && "$rux" -v -p "$work" graph init --force && "$rux" -v -p "$work" optimize ;;
     *) echo "unknown config '$cfg'" >&2; exit 2 ;;
   esac
 }

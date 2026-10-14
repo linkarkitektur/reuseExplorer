@@ -54,8 +54,8 @@ TEST_CASE("MigrationV27_FreshProject_HasViewColumnsAndCheck",
   TempDB tmp;
   {
     ProjectDB db(tmp.path);
-    CHECK(db.schema_version() == 27);
-    CHECK(ProjectDB::latest_schema_version() == 27);
+    CHECK(db.schema_version() == ProjectDB::latest_schema_version());
+    CHECK(ProjectDB::latest_schema_version() >= 27);
     const auto t = make_type(db, "Døre");
     make_part(db, "RX-001", t);
     CHECK_FALSE(db.survey_part("RX-001")->view);
@@ -90,7 +90,7 @@ TEST_CASE("MigrationV27_FromV26_KeepsPartsWithNullViews",
   roll_back_to_v26(tmp.path);
   {
     ProjectDB db(tmp.path);
-    CHECK(db.schema_version() == 27);
+    CHECK(db.schema_version() == ProjectDB::latest_schema_version());
     const auto p = db.survey_part("RX-001");
     REQUIRE(p);
     CHECK(p->quantity == 3.0);

@@ -328,7 +328,7 @@ ReUseX/
 │   └── qt/                         # Native Qt client (in progress): rux_qt_core,
 │                                   #   rux_qt_lib, rux-qt-gallery; styles/app.qss;
 │                                   #   theme/tokens.css (vendored from rux-frontend);
-│                                   #   shell (Q1), Database (Q2), 3D, Posegraf,
+│                                   #   shell (Q1), Database (Q2), 3D, Rediger,
 │                                   #   Pipeline, Log (Q3)
 ├── apps/blender/reusex_panel/      # Blender add-on
 ├── bindings/python/                # pybind11 bindings (read-only ProjectDB access)
@@ -385,15 +385,20 @@ The shell lives in `rux_qt_lib` (`AppShell`, `ProjectSession`,
 `rux::run` a `GuiLauncher` (`rux_app.hpp`), so `rux_lib` and both test
 binaries carry no Qt client code. Hidden dev flag:
 `rux -p x.rux --quit-after-ms N`.
-The Qt client's 3D workspace and `rux render` share one scene builder,
+The Qt client's workspaces are Start, Oversigt (`DatabaseWorkspace`,
+read-only), 3D (`Viewer3DWorkspace`), Rediger (`EditWorkspace`: `GraphPanel`,
+`EdgeListPanel`, pair strip), Pipeline (`PipelineWorkspace`) and Log. The 3D
+workspace and `rux render` share one scene builder,
 `visualize::populate_scene()` (`visualize/scene.hpp`); its Pipeline workspace
 runs stages in-process through `pipeline::JobRunner` with
-`pipeline::stage_executor_with_optimize()` (handed over in `GuiLaunch`; `ruxd`
+`pipeline::stage_executor_with_optimize()` (which runs `optimize` and
+`graph_discover`; handed over in `GuiLaunch`; `ruxd`
 injects the same executor for the web GUI, from its own repo), and "Kopiér som
 rux-kommando" (`rux_qt/cli_command.hpp`) is round-trip tested against the real
 CLI (`tests/unit/rux_app/test_cli_command_roundtrip.cpp`, via
-`rux::set_stage_params_sink`). `RUX_QT_PAGE=database|3d|posegraf|pipeline|log`
-lands the smoke run on that page.
+`rux::set_stage_params_sink`). `RUX_QT_PAGE=oversigt|3d|rediger|pipeline|log`
+lands the smoke run on that page (`database` is still accepted as an alias
+for `oversigt`; `posegraf` is gone).
 `rux-qt-gallery` (`apps/rux/qt`) renders pages of the native Qt client
 headless to PNG for design review; its theme is generated at run time from
 `apps/rux/qt/theme/tokens.css`, a vendored copy of rux-frontend's tokens
@@ -443,9 +448,16 @@ and deleted the shims. `include/geometry/` now holds only the real
 
 **slam** (`include/slam/`):
 - `PlaneGraphOptimizer.hpp`: plane-landmark pose graph (GTSAM), `rux optimize`.
-  Also hosts the optional wide-baseline loop-closure front-end (ORB + depth →
-  RANSAC), enabled with `--loop-closure`; run `rux optimize --help` for the
-  current flag list rather than trusting a doc.
+  Solves the stored pose graph (`pose_graph_edges`, seeded from
+  `sensor_frames.initial_transform`; `optimize_graph`); `slam/pose_graph.hpp`
+  is `rux graph init`, `slam/loop_candidates.hpp` the ORB / panorama / file
+  loop front-ends, `slam/graph_discover.hpp` (`rux graph discover`:
+  front-ends vs the stored graph, PCM with confirmed edges as fixed inliers;
+  also `JobStage::graph_discover`, run by `stage_executor_with_optimize()`),
+  `slam/graph_prune.hpp` (`rux graph prune`).
+- `pose_graph_conventions.hpp`: stored (`sensor_frames.transform`) ↔ optical
+  edge transforms and information; `core/pose_graph.hpp` holds the schema
+  vocabulary and SE(3) helpers.
 - `JointPairwiseRegistration.hpp`: `rux register`
 - `frame_pair_icp.hpp`: depth-cloud ICP between two stored frames, behind
   the Qt client's pair strip and (from the `ruxd` repo) the web GUI's
@@ -458,10 +470,10 @@ and deleted the shims. `include/geometry/` now holds only the real
   repo, `ruxd`, because `reusex_pipeline` must not link GTSAM (#464)
 - `PanoramaAlignment.hpp`: content-based 360 pose refinement, `rux align 360`
 - `PanoramaLoopEdges.hpp`: wide-baseline `LoopEdge`s derived from 360
-  panoramas (`rux optimize --use-panoramas`, #236). Each panorama is resected
-  INDEPENDENTLY against every frame it matches, in that frame's own optical
-  coordinates — reusing the aligned panorama *pose* instead would be circular
-  and carry no drift information. Does not require `rux align 360`.
+  panoramas (`rux graph discover --use-panoramas`, #236). Each panorama is
+  resected INDEPENDENTLY against every frame it matches, in that frame's own
+  optical coordinates — reusing the aligned panorama *pose* instead would be
+  circular and carry no drift information. Does not require `rux align 360`.
 
 **geometry_common** (`include/geometry/`, layer 1½): the real (non-shim) headers
 there — `utils.hpp`, `cgal_utils.hpp`, `transform_utils.hpp`,
@@ -536,7 +548,13 @@ tree — if a doc mentions `RTABMapDatabase`, that doc is stale.
   `core/resource_view.hpp`): the one chosen image (sensor frame or panorama +
   normalised region) a resource is shown by, set by `sync_survey` / mask →
   resource and read with no fallback ranking; PATCHing a frame's `sys:view`
-  without a region fills in the instance's region (`core::complete_view_region`)
+  without a region fills in the instance's region (`core::complete_view_region`).
+  Schema v28 makes `pose_graph_edges` the stored pose graph (measurement, GTSAM-order
+  information, source, status, metrics; canonical `from < to`,
+  `UNIQUE(from, to, type)`; `upsert_pose_graph_edge` /
+  `set_pose_graph_edge_status` / `update_pose_graph_edge_metrics`), adds
+  `sensor_frames.initial_transform` and `project_settings` (`setting()` /
+  `set_setting()`)
 - Migrating schema; `LATEST_SCHEMA_VERSION` is defined in
   `src/core/ProjectDB.cpp` — read it there rather than trusting a doc (it moves
   most releases)
@@ -605,7 +623,8 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | `align` | `360` (content-based panorama pose refinement) | `src/align/` |
 | `edit` | `downsample`, `perturb-poses` (drift synthesis, #338) | `src/edit/` |
 | `analyze` | `quality`, `accuracy` | `src/analyze/` |
-| `optimize` | — (plane-landmark pose graph) | `src/optimize.cpp` |
+| `optimize` | — (solves the stored pose graph) | `src/optimize.cpp` |
+| `graph` | `init`, `discover`, `prune` (stored pose graph) | `src/graph/` |
 | `register` | — (joint pairwise registration) | `src/register.cpp` |
 | `validate` | — (`--stage`, `--json`) | `src/validate.cpp` |
 | `get` / `set` / `del` | path-based DB access (`src/database/*_router.cpp`) | `src/get.cpp`, `src/set.cpp`, `src/del.cpp` |
@@ -616,7 +635,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | `assemble` | — (multi-scan assembly) | `src/assemble.cpp` |
 
 With **no** subcommand, `rux` launches the Qt client (help without a display).
-`create`, `import`, `export`, `edit`, `analyze`, `align` all
+`create`, `import`, `export`, `edit`, `analyze`, `align`, `graph` all
 `require_subcommand(1)`.
 Global flags: `-v/-vv/-vvv`, `-V/--version`, `-L/--license`, `-D/--visualize`,
 `-p/--project <path.rux>` (defaults to `./project.rux`).

@@ -8,12 +8,15 @@
 // table, so a change to a title or a keyword is caught by them.
 //
 // Ids: "page:<n>" (nav order, 0 = Start), "open", "reload", "close",
-// "copy-path", "copy-cli", "inspector", "theme", "quit", "recent:<path>".
+// "copy-path", "copy-cli", "inspector", "theme", "quit", "pane:<key>"
+// (a Rediger pane, see EditPane), "recent:<path>".
 
 #include <rux_qt/fuzzy.hpp>
 #include <rux_qt/recent.hpp>
 
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace rux::qt {
@@ -24,9 +27,20 @@ struct PageEntry {
   std::string keywords; ///< aliases, Danish and English
 };
 
-/// The shell's pages in rail order (Start, Database, 3D, Posegraf,
+/// The shell's pages in rail order (Start, Oversigt, 3D, Rediger,
 /// Pipeline, Log). Alt+1 … Alt+6.
 const std::vector<PageEntry> &page_entries();
+
+/// The Rediger workspace's panes (spec §5.2), in their QSettings order.
+enum class EditPane { graph = 0, edges, images, overlay };
+inline constexpr int kEditPaneCount = 4;
+std::string_view edit_pane_key(EditPane pane); ///< "graph" | "edges" | …
+std::string edit_pane_name_da(EditPane pane);  ///< "Graf", "Kantliste", …
+std::optional<EditPane> parse_edit_pane(std::string_view key);
+
+/// RUX_QT_PAGE value -> rail index, or -1. "database" is an alias of
+/// "oversigt" (scripts written before the rename keep working).
+int smoke_page_index(std::string_view name);
 
 struct PaletteEntry {
   std::string id;

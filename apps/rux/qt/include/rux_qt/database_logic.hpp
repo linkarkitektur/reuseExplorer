@@ -11,6 +11,7 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -85,80 +86,139 @@ struct EdgeKey {
   }
 };
 
+/// The store's canonical key: from < to (ProjectDB reads every row back
+/// that way). Compare edge identities with same_edge_key(), never ==, unless
+/// both sides are known canonical.
+EdgeKey canonical_key(EdgeKey key);
+/// The same edge: (min(from, to), max(from, to), type) are equal.
+bool same_edge_key(const EdgeKey &a, const EdgeKey &b);
+
 struct EdgeRecord {
   EdgeKey key;
-  double residual = 0.0;
-  double weight = 1.0; ///< NaN when the optimizer stored none
+  /// 0.5 x whitened squared residual after the last solve; NaN = never
+  /// solved (a staged measurement has none until optimize runs).
+  double residual = std::numeric_limits<double>::quiet_NaN();
+  /// 1/σ_trans²; NaN when unknown (a manual edge without ICP).
+  double weight = std::numeric_limits<double>::quiet_NaN();
+  /// T_from^-1 · T_to in the sensor_frames.transform convention, row-major.
+  std::optional<std::array<double, 16>> transform;
+  /// 6x6 information, GTSAM order (rx, ry, rz, tx, ty, tz); nullopt = the
+  /// optimizer's per-type default.
+  std::optional<std::array<double, 36>> information;
+  std::string source; ///< rtabmap | odometry_init | orb | … ; "" unknown
+  std::string status = "auto"; ///< auto | confirmed | rejected
+  std::optional<double> seed_disagreement_m, seed_disagreement_deg;
+  std::optional<double> deviation_m, deviation_deg;
 };
 
-/// An edge between the current A and B, with its pending state.
+/// Field-wise equality where two NaN weights/residuals are equal.
+bool same_record(const EdgeRecord &a, const EdgeRecord &b);
+
+/// One edge with its pending state, as the canvas, the list and the pair
+/// strip show it.
 struct EdgeView {
-  EdgeRecord edge;
-  bool pending_add = false;    ///< staged, not in the file yet
-  bool pending_delete = false; ///< in the file, staged for deletion
-  bool reversed = false;       ///< stored B -> A rather than A -> B
+  enum class Pending {
+    none,     ///< as stored
+    added,    ///< a new key, staged
+    replaced, ///< a new measurement for a stored key, staged
+    status,   ///< a staged status change of a stored key
+  };
+  EdgeRecord edge; ///< effective: pending applied
+  Pending pending = Pending::none;
+  std::string stored_status; ///< status in the file; empty for a new key
+  bool reversed = false;     ///< seen from (a, b), it is stored b -> a
 };
 
-/// Pose-graph edits staged in memory until "Gem ændringer" (RTABMap's
-/// linksAdded_/linksRemoved_). The base is what the file holds; ops() is
-/// what a save must do, deletions first, in staging order.
+/// Pose-graph edits staged in memory until "Gem ændringer". The base is the
+/// file; at most one pending op per key. A user "delete" is a rejection
+/// (spec D4: a tombstone that discover and optimize respect).
+///
+/// Keys match in either direction ((min(from, to), max(from, to), type), the
+/// store's canonical key): staging 5 -> 1 over a stored 1 -> 5 acts on that
+/// edge. Every staged record is canonicalised on the way in
+/// (canonical_edge: key swapped, measurement inverted, information mapped
+/// as the store does), so the base, effective(), ops() and the saved base
+/// all hold from < to, exactly what the file holds.
 class PendingEdgeEdits {
     public:
   enum class Result {
-    added,     ///< a new edge is staged
-    restored,  ///< it re-adds an edge staged for deletion: no-op now
-    removed,   ///< an edge in the file is staged for deletion
-    unstaged,  ///< it removes a staged addition: no-op now
-    duplicate, ///< that edge already exists (or is already staged)
-    not_found, ///< nothing to remove
-    invalid,   ///< from == to, an unknown type, or a weight <= 0
+    added,       ///< a new edge is staged
+    replaced,    ///< a new measurement for an existing / staged key
+    revived,     ///< a new measurement over a rejected edge (overwrites it)
+    confirmed,   ///< a status change to confirmed is staged (also: an add
+                 ///< without a transform over a stored edge)
+    rejected,    ///< a status change to rejected is staged
+    unrejected,  ///< a rejected edge goes back to auto
+    unconfirmed, ///< a confirmed edge goes back to auto
+    unstaged,    ///< it cancelled a pending op: the file state shows again
+    unchanged,   ///< already in that state
+    not_found,   ///< no such edge
+    invalid,     ///< from == to, an unknown type, or a weight <= 0
   };
 
   struct Op {
-    enum class Kind { remove, add };
-    Kind kind;
-    EdgeRecord edge;
+    enum class Kind { upsert, set_status };
+    Kind kind = Kind::upsert;
+    EdgeRecord edge; ///< upsert: the record; set_status: key + status
+    bool overwrite_rejected = false;
+    /// set_status: the stored status it changes (the banner tells an
+    /// un-confirm from an un-reject).
+    std::string from_status;
   };
 
-  /// The edges as stored. Clears every pending edit.
-  void set_base(std::vector<EdgeRecord> edges);
+  void set_base(std::vector<EdgeRecord> edges); ///< clears pending
   const std::vector<EdgeRecord> &base() const { return base_; }
 
+  /// Stage a measurement (always status "confirmed"; residual and metrics
+  /// cleared — optimize writes them), canonicalised (canonical_edge). Over a
+  /// stored key WITHOUT a transform the store keeps the stored measurement and
+  /// only confirms it: that is Result::confirmed (or unchanged when it is
+  /// confirmed already).
   Result add(const EdgeRecord &edge);
-  /// Stage the removal of every stored row with this key (the store deletes
-  /// by from/to/type), or drop a staged addition.
-  Result remove(const EdgeKey &key);
-  void discard();
+  Result confirm(const EdgeKey &key);
+  Result reject(const EdgeKey &key);
+  Result unreject(const EdgeKey &key);
+  /// A stored confirmed edge back to auto: a status change, never a
+  /// measurement-less upsert (the store ignores "auto" over "confirmed").
+  Result unconfirm(const EdgeKey &key);
+  /// Drop whatever is pending on @p key.
+  Result revert(const EdgeKey &key);
+  void discard() { pending_.clear(); }
 
-  bool empty() const { return adds_.empty() && removes_.empty(); }
-  /// Number of staged edits (additions + removals).
-  int count() const;
+  bool empty() const { return pending_.empty(); }
+  int count() const { return static_cast<int>(pending_.size()); }
+  /// Status changes first, then measurements, each in staging order.
   std::vector<Op> ops() const;
 
-  /// Every edge between frames @p a and @p b, either direction: stored ones
-  /// (flagged when staged for deletion) and staged additions.
+  /// Every edge, base order then new keys in staging order.
+  std::vector<EdgeView> effective() const;
+  /// effective() between @p a and @p b, either direction.
   std::vector<EdgeView> between(int a, int b) const;
-  /// Effective edge count of a frame (stored minus deleted plus added).
+  /// Non-rejected effective edges at @p frame (a key counted once).
   int degree(int frame) const;
-  /// degree() of every frame with an edge, in one O(E log E) pass (the
-  /// filmstrip marks; degree() per frame is O(E) each).
   std::map<int, int> degrees() const;
 
-  /// After a successful save: fold the ops into the base, clear pending.
-  void commit_succeeded();
-  /// After a successful save of @p saved (a snapshot of ops() taken when the
-  /// save started): fold exactly those into the base and drop them from the
-  /// pending set. Edits staged while the save ran stay pending — including
-  /// one that undid a saved op (it is re-staged against the new base).
+  /// After a successful save of @p saved (a snapshot of ops()): fold it into
+  /// the base; ops staged or changed during the save stay pending.
   void commit_saved(const std::vector<Op> &saved);
 
     private:
-  bool removed(const EdgeKey &k) const;
-  bool in_base(const EdgeKey &k) const;
+  const EdgeRecord *stored(const EdgeKey &k) const;
+  int pending_index(const EdgeKey &k) const;
+  Result stage_status(const EdgeKey &k, const std::string &status,
+                      Result on_change);
   std::vector<EdgeRecord> base_;
-  std::vector<EdgeRecord> adds_;
-  std::vector<EdgeKey> removes_;
+  std::vector<Op> pending_;
 };
+
+/// The banner's line: "2 nye eller målte kanter, 1 afvist, 1 bekræftet".
+std::string pending_summary_da(const std::vector<PendingEdgeEdits::Op> &ops);
+
+/// Whether "Tilføj kant" of @p type between a pair replaces a measurement:
+/// @p views (PendingEdgeEdits::between) holds a non-rejected edge of that
+/// type, in either direction. The button then reads "Erstat måling".
+bool pair_add_replaces(const std::vector<EdgeView> &views,
+                       std::string_view type);
 
 /// True for the three stored edge types.
 bool is_edge_type(std::string_view type);
@@ -235,6 +295,17 @@ std::string format_decimal_da(double v, int decimals);
 /// order; empty when the table has none (the caller falls back to "Row N").
 std::string row_key_title(
     const std::vector<std::pair<std::string, std::string>> &key_columns);
+
+/// A pixel size.
+struct ImageSize {
+  int width = 0;
+  int height = 0;
+};
+/// The size to show a @p width x @p height image at so its longer side is
+/// at most @p max_side (aspect kept, never enlarged, never below 1 px).
+ImageSize fit_within(int width, int height, int max_side);
+/// The longest side a panorama is decoded to for the preview.
+inline constexpr int kPanoramaMaxSide = 4096;
 
 // --------------------------------------------------------- write errors --
 

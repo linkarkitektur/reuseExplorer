@@ -4,9 +4,10 @@
 #pragma once
 
 // The shell's pages, in nav-rail order, and the placeholder every workspace
-// shows until its phase lands (Database: Q2; 3D, Posegraf, Pipeline, Log:
-// Q3). A placeholder is a designed empty state: what the workspace will do,
-// and the rux commands that do it today.
+// shows until its phase lands. Rail order: Start, Oversigt, 3D, Rediger,
+// Pipeline, Log (Oversigt is Workspace::database). A placeholder is a designed
+// empty state: what the workspace will do, and the rux commands that do it
+// today.
 
 #include <QString>
 #include <QStringList>
@@ -23,7 +24,7 @@ enum class Workspace : int {
   start = 0,
   database,
   viewer3d,
-  posegraph,
+  edit,
   pipeline,
   log,
 };

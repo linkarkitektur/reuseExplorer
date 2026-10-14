@@ -6,7 +6,7 @@
 // command that really does what the GUI run did. The key -> flag table lives
 // in rux_qt/cli_command.cpp, far from the CLI it describes; this test parses
 // every generated command back through the REAL CLI11 setup of each stage
-// subcommand (setup_subcommand_create / setup_subcommand_optimize) and checks
+// subcommand (setup_subcommand_create / _optimize / _graph) and checks
 // that the stage receives the same parameters — key by key, for every
 // parameter pipeline::stage_parameters() lists, and all at once.
 //
@@ -18,6 +18,7 @@
 #include <create.hpp>
 #include <create/stage_bridge.hpp>
 #include <global-params.hpp>
+#include <graph.hpp>
 #include <optimize.hpp>
 
 #include <reusex/pipeline/mesh_parameters.hpp>
@@ -58,7 +59,10 @@ const std::set<std::string> kNoFlag = {"rooms.propagate_k"};
 /// job_stage_names(), but is listed for the same reason
 /// CliCommand_UnknownStage_IsUnsupported (test_workspace_logic.cpp) uses it:
 /// a byword for "a stage name with no CLI mapping".
-const std::set<std::string> kNoCliMapping = {"gsplat", "annotate"};
+const std::set<std::string> kNoCliMapping = {
+    "gsplat",
+    "annotate",
+};
 
 struct Captured {
   std::string stage;
@@ -72,6 +76,7 @@ Captured parse_through_cli(const std::vector<std::string> &args) {
   app.add_option("-p,--project", global->project_db);
   setup_subcommand_create(app, global);
   setup_subcommand_optimize(app, global);
+  setup_subcommand_graph(app, global);
 
   Captured got;
   rux::set_stage_params_sink(
@@ -131,6 +136,8 @@ std::string changed_value(const pl::ParameterDescriptor &d) {
       return "planes in [1, 2]";
     if (d.key == "solver")
       return "highs";
+    if (d.key == "loop_proposal")
+      return "spatial";
     return "x_" + d.key;
   case pl::ParameterType::integer_list:
     return "1,4";
@@ -319,7 +326,7 @@ TEST_CASE("CliCommandRoundTrip_MeshAndOptimize_ShareTheStageReader",
 namespace {
 
 /// Everything differing between two PlaneGraphOptions, field by field,
-/// including nested surfel/loop_closure/panorama_loops — a readable mismatch
+/// including nested surfel — a readable mismatch
 /// report for CHECK's INFO, without hand-listing fields a second time (that
 /// hand list is exactly the bug the integration review's finding 4 flagged).
 ///
@@ -349,7 +356,7 @@ TEST_CASE("CliCommandRoundTrip_OptimizeFlagDefaults_MatchTheStageBase",
   // min_depth, max_depth, pcm_trans_threshold, pcm_rot_threshold,
   // pcm_max_edges and seed with no matching CHECK, so a CLI default
   // diverging on any of them would have passed silently. PlaneGraphOptions
-  // and its three nested option structs now each carry a defaulted,
+  // and its nested `surfel` struct now each carry a defaulted,
   // memberwise `operator==` (`= default`, C++20) right next to their field
   // list, so a newly added field is compared automatically — by the
   // compiler, not by whoever remembers to update this test.
@@ -357,7 +364,5 @@ TEST_CASE("CliCommandRoundTrip_OptimizeFlagDefaults_MatchTheStageBase",
   const auto cli = plane_graph_options(SubcommandOptimizeOptions{});
 
   INFO(describe("surfel", cli.surfel, lib.surfel));
-  INFO(describe("loop_closure", cli.loop_closure, lib.loop_closure));
-  INFO(describe("panorama_loops", cli.panorama_loops, lib.panorama_loops));
   CHECK(cli == lib);
 }

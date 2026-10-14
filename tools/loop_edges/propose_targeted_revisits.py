@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Targeted revisit loop-edge proposal for `rux optimize --loop-edges`.
+# Targeted revisit loop-edge proposal for `rux graph discover --loop-edges`.
 # Issue #221 / #364 follow-up: owner-directed approach.
 #
 # WHY THIS EXISTS
@@ -36,7 +36,7 @@
 #       --min-inliers 40 --device cuda
 #
 # The output schema is identical to export_loop_edges.py ("reusex.loop_edges.v1")
-# so it can be passed directly to `rux optimize --loop-edges`.
+# so it can be passed directly to `rux graph discover --loop-edges`.
 
 import argparse
 import json
@@ -148,8 +148,8 @@ def propose_targeted_pairs(
 # --------------------------------------------------------------------------- #
 def main():
     ap = argparse.ArgumentParser(
-        description="Targeted revisit loop-edge proposal for `rux optimize "
-        "--loop-edges` (issue #221 / #364).\n\n"
+        description="Targeted revisit loop-edge proposal for `rux graph "
+        "discover --loop-edges` (issue #221 / #364).\n\n"
         "Pairs operator-identified revisit frames against a known target region "
         "by frame-index proximity, bypassing seed-pose drift blindspots."
     )

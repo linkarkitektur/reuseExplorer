@@ -535,6 +535,16 @@ QLabel#viewportEmpty {
   color: var(--color-on-chrome-muted);
   font-size: var(--font-size-md);
 }
+QFrame#offsetFields {
+  background: var(--color-surface-raised);
+  border-top: 1px solid var(--color-border);
+}
+/* Six offset fields in a narrow pane: mono digits, tight padding. */
+QDoubleSpinBox#offsetField {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  padding: var(--space-1) var(--space-1);
+}
 QFrame#statusBar {
   background: var(--color-surface-raised);
   border-top: 1px solid var(--color-border);
@@ -885,6 +895,12 @@ QLabel#paletteHint, QLabel#paletteCount {
   background: var(--color-surface);
 }
 
+/* Oversigt's panorama preview: the image on the near-black canvas. */
+QGraphicsView#panoramaView {
+  background: var(--color-canvas);
+  border: none;
+}
+
 /* Toolbars over each centre view: a raised strip with a hairline. */
 QFrame#dbToolbar {
   background: var(--color-surface-raised);
@@ -892,6 +908,25 @@ QFrame#dbToolbar {
 }
 QFrame#dbToolbar QLabel {
   background: transparent;
+}
+/* Rediger's graph toolbar is two rows: one hairline, under the second. */
+QFrame#dbToolbar[row="first"] {
+  border-bottom: none;
+}
+
+/* Rediger: splitter panes (PaneFrame) */
+QFrame#paneFrame {
+  background: var(--color-surface);
+}
+QFrame#paneHeader {
+  background: var(--color-surface-raised);
+  border-bottom: 1px solid var(--color-border);
+}
+QSplitter::handle {
+  background: var(--color-border);
+}
+QSplitter::handle:hover {
+  background: var(--color-border-strong);
 }
 QLabel#toolbarMeta {
   color: var(--color-text-muted);
@@ -1018,7 +1053,8 @@ QFrame#pairStrip {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
 }
-QFrame#pairStrip QLabel {
+QFrame#pairStrip QLabel,
+QScrollArea#edgeRowsScroll, QWidget#edgeRows {
   background: transparent;
 }
 QLabel#pairIds, QLabel#edgeMono {
@@ -1030,6 +1066,17 @@ QLabel#pairDelta, QLabel#edgeMeta {
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
+}
+/* Rediger's pair images: A | B captions in the slot colours (A = accent,
+   as the graph marks it; B in the muted ink). */
+QLabel#pairCaptionA,
+QLabel#pairCaptionB {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+QLabel#pairCaptionA {
+  color: var(--color-accent-deep);
 }
 QLabel#pairNone, QLabel#pairNote {
   color: var(--color-text-muted);
@@ -1046,11 +1093,17 @@ QFrame#edgeRow:hover {
 QFrame#edgeRow[state="add"] {
   border-color: var(--color-accent);
 }
-QFrame#edgeRow[state="delete"] QLabel#edgeMono {
+QFrame#edgeRow[state="rejected"] QLabel#edgeMono,
+QFrame#edgeRow[state="rejected"] QLabel#edgeMeta {
   color: var(--color-text-faint);
 }
 QFrame#edgeRow QLabel {
   background: transparent;
+}
+/* A row's actions sit on its second line beside the status pills: compact,
+   so a row with several edges in view still leaves the 3D overlay room. */
+QPushButton#edgeAction {
+  padding: var(--space-1) var(--space-3);
 }
 QLabel#icpLine {
   font-size: var(--font-size-xs);
@@ -1129,9 +1182,9 @@ QTextEdit#inspectorBlock {
   padding: var(--space-2);
 }
 
-/* ============================================ 3D, Posegraf, Pipeline (Q3) */
+/* ============================================= 3D, Rediger, Pipeline (Q3) */
 
-#viewerWorkspace, #poseGraphWorkspace, #pipelineWorkspace, #logWorkspace,
+#viewerWorkspace, #graphPanel, #pipelineWorkspace, #logWorkspace,
 #pipelineContent, QScrollArea#pipelineScroll {
   background: var(--color-surface);
 }
@@ -1149,9 +1202,58 @@ QLabel#legendText {
   font-size: var(--font-size-xs);
   background: transparent;
 }
+/* Rediger's edge legend: a chrome card in the canvas's lower-left corner
+   (chrome is dark in both themes, like the canvas under it). */
+QFrame#graphLegend,
+QFrame#overlayLegend {
+  background: var(--color-chrome);
+  border: 1px solid var(--color-chrome-border);
+  border-radius: var(--radius-sm);
+}
+QFrame#graphLegend QWidget#legendHost {
+  background: transparent;
+}
+QFrame#graphLegend QLabel#legendText,
+QFrame#overlayLegend QLabel#legendText {
+  color: var(--color-on-chrome);
+  font-size: var(--font-size-xs);
+  background: transparent;
+}
+QFrame#graphLegend QLabel#legendCount,
+QFrame#overlayLegend QLabel#legendCount {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-on-chrome-muted);
+  background: transparent;
+}
+QFrame#graphLegend QLabel#legendNote {
+  font-size: var(--font-size-xs);
+  color: var(--color-on-chrome-muted);
+  background: transparent;
+}
 QGraphicsView#poseGraphView {
   background: var(--color-canvas);
   border: none;
+}
+/* The view yaw: -180..180 has no "less" side, so no filled sub-page. */
+QSlider#yawSlider::sub-page:horizontal {
+  background: var(--color-border);
+}
+QDoubleSpinBox#yawSpin {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  padding: var(--space-1) var(--space-2);
+}
+
+/* ---- Rediger's edge list: nine columns in the left pane at 1440 px */
+QWidget#edgeList QTableView#dataTable::item {
+  padding: 0 var(--space-2);
+}
+QWidget#edgeList QHeaderView::section {
+  padding: var(--space-2);
+  /* the sort arrow's room (SortHeader reserves none), so it never
+     overprints a right-aligned figure column's label */
+  padding-right: var(--space-4);
 }
 
 /* ---- log filter bar */

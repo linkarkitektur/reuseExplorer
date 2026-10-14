@@ -6,6 +6,7 @@
 
 #include "slam/PlaneGraphOptimizer.hpp"
 #include "core/logging.hpp"
+#include "core/pose_graph.hpp"
 
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
@@ -33,6 +34,23 @@
 namespace reusex::geometry {
 
 namespace {
+
+gtsam::Pose3 to_pose3(const Eigen::Matrix4d &T) {
+  return gtsam::Pose3(gtsam::Rot3(T.block<3, 3>(0, 0)),
+                      gtsam::Point3(T.block<3, 1>(0, 3)));
+}
+
+gtsam::SharedNoiseModel sigmas_noise(double sr, double st) {
+  return gtsam::noiseModel::Diagonal::Sigmas(
+      (gtsam::Vector(6) << sr, sr, sr, st, st, st).finished());
+}
+
+gtsam::SharedNoiseModel
+information_noise(const Eigen::Matrix<double, 6, 6> &I) {
+  if (I.isDiagonal(1e-12))
+    return gtsam::noiseModel::Diagonal::Precisions(gtsam::Vector(I.diagonal()));
+  return gtsam::noiseModel::Gaussian::Information(I);
+}
 
 /// gtsam's OrientedPlane3Factor does not implement clone(), which
 /// GncOptimizer requires (it clones the graph to build its robustified
@@ -401,8 +419,8 @@ PlaneGraphOptimizer::PlaneGraphOptimizer(PlaneGraphOptions options)
     : options_(std::move(options)) {}
 
 PlaneGraphResult
-PlaneGraphOptimizer::optimize(std::vector<FrameSurfels> &frames,
-                              const std::vector<LoopEdge> &loop_edges) const {
+PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
+                                    const std::vector<GraphEdge> &edges) const {
   using gtsam::symbol_shorthand::P; // plane landmarks
   using gtsam::symbol_shorthand::X; // poses
 
@@ -413,11 +431,34 @@ PlaneGraphOptimizer::optimize(std::vector<FrameSurfels> &frames,
     core::warn("PlaneGraph: need at least 2 frames, got {}", N);
     return result;
   }
+  auto in_range = [N](const GraphEdge &e) {
+    return e.i >= 0 && e.j >= 0 && e.i < N && e.j < N && e.i != e.j;
+  };
+  const bool has_loop_edges =
+      std::any_of(edges.begin(), edges.end(), [](const GraphEdge &e) {
+        return e.kind == GraphEdge::Kind::loop;
+      });
+  // Edges that cannot enter the graph (an endpoint outside frames[] or a
+  // self-loop) are skipped. Odometry now comes from the edge list, so a
+  // skipped odometry edge can disconnect the trajectory: say so (STANDARDS §5).
+  {
+    int bad_odom = 0, bad_loop = 0;
+    for (const auto &e : edges)
+      if (!in_range(e))
+        ++(e.kind == GraphEdge::Kind::loop ? bad_loop : bad_odom);
+    if (bad_odom + bad_loop > 0)
+      core::warn("PlaneGraph: skipped {} odometry and {} loop edges with an "
+                 "out-of-range index or a self-loop ({} frames). Edge indices "
+                 "must be positions in frames[]; check the node_id -> index "
+                 "mapping",
+                 bad_odom, bad_loop, N);
+  }
 
   // --- Seed poses ----------------------------------------------------------
   // seed[] is the ORIGINAL input pose of each frame, held fixed for the whole
-  // run: odometry factors and the gauge prior are always derived from it (the
-  // trusted trajectory), and max_pose_shift is measured against it. cur[] is
+  // run: the gauge prior is derived from it (odometry measurements come from
+  // the edge list; legacy_graph_edges derives them from the same seed), and
+  // max_pose_shift is measured against it. cur[] is
   // the working pose, updated after each round and used to re-associate.
   std::vector<Eigen::Matrix4d> seed(N);
   for (int i = 0; i < N; ++i)
@@ -668,7 +709,7 @@ PlaneGraphOptimizer::optimize(std::vector<FrameSurfels> &frames,
     // No plane landmarks: only bail out if there are ALSO no loop edges. When
     // loop edges are present the graph (gauge + odometry + loop factors) is
     // still well-posed and worth solving, so fall through to build it.
-    if (kept == 0 && loop_edges.empty()) {
+    if (kept == 0 && !has_loop_edges) {
       if (round == 0) {
         core::warn("PlaneGraph: no landmark passed the hygiene checks; poses "
                    "unchanged. Lower --min-observations or relax association / "
@@ -724,6 +765,7 @@ PlaneGraphOptimizer::optimize(std::vector<FrameSurfels> &frames,
       std::string type;
       size_t factor_idx;
       double weight; // 1 / sigma_trans² at build time
+      int tag;
     };
     std::vector<EdgeRec> edge_recs;
 
@@ -747,35 +789,35 @@ PlaneGraphOptimizer::optimize(std::vector<FrameSurfels> &frames,
       trusted_factors.push_back(graph.size() - 1);
     }
 
-    // Odometry from consecutive SEED poses (the trusted trajectory). A frame
-    // flagged under-constrained gets both of its odometry factors tightened
-    // (sigmas scaled by underconstrained_odom_scale) so planes cannot bend the
-    // trajectory where they under-constrain it.
+    // Odometry factors, one per odometry-kind edge. Edges without an
+    // information matrix keep the historical weighting: odometry_sigma_*,
+    // tightened on under-constrained frames, optionally motion-scaled. A
+    // stored information is the measurement's own noise (only the
+    // observability guard applies to it).
     {
       const double base_r = options_.odometry_sigma_rot;
       const double base_t = options_.odometry_sigma_trans;
       const double scale = options_.underconstrained_odom_scale;
 
-      // Relative seed motion per edge, computed once: it is both the factor
-      // measurement and (under OdometryNoiseModel::motion) the noise signal.
-      std::vector<gtsam::Pose3> odom(std::max(0, N - 1));
-      std::vector<OdometryEdgeMotion> motion(std::max(0, N - 1));
-      for (int i = 0; i + 1 < N; ++i) {
-        const Eigen::Matrix4d rel = seed[i].inverse() * seed[i + 1];
-        odom[i] = gtsam::Pose3(gtsam::Rot3(rel.block<3, 3>(0, 0)),
-                               gtsam::Point3(rel.block<3, 1>(0, 3)));
-        motion[i].translation = odom[i].translation().norm();
-        motion[i].rotation = gtsam::Rot3::Logmap(odom[i].rotation()).norm();
+      std::vector<int> motion_slot(edges.size(), -1);
+      std::vector<OdometryEdgeMotion> motion;
+      for (size_t k = 0; k < edges.size(); ++k) {
+        const auto &e = edges[k];
+        if (e.kind != GraphEdge::Kind::odometry || e.information ||
+            !in_range(e))
+          continue;
+        const gtsam::Pose3 rel = to_pose3(e.T_ij);
+        motion_slot[k] = static_cast<int>(motion.size());
+        motion.push_back({rel.translation().norm(),
+                          gtsam::Rot3::Logmap(rel.rotation()).norm()});
       }
-
       std::vector<OdometrySigmaScale> motion_scale;
-      if (options_.odometry_noise_model == OdometryNoiseModel::motion) {
+      if (options_.odometry_noise_model == OdometryNoiseModel::motion &&
+          !motion.empty()) {
         motion_scale = odometry_motion_scales(
             motion, static_cast<double>(options_.odometry_weight_min),
             static_cast<double>(options_.odometry_weight_max));
         std::vector<double> mt, mr;
-        mt.reserve(motion.size());
-        mr.reserve(motion.size());
         for (const auto &m : motion) {
           mt.push_back(m.translation);
           mr.push_back(m.rotation);
@@ -785,27 +827,41 @@ PlaneGraphOptimizer::optimize(std::vector<FrameSurfels> &frames,
                    motion.size(), median_of(mt), median_of(mr));
       }
 
-      for (int i = 0; i + 1 < N; ++i) {
+      for (size_t k = 0; k < edges.size(); ++k) {
+        const auto &e = edges[k];
+        if (e.kind != GraphEdge::Kind::odometry || !in_range(e))
+          continue;
         const double s =
-            (underconstrained[i] || underconstrained[i + 1]) ? scale : 1.0;
-        const double mr = motion_scale.empty() ? 1.0 : motion_scale[i].rotation;
-        const double mt =
-            motion_scale.empty() ? 1.0 : motion_scale[i].translation;
-        const double sr = base_r * s * mr;
-        const double st = base_t * s * mt;
-        auto odom_noise = gtsam::noiseModel::Diagonal::Sigmas(
-            (gtsam::Vector(6) << sr, sr, sr, st, st, st).finished());
+            (underconstrained[e.i] || underconstrained[e.j]) ? scale : 1.0;
+        gtsam::SharedNoiseModel noise;
+        double weight = 0.0;
+        if (e.information) {
+          const Eigen::Matrix<double, 6, 6> I = *e.information / (s * s);
+          noise = information_noise(I);
+          weight = I.diagonal().tail<3>().mean();
+        } else {
+          const int slot = motion_slot[k];
+          const double mr =
+              motion_scale.empty() ? 1.0 : motion_scale[slot].rotation;
+          const double mt =
+              motion_scale.empty() ? 1.0 : motion_scale[slot].translation;
+          const double sr = base_r * s * mr;
+          const double st = base_t * s * mt;
+          noise = sigmas_noise(sr, st);
+          weight = 1.0 / (st * st);
+        }
         graph.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
-            X(i), X(i + 1), odom[i], odom_noise);
+            X(e.i), X(e.j), to_pose3(e.T_ij), noise);
         // Odometry is a KNOWN INLIER by default: GNC may not demote it. With
-        // --odometry-robust it is left out of the trusted set so GNC can, which
-        // is the #225 "grossly-wrong seed edge" probe.
-        if (options_.odometry_robust)
+        // --odometry-robust it is left out of the trusted set so GNC can
+        // (the #225 "grossly-wrong seed edge" probe) — unless the user
+        // confirmed the edge.
+        if (options_.odometry_robust && !e.known_inlier)
           odom_factors.push_back(graph.size() - 1);
         else
           trusted_factors.push_back(graph.size() - 1);
         edge_recs.push_back(
-            {i, i + 1, "odometry", graph.size() - 1, 1.0 / (st * st)});
+            {e.i, e.j, "odometry", graph.size() - 1, weight, e.tag});
       }
     }
 
@@ -832,28 +888,32 @@ PlaneGraphOptimizer::optimize(std::vector<FrameSurfels> &frames,
     //
     // Endpoints out of range are skipped.
     int loop_edge_count = 0;
-    for (const auto &e : loop_edges) {
-      if (e.i < 0 || e.j < 0 || e.i >= N || e.j >= N || e.i == e.j)
+    for (const auto &e : edges) {
+      if (e.kind != GraphEdge::Kind::loop || !in_range(e))
         continue;
-      auto base_noise = gtsam::noiseModel::Diagonal::Sigmas(
-          (gtsam::Vector(6) << e.sigma_rot, e.sigma_rot, e.sigma_rot,
-           e.sigma_trans, e.sigma_trans, e.sigma_trans)
-              .finished());
-      const gtsam::Pose3 rel(gtsam::Rot3(e.T_ij.block<3, 3>(0, 0)),
-                             gtsam::Point3(e.T_ij.block<3, 1>(0, 3)));
+      gtsam::SharedNoiseModel base_noise;
+      double weight = 0.0;
+      if (e.information) {
+        base_noise = information_noise(*e.information);
+        weight = e.information->diagonal().tail<3>().mean();
+      } else {
+        const double sr = options_.loop_default_sigma_rot;
+        const double st = options_.loop_default_sigma_trans;
+        base_noise = sigmas_noise(sr, st);
+        weight = 1.0 / (st * st);
+      }
       gtsam::SharedNoiseModel noise = base_noise;
-      if (options_.loop_edges_trusted && !options_.use_gnc) {
-        // Plain LM: no per-factor TLS threshold exists, so bound the trusted
-        // edge with a Huber kernel (which LM does honour).
+      if (options_.loop_edges_trusted && !options_.use_gnc && !e.known_inlier)
         noise = gtsam::noiseModel::Robust::Create(
             gtsam::noiseModel::mEstimator::Huber::Create(1.345), base_noise);
-      }
-      graph.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(X(e.i), X(e.j),
-                                                               rel, noise);
-      if (options_.loop_edges_trusted)
+      graph.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+          X(e.i), X(e.j), to_pose3(e.T_ij), noise);
+      if (e.known_inlier)
+        trusted_factors.push_back(graph.size() - 1);
+      else if (options_.loop_edges_trusted)
         loop_factors.push_back(graph.size() - 1);
-      edge_recs.push_back({e.i, e.j, "loop_closure", graph.size() - 1,
-                           1.0 / (e.sigma_trans * e.sigma_trans)});
+      edge_recs.push_back(
+          {e.i, e.j, "loop_closure", graph.size() - 1, weight, e.tag});
       ++loop_edge_count;
     }
     result.loop_edges = loop_edge_count;
@@ -981,7 +1041,8 @@ PlaneGraphOptimizer::optimize(std::vector<FrameSurfels> &frames,
     result.edges.reserve(edge_recs.size());
     for (const auto &rec : edge_recs) {
       const double res = graph.at(rec.factor_idx)->error(solution);
-      result.edges.push_back({rec.i, rec.j, rec.type, res, rec.weight});
+      result.edges.push_back(
+          {rec.i, rec.j, rec.type, res, rec.weight, rec.tag});
     }
 
     // Adopt the round's poses into cur[] and measure this round's motion.
@@ -1028,6 +1089,38 @@ PlaneGraphOptimizer::optimize(std::vector<FrameSurfels> &frames,
              result.rounds, result.initial_error, result.final_error,
              max_shift);
   return result;
+}
+
+PlaneGraphResult
+PlaneGraphOptimizer::optimize(std::vector<FrameSurfels> &frames,
+                              const std::vector<LoopEdge> &loop_edges) const {
+  return optimize_graph(frames, legacy_graph_edges(frames, loop_edges));
+}
+
+std::vector<GraphEdge>
+legacy_graph_edges(const std::vector<FrameSurfels> &frames,
+                   const std::vector<LoopEdge> &loop_edges) {
+  std::vector<GraphEdge> edges;
+  edges.reserve(frames.size() + loop_edges.size());
+  for (size_t i = 0; i + 1 < frames.size(); ++i) {
+    GraphEdge e;
+    e.i = static_cast<int>(i);
+    e.j = static_cast<int>(i + 1);
+    e.T_ij = frames[i].world_pose.matrix().inverse() *
+             frames[i + 1].world_pose.matrix();
+    edges.push_back(e);
+  }
+  for (const auto &l : loop_edges) {
+    GraphEdge e;
+    e.i = l.i;
+    e.j = l.j;
+    e.T_ij = l.T_ij;
+    e.information =
+        core::pose_graph::information_from_sigmas(l.sigma_rot, l.sigma_trans);
+    e.kind = GraphEdge::Kind::loop;
+    edges.push_back(e);
+  }
+  return edges;
 }
 
 // ---------------------------------------------------------------------------

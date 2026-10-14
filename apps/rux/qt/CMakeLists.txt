@@ -32,8 +32,12 @@ add_library(rux_qt_core STATIC
     src/core/palette_table.cpp
     src/core/background.cpp
     src/core/database_logic.cpp
+    src/core/edge_colouring.cpp
+    src/core/edge_table.cpp
     src/core/cli_command.cpp
-    src/core/workspace_logic.cpp)
+    src/core/workspace_logic.cpp
+    src/core/graph_view.cpp
+    src/core/pair_alignment.cpp)
 target_include_directories(rux_qt_core PUBLIC include)
 target_compile_features(rux_qt_core PUBLIC cxx_std_20)
 
@@ -50,6 +54,7 @@ find_package(VTK REQUIRED COMPONENTS
     RenderingCore
     RenderingOpenGL2
     InteractionStyle
+    InteractionWidgets
     GUISupportQt)
 
 # ---------------------------------------------------------------------------
@@ -89,5 +94,11 @@ vtk_module_autoinit(TARGETS rux_qt_lib MODULES ${VTK_LIBRARIES})
 file(GLOB rux_qt_gallery_SOURCES CONFIGURE_DEPENDS "gallery/*.cpp")
 add_executable(rux-qt-gallery ${rux_qt_gallery_SOURCES})
 set_target_properties(rux-qt-gallery PROPERTIES AUTOMOC ON)
-target_link_libraries(rux-qt-gallery PRIVATE rux_qt_lib ${VTK_LIBRARIES})
+# reusex_slam + reusex_pipeline: the gallery hands its shell
+# stage_executor_with_optimize() (header-only, pipeline/optimize_stage.hpp),
+# as `rux` does, so "Optimer" / "Find kanter" run in a shot.
+target_link_libraries(rux-qt-gallery
+    PRIVATE rux_qt_lib reusex_slam reusex_pipeline
+        # db-panorama writes a synthetic panorama (cv::imencode)
+        opencv_core opencv_imgcodecs ${VTK_LIBRARIES})
 vtk_module_autoinit(TARGETS rux-qt-gallery MODULES ${VTK_LIBRARIES})

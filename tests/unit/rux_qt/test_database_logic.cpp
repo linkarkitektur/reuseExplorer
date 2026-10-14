@@ -11,6 +11,7 @@
 
 #include <rux_qt/database_logic.hpp>
 
+#include <array>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -100,163 +101,262 @@ TEST_CASE("BrowserKey_ArrowsMoveAAndShiftArrowsMoveB",
 namespace {
 
 EdgeRecord edge(int from, int to, const char *type = "loop_closure",
-                double residual = 0.0, double weight = 1.0) {
-  return {{from, to, type}, residual, weight};
+                const char *status = "auto", double residual = 0.0,
+                double weight = 1.0) {
+  EdgeRecord r;
+  r.key = {from, to, type};
+  r.residual = residual;
+  r.weight = weight;
+  r.status = status;
+  return r;
 }
+
+using R = PendingEdgeEdits::Result;
+using K = PendingEdgeEdits::Op::Kind;
 
 } // namespace
 
-TEST_CASE("PendingEdits_AddAndRemove_StageAndCancelOut",
+TEST_CASE("PendingEdits_Add_StagesAConfirmedMeasurement",
           "[rux_qt][database][pending]") {
   PendingEdgeEdits e;
-  e.set_base({edge(1, 2, "odometry", 0.5, 4.0), edge(2, 3, "odometry")});
-  CHECK(e.empty());
-
-  CHECK(e.add(edge(1, 5)) == PendingEdgeEdits::Result::added);
+  e.set_base({edge(1, 2, "odometry"), edge(2, 3, "loop_closure", "rejected")});
+  EdgeRecord m = edge(1, 5);
+  m.transform =
+      std::array<double, 16>{1, 0, 0, 0.1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  m.source = "manual";
+  CHECK(e.add(m) == R::added);
   CHECK(e.count() == 1);
-  // Same key twice: duplicate, still one edit.
-  CHECK(e.add(edge(1, 5)) == PendingEdgeEdits::Result::duplicate);
-  // An edge that is already stored is a duplicate too.
-  CHECK(e.add(edge(1, 2, "odometry")) == PendingEdgeEdits::Result::duplicate);
-  // A different type between the same frames is a different edge.
-  CHECK(e.add(edge(1, 2, "loop_closure")) == PendingEdgeEdits::Result::added);
+  const auto ops = e.ops();
+  REQUIRE(ops.size() == 1);
+  CHECK(ops[0].kind == K::upsert);
+  CHECK(ops[0].edge.status == "confirmed"); // a user edge is confirmed (D4)
+  CHECK(ops[0].edge.transform.has_value());
+  CHECK_FALSE(ops[0].overwrite_rejected);
+  // Staging the same key again replaces the staged measurement.
+  CHECK(e.add(edge(1, 5)) == R::replaced);
+  CHECK(e.count() == 1);
+  // Over a stored active edge without a measurement: the store only
+  // changes its status, so it is a confirmation, not a replacement.
+  CHECK(e.add(edge(1, 2, "odometry")) == R::confirmed);
   CHECK(e.count() == 2);
-
-  // Removing a staged addition just unstages it.
-  CHECK(e.remove({1, 5, "loop_closure"}) == PendingEdgeEdits::Result::unstaged);
-  CHECK(e.count() == 1);
-  // Removing a stored edge stages its deletion.
-  CHECK(e.remove({2, 3, "odometry"}) == PendingEdgeEdits::Result::removed);
+  // With a measurement it replaces the stored one.
+  CHECK(e.add(m) == R::replaced); // (1, 5) is staged: re-staged
+  EdgeRecord m12 = edge(1, 2, "odometry");
+  m12.transform = m.transform;
+  CHECK(e.add(m12) == R::replaced);
   CHECK(e.count() == 2);
-  CHECK(e.remove({2, 3, "odometry"}) == PendingEdgeEdits::Result::not_found);
-  // Re-adding a deleted edge restores it instead of adding a copy.
-  CHECK(e.add(edge(2, 3, "odometry")) == PendingEdgeEdits::Result::restored);
-  CHECK(e.count() == 1);
-  CHECK(e.remove({9, 8, "odometry"}) == PendingEdgeEdits::Result::not_found);
+}
 
-  e.discard();
+TEST_CASE("PendingEdits_AddWithoutMeasurement_OverStored_KeepsTheMeasurement",
+          "[rux_qt][database][pending]") {
+  PendingEdgeEdits e;
+  EdgeRecord stored = edge(1, 2, "loop_closure", "auto", 3.5, 9.0);
+  stored.transform =
+      std::array<double, 16>{1, 0, 0, 0.3, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  stored.source = "orb";
+  stored.deviation_m = 0.2;
+  e.set_base({stored, edge(3, 4, "loop_closure", "confirmed")});
+  REQUIRE(e.add(edge(1, 2, "loop_closure", "auto", 0.0, 400.0)) ==
+          R::confirmed);
+  // Already confirmed: nothing to stage.
+  CHECK(e.add(edge(3, 4)) == R::unchanged);
+  CHECK(e.count() == 1);
+  // Shown as the stored measurement, now confirmed.
+  const auto v = e.effective();
+  REQUIRE(v.size() == 2);
+  CHECK(v[0].pending == EdgeView::Pending::status);
+  CHECK(v[0].edge.status == "confirmed");
+  CHECK(v[0].edge.weight == 9.0);
+  CHECK(v[0].edge.source == "orb");
+  // After the save the base holds what the store holds: status only.
+  e.commit_saved(e.ops());
   CHECK(e.empty());
-  CHECK(e.base().size() == 2);
+  REQUIRE(e.base().size() == 2);
+  CHECK(e.base()[0].status == "confirmed");
+  CHECK(e.base()[0].weight == 9.0);
+  CHECK(e.base()[0].residual == 3.5);
+  CHECK(e.base()[0].source == "orb");
+  CHECK(e.base()[0].transform == stored.transform);
+  CHECK(e.base()[0].deviation_m == 0.2);
+}
+
+TEST_CASE("PendingEdits_CommitSaved_NewKey_StoresTheWrittenSource",
+          "[rux_qt][database][pending]") {
+  PendingEdgeEdits e;
+  REQUIRE(e.add(edge(1, 2)) == R::added);
+  e.commit_saved(e.ops());
+  REQUIRE(e.base().size() == 1);
+  CHECK(e.base()[0].source == "manual"); // what edge_row_from_record writes
+}
+
+TEST_CASE("PendingEdits_AddOverRejected_Revives",
+          "[rux_qt][database][pending]") {
+  PendingEdgeEdits e;
+  e.set_base({edge(2, 3, "loop_closure", "rejected")});
+  CHECK(e.add(edge(2, 3)) == R::revived);
+  const auto ops = e.ops();
+  REQUIRE(ops.size() == 1);
+  CHECK(ops[0].overwrite_rejected); // the store refuses a tombstone otherwise
 }
 
 TEST_CASE("PendingEdits_RejectsInvalidEdges", "[rux_qt][database][pending]") {
   PendingEdgeEdits e;
-  CHECK(e.add(edge(3, 3)) == PendingEdgeEdits::Result::invalid);
-  CHECK(e.add(edge(1, 2, "bogus")) == PendingEdgeEdits::Result::invalid);
-  CHECK(e.add(edge(1, 2, "loop_closure", 0.0, 0.0)) ==
-        PendingEdgeEdits::Result::invalid);
-  CHECK(e.add(edge(1, 2, "loop_closure", 0.0,
-                   std::numeric_limits<double>::quiet_NaN())) ==
-        PendingEdgeEdits::Result::invalid);
+  CHECK(e.add(edge(3, 3)) == R::invalid);
+  CHECK(e.add(edge(1, 2, "bogus")) == R::invalid);
+  CHECK(e.add(edge(1, 2, "loop_closure", "auto", 0.0, 0.0)) == R::invalid);
+  CHECK(e.add(edge(1, 2, "loop_closure", "auto", 0.0, -1.0)) == R::invalid);
+  // No ICP: the weight is unknown (NaN) and that is allowed.
+  CHECK(e.add(edge(1, 2, "loop_closure", "auto", 0.0,
+                   std::numeric_limits<double>::quiet_NaN())) == R::added);
+}
+
+TEST_CASE("PendingEdits_ConfirmRejectUnreject", "[rux_qt][database][pending]") {
+  PendingEdgeEdits e;
+  e.set_base({edge(1, 2, "odometry"), edge(4, 5, "loop_closure", "rejected"),
+              edge(6, 7, "loop_closure", "confirmed")});
+  CHECK(e.confirm({1, 2, "odometry"}) == R::confirmed);
+  CHECK(e.confirm({6, 7, "loop_closure"}) == R::unchanged);
+  CHECK(e.confirm({8, 9, "loop_closure"}) == R::not_found);
+  // Rejecting a staged confirmation replaces it.
+  CHECK(e.reject({1, 2, "odometry"}) == R::rejected);
+  CHECK(e.count() == 1);
+  CHECK(e.ops()[0].edge.status == "rejected");
+  // Un-rejecting a staged rejection of an active edge just drops it.
+  CHECK(e.unreject({1, 2, "odometry"}) == R::unstaged);
+  CHECK(e.empty());
+  // A stored tombstone comes back as auto.
+  CHECK(e.unreject({4, 5, "loop_closure"}) == R::unrejected);
+  CHECK(e.ops()[0].edge.status == "auto");
+  CHECK(e.reject({4, 5, "loop_closure"}) == R::unstaged); // back to the file
+  CHECK(e.empty());
+  // A staged new edge is simply dropped on reject.
+  REQUIRE(e.add(edge(10, 11)) == R::added);
+  CHECK(e.reject({10, 11, "loop_closure"}) == R::unstaged);
+  CHECK(e.empty());
+  CHECK(e.reject({10, 11, "loop_closure"}) == R::not_found);
+}
+
+TEST_CASE("PendingEdits_Revert_DropsWhateverIsStaged",
+          "[rux_qt][database][pending]") {
+  PendingEdgeEdits e;
+  e.set_base({edge(1, 2, "odometry")});
+  e.reject({1, 2, "odometry"});
+  CHECK(e.revert({1, 2, "odometry"}) == R::unstaged);
+  CHECK(e.revert({1, 2, "odometry"}) == R::unchanged);
   CHECK(e.empty());
 }
 
-TEST_CASE("PendingEdits_Ops_DeleteFirstThenAddInStagingOrder",
+TEST_CASE("PendingEdits_Ops_StatusChangesFirstThenMeasurements",
           "[rux_qt][database][pending]") {
   PendingEdgeEdits e;
-  e.set_base(
-      {edge(1, 2, "odometry"), edge(1, 2, "odometry"), edge(4, 5, "panorama")});
-  REQUIRE(e.add(edge(7, 8)) == PendingEdgeEdits::Result::added);
-  REQUIRE(e.remove({1, 2, "odometry"}) == PendingEdgeEdits::Result::removed);
-  REQUIRE(e.add(edge(2, 9)) == PendingEdgeEdits::Result::added);
-  REQUIRE(e.remove({4, 5, "panorama"}) == PendingEdgeEdits::Result::removed);
-
+  e.set_base({edge(1, 2, "odometry"), edge(4, 5, "panorama")});
+  REQUIRE(e.add(edge(7, 8)) == R::added);
+  REQUIRE(e.reject({1, 2, "odometry"}) == R::rejected);
+  REQUIRE(e.add(edge(2, 9)) == R::added);
+  REQUIRE(e.confirm({4, 5, "panorama"}) == R::confirmed);
   const auto ops = e.ops();
   REQUIRE(ops.size() == 4);
-  using K = PendingEdgeEdits::Op::Kind;
-  CHECK(ops[0].kind == K::remove);
+  CHECK(ops[0].kind == K::set_status);
   CHECK(ops[0].edge.key == EdgeKey{1, 2, "odometry"});
-  CHECK(ops[1].kind == K::remove);
+  CHECK(ops[1].kind == K::set_status);
   CHECK(ops[1].edge.key == EdgeKey{4, 5, "panorama"});
-  CHECK(ops[2].kind == K::add);
   CHECK(ops[2].edge.key == EdgeKey{7, 8, "loop_closure"});
   CHECK(ops[3].edge.key == EdgeKey{2, 9, "loop_closure"});
-  // Both stored rows of a duplicated key count as one removal.
-  CHECK(e.count() == 4);
+}
 
-  e.commit_succeeded();
-  CHECK(e.empty());
-  REQUIRE(e.base().size() == 2);
-  CHECK(e.base()[0].key == EdgeKey{7, 8, "loop_closure"});
-  CHECK(e.base()[1].key == EdgeKey{2, 9, "loop_closure"});
+TEST_CASE("PendingEdits_Effective_AppliesPendingOnTheBase",
+          "[rux_qt][database][pending]") {
+  PendingEdgeEdits e;
+  auto stored = edge(1, 2, "odometry", "auto", 3.5, 9.0);
+  stored.deviation_m = 0.4;
+  e.set_base({stored, edge(2, 1, "panorama"), edge(2, 3, "odometry")});
+  REQUIRE(e.reject({2, 1, "panorama"}) == R::rejected);
+  REQUIRE(e.add(edge(1, 2, "loop_closure")) == R::added);
+  const auto all = e.effective();
+  REQUIRE(all.size() == 4);
+  CHECK(all[0].pending == EdgeView::Pending::none);
+  CHECK(all[0].edge.deviation_m == 0.4);
+  CHECK(all[1].pending == EdgeView::Pending::status);
+  CHECK(all[1].edge.status == "rejected");
+  CHECK(all[1].stored_status == "auto");
+  CHECK(all[3].pending == EdgeView::Pending::added);
+  CHECK(all[3].stored_status.empty());
+
+  const auto v = e.between(1, 2);
+  REQUIRE(v.size() == 3);
+  CHECK_FALSE(v[0].reversed);
+  CHECK(v[1].reversed);
+  CHECK(e.between(2, 1)[0].reversed);
+  CHECK(e.between(1, 3).empty());
+  // Rejected edges do not count towards a frame's degree.
+  CHECK(e.degree(1) == 2); // odometry + staged loop closure
+  CHECK(e.degree(2) == 3);
+  CHECK(e.degree(9) == 0);
+}
+
+TEST_CASE("PendingEdits_Degrees_MatchDegreePerFrame", "[rux_qt][database]") {
+  PendingEdgeEdits e;
+  e.set_base({edge(1, 2, "odometry"), edge(2, 3, "odometry"),
+              edge(1, 2, "odometry"), // duplicate row, counted once
+              edge(3, 1, "loop_closure")});
+  e.reject({2, 3, "odometry"});
+  e.add(edge(4, 1));
+  const auto all = e.degrees();
+  for (int f : {1, 2, 3, 4}) {
+    INFO(f);
+    const auto it = all.find(f);
+    CHECK((it == all.end() ? 0 : it->second) == e.degree(f));
+  }
 }
 
 TEST_CASE("PendingEdits_CommitSaved_KeepsEditsStagedDuringTheSave",
           "[rux_qt][database][pending]") {
   PendingEdgeEdits e;
   e.set_base({edge(1, 2, "odometry"), edge(4, 5, "panorama")});
-  REQUIRE(e.add(edge(7, 8)) == PendingEdgeEdits::Result::added);
-  REQUIRE(e.remove({1, 2, "odometry"}) == PendingEdgeEdits::Result::removed);
+  REQUIRE(e.add(edge(7, 8)) == R::added);
+  REQUIRE(e.reject({1, 2, "odometry"}) == R::rejected);
   const auto snapshot = e.ops(); // the save starts with these two
-
-  // While it runs: a new edge, and a deletion of another stored one.
-  REQUIRE(e.add(edge(2, 9)) == PendingEdgeEdits::Result::added);
-  REQUIRE(e.remove({4, 5, "panorama"}) == PendingEdgeEdits::Result::removed);
-
-  SECTION("success folds only the snapshot") {
-    e.commit_saved(snapshot);
-    REQUIRE(e.base().size() == 2); // (4,5) stored, (7,8) now stored
-    CHECK(e.base()[0].key == EdgeKey{4, 5, "panorama"});
-    CHECK(e.base()[1].key == EdgeKey{7, 8, "loop_closure"});
-    const auto left = e.ops();
-    REQUIRE(left.size() == 2);
-    CHECK(left[0].kind == PendingEdgeEdits::Op::Kind::remove);
-    CHECK(left[0].edge.key == EdgeKey{4, 5, "panorama"});
-    CHECK(left[1].edge.key == EdgeKey{2, 9, "loop_closure"});
-  }
-  SECTION("failure keeps everything pending") {
-    // No commit: the four edits are all still there.
-    CHECK(e.count() == 4);
-    CHECK(e.base().size() == 2);
-  }
-}
-
-TEST_CASE("PendingEdits_CommitSaved_ReappliesAnUndoMadeDuringTheSave",
-          "[rux_qt][database][pending]") {
-  PendingEdgeEdits e;
-  e.set_base({edge(1, 2, "odometry")});
-  REQUIRE(e.add(edge(7, 8)) == PendingEdgeEdits::Result::added);
-  REQUIRE(e.remove({1, 2, "odometry"}) == PendingEdgeEdits::Result::removed);
-  const auto snapshot = e.ops();
-  // The user undoes both while the save is writing them.
-  REQUIRE(e.remove({7, 8, "loop_closure"}) ==
-          PendingEdgeEdits::Result::unstaged);
-  REQUIRE(e.add(edge(1, 2, "odometry")) == PendingEdgeEdits::Result::restored);
+  // While it runs: one more edit, and one that changes a saved one again.
+  REQUIRE(e.confirm({4, 5, "panorama"}) == R::confirmed);
+  REQUIRE(e.add(edge(7, 8, "loop_closure", "auto", 0.0, 4.0)) == R::replaced);
   e.commit_saved(snapshot);
-  // The file now has (7,8) and lacks (1,2): undoing needs two new edits.
+  // The base now holds the saved state.
+  REQUIRE(e.base().size() == 3);
+  CHECK(e.base()[0].status == "rejected");
+  CHECK(e.base()[2].key == EdgeKey{7, 8, "loop_closure"});
+  // What was staged during the save stays pending.
   const auto left = e.ops();
   REQUIRE(left.size() == 2);
-  CHECK(left[0].kind == PendingEdgeEdits::Op::Kind::remove);
-  CHECK(left[0].edge.key == EdgeKey{7, 8, "loop_closure"});
-  CHECK(left[1].kind == PendingEdgeEdits::Op::Kind::add);
-  CHECK(left[1].edge.key == EdgeKey{1, 2, "odometry"});
+  CHECK(left[0].kind == K::set_status);
+  CHECK(left[0].edge.key == EdgeKey{4, 5, "panorama"});
+  CHECK(left[1].kind == K::upsert);
+  CHECK(left[1].edge.weight == 4.0);
 }
 
-TEST_CASE("PendingEdits_Between_ShowsBothDirectionsWithState",
+TEST_CASE("PendingEdits_CommitSaved_ManualEdgeWithoutWeight_LeavesNothing",
+          "[rux_qt][database][pending]") {
+  // A manual edge has a NaN weight; NaN != NaN must not keep it pending.
+  PendingEdgeEdits e;
+  REQUIRE(e.add(edge(1, 2, "loop_closure", "auto", 0.0,
+                     std::numeric_limits<double>::quiet_NaN())) == R::added);
+  e.commit_saved(e.ops());
+  CHECK(e.empty());
+  CHECK(e.base().size() == 1);
+}
+
+TEST_CASE("PendingSummary_NamesTheKindsInDanish",
           "[rux_qt][database][pending]") {
   PendingEdgeEdits e;
-  e.set_base({edge(1, 2, "odometry", 0.25, 9.0), edge(2, 1, "panorama"),
-              edge(2, 3, "odometry")});
-  REQUIRE(e.remove({2, 1, "panorama"}) == PendingEdgeEdits::Result::removed);
-  REQUIRE(e.add(edge(1, 2, "loop_closure")) == PendingEdgeEdits::Result::added);
-
-  const auto v = e.between(1, 2);
-  REQUIRE(v.size() == 3);
-  CHECK(v[0].edge.key.type == "odometry");
-  CHECK(v[0].edge.residual == 0.25);
-  CHECK_FALSE(v[0].reversed);
-  CHECK_FALSE(v[0].pending_add);
-  CHECK(v[1].edge.key.type == "panorama");
-  CHECK(v[1].reversed);
-  CHECK(v[1].pending_delete);
-  CHECK(v[2].pending_add);
-  // Seen from B, the stored 1->2 edge is reversed.
-  CHECK(e.between(2, 1)[0].reversed);
-  CHECK(e.between(1, 3).empty());
-
-  CHECK(e.degree(1) == 2); // odometry + staged loop closure
-  CHECK(e.degree(2) == 3);
-  CHECK(e.degree(9) == 0);
+  e.set_base({edge(1, 2, "odometry"), edge(3, 4, "loop_closure")});
+  e.add(edge(5, 6));
+  e.reject({1, 2, "odometry"});
+  e.confirm({3, 4, "loop_closure"});
+  CHECK(pending_summary_da(e.ops()) ==
+        "1 ny eller målt kant, 1 afvist, 1 bekræftet");
+  e.discard();
+  e.add(edge(5, 6));
+  e.add(edge(7, 6));
+  CHECK(pending_summary_da(e.ops()) == "2 nye eller målte kanter");
 }
 
 TEST_CASE("EdgeTypes_HaveDanishNames", "[rux_qt][database]") {
@@ -420,18 +520,126 @@ TEST_CASE("WriteErrors_AreClassifiedWithDanishMessages",
   CHECK_FALSE(write_error_da(WriteErrorKind::other).empty());
 }
 
-TEST_CASE("PendingEdits_Degrees_MatchDegreePerFrame", "[rux_qt][database]") {
+TEST_CASE("PendingEdits_KeysMatchInEitherDirection",
+          "[rux_qt][database][pending]") {
+  // The store keeps from < to; a key given the other way round is the same
+  // edge (the library's upsert flips the measurement).
   PendingEdgeEdits e;
-  e.set_base({{{1, 2, "odometry"}, 0, 1},
-              {{2, 3, "odometry"}, 0, 1},
-              {{1, 2, "odometry"}, 0, 1}, // duplicate row, counted once
-              {{3, 1, "loop_closure"}, 0, 1}});
-  e.remove({2, 3, "odometry"});
-  e.add({{4, 1, "loop_closure"}, 0, 1});
-  const auto all = e.degrees();
-  for (int f : {1, 2, 3, 4}) {
-    INFO(f);
-    const auto it = all.find(f);
-    CHECK((it == all.end() ? 0 : it->second) == e.degree(f));
-  }
+  e.set_base({edge(1, 2, "loop_closure", "rejected"), edge(3, 4, "odometry")});
+  CHECK(e.add(edge(2, 1)) == R::revived);
+  CHECK(e.ops()[0].overwrite_rejected);
+  CHECK(e.reject({4, 3, "odometry"}) == R::rejected);
+  CHECK(e.count() == 2);
+  CHECK(e.revert({1, 2, "loop_closure"}) == R::unstaged);
+  CHECK(e.effective().size() == 2); // no duplicate reversed edge
+  CHECK(e.degree(1) == 0);          // still rejected
+  CHECK(e.degree(3) == 0);
+}
+
+TEST_CASE("PendingEdits_Add_ClearsTheResidual", "[rux_qt][database][pending]") {
+  // The residual is written by optimize; a staged measurement has none yet.
+  EdgeRecord unknown;
+  CHECK(std::isnan(unknown.residual));
+  CHECK(std::isnan(unknown.weight));
+  PendingEdgeEdits e;
+  REQUIRE(e.add(edge(1, 2, "loop_closure", "auto", 2.5, 4.0)) == R::added);
+  CHECK(std::isnan(e.ops()[0].edge.residual));
+  CHECK(e.ops()[0].edge.weight == 4.0);
+}
+
+TEST_CASE("PendingEdits_Unconfirm_IsAStatusChangeToAuto",
+          "[rux_qt][database][pending]") {
+  // Un-confirming must change the status only: a measurement-less upsert
+  // with status "auto" onto a confirmed row is a no-op in the store.
+  PendingEdgeEdits e;
+  e.set_base({edge(1, 2, "odometry"), edge(4, 5, "loop_closure", "rejected"),
+              edge(6, 7, "loop_closure", "confirmed")});
+  CHECK(e.unconfirm({6, 7, "loop_closure"}) == R::unconfirmed);
+  REQUIRE(e.count() == 1);
+  CHECK(e.ops()[0].kind == K::set_status);
+  CHECK(e.ops()[0].edge.status == "auto");
+  CHECK(e.effective()[2].edge.status == "auto");
+  CHECK(pending_summary_da(e.ops()) == "1 sat til auto");
+  // Confirming it again goes back to the file state.
+  CHECK(e.confirm({7, 6, "loop_closure"}) == R::unstaged);
+  CHECK(e.empty());
+  // Nothing to un-confirm on an auto or a rejected edge, or an unknown one.
+  CHECK(e.unconfirm({1, 2, "odometry"}) == R::unchanged);
+  CHECK(e.unconfirm({4, 5, "loop_closure"}) == R::unchanged);
+  CHECK(e.unconfirm({8, 9, "loop_closure"}) == R::not_found);
+  CHECK(e.empty());
+  // A staged confirmation is simply dropped.
+  REQUIRE(e.confirm({1, 2, "odometry"}) == R::confirmed);
+  CHECK(e.unconfirm({2, 1, "odometry"}) == R::unstaged);
+  CHECK(e.empty());
+  // A staged measurement is confirmed by definition: revert it instead.
+  REQUIRE(e.add(edge(10, 11)) == R::added);
+  CHECK(e.unconfirm({10, 11, "loop_closure"}) == R::unchanged);
+  CHECK(e.count() == 1);
+  // An un-reject still reads as a revival in the banner.
+  e.discard();
+  REQUIRE(e.unreject({4, 5, "loop_closure"}) == R::unrejected);
+  CHECK(pending_summary_da(e.ops()) == "1 genoplivet");
+}
+
+TEST_CASE("PairAddReplaces_OnlyAnActiveEdgeOfThatType",
+          "[rux_qt][database][pending]") {
+  PendingEdgeEdits e;
+  e.set_base({edge(1, 2, "odometry"), edge(2, 1, "loop_closure", "rejected")});
+  const auto views = e.between(2, 1);
+  CHECK(pair_add_replaces(views, "odometry"));
+  CHECK_FALSE(pair_add_replaces(views, "loop_closure")); // a tombstone
+  CHECK_FALSE(pair_add_replaces(views, "panorama"));
+  // A staged rejection counts as rejected, a staged new edge as active.
+  e.reject({1, 2, "odometry"});
+  REQUIRE(e.add(edge(2, 1, "panorama")) == R::added);
+  const auto staged = e.between(1, 2);
+  CHECK_FALSE(pair_add_replaces(staged, "odometry"));
+  CHECK(pair_add_replaces(staged, "panorama"));
+}
+
+// ------------------------------------------------------------- panorama --
+
+TEST_CASE("FitWithin_KeepsTheAspectAndNeverEnlarges",
+          "[rux_qt][database][panorama]") {
+  CHECK(fit_within(8192, 4096, 4096).width == 4096);
+  CHECK(fit_within(8192, 4096, 4096).height == 2048);
+  CHECK(fit_within(2048, 1024, 4096).width == 2048); // small: unchanged
+  CHECK(fit_within(1000, 3000, 1500).height == 1500);
+  CHECK(fit_within(1000, 3000, 1500).width == 500);
+  CHECK(fit_within(0, 100, 4096).width == 0);
+  CHECK(fit_within(7, 3, 2).height >= 1); // never collapses to 0
+}
+
+TEST_CASE("PendingEdits_ReversedRestage_KeepsTheStoredKey",
+          "[rux_qt][database][pending]") {
+  // ICP stages B -> A; over a stored A -> B (from < to) the staged record,
+  // the effective view, the op and the saved base all keep the store's
+  // canonical key, with the measurement inverted.
+  PendingEdgeEdits e;
+  e.set_base({edge(1, 5, "loop_closure")});
+  EdgeRecord m = edge(5, 1, "loop_closure");
+  m.transform =
+      std::array<double, 16>{1, 0, 0, 0.5, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  REQUIRE(e.add(m) == R::replaced);
+  const auto eff = e.effective();
+  REQUIRE(eff.size() == 1);
+  CHECK(eff[0].edge.key == EdgeKey{1, 5, "loop_closure"});
+  REQUIRE(eff[0].edge.transform.has_value());
+  CHECK((*eff[0].edge.transform)[3] == Approx(-0.5));
+  REQUIRE(e.ops().size() == 1);
+  CHECK(e.ops()[0].edge.key == EdgeKey{1, 5, "loop_closure"});
+  e.commit_saved(e.ops());
+  REQUIRE(e.base().size() == 1);
+  CHECK(e.base()[0].key == EdgeKey{1, 5, "loop_closure"});
+
+  // A new key staged the other way round is canonical too.
+  REQUIRE(e.add(edge(9, 7, "odometry")) == R::added);
+  CHECK(e.effective().back().edge.key == EdgeKey{7, 9, "odometry"});
+  // So is a status change asked for the other way round.
+  REQUIRE(e.reject({5, 1, "loop_closure"}) == R::rejected);
+  CHECK(e.ops()[0].edge.key == EdgeKey{1, 5, "loop_closure"});
+  CHECK(canonical_key({5, 1, "x"}) == EdgeKey{1, 5, "x"});
+  CHECK(same_edge_key({5, 1, "x"}, {1, 5, "x"}));
+  CHECK_FALSE(same_edge_key({5, 1, "x"}, {1, 5, "y"}));
 }

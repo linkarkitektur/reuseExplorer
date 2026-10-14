@@ -39,6 +39,22 @@ using RowMajor4d = Eigen::Matrix<double, 4, 4, Eigen::RowMajor>;
 /// CV_16UC1 in millimetres; the result is in metres.
 CloudT::Ptr depth_to_world_cloud(const ProjectDB &db, int node_id,
                                  const FramePairIcpOptions &o) {
+  const auto pts = frame_world_points(db, node_id, o);
+  auto cloud = std::make_shared<CloudT>();
+  cloud->reserve(pts.size());
+  for (const auto &p : pts)
+    cloud->emplace_back(p[0], p[1], p[2]);
+  cloud->is_dense = true;
+  cloud->width = static_cast<uint32_t>(cloud->size());
+  cloud->height = 1;
+  return cloud;
+}
+
+} // namespace
+
+std::vector<std::array<float, 3>>
+frame_world_points(const ProjectDB &db, int node_id,
+                   const FramePairIcpOptions &o) {
   const cv::Mat depth16 = db.sensor_frame_depth(node_id);
   if (depth16.empty())
     throw std::runtime_error("frame " + std::to_string(node_id) +
@@ -69,9 +85,9 @@ CloudT::Ptr depth_to_world_cloud(const ProjectDB &db, int node_id,
   const Eigen::Matrix4f tf = world_tf * local_tf;
 
   const int step = std::max(1, o.pixel_step);
-  auto cloud = std::make_shared<CloudT>();
-  cloud->reserve(static_cast<size_t>(depth_f.rows / step + 1) *
-                 static_cast<size_t>(depth_f.cols / step + 1));
+  std::vector<std::array<float, 3>> pts;
+  pts.reserve(static_cast<size_t>(depth_f.rows / step + 1) *
+              static_cast<size_t>(depth_f.cols / step + 1));
   for (int v = 0; v < depth_f.rows; v += step) {
     const float *row = depth_f.ptr<float>(v);
     for (int u = 0; u < depth_f.cols; u += step) {
@@ -81,22 +97,17 @@ CloudT::Ptr depth_to_world_cloud(const ProjectDB &db, int node_id,
       const float x = (static_cast<float>(u) - cx) * z / fx;
       const float y = (static_cast<float>(v) - cy) * z / fy;
       const Eigen::Vector4f p = tf * Eigen::Vector4f(x, y, z, 1.0f);
-      cloud->emplace_back(p[0], p[1], p[2]);
+      pts.push_back({p[0], p[1], p[2]});
     }
   }
-  cloud->is_dense = true;
-  cloud->width = static_cast<uint32_t>(cloud->size());
-  cloud->height = 1;
-  if (cloud->empty())
+  if (pts.empty())
     throw std::runtime_error(
         "frame " + std::to_string(node_id) +
         " produced an empty cloud (no depth return between " +
         std::to_string(o.min_depth_m) + " and " +
         std::to_string(o.max_depth_m) + " m)");
-  return cloud;
+  return pts;
 }
-
-} // namespace
 
 FramePairIcpResult refine_frame_pair_icp(const ProjectDB &db, int from_id,
                                          int to_id,
@@ -117,7 +128,13 @@ FramePairIcpResult refine_frame_pair_icp(const ProjectDB &db, int from_id,
   icp.setEuclideanFitnessEpsilon(1e-4);
 
   CloudT aligned;
-  icp.align(aligned);
+  if (opts.initial_guess) {
+    const Eigen::Matrix4f guess =
+        Eigen::Map<const RowMajor4d>(opts.initial_guess->data()).cast<float>();
+    icp.align(aligned, guess);
+  } else {
+    icp.align(aligned);
+  }
 
   const Eigen::Matrix4d delta = icp.getFinalTransformation().cast<double>();
   FramePairIcpResult result;
@@ -162,12 +179,25 @@ FramePairIcpResult refine_frame_pair_icp(const ProjectDB &db, int from_id,
         std::acos(std::clamp((tr - 1.0) / 2.0, -1.0, 1.0)) * 180.0 / M_PI;
   }
 
+  const Eigen::Matrix4d edge = rel.inverse();
   for (int i = 0; i < 4; ++i)
     for (int j = 0; j < 4; ++j) {
       result.relative_pose[static_cast<size_t>(i * 4 + j)] = rel(i, j);
       result.world_delta[static_cast<size_t>(i * 4 + j)] = delta(i, j);
+      result.edge_transform[static_cast<size_t>(i * 4 + j)] = edge(i, j);
     }
   return result;
+}
+
+std::array<double, 36> icp_edge_information(const FramePairIcpResult &result) {
+  const double st = std::max(result.fitness, 0.01);
+  const double sr = std::max(result.fitness / 2.0, 0.005);
+  std::array<double, 36> info{};
+  for (int k = 0; k < 3; ++k) {
+    info[static_cast<size_t>(k * 6 + k)] = 1.0 / (sr * sr);
+    info[static_cast<size_t>((k + 3) * 6 + (k + 3))] = 1.0 / (st * st);
+  }
+  return info;
 }
 
 } // namespace reusex::slam

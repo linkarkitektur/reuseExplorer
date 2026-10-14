@@ -187,6 +187,10 @@ double median_pair_disagreement(const std::vector<Eigen::Matrix4d> &reference,
 /// of a project, never for an original capture; `rux edit perturb-poses` says
 /// so in its help and the bench harness copies first.
 ///
+/// Also writes the drifted poses to `initial_transform` and, when the
+/// project has `odometry_init` edges, re-derives them
+/// (`slam::init_pose_graph(force)`), so `rux optimize` sees the drift.
+///
 /// @param db       project to perturb, opened read-write
 /// @param opt      drift parameters
 /// @param dry_run  measure and report without writing anything back (how the

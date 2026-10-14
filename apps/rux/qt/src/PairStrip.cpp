@@ -1,16 +1,20 @@
 // SPDX-FileCopyrightText: 2026 Povl Filip Sonne-Frederiksen
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// The A<->B pair strip of the frame browser: the pose-graph edges between the
+// The A<->B pair strip of Rediger: the pose-graph edges between the
 // two frames (stored and pending), how far apart the frames are, and the
-// three edits — ICP refine (slam::refine_frame_pair_icp, on a detached thread
-// with its own read-only connection), add an edge, delete one.
+// edits — ICP refine (slam::refine_frame_pair_icp, on a detached thread
+// with its own read-only connection, seeded with B's manual offset and
+// moving B to its result), add a measured edge (pair_edge_to_add: ICP's
+// B -> A edge while its fit is current, else T_A^-1 · ΔT · T_B), and per
+// row confirm / un-confirm, reject / un-reject, revert.
 
 #include <rux_qt/EdgeEditor.hpp>
-#include <rux_qt/FrameBrowser.hpp>
+#include <rux_qt/PairStrip.hpp>
 #include <rux_qt/ProjectSession.hpp>
 #include <rux_qt/Theme.hpp>
 #include <rux_qt/background.hpp>
+#include <rux_qt/edge_table.hpp>
 #include <rux_qt/widgets.hpp>
 
 #include <reusex/core/ProjectDB.hpp>
@@ -23,8 +27,10 @@
 #include <QMouseEvent>
 #include <QPointer>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <thread>
@@ -34,6 +40,22 @@ namespace {
 
 QString dec(double v, int decimals) {
   return QString::fromStdString(format_decimal_da(v, decimals));
+}
+
+QString residual_text(double r) {
+  return std::isfinite(r) ? dec(r, 2) : QString("—");
+}
+
+QString status_da(const std::string &status) {
+  return status == "confirmed"  ? QString("Bekræftet")
+         : status == "rejected" ? QString("Afvist")
+                                : QString("Auto");
+}
+
+QString status_tone(const std::string &status) {
+  return status == "confirmed"  ? QString("good")
+         : status == "rejected" ? QString("crit")
+                                : QString("outline");
 }
 
 QString weight_text(double w) {
@@ -68,33 +90,43 @@ Selection edge_selection(const EdgeView &v, int a, int b) {
   s.kind = "Kant";
   s.title = QString::fromStdString(edge_type_da(v.edge.key.type));
   s.subtitle = QString("%1 → %2").arg(v.edge.key.from).arg(v.edge.key.to);
-  if (v.pending_add) {
-    s.pill = "Ny — ikke gemt";
+  if (v.pending != EdgeView::Pending::none) {
+    s.pill = "Ikke gemt";
     s.pill_tone = "accent";
-  } else if (v.pending_delete) {
-    s.pill = "Slettes ved gem";
-    s.pill_tone = "crit";
   } else {
-    s.pill = "Gemt";
-    s.pill_tone = "good";
+    s.pill = status_da(v.edge.status);
+    s.pill_tone = status_tone(v.edge.status);
   }
-  SelectionSection e{"Kant", {}, {}};
-  e.rows.push_back({"Fra", QString::number(v.edge.key.from)});
-  e.rows.push_back({"Til", QString::number(v.edge.key.to)});
-  e.rows.push_back({"Type", QString::fromStdString(v.edge.key.type),
-                    SelectionRow::Style::mono});
-  e.rows.push_back({"Vægt", weight_text(v.edge.weight)});
-  e.rows.push_back({"Residual", dec(v.edge.residual, 4)});
-  e.rows.push_back({"Retning",
-                    v.reversed ? QString("B → A (%1 → %2)").arg(b).arg(a)
-                               : QString("A → B (%1 → %2)").arg(a).arg(b),
-                    SelectionRow::Style::value});
+  const auto add = [](SelectionSection &sec, const QString &key,
+                      const QString &value,
+                      SelectionRow::Style style = SelectionRow::Style::mono) {
+    SelectionRow r;
+    r.key = key;
+    r.value = value;
+    r.style = style;
+    sec.rows.push_back(r);
+  };
+  SelectionSection e;
+  e.title = "Kant";
+  add(e, "Fra", QString::number(v.edge.key.from));
+  add(e, "Til", QString::number(v.edge.key.to));
+  add(e, "Type", QString::fromStdString(v.edge.key.type));
+  add(e, "Vægt", weight_text(v.edge.weight));
+  add(e, "Residual", residual_text(v.edge.residual));
+  add(e, "Status", status_da(v.edge.status), SelectionRow::Style::value);
+  if (!v.edge.source.empty())
+    add(e, "Kilde", QString::fromStdString(v.edge.source));
+  add(e, "Retning",
+      v.reversed ? QString("B → A (%1 → %2)").arg(b).arg(a)
+                 : QString("A → B (%1 → %2)").arg(a).arg(b),
+      SelectionRow::Style::value);
   s.sections.push_back(e);
-  SelectionSection about{"Om tallene", {}, {}};
-  about.rows.push_back(
-      {"Vægt", "Translationsinformation, 1/σ²", SelectionRow::Style::value});
-  about.rows.push_back({"Residual", "½ · hvidet kvadratfejl efter optimering",
-                        SelectionRow::Style::value});
+  SelectionSection about;
+  about.title = "Om tallene";
+  add(about, "Vægt", "Translationsinformation, 1/σ²",
+      SelectionRow::Style::value);
+  add(about, "Residual", "½ · hvidet kvadratfejl efter optimering",
+      SelectionRow::Style::value);
   s.sections.push_back(about);
   return s;
 }
@@ -109,42 +141,56 @@ PairStrip::PairStrip(ProjectSession &session, EdgeEditor &editor,
   auto *v = new QVBoxLayout(this);
   const int pad = t.px("--space-3");
   v->setContentsMargins(t.px("--space-4"), pad, t.px("--space-4"), pad);
-  v->setSpacing(t.px("--space-2"));
+  v->setSpacing(t.px("--space-1")); // tight: the 3D overlay above needs it
 
   auto *head = new QHBoxLayout;
   head->setSpacing(t.px("--space-3"));
+  // The ids are in Rediger's pair header just above.
   head->addWidget(new CapsLabel("Kant A ↔ B", "panelTitle"));
-  pair_ = new QLabel;
-  pair_->setObjectName("pairIds");
-  head->addWidget(pair_);
   delta_ = new QLabel;
   delta_->setObjectName("pairDelta");
+  delta_->setWordWrap(true);
   head->addWidget(delta_, 1);
+  v->addLayout(head);
 
+  // The edits on a line of their own, so the strip fits a narrow column.
+  // ("Nulstil" B is the 3D overlay's, beside the canvas it resets.)
+  auto *actions = new QHBoxLayout;
+  actions->setSpacing(t.px("--space-3"));
   icp_ = new QPushButton(NavItem::escape_mnemonic("ICP-forfin"));
   icp_->setProperty("kind", "secondary");
   icp_->setCursor(Qt::PointingHandCursor);
   icp_->setToolTip("Justér B's dybdesky mod A's med ICP og vis, hvor godt "
                    "de passer. Ændrer ikke projektet.");
-  head->addWidget(icp_);
+  actions->addWidget(icp_);
   type_ = new QComboBox;
   type_->setObjectName("edgeType");
   for (const char *k : {"loop_closure", "odometry", "panorama"})
     type_->addItem(QString::fromStdString(edge_type_da(k)), QString(k));
   type_->setToolTip("Typen af den nye kant");
-  head->addWidget(type_);
+  actions->addWidget(type_);
   add_ = new QPushButton(NavItem::escape_mnemonic("Tilføj kant"));
   add_->setProperty("kind", "primary");
   add_->setCursor(Qt::PointingHandCursor);
-  head->addWidget(add_);
-  v->addLayout(head);
+  add_->setToolTip("Tilføj en kant med den nuværende relative pose (efter din "
+                   "placering og ICP, hvis kørt). Bekræftet; gemmes med Gem "
+                   "ændringer.");
+  actions->addWidget(add_);
+  actions->addStretch(1); // left-aligned, under the edge rows' start
+  v->addLayout(actions);
 
   rows_ = new QWidget;
   rows_->setObjectName("edgeRows");
   rows_layout_ = new QVBoxLayout(rows_);
   rows_layout_->setContentsMargins(0, 0, 0, 0);
   rows_layout_->setSpacing(t.px("--space-1"));
-  v->addWidget(rows_);
+  rows_scroll_ = new QScrollArea;
+  rows_scroll_->setObjectName("edgeRowsScroll");
+  rows_scroll_->setFrameShape(QFrame::NoFrame);
+  rows_scroll_->setWidgetResizable(true);
+  rows_scroll_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  rows_scroll_->setWidget(rows_);
+  v->addWidget(rows_scroll_);
 
   icp_line_ = new QLabel;
   icp_line_->setObjectName("icpLine");
@@ -157,6 +203,8 @@ PairStrip::PairStrip(ProjectSession &session, EdgeEditor &editor,
 
   connect(icp_, &QPushButton::clicked, this, &PairStrip::run_icp);
   connect(add_, &QPushButton::clicked, this, &PairStrip::add_edge);
+  connect(type_, &QComboBox::currentIndexChanged, this,
+          &PairStrip::refresh_add_label);
   connect(&editor_, &EdgeEditor::changed, this, &PairStrip::rebuild);
   connect(&session_, &ProjectSession::state_changed, this, [this] {
     icp_results_.clear();
@@ -187,7 +235,6 @@ void PairStrip::rebuild() {
   const reusex::ProjectDB *db = session_.db();
   const bool pair_ok = db && a_ >= 0 && b_ >= 0;
   const bool same = pair_ok && a_ == b_;
-  pair_->setText(pair_ok ? QString("%1 ↔ %2").arg(a_).arg(b_) : QString("—"));
 
   // How far apart: distance, angle and time between the stored poses.
   QString delta;
@@ -215,13 +262,25 @@ void PairStrip::rebuild() {
   for (const EdgeView &v : views) {
     auto *row = new EdgeRow(
         [this, v] { emit edge_selected(edge_selection(v, a_, b_)); });
-    row->setProperty("state", v.pending_add      ? "add"
-                              : v.pending_delete ? "delete"
-                                                 : "stored");
-    auto *h = new QHBoxLayout(row);
-    h->setContentsMargins(t.px("--space-2"), t.px("--space-1"),
-                          t.px("--space-1"), t.px("--space-1"));
+    row->setProperty("state", v.edge.status == "rejected" ? "rejected"
+                              : v.pending != EdgeView::Pending::none
+                                  ? "add"
+                                  : "stored");
+    // Two lines, so the row fits Rediger's right column at 1440 px with
+    // the rows' scrollbar showing: what the edge is and its figures (one
+    // eliding label takes the slack), then its state and its actions. The
+    // actions never share a line with fixed-width text that could push
+    // them past the column's edge.
+    auto *rv = new QVBoxLayout(row);
+    rv->setContentsMargins(t.px("--space-2"), t.px("--space-1"),
+                           t.px("--space-1"), t.px("--space-1"));
+    rv->setSpacing(t.px("--space-1"));
+    auto *h = new QHBoxLayout;
     h->setSpacing(t.px("--space-3"));
+    auto *h2 = new QHBoxLayout;
+    h2->setSpacing(t.px("--space-2"));
+    rv->addLayout(h);
+    rv->addLayout(h2);
     h->addWidget(
         new Pill(QString::fromStdString(edge_type_da(v.edge.key.type)),
                  v.edge.key.type == "loop_closure" ? "accent" : "outline"));
@@ -229,39 +288,66 @@ void PairStrip::rebuild() {
         new QLabel(QString("%1 → %2").arg(v.edge.key.from).arg(v.edge.key.to));
     dir->setObjectName("edgeMono");
     h->addWidget(dir);
-    auto *w = new QLabel(QString("Vægt %1").arg(weight_text(v.edge.weight)));
-    w->setObjectName("edgeMeta");
-    h->addWidget(w);
-    auto *r = new QLabel(
-        v.pending_add ? QString("Residual —")
-                      : QString("Residual %1").arg(dec(v.edge.residual, 4)));
+    // The figures that judge an edge, the residual first, so a narrow
+    // column cuts the source, not the number the colour modes and the list
+    // sort by.
+    const auto cell = [&v](EdgeColumn c) {
+      return QString::fromStdString(edge_cell_text(v, c));
+    };
+    const QString source =
+        QString::fromStdString(edge_source_da(v.edge.source));
+    const bool measured = std::isfinite(v.edge.residual) ||
+                          v.edge.deviation_m || v.edge.deviation_deg;
+    // A staged or never-optimized edge has no figures yet: say so instead
+    // of a line of dashes.
+    auto *r = new ElidedLabel(
+        measured ? QString("Residual %1 · afvigelse %2 m / %3° · kilde %4")
+                       .arg(cell(EdgeColumn::residual),
+                            cell(EdgeColumn::deviation_m),
+                            cell(EdgeColumn::deviation_deg), source)
+                 : QString("Ikke optimeret endnu · kilde %1").arg(source),
+        Qt::ElideRight);
     r->setObjectName("edgeMeta");
-    r->setToolTip("½ · hvidet kvadratfejl efter seneste optimering");
-    h->addWidget(r);
-    h->addStretch(1);
-    if (v.pending_add)
-      h->addWidget(new Pill("Ny", "accent"));
-    if (v.pending_delete)
-      h->addWidget(new Pill("Slettes", "crit"));
-    auto *act = new QPushButton(v.pending_delete || v.pending_add
-                                    ? QString("Fortryd")
-                                    : QString("Slet kant"));
-    act->setProperty("kind", "ghost");
-    act->setObjectName("edgeAction");
-    act->setCursor(Qt::PointingHandCursor);
+    r->setToolTip(r->full_text() +
+                  "\nResidual: ½ · hvidet kvadratfejl efter seneste "
+                  "optimering\nAfvigelse: kantens måling mod de optimerede "
+                  "poser");
+    h->addWidget(r, 1);
+    h2->addWidget(
+        new Pill(status_da(v.edge.status), status_tone(v.edge.status)));
+    if (v.pending != EdgeView::Pending::none)
+      h2->addWidget(new Pill("Ikke gemt", "accent"));
+    h2->addStretch(1);
     const EdgeKey key = v.edge.key;
-    const bool restore = v.pending_delete;
-    const EdgeRecord record = v.edge;
-    connect(act, &QPushButton::clicked, this, [this, key, restore, record] {
-      if (restore)
-        editor_.add(record); // re-adding a deleted edge restores it
-      else
-        editor_.remove(key);
-    });
-    act->setMinimumHeight(act->sizeHint().height());
-    h->addWidget(act);
-    row->setMinimumHeight(h->sizeHint().height());
+    auto action = [&](const QString &text, auto fn) {
+      auto *b = new QPushButton(NavItem::escape_mnemonic(text));
+      b->setProperty("kind", "ghost");
+      b->setObjectName("edgeAction");
+      b->setCursor(Qt::PointingHandCursor);
+      connect(b, &QPushButton::clicked, this,
+              [this, key, fn] { fn(editor_, key); });
+      b->setMinimumHeight(b->sizeHint().height());
+      h2->addWidget(b);
+    };
+    const bool stored = v.pending == EdgeView::Pending::none;
+    if (stored && v.edge.status == "auto")
+      action("Bekræft", [](EdgeEditor &e, const EdgeKey &k) { e.confirm(k); });
+    if (stored && v.edge.status == "confirmed")
+      action("Til auto",
+             [](EdgeEditor &e, const EdgeKey &k) { e.unconfirm(k); });
+    if (!stored)
+      action("Fortryd", [](EdgeEditor &e, const EdgeKey &k) { e.revert(k); });
+    else if (v.edge.status == "rejected")
+      action("Fortryd afvisning",
+             [](EdgeEditor &e, const EdgeKey &k) { e.unreject(k); });
+    else
+      action("Afvis", [](EdgeEditor &e, const EdgeKey &k) { e.reject(k); });
+    row->setMinimumHeight(rv->sizeHint().height());
     rows_layout_->addWidget(row);
+    // Shown now, not on the queued show a visible parent schedules: a
+    // still-hidden row adds nothing to rows_' size hint, and the height
+    // below would be measured without it (0 on a rebuild while shown).
+    row->show();
   }
   if (views.empty()) {
     auto *none = new QLabel;
@@ -278,70 +364,175 @@ void PairStrip::rebuild() {
     else
       none->setText("Ingen kant mellem A og B.");
     rows_layout_->addWidget(none);
+    none->show();
   }
 
-  // ICP result for this pair, if one was run.
-  const auto key = std::make_pair(a_, b_);
-  if (icp_running_ == key) {
-    icp_line_->setText("ICP kører …");
-    icp_line_->setProperty("tone", "wait");
-  } else if (auto it = icp_results_.find(key); it != icp_results_.end()) {
-    const IcpOutcome &o = it->second;
-    if (!o.ok) {
-      icp_line_->setText("ICP fejlede: " + o.error);
-      icp_line_->setProperty("tone", "crit");
-    } else {
-      // B's camera centre moves by the shift; the angle is the rotation.
-      icp_line_->setText(
-          o.converged
-              ? QString("ICP konvergerede · RMS %1 cm · %2 % inden for 5 cm "
-                        "· B flyttes %3 cm og drejes %4° · %5 / %6 punkter · "
-                        "ny kant får vægt %7")
-                    .arg(dec(o.fitness * 100.0, 1), dec(o.inliers * 100.0, 0),
-                         dec(o.center_shift_m * 100.0, 1),
-                         dec(o.rotation_deg, 2),
-                         format_count(static_cast<qulonglong>(o.source_points)),
-                         format_count(static_cast<qulonglong>(o.target_points)),
-                         weight_text(weight_from_icp_fitness(o.fitness)))
-              : QString("ICP konvergerede ikke · RMS %1 cm · %2 % inden for "
-                        "5 cm — billederne deler for lidt geometri. En ny kant "
-                        "får vægt 1.")
-                    .arg(dec(o.fitness * 100.0, 1), dec(o.inliers * 100.0, 0)));
-      icp_line_->setProperty("tone", o.converged ? "good" : "warn");
-    }
-  } else {
-    icp_line_->clear();
-    icp_line_->setProperty("tone", QVariant());
-  }
-  icp_line_->setVisible(!icp_line_->text().isEmpty());
-  repolish(icp_line_);
+  // As tall as the rows, up to the first row and a sliver of the next
+  // (which shows that there are more); the rest scrolls.
+  rows_layout_->activate();
+  int cap = rows_->sizeHint().height();
+  if (rows_layout_->count() > 1)
+    if (QWidget *first = rows_layout_->itemAt(0)->widget())
+      cap = first->sizeHint().height() + rows_layout_->spacing() +
+            t.px("--space-2");
+  rows_scroll_->setFixedHeight(std::min(rows_->sizeHint().height(), cap));
+
+  refresh_icp();
 
   const bool editable = pair_ok && !same;
   icp_->setEnabled(editable && icp_running_.first < 0);
   add_->setEnabled(editable);
   type_->setEnabled(editable);
+  refresh_add_label();
   const QString ro = editor_.read_only_reason();
   note_->setText(ro.isEmpty() ? QString()
                               : QString("Skrivebeskyttet: kanter kan "
-                                        "tilføjes og slettes her, men ikke "
+                                        "tilføjes og afvises her, men ikke "
                                         "gemmes."));
   note_->setVisible(!ro.isEmpty());
 }
 
+void PairStrip::refresh_add_label() {
+  const bool pair_ok = session_.db() && a_ >= 0 && b_ >= 0 && a_ != b_;
+  const bool replaces =
+      pair_ok &&
+      pair_add_replaces(editor_.edits().between(a_, b_),
+                        type_->currentData().toString().toStdString());
+  add_->setText(
+      NavItem::escape_mnemonic(replaces ? "Erstat måling" : "Tilføj kant"));
+}
+
+std::optional<Mat4> PairStrip::current_delta() const {
+  return delta_source_ ? delta_source_() : std::optional<Mat4>{};
+}
+
+IcpFitState PairStrip::fit_state(const IcpOutcome &o) const {
+  return icp_fit_state(o.ok, o.stale, o.converged, o.applied, current_delta());
+}
+
+void PairStrip::refresh_icp() {
+  // ICP result for this pair, if one was run.
+  const auto key = std::make_pair(a_, b_);
+  const bool pair_ok = session_.db() && a_ >= 0 && b_ >= 0;
+  QString text, tone, detail;
+  if (pair_ok && icp_running_ == key) {
+    text = "ICP kører …";
+    tone = "wait";
+  } else if (auto it = icp_results_.find(key); it != icp_results_.end()) {
+    const IcpOutcome &o = it->second;
+    // The fit's figures; how far B moved is the overlay's to say (one
+    // measure, about B's centroid), so it is not repeated here.
+    const QString fit =
+        QString("RMS %1 cm · %2 % inden for 5 cm")
+            .arg(dec(o.fitness * 100.0, 1), dec(o.inliers * 100.0, 0));
+    const QString points =
+        QString("%1 / %2 punkter")
+            .arg(format_count(static_cast<qulonglong>(o.source_points)),
+                 format_count(static_cast<qulonglong>(o.target_points)));
+    const QString weight =
+        QString("ny kant får vægt %1")
+            .arg(weight_text(weight_from_icp_fitness(o.fitness)));
+    const QString from =
+        o.seeded ? QString("Fra din manuelle placering · ") : QString();
+    // The point counts and the weight in the tooltip: two lines, not three,
+    // under the 3D overlay.
+    detail = QString("%1 · %2").arg(points, weight);
+    switch (fit_state(o)) {
+    case IcpFitState::failed:
+      text = "ICP fejlede: " + o.error;
+      tone = "crit";
+      break;
+    case IcpFitState::dropped:
+      text = "ICP-resultatet er droppet: B blev flyttet, mens ICP kørte. "
+             "Kør ICP-forfin igen.";
+      tone = "warn";
+      break;
+    case IcpFitState::moved_since:
+      text = "B er flyttet efter ICP — kør ICP-forfin igen. En ny kant måles "
+             "fra B's nuværende placering.";
+      tone = "warn";
+      break;
+    case IcpFitState::not_converged:
+      text = QString("ICP konvergerede ikke · %1 — billederne deler for lidt "
+                     "geometri. B bliver stående; en ny kant måles fra dens "
+                     "placering.")
+                 .arg(fit);
+      tone = "warn";
+      break;
+    case IcpFitState::aligned:
+      text = from + QString("ICP konvergerede · %1 · B er lagt på ICP's "
+                            "placering")
+                        .arg(fit);
+      tone = "good";
+      break;
+    case IcpFitState::not_placed:
+      text = from + QString("ICP konvergerede · %1. B er ikke flyttet: "
+                            "3D-overlayet var ikke klar.")
+                        .arg(fit);
+      tone = "good";
+      break;
+    }
+  }
+  icp_line_->setText(text);
+  icp_line_->setToolTip(detail.isEmpty() ? text : text + "\n" + detail);
+  icp_line_->setProperty("tone", tone.isEmpty() ? QVariant() : QVariant(tone));
+  icp_line_->setVisible(!text.isEmpty());
+  repolish(icp_line_);
+}
+
 void PairStrip::add_edge() {
-  if (a_ < 0 || b_ < 0 || a_ == b_)
+  const reusex::ProjectDB *db = session_.db();
+  if (!db || a_ < 0 || b_ < 0 || a_ == b_)
     return;
-  EdgeRecord e;
-  e.key = {a_, b_, type_->currentData().toString().toStdString()};
-  e.residual = 0.0;
-  e.weight = 1.0;
-  // An ICP fit of this pair makes the weight honest: 1/σ² from its RMS.
+  std::optional<Mat4> pose_a, pose_b;
+  try {
+    if (db->has_sensor_frame_pose(a_) && db->has_sensor_frame_pose(b_)) {
+      pose_a = db->sensor_frame_pose(a_);
+      pose_b = db->sensor_frame_pose(b_);
+    }
+  } catch (const std::exception &e) {
+    // A read error is not a missing pose: say what the project said.
+    note_->setText(QString("Poserne kunne ikke læses: %1")
+                       .arg(QString::fromUtf8(e.what())));
+    note_->setVisible(true);
+    return;
+  }
+  if (!pose_a || !pose_b) {
+    note_->setText("Begge billeder skal have en pose, før en kant kan måles.");
+    note_->setVisible(true);
+    return;
+  }
+  // ICP's measurement while its fit still describes B's placement; else
+  // B's placement itself (the stored relative pose when B is unmoved).
+  std::optional<IcpEdgeMeasurement> icp;
   if (auto it = icp_results_.find({a_, b_});
-      it != icp_results_.end() && it->second.ok && it->second.converged)
-    e.weight = weight_from_icp_fitness(it->second.fitness);
-  const auto r = editor_.add(e);
-  if (r == PendingEdgeEdits::Result::duplicate) {
-    note_->setText("Den kant findes allerede mellem A og B.");
+      it != icp_results_.end() && icp_fit_usable(fit_state(it->second)))
+    icp = IcpEdgeMeasurement{it->second.edge_transform, it->second.information};
+  const EdgeRecord e =
+      pair_edge_to_add(a_, b_, type_->currentData().toString().toStdString(),
+                       *pose_a, *pose_b, current_delta(), icp);
+  QString msg;
+  switch (editor_.add(e)) {
+  case PendingEdgeEdits::Result::added:
+    break;
+  case PendingEdgeEdits::Result::replaced: {
+    // As the list and the rows show it: the store's direction.
+    const EdgeKey k = canonical_key(e.key);
+    msg = QString("Kanten %1 → %2 får den nye måling ved gem.")
+              .arg(k.from)
+              .arg(k.to);
+    break;
+  }
+  case PendingEdgeEdits::Result::revived:
+    msg = "Den afviste kant genoplives, og den nye måling erstatter den "
+          "gemte ved gem.";
+    break;
+  default:
+    msg = "Kanten kan ikke tilføjes (samme billede eller ukendt type).";
+  }
+  // add() emitted changed(): rebuild() has reset the note already.
+  if (!msg.isEmpty()) {
+    note_->setText(msg);
     note_->setVisible(true);
   }
 }
@@ -351,6 +542,10 @@ void PairStrip::run_icp() {
       !session_.is_open())
     return;
   const int a = a_, b = b_;
+  // Seeded with B's manual offset, if any; asked again when ICP finishes.
+  std::optional<Mat4> guess;
+  if (delta_source_)
+    guess = delta_source_();
   icp_running_ = {a, b};
   rebuild();
   // A detached thread with its own read-only connection: ICP over two
@@ -359,37 +554,65 @@ void PairStrip::run_icp() {
   const std::string path = session_.path().toStdString();
   auto work = std::make_shared<BackgroundWork>();
   QPointer<PairStrip> guard(this);
-  std::thread([path, a, b, guard, work]() mutable {
+  std::thread([path, a, b, guess, guard, work]() mutable {
     IcpOutcome o;
     try {
       reusex::ProjectDB db(path, /*readOnly=*/true);
+      reusex::slam::FramePairIcpOptions opts;
+      opts.initial_guess = guess;
       // B onto A: "from" B, "to" A, as an edge A -> B constrains B.
-      const auto r = reusex::slam::refine_frame_pair_icp(db, b, a);
+      const auto r = reusex::slam::refine_frame_pair_icp(db, b, a, opts);
       o.ok = true;
+      o.world_delta = r.world_delta;
+      o.seeded = guess.has_value();
+      o.information = reusex::slam::icp_edge_information(r);
       o.fitness = r.fitness;
       o.inliers = r.inlier_fraction;
       o.converged = r.converged;
       o.source_points = r.source_points;
       o.target_points = r.target_points;
-      o.center_shift_m = r.source_center_shift_m;
-      o.rotation_deg = r.rotation_deg;
+      o.edge_transform = r.edge_transform;
     } catch (const std::exception &e) {
       o.error = QString::fromUtf8(e.what());
     }
     QMetaObject::invokeMethod(
         qApp,
-        [guard, a, b, o] {
+        [guard, a, b, guess, o] {
           if (guard)
-            guard->icp_finished(a, b, o);
+            guard->icp_finished(a, b, guess, o);
         },
         Qt::QueuedConnection);
     work.reset(); // last: counted until the thread has let go of everything
   }).detach();
 }
 
-void PairStrip::icp_finished(int a, int b, IcpOutcome outcome) {
-  icp_results_[{a, b}] = std::move(outcome);
+void PairStrip::icp_finished(int a, int b, const std::optional<Mat4> &guess,
+                             IcpOutcome outcome) {
   icp_running_ = {-1, -1};
+  // Another pair meanwhile: the overlay started that pair unmoved, so the
+  // result describes nothing on screen. Dropped.
+  if (a != a_ || b != b_) {
+    rebuild();
+    return;
+  }
+  // B moved, reset or nudged while ICP ran: say so, never move B.
+  outcome.stale = outcome.ok && !icp_seed_unchanged(guess, current_delta());
+  const bool place = outcome.ok && outcome.converged && !outcome.stale;
+  const Mat4 world_delta = outcome.world_delta;
+  // Where B will sit — on the result, or still at the seed — is what the
+  // fit describes; a later move outdates it. Set BEFORE the emit: placing B
+  // re-enters refresh_icp() (offset_changed), which must already see the
+  // fit as applied.
+  outcome.applied = place ? std::optional<Mat4>(world_delta) : guess;
+  icp_results_[{a, b}] = std::move(outcome);
+  if (place) {
+    emit icp_aligned(a, b, world_delta); // the overlay places B (normalised)
+    // The overlay normalises the offset (angles wrapped, translation
+    // clamped): the fit is applied at the ΔT it actually holds, if any.
+    // Re-found: the emit may re-enter.
+    if (auto it = icp_results_.find({a, b}); it != icp_results_.end())
+      it->second.applied = current_delta();
+  }
   rebuild();
 }
 

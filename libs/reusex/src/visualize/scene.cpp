@@ -968,6 +968,14 @@ void place_preset_camera(vtkRenderer *renderer, const CameraFraming &framing,
   double center[3] = {c[0], c[1], c[2]};
   const double reach = std::max(bounds.diagonal(), 1.0);
   const double aspect = framing.aspect;
+  const double yaw = framing.yaw_deg * std::numbers::pi / 180.0;
+  const double cy = std::cos(yaw), sy = std::sin(yaw);
+  // The camera turns by -yaw so the model appears turned by +yaw. Extents in
+  // the turned frame decide the framing.
+  const double ex =
+      std::abs(cy) * bounds.extent(0) + std::abs(sy) * bounds.extent(1);
+  const double ey =
+      std::abs(sy) * bounds.extent(0) + std::abs(cy) * bounds.extent(1);
 
   vtkCamera *cam = renderer->GetActiveCamera();
   cam->SetFocalPoint(center);
@@ -975,23 +983,24 @@ void place_preset_camera(vtkRenderer *renderer, const CameraFraming &framing,
   switch (framing.view) {
   case ViewPreset::top:
   case ViewPreset::plan:
-    // Straight down -Z with +Y up the page. `plan` differs from `top` only in
-    // the cut plane applied to the actors, so the two frame identically.
+    // Straight down -Z with +Y up the page (turned by the yaw). `plan`
+    // differs from `top` only in the cut plane applied to the actors, so the
+    // two frame identically.
     cam->ParallelProjectionOn();
     cam->SetPosition(center[0], center[1], center[2] + reach);
-    cam->SetViewUp(0.0, 1.0, 0.0);
-    cam->SetParallelScale(parallel_scale_for(bounds.extent(0), bounds.extent(1),
-                                             aspect, framing.margin));
+    cam->SetViewUp(sy, cy, 0.0);
+    cam->SetParallelScale(parallel_scale_for(ex, ey, aspect, framing.margin));
     renderer->ResetCameraClippingRange();
     return;
 
   case ViewPreset::front:
-    // Orthographic elevation looking along +Y, world Z up.
+    // Orthographic elevation looking along +Y (turned by the yaw), world Z
+    // up.
     cam->ParallelProjectionOn();
-    cam->SetPosition(center[0], center[1] - reach, center[2]);
+    cam->SetPosition(center[0] - reach * sy, center[1] - reach * cy, center[2]);
     cam->SetViewUp(0.0, 0.0, 1.0);
-    cam->SetParallelScale(parallel_scale_for(bounds.extent(0), bounds.extent(2),
-                                             aspect, framing.margin));
+    cam->SetParallelScale(
+        parallel_scale_for(ex, bounds.extent(2), aspect, framing.margin));
     renderer->ResetCameraClippingRange();
     return;
 
@@ -999,8 +1008,9 @@ void place_preset_camera(vtkRenderer *renderer, const CameraFraming &framing,
     cam->ParallelProjectionOff();
     cam->SetViewAngle(40.0);
     const double azimuth = 2.0 * std::numbers::pi *
-                           static_cast<double>(framing.orbit_index) /
-                           static_cast<double>(framing.orbit_count);
+                               static_cast<double>(framing.orbit_index) /
+                               static_cast<double>(framing.orbit_count) -
+                           yaw;
     const double elevation =
         framing.orbit_elevation_deg * std::numbers::pi / 180.0;
     cam->SetPosition(

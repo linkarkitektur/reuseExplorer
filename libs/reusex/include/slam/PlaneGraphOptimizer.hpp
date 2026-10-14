@@ -32,8 +32,10 @@
 #include "reusex/segmentation/Surfel.hpp"
 #include "reusex/segmentation/surfel_extraction.hpp"
 #include "reusex/slam/LoopClosure.hpp"
-#include "reusex/slam/PanoramaLoopEdges.hpp"
 
+#include <Eigen/Core>
+
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -348,19 +350,6 @@ struct PlaneGraphOptions {
   /// without changing what the registration stage extracts.
   SurfelExtractionParams surfel{.sampling_factor = 6};
 
-  /// P2 wide-baseline loop closure (off by default). When enabled,
-  /// optimize_sensor_poses detects loop edges from the RGB-D frames and feeds
-  /// them into the same GNC graph as robust BetweenFactor<Pose3> constraints.
-  LoopClosureOptions loop_closure;
-  /// Panorama-derived wide-baseline loop edges (issue #236; off by default,
-  /// `--use-panoramas`). A 360 panorama is resected INDEPENDENTLY against each
-  /// frame it matches, in that frame's own optical coordinates, so the relative
-  /// pose it implies between two frames is a genuine measurement rather than a
-  /// restatement of the drifted seed trajectory. The resulting edges are the
-  /// same LoopEdge type, gated by the same `loop_closure` knobs
-  /// (`min_frame_gap`, min/max seed disagreement), PCM-filtered as part of the
-  /// UNION with the other sources, and solved in the same GNC graph.
-  PanoramaLoopOptions panorama_loops;
   /// How loop-edge factors are treated by the solver:
   ///   false (default, SAFE): loop edges are ordinary GNC candidates under the
   ///     shared `gnc_inlier_cost` threshold — a wrong edge is down-weighted.
@@ -388,59 +377,41 @@ struct PlaneGraphOptions {
   /// wrappers from every factor it is given, so a per-factor threshold is the
   /// only way to bound a loop edge under GNC.
   float loop_trust_inlier_cost = 200.0f;
-  /// Optional path to a JSON file of externally-computed loop edges (schema
-  /// "reusex.loop_edges.v1"; see load_loop_edges). Empty = none. These are the
-  /// license-clean bridge for learned matchers (XFeat / EfficientLoFTR /
-  /// MapAnything, or an offline MASt3R ceiling oracle): the external edges are
-  /// UNIONED with any internally-detected ORB edges (--loop-closure) and fed
-  /// into the SAME GNC graph, so a wrong external edge is handled by the same
-  /// robustness as an ORB one. Concretely, optimize_sensor_poses() applies to
-  /// the file's edges: the `loop_edges_min_seed_disagreement` gate, a (i,j)
-  /// dedup against the internal edges (one pair, one factor), PCM over the
-  /// UNION when `loop_closure.pcm` is set (`--loop-no-pcm` turns it off for
-  /// BOTH sources), and finally GNC in the solver. Works independently of
-  /// loop_closure.enable. loop_edges_trusted applies to these too — which is
-  /// precisely why the PCM step is not optional in practice: a trusted edge
-  /// gets the generous `loop_trust_inlier_cost` threshold, so consistency
-  /// filtering is the main defence left against a matcher false positive.
-  std::string loop_edges_file;
-  /// Seed-disagreement gate for the external (`loop_edges_file`) edges,
-  /// mirroring LoopClosureOptions::min_seed_disagreement for the internal path:
-  /// keep an external edge only if its relative translation disagrees with the
-  /// seed poses by at least this (m). Redundant edges that already agree with
-  /// the seed carry no drift-correction information and only inject
-  /// matcher+depth noise into already-correct poses (measured: honka laser-GT F
-  /// 0.7958 -> 0.62 when 1336 redundant edges were applied ungated). Dropping
-  /// them makes the bridge a no-op on a well-posed scan while keeping every
-  /// large-drift edge.
-  /// This field is the ABSOLUTE FLOOR of that gate; the gate applied is
-  /// `max(loop_edges_min_seed_disagreement_fraction * trajectory_extent,
-  /// loop_edges_min_seed_disagreement)` — see geometry::seed_disagreement_gate.
-  /// Both 0 disables the gate (apply every external edge).
-  ///
-  /// The floor defaults to 0 because, unlike the internal ORB path, this gate's
-  /// historical 0.50 m value was never a noise floor: it was a DRIFT threshold
-  /// measured on one 18 m scan (office 16.66 m of drift, NewOffice >20 m), and
-  /// issue #339 is exactly the bill for that. It is kept as an option so an
-  /// absolute gate can still be pinned when a capture's scale is known.
-  double loop_edges_min_seed_disagreement = 0.0;
-  /// Scale-relative seed-disagreement gate for external edges, as a fraction of
-  /// the seed trajectory's extent (#339). Default 0.0278 reproduces the
-  /// historical 0.50 m on the office scan (0.0278 * 18.01 m = 0.501 m, which
-  /// keeps all 163 of its drift edges) while scaling down to 0.05 m on a 1.8 m
-  /// ARKitScenes room scan — the setting measured in §9.4 to avoid the F@50mm
-  /// 0.29 collapse the absolute 0.50 m gate produced there by admitting only
-  /// the most-disagreeing (wrong) edges. Set 0 to use the floor alone.
-  double loop_edges_min_seed_disagreement_fraction = 0.0278;
 
-  /// Memberwise, covering every field above AND every field of `surfel`,
-  /// `loop_closure` and `panorama_loops` (their own defaulted operator==).
+  /// Noise of a loop edge that carries no information matrix (a stored edge
+  /// with NULL `information`, spec §3.1). Mirrors the LoopClosureOptions
+  /// base sigmas.
+  float loop_default_sigma_rot = 0.05f;   ///< rad
+  float loop_default_sigma_trans = 0.10f; ///< m
+
+  /// Memberwise, covering every field above AND every field of `surfel`
+  /// (its own defaulted operator==).
   /// Relied on by CliCommandRoundTrip_OptimizeFlagDefaults_MatchTheStageBase
   /// (tests/unit/rux_app/test_cli_command_roundtrip.cpp) to compare the whole
   /// struct through one comparison, so a field added here without a matching
   /// CLI default is caught instead of silently skipped by a hand-maintained
   /// field list (integration review finding 4).
   bool operator==(const PlaneGraphOptions &) const = default;
+};
+
+/// One edge of the (stored) pose graph handed to the solver, already in the
+/// optimizer's OPTICAL convention (slam/pose_graph_conventions.hpp). Indices
+/// are positions in the frames vector.
+struct GraphEdge {
+  enum class Kind { odometry, loop };
+  int i = -1;
+  int j = -1;
+  /// pose(i)^-1 * pose(j), optical convention.
+  Eigen::Matrix4d T_ij = Eigen::Matrix4d::Identity();
+  /// 6x6, GTSAM order (rx, ry, rz, tx, ty, tz). nullopt: odometry uses
+  /// odometry_sigma_* (x observability guard x motion model), loop uses
+  /// loop_default_sigma_*.
+  std::optional<Eigen::Matrix<double, 6, 6>> information;
+  Kind kind = Kind::odometry;
+  /// GNC may never demote this factor (a user-confirmed edge).
+  bool known_inlier = false;
+  /// Caller's tag, echoed in PoseGraphEdgeRecord::tag; -1 = none.
+  int tag = -1;
 };
 
 /// One pose-graph edge produced by the optimizer, indexed by position in the
@@ -452,6 +423,7 @@ struct PoseGraphEdgeRecord {
   std::string type;      ///< "odometry" | "loop_closure"
   double residual = 0.0; ///< 0.5 × whitened squared residual (GTSAM convention)
   double weight = 1.0;   ///< 1 / sigma_trans² at build time
+  int tag = -1;          ///< GraphEdge::tag of the edge
 };
 
 /// Summary statistics from a plane-graph optimization run.
@@ -488,6 +460,11 @@ struct PlaneGraphResult {
   /// are the run's own estimate of what a typical plane observation is worth.
   double median_fit_sigma_normal = 0.0;   ///< rad
   double median_fit_sigma_distance = 0.0; ///< m
+  /// Stored-graph bookkeeping (optimize_sensor_poses).
+  int graph_edges = 0;  ///< stored edges that entered the solve
+  int bridge_edges = 0; ///< connectivity bridges from the initial poses
+  bool graph_initialised = false; ///< the run created the odometry edges
+  int edges_with_metrics = 0;     ///< stored rows whose metrics were written
 };
 
 /// Plane-landmark pose-graph optimizer operating purely in memory.
@@ -507,19 +484,36 @@ class PlaneGraphOptimizer {
   PlaneGraphResult optimize(std::vector<FrameSurfels> &frames,
                             const std::vector<LoopEdge> &loop_edges = {}) const;
 
+  /// Solve with an explicit edge list instead of consecutive-seed odometry:
+  /// odometry AND loop factors all come from @p edges (out-of-range or
+  /// self-loop edges are skipped). The gauge prior still pins frame 0 at its
+  /// world_pose. optimize() == optimize_graph(frames,
+  /// legacy_graph_edges(frames, loop_edges)).
+  PlaneGraphResult optimize_graph(std::vector<FrameSurfels> &frames,
+                                  const std::vector<GraphEdge> &edges) const;
+
     private:
   PlaneGraphOptions options_;
 };
 
-/// High-level entry point: extract surfels for every sensor frame in @p db,
-/// globally optimize their poses via the plane-landmark graph, and (unless
-/// @p dry_run) write the optimized world poses back into the sensor_frames
-/// table.
-///
-/// The optimizer works on the combined optical->world pose; on write-back the
-/// constant local (optical->sensor) transform is removed so the stored
-/// `transform` column keeps its worldTf meaning (identical to
-/// refine_sensor_poses).
+/// The graph optimize() has always built: odometry between consecutive frames
+/// measured from their world_pose (no information: default sigmas), then each
+/// loop edge with information_from_sigmas(sigma_rot, sigma_trans).
+std::vector<GraphEdge>
+legacy_graph_edges(const std::vector<FrameSurfels> &frames,
+                   const std::vector<LoopEdge> &loop_edges);
+
+/// High-level entry point: solve the STORED pose graph of @p db
+/// (pose_graph_edges, schema v28). Seeds every frame from
+/// sensor_frames.initial_transform (falling back to `transform` with a
+/// warning), adds one factor per active stored edge (auto + confirmed, with a
+/// measurement; confirmed loop edges are GNC known inliers), bridges a
+/// disconnected graph from the initial poses, and — unless @p dry_run —
+/// writes the optimized world poses to `transform` (never to
+/// initial_transform) and residual / deviation / seed-disagreement back to
+/// every stored edge. The edge set is never replaced. When the graph has no
+/// usable odometry, slam::init_pose_graph() runs first (in memory only under
+/// @p dry_run).
 ///
 /// @param db       Project database (read/write).
 /// @param options  Optimization parameters.

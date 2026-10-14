@@ -11,16 +11,21 @@
 // pull the drifted poses back toward the (shared, globally-consistent) truth.
 // Fixed seeds keep everything deterministic (docs/STANDARDS.md §6).
 
+#include <reusex/core/logging.hpp>
+#include <reusex/core/pose_graph.hpp>
 #include <reusex/segmentation/Surfel.hpp>
 #include <reusex/slam/PlaneGraphOptimizer.hpp>
 #include <reusex/types.hpp>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <Eigen/Geometry>
 
+#include <algorithm>
 #include <cmath>
+#include <string>
 #include <vector>
 
 using namespace reusex;
@@ -852,14 +857,174 @@ TEST_CASE("PlaneGraphOptions operator== is memberwise through nested structs",
     b.surfel.sampling_factor = a.surfel.sampling_factor + 1;
     CHECK_FALSE(a == b);
   }
-  SECTION("a loop_closure field the old hand list never covered") {
-    // vocab_size had no CHECK in the pre-fix parity test.
-    b.loop_closure.vocab_size = a.loop_closure.vocab_size + 1;
-    CHECK_FALSE(a == b);
-  }
-  SECTION("a panorama_loops field the old hand list never covered") {
-    // refine_iterations had no CHECK in the pre-fix parity test.
-    b.panorama_loops.refine_iterations = a.panorama_loops.refine_iterations + 1;
-    CHECK_FALSE(a == b);
-  }
+}
+
+TEST_CASE("PlaneGraphOptimizer_OptimizeGraphWithLegacyEdges_EqualsOptimize",
+          "[plane_graph][optimize][stored_graph]") {
+  auto a = drifted_corner_frames();
+  auto b = drifted_corner_frames();
+  const PlaneGraphOptions o = test_options();
+  const auto ra = PlaneGraphOptimizer(o).optimize(a);
+  const auto rb =
+      PlaneGraphOptimizer(o).optimize_graph(b, legacy_graph_edges(b, {}));
+  REQUIRE(ra.converged);
+  REQUIRE(rb.converged);
+  CHECK(ra.landmarks == rb.landmarks);
+  CHECK(ra.edges.size() == rb.edges.size());
+  for (size_t i = 0; i < a.size(); ++i)
+    CHECK((a[i].world_pose.matrix() - b[i].world_pose.matrix()).norm() < 1e-12);
+}
+
+TEST_CASE("PlaneGraphOptimizer_StoredOdometryMeasurement_OverridesTheSeed",
+          "[plane_graph][optimize][stored_graph]") {
+  // Frame 1's seed is drifted, but the stored odometry says the true relative
+  // pose is the identity. With plane factors off and a tight explicit
+  // information on that edge, the solve must follow the stored measurement —
+  // the seed only initialises.
+  std::vector<FrameSurfels> frames;
+  for (int i = 0; i < 2; ++i)
+    frames.push_back(make_corner_frame(i));
+  frames[1].world_pose = drift(0.05, {1, 0, 0}, {0.05, 0.0, 0.0});
+
+  PlaneGraphOptions o = test_options();
+  o.use_plane_factors = false;
+  o.use_gnc = false;
+  GraphEdge e;
+  e.i = 0;
+  e.j = 1;
+  e.T_ij = Eigen::Matrix4d::Identity();
+  e.information = reusex::core::pose_graph::information_from_sigmas(1e-3, 1e-3);
+  e.kind = GraphEdge::Kind::odometry;
+  e.tag = 7;
+
+  const auto res = PlaneGraphOptimizer(o).optimize_graph(frames, {e});
+  REQUIRE(res.converged);
+  CHECK(pose_trans_error(frames[1].world_pose, Eigen::Affine3d::Identity()) <
+        1e-3);
+  REQUIRE(res.edges.size() == 1);
+  CHECK(res.edges[0].tag == 7);
+  CHECK(res.edges[0].type == "odometry");
+  CHECK(res.edges[0].weight == Catch::Approx(1e6));
+}
+
+TEST_CASE("PlaneGraphOptimizer_KnownInlierLoopEdge_SurvivesGnc",
+          "[plane_graph][optimize][stored_graph]") {
+  // The setup of CorrectLoopEdgeNoPlaneFactors, but WITH GNC: an ordinary
+  // loop edge that conflicts with the (trusted) odometry is down-weighted; a
+  // user-confirmed (known-inlier) one is not.
+  //
+  // GNC judges an edge by its residual at the equal-weight least-squares
+  // solution, not at the seed. Under test_options()' deliberately LOOSE
+  // odometry the loop edge would win that solve outright and never look like
+  // an outlier, so this case restores the library's (tight) default odometry
+  // sigmas and makes the loop edge tighter still: at the LS solution its
+  // whitened cost is ~10 (> gnc_inlier_cost), yet as a known inlier it pulls
+  // frame 1 ~80% of the way to truth.
+  auto run = [](bool known) {
+    std::vector<FrameSurfels> frames;
+    for (int i = 0; i < 2; ++i)
+      frames.push_back(make_corner_frame(i));
+    frames[1].world_pose = drift(0.05, {1, 0, 0}, {0.05, 0.0, 0.0});
+    PlaneGraphOptions o = test_options();
+    o.min_landmark_observations = 10; // 0 landmarks
+    o.use_gnc = true;
+    o.odometry_sigma_rot = PlaneGraphOptions{}.odometry_sigma_rot;
+    o.odometry_sigma_trans = PlaneGraphOptions{}.odometry_sigma_trans;
+    auto edges = legacy_graph_edges(frames, {});
+    GraphEdge loop;
+    loop.i = 0;
+    loop.j = 1;
+    loop.T_ij = Eigen::Matrix4d::Identity();
+    loop.information =
+        reusex::core::pose_graph::information_from_sigmas(0.0025, 0.005);
+    loop.kind = GraphEdge::Kind::loop;
+    loop.known_inlier = known;
+    edges.push_back(loop);
+    const auto res = PlaneGraphOptimizer(o).optimize_graph(frames, edges);
+    REQUIRE(res.converged);
+    REQUIRE(res.loop_edges == 1);
+    return pose_trans_error(frames[1].world_pose, Eigen::Affine3d::Identity());
+  };
+  const double seed_err = 0.05;
+  const double known = run(true);
+  const double free = run(false);
+  UNSCOPED_INFO("known-inlier error " << known << " m, free " << free << " m");
+  CHECK(known < 0.5 * seed_err);
+  CHECK(known < free);
+}
+
+TEST_CASE("PlaneGraphOptimizer_InvalidStoredEdges_AreSkippedWithAWarning",
+          "[plane_graph][optimize][stored_graph]") {
+  // An odometry edge pointing past frames[] and a self-loop loop edge cannot
+  // enter the graph: they are skipped, the solve still runs on the valid
+  // edges, and one warning names both counts (STANDARDS §5).
+  std::vector<FrameSurfels> frames;
+  for (int i = 0; i < 2; ++i)
+    frames.push_back(make_corner_frame(i));
+  frames[1].world_pose = drift(0.05, {1, 0, 0}, {0.05, 0.0, 0.0});
+
+  auto edges = legacy_graph_edges(frames, {});
+  GraphEdge out_of_range;
+  out_of_range.i = 0;
+  out_of_range.j = 5;
+  edges.push_back(out_of_range);
+  GraphEdge self_loop;
+  self_loop.i = 1;
+  self_loop.j = 1;
+  self_loop.kind = GraphEdge::Kind::loop;
+  edges.push_back(self_loop);
+
+  std::vector<std::string> warnings;
+  const auto level = core::get_log_level();
+  core::set_log_level(core::LogLevel::warn);
+  core::set_log_handler([&](core::LogLevel l, std::string_view m) {
+    if (l == core::LogLevel::warn)
+      warnings.emplace_back(m);
+  });
+  const auto res =
+      PlaneGraphOptimizer(test_options()).optimize_graph(frames, edges);
+  core::reset_log_handler();
+  core::set_log_level(level);
+
+  REQUIRE(res.converged);
+  CHECK(res.loop_edges == 0);
+  REQUIRE(res.edges.size() == 1);
+  CHECK(res.edges[0].i == 0);
+  CHECK(res.edges[0].j == 1);
+  CHECK(std::any_of(warnings.begin(), warnings.end(), [](const std::string &w) {
+    return w.find("skipped 1 odometry and 1 loop edges") != std::string::npos &&
+           w.find("node_id -> index") != std::string::npos;
+  }));
+}
+
+TEST_CASE("PlaneGraphOptimizer_LoopEdgeWithoutInformation_UsesDefaultSigmas",
+          "[plane_graph][optimize][stored_graph]") {
+  std::vector<FrameSurfels> frames;
+  for (int i = 0; i < 2; ++i)
+    frames.push_back(make_corner_frame(i));
+  frames[1].world_pose = drift(0.05, {1, 0, 0}, {0.05, 0.0, 0.0});
+
+  PlaneGraphOptions o = test_options();
+  o.min_landmark_observations = 10; // 0 landmarks: the loop edge must pull
+  o.use_gnc = false;
+  o.loop_default_sigma_rot = 0.01f;
+  o.loop_default_sigma_trans = 0.02f;
+  auto edges = legacy_graph_edges(frames, {});
+  GraphEdge loop;
+  loop.i = 0;
+  loop.j = 1;
+  loop.kind = GraphEdge::Kind::loop;
+  loop.tag = 3;
+  edges.push_back(loop);
+
+  const auto res = PlaneGraphOptimizer(o).optimize_graph(frames, edges);
+  REQUIRE(res.converged);
+  REQUIRE(res.loop_edges == 1);
+  const auto it = std::find_if(res.edges.begin(), res.edges.end(),
+                               [](const auto &r) { return r.tag == 3; });
+  REQUIRE(it != res.edges.end());
+  CHECK(it->type == "loop_closure");
+  CHECK(it->weight == Catch::Approx(1.0 / (0.02f * 0.02f)));
+  CHECK(pose_trans_error(frames[1].world_pose, Eigen::Affine3d::Identity()) <
+        0.025);
 }

@@ -23,6 +23,13 @@
 
 #include <reusex/slam/perturb_poses.hpp>
 
+#include <reusex/core/ProjectDB.hpp>
+#include <reusex/core/pose_graph.hpp>
+#include <reusex/slam/pose_graph.hpp>
+
+#include "../../support/pose_fixture.hpp"
+#include "../../support/temp_path.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
@@ -262,4 +269,57 @@ TEST_CASE("median_pair_disagreement_ShortSequence_StillSamplesPairs",
   perturb_trajectory(drifted, opt);
 
   REQUIRE(median_pair_disagreement(poses, drifted, 50) > 0.0);
+}
+
+TEST_CASE("perturb_sensor_poses_WithStoredGraph_ResnapshotsAndRederives",
+          "[slam][drift][pose_graph]") {
+  namespace pg = reusex::core::pose_graph;
+  reusex::test_support::TempPath tmp("test_perturb_graph");
+  reusex::ProjectDB db(tmp.path);
+  const auto traj = room_trajectory(60);
+  for (int k = 0; k < 60; ++k)
+    db.save_sensor_frame(
+        k + 1, reusex::test_support::make_color(8, 8), cv::Mat(), cv::Mat(),
+        pg::row_major_from_matrix(traj[static_cast<size_t>(k)]),
+        reusex::test_support::make_intrinsics(8, 8, 4, 4, 8, 8), k);
+  reusex::slam::init_pose_graph(db);
+
+  reusex::geometry::perturb_sensor_poses(db, PoseDriftOptions{},
+                                         /*dry_run=*/false);
+
+  bool any_changed = false;
+  for (int k = 1; k <= 60; ++k) {
+    REQUIRE(db.initial_pose(k).has_value());
+    CHECK(*db.initial_pose(k) == db.sensor_frame_pose(k));
+  }
+  for (int k = 1; k < 60; ++k) {
+    const auto e = db.pose_graph_edge(k, k + 1, "odometry");
+    REQUIRE(e.has_value());
+    const Eigen::Matrix4d drifted =
+        pg::matrix_from_row_major(db.sensor_frame_pose(k)).inverse() *
+        pg::matrix_from_row_major(db.sensor_frame_pose(k + 1));
+    CHECK((pg::matrix_from_row_major(*e->transform) - drifted).norm() < 1e-9);
+    const Eigen::Matrix4d original =
+        traj[static_cast<size_t>(k - 1)].inverse() *
+        traj[static_cast<size_t>(k)];
+    any_changed = any_changed || (drifted - original).norm() > 1e-6;
+  }
+  CHECK(any_changed);
+}
+
+TEST_CASE("perturb_sensor_poses_WithoutGraph_OnlySnapshots",
+          "[slam][drift][pose_graph]") {
+  reusex::test_support::TempPath tmp("test_perturb_nograph");
+  reusex::ProjectDB db(tmp.path);
+  const auto traj = room_trajectory(60);
+  for (int k = 0; k < 60; ++k)
+    db.save_sensor_frame(
+        k + 1, reusex::test_support::make_color(8, 8), cv::Mat(), cv::Mat(),
+        reusex::core::pose_graph::row_major_from_matrix(
+            traj[static_cast<size_t>(k)]),
+        reusex::test_support::make_intrinsics(8, 8, 4, 4, 8, 8), k);
+  reusex::geometry::perturb_sensor_poses(db, PoseDriftOptions{}, false);
+  CHECK(db.list_pose_graph_edges().empty());
+  for (int k = 1; k <= 60; ++k)
+    CHECK(*db.initial_pose(k) == db.sensor_frame_pose(k));
 }

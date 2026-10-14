@@ -70,7 +70,7 @@ namespace reusex::geometry {
 /// the two front-ends see the same features; the frame-selection and
 /// edge-emission knobs are specific to loop closure.
 struct PanoramaLoopOptions {
-  /// Off by default; opt in with `rux optimize --loop-closure --use-panoramas`.
+  /// Off by default; opt in with `rux graph discover --use-panoramas`.
   bool enable = false;
 
   // --- candidate frames ----------------------------------------------------
