@@ -76,6 +76,24 @@ Mat4 edge_measurement(const Mat4 &pose_from, const Mat4 &pose_to,
 bool icp_seed_unchanged(const std::optional<Mat4> &launched,
                         const std::optional<Mat4> &current);
 
+/// What a finished ICP run of the pair still means, given B's placement.
+enum class IcpFitState {
+  failed,        ///< ICP threw
+  dropped,       ///< B was moved while ICP ran; never applied
+  not_converged, ///< B stayed where it was
+  aligned,       ///< converged, B placed on the result and still there
+  not_placed,    ///< converged, but B could not be placed (no overlay)
+  moved_since,   ///< B was moved after ICP: the fit no longer describes it
+};
+/// @p applied is ΔT right after the result was handled (B's placement on
+/// the result, or the seed it stayed at; nullopt = no offset), @p now is ΔT
+/// at present.
+IcpFitState icp_fit_state(bool ok, bool stale, bool converged,
+                          const std::optional<Mat4> &applied,
+                          const std::optional<Mat4> &now);
+/// Whether a new edge may use the fit's measurement and information.
+bool icp_fit_usable(IcpFitState state);
+
 /// A back-projected depth cloud (slam::frame_world_points' element type).
 using CloudPoints = std::vector<std::array<float, 3>>;
 /// The overlay draws at most this many points per frame, so dragging the

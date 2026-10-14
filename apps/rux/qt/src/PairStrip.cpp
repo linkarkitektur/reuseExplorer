@@ -324,50 +324,7 @@ void PairStrip::rebuild() {
     rows_layout_->addWidget(none);
   }
 
-  // ICP result for this pair, if one was run.
-  const auto key = std::make_pair(a_, b_);
-  if (pair_ok && icp_running_ == key) {
-    icp_line_->setText("ICP kører …");
-    icp_line_->setProperty("tone", "wait");
-  } else if (auto it = icp_results_.find(key); it != icp_results_.end()) {
-    const IcpOutcome &o = it->second;
-    if (!o.ok) {
-      icp_line_->setText("ICP fejlede: " + o.error);
-      icp_line_->setProperty("tone", "crit");
-    } else if (o.stale) {
-      icp_line_->setText("ICP-resultatet er droppet: B blev flyttet, mens ICP "
-                         "kørte. Kør ICP-forfin igen.");
-      icp_line_->setProperty("tone", "warn");
-    } else {
-      // B's camera centre moves by the shift; the angle is the rotation.
-      icp_line_->setText(
-          o.converged
-              ? (o.seeded ? QString("Fra din manuelle placering · ")
-                          : QString()) +
-                    QString("ICP konvergerede · RMS %1 cm · %2 % inden for "
-                            "5 cm · B flyttes %3 cm og drejes %4° · %5 / %6 "
-                            "punkter · ny kant får vægt %7")
-                        .arg(dec(o.fitness * 100.0, 1),
-                             dec(o.inliers * 100.0, 0),
-                             dec(o.center_shift_m * 100.0, 1),
-                             dec(o.rotation_deg, 2),
-                             format_count(
-                                 static_cast<qulonglong>(o.source_points)),
-                             format_count(
-                                 static_cast<qulonglong>(o.target_points)),
-                             weight_text(weight_from_icp_fitness(o.fitness)))
-              : QString("ICP konvergerede ikke · RMS %1 cm · %2 % inden for "
-                        "5 cm — billederne deler for lidt geometri. En ny kant "
-                        "får vægt 1. B bliver stående.")
-                    .arg(dec(o.fitness * 100.0, 1), dec(o.inliers * 100.0, 0)));
-      icp_line_->setProperty("tone", o.converged ? "good" : "warn");
-    }
-  } else {
-    icp_line_->clear();
-    icp_line_->setProperty("tone", QVariant());
-  }
-  icp_line_->setVisible(!icp_line_->text().isEmpty());
-  repolish(icp_line_);
+  refresh_icp();
 
   const bool editable = pair_ok && !same;
   icp_->setEnabled(editable && icp_running_.first < 0);
@@ -381,16 +338,89 @@ void PairStrip::rebuild() {
   note_->setVisible(!ro.isEmpty());
 }
 
+std::optional<Mat4> PairStrip::current_delta() const {
+  return delta_source_ ? delta_source_() : std::optional<Mat4>{};
+}
+
+IcpFitState PairStrip::fit_state(const IcpOutcome &o) const {
+  return icp_fit_state(o.ok, o.stale, o.converged, o.applied, current_delta());
+}
+
+void PairStrip::refresh_icp() {
+  // ICP result for this pair, if one was run.
+  const auto key = std::make_pair(a_, b_);
+  const bool pair_ok = session_.db() && a_ >= 0 && b_ >= 0;
+  QString text, tone;
+  if (pair_ok && icp_running_ == key) {
+    text = "ICP kører …";
+    tone = "wait";
+  } else if (auto it = icp_results_.find(key); it != icp_results_.end()) {
+    const IcpOutcome &o = it->second;
+    // The fit's figures; how far B moved is the overlay's to say (one
+    // measure, about B's centroid), so it is not repeated here.
+    const QString fit =
+        QString("RMS %1 cm · %2 % inden for 5 cm")
+            .arg(dec(o.fitness * 100.0, 1), dec(o.inliers * 100.0, 0));
+    const QString points =
+        QString("%1 / %2 punkter")
+            .arg(format_count(static_cast<qulonglong>(o.source_points)),
+                 format_count(static_cast<qulonglong>(o.target_points)));
+    const QString weight =
+        QString("ny kant får vægt %1")
+            .arg(weight_text(weight_from_icp_fitness(o.fitness)));
+    const QString from =
+        o.seeded ? QString("Fra din manuelle placering · ") : QString();
+    switch (fit_state(o)) {
+    case IcpFitState::failed:
+      text = "ICP fejlede: " + o.error;
+      tone = "crit";
+      break;
+    case IcpFitState::dropped:
+      text = "ICP-resultatet er droppet: B blev flyttet, mens ICP kørte. "
+             "Kør ICP-forfin igen.";
+      tone = "warn";
+      break;
+    case IcpFitState::moved_since:
+      text = "B er flyttet efter ICP — kør ICP-forfin igen. En ny kant får "
+             "vægt 1.";
+      tone = "warn";
+      break;
+    case IcpFitState::not_converged:
+      text = QString("ICP konvergerede ikke · %1 — billederne deler for lidt "
+                     "geometri. En ny kant får vægt 1. B bliver stående.")
+                 .arg(fit);
+      tone = "warn";
+      break;
+    case IcpFitState::aligned:
+      text = from + QString("ICP konvergerede · %1 · B er lagt på ICP's "
+                            "placering · %2 · %3")
+                        .arg(fit, points, weight);
+      tone = "good";
+      break;
+    case IcpFitState::not_placed:
+      text = from + QString("ICP konvergerede · %1 · %2 · %3. B er ikke "
+                            "flyttet: 3D-overlayet var ikke klar.")
+                        .arg(fit, points, weight);
+      tone = "good";
+      break;
+    }
+  }
+  icp_line_->setText(text);
+  icp_line_->setProperty("tone", tone.isEmpty() ? QVariant() : QVariant(tone));
+  icp_line_->setVisible(!text.isEmpty());
+  repolish(icp_line_);
+}
+
 void PairStrip::add_edge() {
   if (a_ < 0 || b_ < 0 || a_ == b_)
     return;
   EdgeRecord e;
   e.key = {a_, b_, type_->currentData().toString().toStdString()};
   e.weight = 1.0;
-  // An ICP fit of this pair makes the weight honest: 1/σ² from its RMS.
+  // An ICP fit of this pair makes the weight honest: 1/σ² from its RMS —
+  // while B still sits where that fit put it.
   if (auto it = icp_results_.find({a_, b_});
-      it != icp_results_.end() && it->second.ok && it->second.converged &&
-      !it->second.stale)
+      it != icp_results_.end() && icp_fit_usable(fit_state(it->second)))
     e.weight = weight_from_icp_fitness(it->second.fitness);
   const auto r = editor_.add(e);
   if (r == PendingEdgeEdits::Result::replaced) {
@@ -441,8 +471,7 @@ void PairStrip::run_icp() {
       o.converged = r.converged;
       o.source_points = r.source_points;
       o.target_points = r.target_points;
-      o.center_shift_m = r.source_center_shift_m;
-      o.rotation_deg = r.rotation_deg;
+      o.edge_transform = r.edge_transform;
     } catch (const std::exception &e) {
       o.error = QString::fromUtf8(e.what());
     }
@@ -467,14 +496,17 @@ void PairStrip::icp_finished(int a, int b, const std::optional<Mat4> &guess,
     return;
   }
   // B moved, reset or nudged while ICP ran: say so, never move B.
-  const std::optional<Mat4> now =
-      delta_source_ ? delta_source_() : std::optional<Mat4>{};
-  outcome.stale = outcome.ok && !icp_seed_unchanged(guess, now);
+  outcome.stale = outcome.ok && !icp_seed_unchanged(guess, current_delta());
+  const bool place = outcome.ok && outcome.converged && !outcome.stale;
+  const Mat4 world_delta = outcome.world_delta;
   icp_results_[{a, b}] = std::move(outcome);
+  if (place)
+    emit icp_aligned(a, b, world_delta); // the overlay places B (normalised)
+  // Where B sits now — on the result, or still at the seed — is what the fit
+  // describes; a later move outdates it. Re-found: the emit may re-enter.
+  if (auto it = icp_results_.find({a, b}); it != icp_results_.end())
+    it->second.applied = place ? current_delta() : guess;
   rebuild();
-  const IcpOutcome &o = icp_results_[{a, b}];
-  if (o.ok && o.converged && !o.stale)
-    emit icp_aligned(a, b, o.world_delta);
 }
 
 } // namespace rux::qt

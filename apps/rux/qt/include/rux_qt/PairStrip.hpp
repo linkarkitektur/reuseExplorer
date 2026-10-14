@@ -42,6 +42,9 @@ class PairStrip : public QFrame {
   void set_delta_source(std::function<std::optional<Mat4>()> source) {
     delta_source_ = std::move(source);
   }
+  /// Re-read B's placement: an ICP fit counts only while B stays where ICP
+  /// put it (the overlay calls this on every offset change).
+  void refresh_icp();
 
     signals:
   /// An edge row was clicked: show it in the inspector.
@@ -57,14 +60,20 @@ class PairStrip : public QFrame {
     double fitness = 0, inliers = 0;
     bool converged = false;
     int source_points = 0, target_points = 0;
-    double center_shift_m = 0, rotation_deg = 0;
     Mat4 world_delta = mat4_identity(); ///< ICP's offset on B, seed included
     bool seeded = false;                ///< started from a manual ΔT
     /// The ICP edge's information (slam::icp_edge_information).
     std::array<double, 36> information{};
+    /// The edge B -> A ICP measured (FramePairIcpResult::edge_transform).
+    Mat4 edge_transform = mat4_identity();
     /// B was moved by hand while ICP ran: shown, never applied.
     bool stale = false;
+    /// ΔT once the result was handled: B placed on it, or the seed B
+    /// stayed at (nullopt = no offset). A different ΔT later outdates it.
+    std::optional<Mat4> applied;
   };
+  IcpFitState fit_state(const IcpOutcome &o) const;
+  std::optional<Mat4> current_delta() const;
   void rebuild();
   void run_icp();
   void icp_finished(int a, int b, const std::optional<Mat4> &guess,

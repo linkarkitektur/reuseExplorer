@@ -334,7 +334,7 @@ QWidget *make_rediger_offset(const PageContext &ctx) {
 
 /// Move B by hand, then ICP-forfin from there: B snaps onto A. Logs the
 /// manual and the ICP offset so a run shows B was pulled back.
-QWidget *make_rediger_icp(const PageContext &ctx) {
+AppShell *make_rediger_icp_shell(const PageContext &ctx) {
   auto *shell = make_pg(ctx);
   settle(); // clouds loaded
   PairOverlay *ov = shell->edit()->overlay();
@@ -348,6 +348,18 @@ QWidget *make_rediger_icp(const PageContext &ctx) {
                "rediger-icp: manual x=0.0500 y=-0.0300 yaw=2.000 -> ICP "
                "x=%.4f y=%.4f z=%.4f yaw=%.3f pitch=%.3f roll=%.3f\n",
                o.x, o.y, o.z, o.yaw_deg, o.pitch_deg, o.roll_deg);
+  return shell;
+}
+QWidget *make_rediger_icp(const PageContext &ctx) {
+  return make_rediger_icp_shell(ctx);
+}
+
+/// After ICP, B nudged 1 cm by hand: the fit no longer describes B, so the
+/// line says so and a new edge falls back to weight 1.
+QWidget *make_rediger_icp_moved(const PageContext &ctx) {
+  auto *shell = make_rediger_icp_shell(ctx);
+  PairOverlay *ov = shell->edit()->overlay();
+  ov->set_offset(nudge(ov->offset(), NudgeKey::x_plus, false));
   return shell;
 }
 
@@ -1035,6 +1047,9 @@ void register_shell_pages() {
   register_page({"rediger-icp",
                  "Rediger: B flyttet i hånden, så ICP-forfin derfra",
                  make_rediger_icp});
+  register_page({"rediger-icp-moved",
+                 "Rediger: B flyttet efter ICP — resultatet gælder ikke mere",
+                 make_rediger_icp_moved});
   register_page(
       {"rediger-xz", "Rediger: grafen i opstalt, set fra −y", make_rediger_xz});
   register_page(

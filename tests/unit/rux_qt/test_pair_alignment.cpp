@@ -169,3 +169,33 @@ TEST_CASE("IcpSeedUnchanged_OnlyTheSameSeedMayMoveB", "[rux_qt][pair]") {
   nudged[3] += 1e-6;
   CHECK_FALSE(icp_seed_unchanged(moved, nudged));
 }
+
+TEST_CASE("IcpFitState_FollowsBsPlacementAfterIcp", "[rux_qt][pair]") {
+  const Mat4 placed =
+      offset_matrix({0.12, -0.04, 0.03, -3.4, -1.1, -0.5}, {1.0, 2.0, 0.5});
+  const Mat4 moved =
+      offset_matrix({0.2, 0.0, 0.0, 0.0, 0.0, 0.0}, {1.0, 2.0, 0.5});
+  using S = IcpFitState;
+  // Failed / dropped runs are what they are, whatever B does.
+  CHECK(icp_fit_state(false, false, true, placed, moved) == S::failed);
+  CHECK(icp_fit_state(true, true, true, placed, moved) == S::dropped);
+  // Converged and B placed on the result: usable while B stays there.
+  CHECK(icp_fit_state(true, false, true, placed, placed) == S::aligned);
+  CHECK(icp_fit_state(true, false, true, placed, moved) == S::moved_since);
+  CHECK(icp_fit_state(true, false, true, placed, std::nullopt) ==
+        S::moved_since);
+  // Converged but B could not be placed (overlay not ready): usable, and
+  // the line must not claim B moved.
+  CHECK(icp_fit_state(true, false, true, std::nullopt, std::nullopt) ==
+        S::not_placed);
+  CHECK(icp_fit_state(true, false, true, std::nullopt, moved) ==
+        S::moved_since);
+  // Not converged: B stayed at its guess; moving it afterwards outdates it.
+  CHECK(icp_fit_state(true, false, false, moved, moved) == S::not_converged);
+  CHECK(icp_fit_state(true, false, false, std::nullopt, moved) ==
+        S::moved_since);
+  CHECK(icp_fit_usable(S::aligned));
+  CHECK(icp_fit_usable(S::not_placed));
+  for (S s : {S::failed, S::dropped, S::not_converged, S::moved_since})
+    CHECK_FALSE(icp_fit_usable(s));
+}

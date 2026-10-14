@@ -185,6 +185,9 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
               overlay_->set_offset(
                   offset_from_matrix(delta, overlay_->pivot()));
           });
+  // An ICP fit counts only while B stays where ICP put it.
+  connect(overlay_, &PairOverlay::offset_changed, strip_,
+          &PairStrip::refresh_icp);
   connect(&session_, &ProjectSession::state_changed, this,
           &EditWorkspace::on_session_state);
   restore_layout();

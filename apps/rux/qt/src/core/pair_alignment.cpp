@@ -184,4 +184,22 @@ bool icp_seed_unchanged(const std::optional<Mat4> &launched,
   return launched == current;
 }
 
+IcpFitState icp_fit_state(bool ok, bool stale, bool converged,
+                          const std::optional<Mat4> &applied,
+                          const std::optional<Mat4> &now) {
+  if (!ok)
+    return IcpFitState::failed;
+  if (stale)
+    return IcpFitState::dropped;
+  if (!icp_seed_unchanged(applied, now))
+    return IcpFitState::moved_since;
+  if (!converged)
+    return IcpFitState::not_converged;
+  return applied ? IcpFitState::aligned : IcpFitState::not_placed;
+}
+
+bool icp_fit_usable(IcpFitState state) {
+  return state == IcpFitState::aligned || state == IcpFitState::not_placed;
+}
+
 } // namespace rux::qt
