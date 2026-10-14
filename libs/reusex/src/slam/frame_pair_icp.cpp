@@ -10,11 +10,13 @@
 
 #include "core/ProjectDB.hpp"
 #include "core/SensorIntrinsics.hpp"
+#include "core/logging.hpp"
 
 #include <Eigen/Core>
 #include <Eigen/LU>
 
 #include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -23,6 +25,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -50,11 +53,41 @@ CloudT::Ptr depth_to_world_cloud(const ProjectDB &db, int node_id,
   return cloud;
 }
 
-} // namespace
+/// The stored colour image as 8-bit BGR, or empty with @p why set when the
+/// frame has none or it is in a format the overlay cannot show.
+cv::Mat color_bgr(const ProjectDB &db, int node_id, std::string &why) {
+  const cv::Mat img = db.sensor_frame_image(node_id);
+  if (img.empty()) {
+    why = "no stored colour image";
+    return {};
+  }
+  if (img.depth() != CV_8U) {
+    why = "colour image is not 8-bit (cv depth " + std::to_string(img.depth()) +
+          ")";
+    return {};
+  }
+  cv::Mat bgr;
+  switch (img.channels()) {
+  case 3:
+    return img;
+  case 1:
+    cv::cvtColor(img, bgr, cv::COLOR_GRAY2BGR);
+    return bgr;
+  case 4:
+    cv::cvtColor(img, bgr, cv::COLOR_BGRA2BGR);
+    return bgr;
+  default:
+    why = "colour image has " + std::to_string(img.channels()) + " channels";
+    return {};
+  }
+}
 
+/// Back-project @p node_id's depth into world space; with @p color (8-bit
+/// BGR) also sample each point's RGB into @p colors.
 std::vector<std::array<float, 3>>
-frame_world_points(const ProjectDB &db, int node_id,
-                   const FramePairIcpOptions &o) {
+back_project(const ProjectDB &db, int node_id, const FramePairIcpOptions &o,
+             const cv::Mat *color,
+             std::vector<std::array<std::uint8_t, 3>> *colors) {
   const cv::Mat depth16 = db.sensor_frame_depth(node_id);
   if (depth16.empty())
     throw std::runtime_error("frame " + std::to_string(node_id) +
@@ -88,6 +121,8 @@ frame_world_points(const ProjectDB &db, int node_id,
   std::vector<std::array<float, 3>> pts;
   pts.reserve(static_cast<size_t>(depth_f.rows / step + 1) *
               static_cast<size_t>(depth_f.cols / step + 1));
+  if (color)
+    colors->reserve(pts.capacity());
   for (int v = 0; v < depth_f.rows; v += step) {
     const float *row = depth_f.ptr<float>(v);
     for (int u = 0; u < depth_f.cols; u += step) {
@@ -98,6 +133,16 @@ frame_world_points(const ProjectDB &db, int node_id,
       const float y = (static_cast<float>(v) - cy) * z / fy;
       const Eigen::Vector4f p = tf * Eigen::Vector4f(x, y, z, 1.0f);
       pts.push_back({p[0], p[1], p[2]});
+      if (color) {
+        // Depth pixel -> colour pixel (the two may differ in resolution),
+        // as reconstruct.cpp maps it.
+        const int col_u =
+            std::clamp(u * color->cols / depth_f.cols, 0, color->cols - 1);
+        const int col_v =
+            std::clamp(v * color->rows / depth_f.rows, 0, color->rows - 1);
+        const cv::Vec3b &bgr = color->at<cv::Vec3b>(col_v, col_u);
+        colors->push_back({bgr[2], bgr[1], bgr[0]});
+      }
     }
   }
   if (pts.empty())
@@ -107,6 +152,29 @@ frame_world_points(const ProjectDB &db, int node_id,
         std::to_string(o.min_depth_m) + " and " +
         std::to_string(o.max_depth_m) + " m)");
   return pts;
+}
+
+} // namespace
+
+std::vector<std::array<float, 3>>
+frame_world_points(const ProjectDB &db, int node_id,
+                   const FramePairIcpOptions &o) {
+  return back_project(db, node_id, o, nullptr, nullptr);
+}
+
+FrameWorldCloud frame_world_colored_points(const ProjectDB &db, int node_id,
+                                           const FramePairIcpOptions &o) {
+  std::string why;
+  const cv::Mat color = color_bgr(db, node_id, why);
+  FrameWorldCloud out;
+  // Throws, as frame_world_points() does, for a frame without depth or pose.
+  out.points = back_project(db, node_id, o, color.empty() ? nullptr : &color,
+                            &out.colors);
+  if (color.empty())
+    core::warn("frame {}: {} back-projected points have no colour ({}); "
+               "they keep the tint",
+               node_id, out.points.size(), why);
+  return out;
 }
 
 FramePairIcpResult refine_frame_pair_icp(const ProjectDB &db, int from_id,

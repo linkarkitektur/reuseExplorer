@@ -404,10 +404,12 @@ binaries carry no Qt client code. Hidden dev flag:
 `rux -p x.rux --quit-after-ms N`.
 The Qt client's workspaces are Start, Oversigt (`DatabaseWorkspace`,
 read-only), 3D (`Viewer3DWorkspace`), Rediger (`EditWorkspace`: `GraphPanel`,
-`EdgeListPanel`, pair strip), Pipeline (`PipelineWorkspace`) and Log. The 3D
-workspace and `rux render` share one scene builder,
-`visualize::populate_scene()` (`visualize/scene.hpp`); its Pipeline workspace
-runs stages in-process through `pipeline::JobRunner` with
+`EdgeListPanel`, the match editor `PairImages` / `MatchCanvas` over the 3D
+overlay — ORB matches between A and B, edited by hand, fitted with
+`slam/frame_pair_matches.hpp` to place B — and the pair strip), Pipeline
+(`PipelineWorkspace`) and Log. The 3D workspace and `rux render` share one
+scene builder, `visualize::populate_scene()` (`visualize/scene.hpp`); its
+Pipeline workspace runs stages in-process through `pipeline::JobRunner` with
 `pipeline::stage_executor_with_optimize()` (which runs `optimize` and
 `graph_discover`; handed over in `GuiLaunch`; `ruxd`
 injects the same executor for the web GUI, from its own repo), and "Kopiér som
@@ -479,6 +481,9 @@ and deleted the shims. `include/geometry/` now holds only the real
 - `frame_pair_icp.hpp`: depth-cloud ICP between two stored frames, behind
   the Qt client's pair strip and (from the `ruxd` repo) the web GUI's
   `/posegraph/icp`
+- `frame_pair_matches.hpp`: ORB keypoint matches between two stored frames
+  (lifted to 3D through their depth) and the RANSAC rigid fit of B onto A,
+  behind Rediger's match editor (Find match / Placér B fra match)
 - `optimize_parameters.hpp`: the optimize stage's JSON parameters →
   `PlaneGraphOptions`, the one reader `rux optimize`, the Qt client and
   (from the `ruxd` repo) the web GUI share. The in-process `optimize` stage

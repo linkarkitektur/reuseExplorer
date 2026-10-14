@@ -14,6 +14,7 @@
 #include <rux_qt/EditWorkspace.hpp>
 #include <rux_qt/FrameBrowser.hpp>
 #include <rux_qt/GraphPanel.hpp>
+#include <rux_qt/MatchCanvas.hpp>
 #include <rux_qt/PairImages.hpp>
 #include <rux_qt/PairOverlay.hpp>
 #include <rux_qt/PairStrip.hpp>
@@ -27,6 +28,7 @@
 #include <rux_qt/Viewer3DWorkspace.hpp>
 #include <rux_qt/background.hpp>
 #include <rux_qt/graph_view.hpp>
+#include <rux_qt/match_editor.hpp>
 
 #include <reusex/core/ProjectDB.hpp>
 #include <reusex/pipeline/optimize_stage.hpp>
@@ -34,9 +36,13 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
 
+#include <sqlite3.h>
+
 #include <vtkActor.h>
 #include <vtkActorCollection.h>
+#include <vtkCamera.h>
 #include <vtkCommand.h>
+#include <vtkRenderWindow.h>
 #include <vtkRenderWindowInteractor.h>
 #include <vtkRenderer.h>
 
@@ -49,12 +55,15 @@
 #include <QFile>
 #include <QGraphicsView>
 #include <QItemSelectionModel>
+#include <QLabel>
+#include <QMouseEvent>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QTimer>
+#include <QVTKOpenGLNativeWidget.h>
 
 #include <algorithm>
 #include <array>
@@ -62,6 +71,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <initializer_list>
 #include <optional>
 #include <string>
@@ -324,8 +334,8 @@ QWidget *make_3d_labels(const PageContext &ctx) {
 }
 
 /// The graph with A and B marked and a few staged loop closures.
-AppShell *make_pg(const PageContext &ctx) {
-  auto *shell = sized(make_shell(ctx, Open::project));
+AppShell *make_pg(const PageContext &ctx, Open open = Open::project) {
+  auto *shell = sized(make_shell(ctx, open));
   FrameBrowser *f = shell->database()->frames();
   if (!f->pair().empty()) {
     const auto &ids = f->pair().ids();
@@ -371,13 +381,41 @@ void click_strip_button(AppShell *shell, std::initializer_list<QString> texts) {
       }
 }
 
-/// B moved by hand: 20 cm in x, 5° yaw. The interactive box widget needs
-/// --gl (xvfb); the offscreen shot shows the fields and the moved cloud.
+/// B moved by hand: 20 cm in x, 5° yaw (the moved cloud and the header
+/// read-out).
 QWidget *make_rediger_offset(const PageContext &ctx) {
   auto *shell = make_pg(ctx);
   settle(); // clouds loaded
   shell->edit()->overlay()->set_offset({0.20, 0.0, 0.0, 5.0, 0.0, 0.0});
   return shell;
+}
+
+/// The 3D overlay in one colouring (reusex-xlg.10). Logs what each cloud
+/// shows; RGB mode with neither cloud in colour fails the page (both frames
+/// of the fixture have colour images).
+QWidget *make_rediger_colouring(const PageContext &ctx, OverlayColouring c) {
+  auto *shell = make_pg(ctx);
+  PairOverlay *ov = shell->edit()->overlay();
+  ov->set_colouring(c);
+  settle(); // clouds loaded
+  const std::string_view key = overlay_colouring_key(c);
+  std::fprintf(stderr, "rediger-%.*s: ready=%d A rgb=%d B rgb=%d\n",
+               static_cast<int>(key.size()), key.data(), ov->ready() ? 1 : 0,
+               ov->shows_rgb_a() ? 1 : 0, ov->shows_rgb_b() ? 1 : 0);
+  if (c == OverlayColouring::rgb &&
+      (!ov->ready() || (!ov->shows_rgb_a() && !ov->shows_rgb_b()))) {
+    std::fprintf(stderr, "rux-qt-gallery: ERROR RGB NOT SHOWN: %s\n",
+                 ov->ready() ? "neither cloud has colours"
+                             : "A's and B's clouds did not load");
+    report_page_failure();
+  }
+  return shell;
+}
+QWidget *make_rediger_rgb(const PageContext &ctx) {
+  return make_rediger_colouring(ctx, OverlayColouring::rgb);
+}
+QWidget *make_rediger_tint(const PageContext &ctx) {
+  return make_rediger_colouring(ctx, OverlayColouring::tint);
 }
 
 /// Move B by hand, then ICP-forfin from there: B snaps onto A. Logs the
@@ -411,6 +449,255 @@ QWidget *make_rediger_icp_moved(const PageContext &ctx) {
   return shell;
 }
 
+// ---- Rediger's match editor (reusex-xlg.2.6)
+
+namespace {
+/// A page's own check failed: one guard string (R2) qt_shot.sh greps.
+void match_page_failed(const char *why) {
+  std::fprintf(stderr, "rux-qt-gallery: ERROR MATCH EDIT FAILED: %s\n", why);
+  report_page_failure();
+}
+
+/// The pair the match pages use: RUX_MATCHES_A / RUX_MATCHES_B on a real
+/// copy (e.g. NewOffice 2240 / 2241), else two neighbouring frames of the
+/// fixture (consecutive views overlap; make_pg's pair is 0.30 / 0.81).
+AppShell *matches_shell(const PageContext &ctx, Open open = Open::project) {
+  auto *shell = make_pg(ctx, open);
+  bool ok_a = false, ok_b = false;
+  const int a = qEnvironmentVariableIntValue("RUX_MATCHES_A", &ok_a);
+  const int b = qEnvironmentVariableIntValue("RUX_MATCHES_B", &ok_b);
+  if (ok_a && ok_b) {
+    shell->edit()->set_pair(a, b);
+  } else {
+    const auto &ids = shell->database()->frames()->pair().ids();
+    if (ids.size() >= 2) {
+      const std::size_t i = ids.size() * 3 / 10;
+      shell->edit()->set_pair(ids[i], ids[std::min(i + 1, ids.size() - 1)]);
+    }
+  }
+  settle(); // images and clouds
+  const MatchCanvas *c = shell->edit()->images()->canvas();
+  std::fprintf(stderr, "rediger-matches: canvas %dx%d\n", c->width(),
+               c->height());
+  return shell;
+}
+
+void log_matches(const char *page, PairImages *im) {
+  const MatchCounts c = im->matches().counts();
+  std::fprintf(stderr,
+               "%s: %d matches, %d usable, %d inliers, %d manual, %d excluded "
+               "— \"%s\"\n",
+               page, c.total, c.usable, c.inliers, c.manual, c.excluded,
+               qPrintable(im->status_text()));
+}
+
+/// Review gap 2: a Find started before "Byt A og B" lands on a pair no
+/// longer shown, and must be dropped — never colour the swapped pair.
+void check_swap_drops_find(AppShell *shell) {
+  EditWorkspace *ed = shell->edit();
+  PairImages *im = ed->images();
+  const int a = ed->a(), b = ed->b();
+  im->find_matches(); // off-thread; its result arrives after the swap
+  ed->set_pair(b, a);
+  settle();
+  const MatchCounts c = im->matches().counts();
+  std::fprintf(stderr,
+               "rediger-matches: Find, then Byt A og B: %d matches on %d/%d "
+               "(searched=%d) — \"%s\"\n",
+               c.total, ed->a(), ed->b(), c.searched ? 1 : 0,
+               qPrintable(im->status_text()));
+  if (c.total != 0 || c.searched)
+    match_page_failed("a Find for the old pair landed on the swapped pair");
+  ed->set_pair(a, b); // back; a new pair again, so nothing carries over
+  settle();
+}
+
+/// Review gap 1, on a scratch copy of the project (never the shot's): A
+/// with its depth, pose or colour NULLed makes Find match say so in
+/// Danish. The copy is a consistent snapshot (VACUUM INTO also takes what
+/// the shell's connection still holds in the WAL).
+void check_missing_frame_data(const PageContext &ctx, int a, int b) {
+  if (ctx.project_path.isEmpty() || a < 0 || b < 0)
+    return;
+  QTemporaryDir dir;
+  const QString copy = dir.filePath("missing.rux");
+  const struct {
+    const char *column;
+    FrameProblem problem;
+  } cases[] = {{"depth", FrameProblem::no_depth},
+               {"transform", FrameProblem::no_pose},
+               {"color", FrameProblem::no_colour}};
+  for (const auto &k : cases) {
+    QFile::remove(copy);
+    sqlite3 *raw = nullptr;
+    bool ok = sqlite3_open_v2(ctx.project_path.toUtf8().constData(), &raw,
+                              SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK;
+    const std::string vacuum = "VACUUM INTO '" + copy.toStdString() + "';";
+    ok = ok && sqlite3_exec(raw, vacuum.c_str(), nullptr, nullptr, nullptr) ==
+                   SQLITE_OK;
+    sqlite3_close(raw);
+    raw = nullptr;
+    ok = ok && sqlite3_open(copy.toUtf8().constData(), &raw) == SQLITE_OK;
+    const std::string null =
+        std::string("UPDATE sensor_frames SET ") + k.column +
+        " = NULL WHERE node_id = " + std::to_string(a) + ";";
+    ok = ok &&
+         sqlite3_exec(raw, null.c_str(), nullptr, nullptr, nullptr) ==
+             SQLITE_OK &&
+         sqlite3_changes(raw) == 1;
+    sqlite3_close(raw);
+    if (!ok) {
+      match_page_failed("could not make the scratch copy");
+      return;
+    }
+    QString status;
+    {
+      ProjectSession session;
+      if (!session.open_blocking(copy)) {
+        match_page_failed("could not open the scratch copy");
+        return;
+      }
+      PairImages im(session); // never shown: the shot stays the real pair
+      im.set_pair(a, b, Slot::a);
+      im.find_matches();
+      settle();
+      status = im.status_text();
+    }
+    settle(); // the hidden editor's decodes have let go of the copy
+    const QString want =
+        QString::fromStdString(frame_problem_text(a, k.problem));
+    std::fprintf(stderr, "rediger-matches: A's %s NULL -> \"%s\"\n", k.column,
+                 qPrintable(status));
+    if (status != want)
+      match_page_failed("a frame without depth, pose or colour was not "
+                        "named in Danish");
+  }
+}
+} // namespace
+
+/// Find match, then Placér B fra match: inliers green, outliers red, B
+/// moved in the overlay. RUX_MATCHES_ICP=1 runs ICP-forfin after and logs
+/// it (the real-data check, reusex-xlg.2.7). First checks the review gaps:
+/// a Find dropped by Byt A og B, and the Danish missing-data messages.
+QWidget *make_rediger_matches(const PageContext &ctx) {
+  auto *shell = matches_shell(ctx);
+  PairImages *im = shell->edit()->images();
+  check_swap_drops_find(shell);
+  check_missing_frame_data(ctx, shell->edit()->a(), shell->edit()->b());
+  im->find_matches();
+  settle();
+  log_matches("rediger-matches found", im);
+  im->align_from_matches();
+  settle();
+  log_matches("rediger-matches aligned", im);
+  const ManualOffset o = shell->edit()->overlay()->offset();
+  std::fprintf(stderr,
+               "rediger-matches: B at x=%.4f y=%.4f z=%.4f yaw=%.3f "
+               "pitch=%.3f roll=%.3f (moved %.1f cm, %.2f deg)\n",
+               o.x, o.y, o.z, o.yaw_deg, o.pitch_deg, o.roll_deg,
+               100.0 * std::sqrt(o.x * o.x + o.y * o.y + o.z * o.z),
+               rotation_angle_deg(shell->edit()->overlay()->delta()));
+  if (qEnvironmentVariableIntValue("RUX_MATCHES_ICP") == 1) {
+    click_strip_button(shell, {"ICP-forfin"});
+    settle();
+    for (auto *l : shell->edit()->strip()->findChildren<QLabel *>("icpLine"))
+      std::fprintf(stderr, "rediger-matches: ICP \"%s\"\n",
+                   qPrintable(l->text()));
+    const ManualOffset &p = shell->edit()->overlay()->offset();
+    std::fprintf(stderr,
+                 "rediger-matches: after ICP x=%.4f y=%.4f z=%.4f yaw=%.3f\n",
+                 p.x, p.y, p.z, p.yaw_deg);
+    // B left the fit's placement: the fit status must not still claim it.
+    const QString status = im->status_text();
+    std::fprintf(stderr, "rediger-matches: fit status after ICP \"%s\"\n",
+                 qPrintable(status));
+    if (!(p.x == o.x && p.y == o.y && p.z == o.z && p.yaw_deg == o.yaw_deg) &&
+        status.startsWith("Fra matches"))
+      match_page_failed("the fit status still claims B after ICP moved it");
+  }
+  return shell;
+}
+
+/// The tightest Rediger layout of normal use, on a read-only project: the
+/// staged edits' banner (with its refused save), the match editor after
+/// Find match and Placér B fra match, an ICP-forfin result and the
+/// read-only note all on screen. The canvas guards must hold here.
+QWidget *make_rediger_matches_readonly(const PageContext &ctx) {
+  auto *shell = matches_shell(ctx, Open::read_only);
+  PairImages *im = shell->edit()->images();
+  im->find_matches();
+  settle();
+  im->align_from_matches();
+  settle();
+  log_matches("rediger-matches-readonly aligned", im);
+  click_strip_button(shell, {"ICP-forfin"});
+  settle();
+  for (auto *l : shell->edit()->strip()->findChildren<QLabel *>("icpLine"))
+    std::fprintf(stderr, "rediger-matches-readonly: ICP \"%s\"\n",
+                 qPrintable(l->text()));
+  for (auto *l : shell->edit()->strip()->findChildren<QLabel *>("pairNote"))
+    std::fprintf(stderr, "rediger-matches-readonly: note \"%s\"\n",
+                 qPrintable(l->text()));
+  shell->edit()->save_edits(); // refused: the banner says why
+  settle();
+  return shell;
+}
+
+/// After align: two lines excluded, one manual match added through the
+/// real click path (lift_pixel off-thread), a region drawn in A, Område on.
+QWidget *make_rediger_matches_edit(const PageContext &ctx) {
+  auto *shell = matches_shell(ctx);
+  PairImages *im = shell->edit()->images();
+  im->find_matches();
+  settle();
+  // A toggle while a Find runs would land on lines the Find then replaces:
+  // it is refused with the busy note instead of being lost.
+  if (!im->matches().lines().empty()) {
+    im->find_matches();
+    im->toggle_line(0);
+    const QString busy = im->status_text();
+    std::fprintf(stderr, "rediger-matches-edit: toggle during Find -> \"%s\"\n",
+                 qPrintable(busy));
+    if (busy != "Vent — finder match …")
+      match_page_failed("a toggle during Find was not refused");
+    settle();
+  }
+  im->align_from_matches();
+  settle();
+  const auto &lines = im->matches().lines();
+  for (int i = 0; i < std::min<int>(2, static_cast<int>(lines.size())); ++i)
+    im->toggle_line(i);
+  // A manual match: the first enabled keypoint pair with depth, re-lifted
+  // by click. Copied out first: the add reallocates the set's vectors.
+  std::optional<std::pair<MatchPoint, MatchPoint>> target;
+  for (const MatchLine &l : lines) {
+    const MatchPoint pa =
+        im->matches().keypoints(MatchSide::a)[static_cast<std::size_t>(l.a)];
+    const MatchPoint pb =
+        im->matches().keypoints(MatchSide::b)[static_cast<std::size_t>(l.b)];
+    if (!l.excluded && pa.xyz && pb.xyz) {
+      target = std::pair{pa, pb};
+      break;
+    }
+  }
+  if (target) {
+    im->set_mode(MatchMode::add);
+    im->pick(MatchSide::a, target->first.u + 3.0f, target->first.v + 3.0f);
+    settle();
+    im->pick(MatchSide::b, target->second.u + 3.0f, target->second.v + 3.0f);
+    settle();
+  }
+  const QSize s = im->canvas()->image_size(MatchSide::a);
+  im->set_region(MatchSide::a, PixelBox{s.width() / 8, s.height() / 4,
+                                        s.width() / 2, s.height() / 2});
+  im->set_mode(MatchMode::region);
+  log_matches("rediger-matches-edit", im);
+
+  if (im->matches().counts().manual != 1)
+    match_page_failed("the manual match was not added");
+  return shell;
+}
+
 namespace {
 /// One left-button drag on the overlay's interactor, in render-window
 /// pixels (VTK's y is up), the way a mouse drives the box widget.
@@ -437,7 +724,7 @@ void log_offset(const char *what, const ManualOffset &o) {
 
 /// The box widget driven by synthesized mouse events (needs --gl): a drag
 /// of the centre handle (translate), then a drag on a face (rotate). Logs
-/// the resulting ΔT; the shot shows the fields that followed the widget.
+/// the resulting ΔT; the shot shows the read-out that followed the widget.
 QWidget *make_rediger_drag(const PageContext &ctx) {
   auto *shell = make_pg(ctx);
   shell->show();
@@ -482,6 +769,122 @@ QWidget *make_rediger_drag(const PageContext &ctx) {
   vtk_drag(iren, f[0], f[1], f[0], f[1] + step);
   QApplication::processEvents();
   log_offset("face dragged up", ov->offset());
+  ov->view()->request_render();
+  return shell;
+}
+
+namespace {
+/// One left-button drag sent to @p w as Qt mouse events (logical px), the
+/// way a real mouse reaches QVTKOpenGLNativeWidget — its interactor adapter
+/// and HiDPI mapping are part of the path, unlike vtk_drag.
+void qt_drag(QWidget *w, QPointF from, QPointF to,
+             const std::function<void()> &after_press = {}) {
+  const auto send = [w](QEvent::Type type, QPointF p, Qt::MouseButton b,
+                        Qt::MouseButtons held) {
+    QMouseEvent e(type, p, w->mapToGlobal(p), b, held, Qt::NoModifier);
+    QApplication::sendEvent(w, &e);
+  };
+  send(QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton);
+  send(QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
+  if (after_press)
+    after_press();
+  constexpr int kSteps = 8;
+  for (int i = 1; i <= kSteps; ++i)
+    send(QEvent::MouseMove, from + (to - from) * (double(i) / kSteps),
+         Qt::NoButton, Qt::LeftButton);
+  send(QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton);
+  QApplication::processEvents();
+}
+
+const char *box_state_name(int s) {
+  // vtkBoxRepresentation::InteractionStateType
+  static const char *names[] = {"Outside",  "MoveF0", "MoveF1", "MoveF2",
+                                "MoveF3",   "MoveF4", "MoveF5", "Translating",
+                                "Rotating", "Scaling"};
+  return s >= 0 && s < 10 ? names[s] : "none";
+}
+} // namespace
+
+/// Drag B's centre handle with Qt mouse events (needs --gl), once exactly
+/// on the handle and once 0.7 handle radii beside it (a realistic aim).
+/// Logs dpr, sizes, the handle radius, the state at the press and the ΔT.
+/// Fails the shot (DRAG NOT TRANSLATED) when the page cannot run (no GL
+/// widget, a cloud missing, no box), when the handle is smaller than
+/// 0.8 x --space-2 logical px or changes size by more than 0.5 px when the
+/// camera dollies 2x, or when either drag does not move B by >= 1 cm
+/// without turning it. Shoot with --gl --scale 1 and --scale 2.
+QWidget *make_rediger_drag_qt(const PageContext &ctx) {
+  auto *shell = make_pg(ctx);
+  shell->show();
+  settle();
+  const auto fail = [](const char *why) {
+    std::fprintf(stderr, "rux-qt-gallery: ERROR DRAG NOT TRANSLATED: %s\n",
+                 why);
+    report_page_failure();
+  };
+  PairOverlay *ov = shell->edit()->overlay();
+  auto *gl = ov->view()->findChild<QVTKOpenGLNativeWidget *>();
+  const auto centre = ov->box_centre_px();
+  if (!gl || !ov->ready() || !centre) {
+    fail(!gl            ? "rediger-drag-qt needs --gl (no GL widget)"
+         : !ov->ready() ? "rediger-drag-qt: A's and B's clouds did not load"
+                        : "rediger-drag-qt: the overlay has no box widget");
+    return shell;
+  }
+  const int *win = gl->renderWindow()->GetSize();
+  const double handle = ov->handle_radius_px();
+  std::fprintf(stderr,
+               "rediger-drag-qt: dpr view=%.2f gl=%.2f gl-size=%dx%d "
+               "window=%dx%d handle=%.1f px centre=(%.1f,%.1f)\n",
+               ov->view()->devicePixelRatioF(), gl->effectiveDevicePixelRatio(),
+               gl->width(), gl->height(), win[0], win[1], handle, centre->x(),
+               centre->y());
+  // A grip that a hand can hit: VTK's own sizing gave 2.2 px at dpr 2.
+  const double min_handle = 0.8 * theme().px("--space-2");
+  if (handle < min_handle) {
+    std::fprintf(stderr, "rediger-drag-qt: handle %.1f px < %.1f px\n", handle,
+                 min_handle);
+    fail("the centre handle is too small to hit");
+  }
+  // box_centre_px() is in the render window's logical coordinates, i.e.
+  // the GL widget's (it fills the canvas).
+  const QPointF origin = *centre;
+  const double step = 2.0 * theme().px("--space-7");
+  bool missed = false;
+  for (const double aim : {0.0, 0.7 * handle}) {
+    ov->reset_offset();
+    QApplication::processEvents();
+    const QPointF from = origin + QPointF(aim, 0.0);
+    int state = -1;
+    qt_drag(gl, from, from + QPointF(step, 0.0),
+            [&] { state = ov->box_state(); });
+    const ManualOffset &o = ov->offset();
+    const double moved = std::sqrt(o.x * o.x + o.y * o.y + o.z * o.z);
+    const double turned = rotation_angle_deg(ov->delta());
+    std::fprintf(stderr,
+                 "rediger-drag-qt: aim +%.1f px state=%s -> moved %.4f m "
+                 "turned %.3f deg (x=%.4f y=%.4f z=%.4f)\n",
+                 aim, box_state_name(state), moved, turned, o.x, o.y, o.z);
+    // Both aims must grab the translate grip.
+    if (moved < 0.01 || turned > 0.5)
+      missed = true;
+  }
+  if (missed)
+    fail("a drag on the centre handle did not move B");
+  // The grip keeps its screen size when the camera moves in.
+  ov->reset_offset();
+  vtkRenderer *r = ov->view()->renderer();
+  r->GetActiveCamera()->Dolly(2.0);
+  r->ResetCameraClippingRange();
+  gl->renderWindow()->Render();
+  const double dollied = ov->handle_radius_px();
+  std::fprintf(stderr,
+               "rediger-drag-qt: dolly 2x -> handle %.1f px (was %.1f)\n",
+               dollied, handle);
+  if (std::abs(dollied - handle) > 0.5)
+    fail("the centre handle changed size when the camera dollied");
+  r->GetActiveCamera()->Dolly(0.5);
+  r->ResetCameraClippingRange();
   ov->view()->request_render();
   return shell;
 }
@@ -1333,15 +1736,36 @@ void register_shell_pages() {
   register_page({"rediger-drag",
                  "Rediger: boksen trukket med musen (kræver --gl)",
                  make_rediger_drag});
+  register_page({"rediger-drag-qt",
+                 "Rediger: midterhåndtaget trukket med Qt-musehændelser "
+                 "(kræver --gl)",
+                 make_rediger_drag_qt});
   register_page({"rediger-offset",
                  "Rediger: B flyttet 20 cm i x og drejet 5° i 3D-overlayet",
                  make_rediger_offset});
+  register_page({"rediger-rgb",
+                 "Rediger: 3D-overlayet i billedernes egne farver (RGB)",
+                 make_rediger_rgb});
+  register_page({"rediger-tint",
+                 "Rediger: 3D-overlayet med A og B i hver sin farve (Tint)",
+                 make_rediger_tint});
   register_page({"rediger-icp",
                  "Rediger: B flyttet i hånden, så ICP-forfin derfra",
                  make_rediger_icp});
   register_page({"rediger-icp-moved",
                  "Rediger: B flyttet efter ICP — resultatet gælder ikke mere",
                  make_rediger_icp_moved});
+  register_page({"rediger-matches",
+                 "Rediger: Find match og Placér B fra match — inliers og "
+                 "outliers, B flyttet",
+                 make_rediger_matches});
+  register_page({"rediger-matches-readonly",
+                 "Rediger: skrivebeskyttet projekt med ventende kanter, "
+                 "match, Placér B og ICP-forfin — den trangeste højre kolonne",
+                 make_rediger_matches_readonly});
+  register_page({"rediger-matches-edit",
+                 "Rediger: match udeladt, et manuelt match og et område i A",
+                 make_rediger_matches_edit});
   register_page(
       {"rediger-xz", "Rediger: grafen i opstalt, set fra −y", make_rediger_xz});
   register_page(

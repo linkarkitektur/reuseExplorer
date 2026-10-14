@@ -17,6 +17,8 @@
 
 #include <opencv2/core.hpp>
 
+#include <sqlite3.h>
+
 #include "../../support/temp_path.hpp"
 
 #include <Eigen/Core>
@@ -27,6 +29,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 
 using reusex::test_support::TempPath;
 
@@ -286,4 +289,113 @@ TEST_CASE("FrameWorldPoints_NoDepth_Throws", "[slam][icp]") {
   }
   reusex::ProjectDB db(project.path, /*readOnly=*/true);
   CHECK_THROWS_AS(reusex::slam::frame_world_points(db, 1), std::runtime_error);
+}
+
+// ---------------------------------------------------------------------------
+// frame_world_colored_points (reusex-xlg.10): the overlay's RGB mode.
+
+namespace {
+
+/// A smooth colour gradient (JPEG keeps it close; the tests compare with the
+/// decoded stored image anyway): B follows u, G follows v, R is constant.
+cv::Mat gradient_color(int w, int h) {
+  cv::Mat img(h, w, CV_8UC3);
+  for (int v = 0; v < h; ++v)
+    for (int u = 0; u < w; ++u)
+      img.at<cv::Vec3b>(v, u) =
+          cv::Vec3b(static_cast<uint8_t>(u * 255 / (w - 1)),
+                    static_cast<uint8_t>(v * 255 / (h - 1)), 200);
+  return img;
+}
+
+void exec_raw(const std::string &db_path, const std::string &sql) {
+  sqlite3 *raw = nullptr;
+  REQUIRE(sqlite3_open(db_path.c_str(), &raw) == SQLITE_OK);
+  char *err = nullptr;
+  const int rc = sqlite3_exec(raw, sql.c_str(), nullptr, nullptr, &err);
+  const std::string message = err ? err : "";
+  sqlite3_free(err);
+  sqlite3_close(raw);
+  INFO(message);
+  REQUIRE(rc == SQLITE_OK);
+}
+
+/// The RGB the stored (decoded, BGR) image holds at (u, v).
+std::array<uint8_t, 3> stored_rgb(const cv::Mat &bgr, int u, int v) {
+  const cv::Vec3b p = bgr.at<cv::Vec3b>(v, u);
+  return {p[2], p[1], p[0]};
+}
+
+} // namespace
+
+TEST_CASE("FrameWorldColoredPoints_ColourIsTheSourcePixel", "[slam][icp]") {
+  const TempPath project("frame_world_colored_points");
+  {
+    reusex::ProjectDB db(project.path, /*readOnly=*/false);
+    db.save_sensor_frame(1, gradient_color(kW, kH), flat_depth(1000),
+                         full_confidence(), identity_pose(), make_intr(), 0.0);
+  }
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  const auto cloud = reusex::slam::frame_world_colored_points(db, 1);
+  const auto plain = reusex::slam::frame_world_points(db, 1);
+  // Same sampling as ICP: the points are frame_world_points', 1:1.
+  REQUIRE(cloud.points == plain);
+  REQUIRE(cloud.colors.size() == cloud.points.size());
+
+  const cv::Mat stored = db.sensor_frame_image(1);
+  REQUIRE(stored.cols == kW);
+  // pixel_step 4 over 160x120: raster order, 40 samples a row.
+  for (std::size_t i = 0; i < cloud.points.size(); i += 37) {
+    const int u = static_cast<int>(i % 40) * 4;
+    const int v = static_cast<int>(i / 40) * 4;
+    INFO("i=" << i << " u=" << u << " v=" << v);
+    CHECK(cloud.colors[i] == stored_rgb(stored, u, v));
+  }
+  // The gradient really varies, so a wrong pixel would show.
+  CHECK(cloud.colors.front() != cloud.colors.back());
+}
+
+TEST_CASE("FrameWorldColoredPoints_HalfResolutionDepth_ScalesToColour",
+          "[slam][icp]") {
+  // iPad-style capture: depth at half the colour resolution; intrinsics at
+  // the colour resolution. Depth pixel (u, v) is colour pixel (2u, 2v).
+  const TempPath project("frame_world_colored_points_halfres");
+  {
+    reusex::ProjectDB db(project.path, /*readOnly=*/false);
+    db.save_sensor_frame(1, gradient_color(kW, kH),
+                         cv::Mat(kH / 2, kW / 2, CV_16UC1, cv::Scalar(1000)),
+                         cv::Mat(kH / 2, kW / 2, CV_8UC1, cv::Scalar(255)),
+                         identity_pose(), make_intr(), 0.0);
+  }
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  const auto cloud = reusex::slam::frame_world_colored_points(db, 1);
+  // 80x60 depth, step 4: 20 x 15 samples.
+  REQUIRE(cloud.points.size() == 300);
+  REQUIRE(cloud.colors.size() == 300);
+  const cv::Mat stored = db.sensor_frame_image(1);
+  for (std::size_t i = 0; i < cloud.points.size(); i += 7) {
+    const int u = static_cast<int>(i % 20) * 4;
+    const int v = static_cast<int>(i / 20) * 4;
+    INFO("i=" << i << " depth u=" << u << " v=" << v);
+    CHECK(cloud.colors[i] == stored_rgb(stored, 2 * u, 2 * v));
+  }
+  // The far corner samples the far half of the colour image, not its
+  // top-left quarter.
+  CHECK(cloud.colors.back() == stored_rgb(stored, 2 * 76, 2 * 56));
+}
+
+TEST_CASE("FrameWorldColoredPoints_NoColourImage_KeepsPointsWithoutColours",
+          "[slam][icp]") {
+  const TempPath project("frame_world_colored_points_nocolor");
+  {
+    reusex::ProjectDB db(project.path, /*readOnly=*/false);
+    db.save_sensor_frame(1, dummy_color(), flat_depth(1000), full_confidence(),
+                         identity_pose(), make_intr(), 0.0);
+  }
+  exec_raw(project.path.string(),
+           "UPDATE sensor_frames SET color = NULL WHERE node_id = 1;");
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  const auto cloud = reusex::slam::frame_world_colored_points(db, 1);
+  CHECK(cloud.points.size() == 1200);
+  CHECK(cloud.colors.empty()); // the caller falls back to a tint
 }

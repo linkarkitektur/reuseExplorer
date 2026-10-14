@@ -108,6 +108,18 @@ bool is_text_field(const QWidget *w) {
 
 } // namespace
 
+QVector<QRgb> depth_colour_table() {
+  // Far = a dim tint over the canvas, near = the chrome's light ink. Index 0
+  // (no return) is transparent, so the canvas shows through.
+  const Theme &t = theme();
+  const QColor canvas = t.color("--color-canvas");
+  const QColor ink = t.color("--color-on-chrome");
+  QVector<QRgb> table(256, kNoData);
+  for (int i = 1; i < 256; ++i)
+    table[i] = mix(canvas, ink, 0.12 + 0.88 * (i - 1) / 254.0);
+  return table;
+}
+
 // ---------------------------------------------------------------- ImagePane --
 
 ImagePane::ImagePane(QWidget *parent) : QWidget(parent) {
@@ -128,13 +140,7 @@ QSize ImagePane::sizeHint() const {
 
 void ImagePane::rebuild_tables() {
   const Theme &t = theme();
-  // Depth: far = a dim tint over the canvas, near = the chrome's light ink.
-  // Index 0 (no return) is transparent, so the canvas shows through.
-  const QColor canvas = t.color("--color-canvas");
-  const QColor ink = t.color("--color-on-chrome");
-  depth_table_.assign(256, kNoData);
-  for (int i = 1; i < 256; ++i)
-    depth_table_[i] = mix(canvas, ink, 0.12 + 0.88 * (i - 1) / 254.0);
+  depth_table_ = depth_colour_table();
   // ARKit confidence low / medium / high.
   conf_levels_table_.assign(256, kNoData);
   conf_levels_table_[1] = t.color("--color-status-failed").rgb();

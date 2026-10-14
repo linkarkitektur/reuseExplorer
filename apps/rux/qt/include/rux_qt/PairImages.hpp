@@ -3,23 +3,39 @@
 
 #pragma once
 
-// Rediger's pair images (spec §5.2): A | B side by side, colour or depth,
-// decoded off the GUI thread by its own FrameImageLoader (Oversigt keeps
-// its own cache; the two pages never wait on each other). A side whose
-// slot is empty says which click fills it; a decode that lands after A or
-// B moved on is dropped.
+// Rediger's pair images as the match editor (reusex-xlg.2.5): A | B on one
+// MatchCanvas (colour or depth, decoded off the GUI thread by its own
+// FrameImageLoader), and a toolbar — Find match (ORB + ratio test,
+// slam::match_frame_pair), the Vælg / Tilføj / Område modes, Ryd område,
+// Placér B fra match (slam::rigid_from_matches on the enabled matches with
+// depth at both ends) — and one status line. Find, a click's lift and the
+// fit run on detached threads with their own read-only ProjectDB; each
+// first checks the frames it needs (colour, depth, pose) so the status can
+// name the missing piece in Danish ("billede 2241 har ingen dybde"); the
+// library's English error is only the status line's tooltip. A result for
+// a pair no longer shown is dropped (generation). A different pair clears
+// the matches (C4). A fit is handed out as align_ready(world_delta);
+// EditWorkspace places B exactly as it places ICP's result and answers
+// align_applied().
 
 #include <rux_qt/FrameBrowser.hpp>
 #include <rux_qt/graph_view.hpp>
+#include <rux_qt/match_editor.hpp>
+#include <rux_qt/pair_alignment.hpp>
 
 #include <QWidget>
 
+#include <memory>
+
 class QButtonGroup;
-class QLabel;
+class QPushButton;
+class QShortcut;
 
 namespace rux::qt {
 
+class ElidedLabel;
 class FrameImageLoader;
+class MatchCanvas;
 class ProjectSession;
 
 class PairImages : public QWidget {
@@ -27,29 +43,96 @@ class PairImages : public QWidget {
     public:
   explicit PairImages(ProjectSession &session, QWidget *parent = nullptr);
   /// A and B (-1 = empty) and the slot the next plain click fills, which
-  /// an empty side's hint names.
+  /// an empty side's hint names. A different pair clears the matches.
   void set_pair(int a, int b, Slot next);
   void set_layer(FrameLayer layer);
   FrameLayer layer() const { return layer_; }
-  /// The Farve / Dybde switch, for the pane header (it takes no row of the
-  /// pane's own height, which the 3D overlay below needs).
+  /// The Farve / Dybde switch (floating in the canvas).
   QWidget *layer_switch() const { return layer_switch_; }
+  /// The Vælg / Tilføj / Område switch, for the pane header.
+  QWidget *mode_switch() const { return mode_switch_; }
+  /// Where Esc cancels a half-made match: focus anywhere inside @p scope
+  /// (EditWorkspace passes itself; default this widget).
+  void set_shortcut_scope(QWidget *scope);
+
+  void find_matches();
+  void align_from_matches();
+  void set_mode(MatchMode mode);
+  MatchMode mode() const { return mode_; }
+  /// A Tilføj click at colour pixel (u, v) of @p side: lifted off-thread,
+  /// then the first or second end of a manual match.
+  void pick(MatchSide side, float u, float v);
+  /// Esc: drops a half-made manual match.
+  void cancel_pick();
+  void toggle_line(int line);
+  void set_region(MatchSide side, PixelBox box);
+  void clear_regions();
+  /// Where EditWorkspace placed B on the last align_ready (the overlay's
+  /// ΔT), or nullopt when it could not.
+  void align_applied(const std::optional<rux::qt::Mat4> &placed_at);
+  /// B's placement changed to @p now (the overlay's ΔT): once B has left
+  /// the fit's placement (ICP-forfin, a drag), the fit status says so.
+  void b_moved(const std::optional<rux::qt::Mat4> &now);
+  const MatchSet &matches() const { return set_; }
+  MatchCanvas *canvas() const { return canvas_; }
+  QString status_text() const;
+
+    signals:
+  /// Placér B fra match fitted the current pair: @p world_delta is B's new
+  /// world-space offset (RigidFit::world_delta, the overlay's ΔT).
+  void align_ready(int a, int b, const rux::qt::Mat4 &world_delta);
 
     private:
+  enum class Busy { none, finding, lifting, aligning };
+  struct Found;
+  struct Lifted;
+  struct Fitted;
   void reload();
-  void sync();
+  /// Forget the pair's working state (matches, pick, note, views); work
+  /// still running describes the old state and is dropped (generation).
+  void restart();
+  void sync_images();
   void frame_ready(int id);
+  void found(std::shared_ptr<Found> r);
+  void lifted(std::shared_ptr<Lifted> r);
+  void fitted(std::shared_ptr<Fitted> r);
+  /// The status line's event: @p text (Danish) in @p tone; @p detail (the
+  /// library's English message, if any) only in its tooltip.
+  void note(const QString &text, const QString &tone,
+            const QString &detail = {});
+  void refresh();
+  bool pair_ok() const;
+  /// A click while find, lift or fit runs: says to wait; true if busy.
+  bool refuse_busy();
+
   ProjectSession &session_;
   FrameImageLoader *loader_ = nullptr;
-  ImagePane *pane_a_ = nullptr;
-  ImagePane *pane_b_ = nullptr;
-  QLabel *caption_a_ = nullptr;
-  QLabel *caption_b_ = nullptr;
+  MatchCanvas *canvas_ = nullptr;
   QButtonGroup *layers_ = nullptr;
   QWidget *layer_switch_ = nullptr;
+  QWidget *mode_switch_ = nullptr;
+  QButtonGroup *modes_ = nullptr;
+  QPushButton *find_ = nullptr;
+  QPushButton *align_ = nullptr;
+  QPushButton *clear_region_ = nullptr;
+  ElidedLabel *status_ = nullptr;
+  /// Esc for a half-made match with focus in the shortcut scope (the canvas
+  /// handles its own Esc too); enabled only while a pick waits.
+  QShortcut *escape_ = nullptr;
   FrameLayer layer_ = FrameLayer::color;
+  MatchMode mode_ = MatchMode::select;
+  MatchSet set_;
+  ManualPick pick_;
   int a_ = -1, b_ = -1;
   Slot next_ = Slot::a;
+  unsigned generation_ = 0; ///< bumped on every pair change / reload
+  Busy busy_ = Busy::none;
+  QString note_, tone_, detail_; ///< the last event; empty = the read-out
+  int last_inliers_ = 0;
+  double last_rms_ = 0.0;
+  /// B's ΔT right after Placér B fra match placed it; reset by restart()
+  /// and once B has moved off it.
+  std::optional<Mat4> placed_at_;
 };
 
 } // namespace rux::qt

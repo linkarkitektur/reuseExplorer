@@ -266,4 +266,15 @@ bool log_tail_accepts(int level, bool on_job_thread) {
   return true; // warn and above: any thread
 }
 
+std::array<int, 2> balanced_canvas_split(int total, int images_chrome,
+                                         int overlay_chrome) {
+  const int images_need = images_chrome + kMatchCanvasFloorPx;
+  const int overlay_need = overlay_chrome + kOverlayCanvasFloorPx;
+  const int spare = total - images_need - overlay_need;
+  // Any odd pixel goes to the images pane (the tighter of the two floors).
+  const int to_overlay = spare >= 0 ? spare / 2 : -((-spare + 1) / 2);
+  const int images = std::max(0, total - overlay_need - to_overlay);
+  return {images, std::max(0, total - images)};
+}
+
 } // namespace rux::qt

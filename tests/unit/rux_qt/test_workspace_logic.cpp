@@ -235,3 +235,33 @@ TEST_CASE("LogTailAccepts_WarnAndAboveFromAnyThread", "[rux_qt][log]") {
   CHECK(log_tail_accepts(4, false));
   CHECK(log_tail_accepts(5, false));
 }
+
+TEST_CASE("BalancedCanvasSplit_SharesTheSpareEvenlyOverBothFloors",
+          "[rux_qt][rediger]") {
+  // 44 px of toolbar on the images pane, 10 on the overlay's.
+  const auto s = balanced_canvas_split(560, 54, 10);
+  CHECK(s[0] + s[1] == 560);
+  const int images_canvas = s[0] - 54, overlay_canvas = s[1] - 10;
+  CHECK(images_canvas - kMatchCanvasFloorPx ==
+        overlay_canvas - kOverlayCanvasFloorPx);
+  CHECK(images_canvas == 223);
+}
+
+TEST_CASE("BalancedCanvasSplit_OddSpare_TheImagesPaneGetsThePixel",
+          "[rux_qt][rediger]") {
+  const auto s = balanced_canvas_split(515, 0, 0);
+  CHECK(s[0] == 200 + 33);
+  CHECK(s[1] == 250 + 32);
+}
+
+TEST_CASE("BalancedCanvasSplit_TooLittleRoom_SharesTheShortfall",
+          "[rux_qt][rediger]") {
+  const auto s = balanced_canvas_split(430, 0, 0);
+  CHECK(s[0] + s[1] == 430);
+  CHECK(s[0] == 190);
+  CHECK(s[1] == 240);
+  const auto z = balanced_canvas_split(20, 50, 50);
+  CHECK(z[0] >= 0);
+  CHECK(z[1] >= 0);
+  CHECK(z[0] + z[1] == 20);
+}

@@ -8,11 +8,14 @@
 // Exit codes: 0 ok, 2 bad command line, 3 a token or a bundled font family
 // was missing (the PNG is still written, with magenta where the token was), 4
 // project or page could not be opened, 5 the PNG could not be written, 6 a
-// layout regression (TOO WIDE, OVERLAY TOO SMALL, STRIP CLIPPED).
+// layout regression (TOO WIDE, OVERLAY TOO SMALL, MATCH CANVAS TOO SMALL,
+// STRIP CLIPPED) or a page's
+// own check (DRAG NOT TRANSLATED, MATCH EDIT FAILED).
 
 #include "demo_pages.hpp"
 
 #include <rux_qt/FrameImageLoader.hpp>
+#include <rux_qt/MatchCanvas.hpp>
 #include <rux_qt/PairOverlay.hpp>
 #include <rux_qt/Theme.hpp>
 #include <rux_qt/background.hpp>
@@ -43,6 +46,14 @@
 #include <memory>
 
 using namespace rux::qt;
+
+namespace rux::qt::gallery {
+namespace {
+bool g_page_failed = false;
+}
+void report_page_failure() { g_page_failed = true; }
+bool page_failed() { return g_page_failed; }
+} // namespace rux::qt::gallery
 
 namespace {
 
@@ -201,7 +212,7 @@ int main(int argc, char **argv) {
   // Rediger's 3D overlay is where B is moved by hand: with A and B loaded
   // its canvas must stay usable at the default 1440x900 (pending banner and
   // edge rows included).
-  constexpr int kMinOverlayCanvas = 250;
+  constexpr int kMinOverlayCanvas = rux::qt::kOverlayCanvasFloorPx;
   bool too_small = false;
   for (auto *o : host.findChildren<rux::qt::PairOverlay *>()) {
     const QWidget *canvas = o->findChild<QWidget *>("viewport");
@@ -216,6 +227,29 @@ int main(int argc, char **argv) {
                    "rux-qt-gallery: ERROR OVERLAY TOO SMALL: %d px tall, "
                    "needs %d\n",
                    canvas->height(), kMinOverlayCanvas);
+    }
+  }
+  // Rediger's match canvas: with A and B both shown, the images must be
+  // big enough to click a keypoint and draw a region in (reusex-xlg.2.5).
+  // EditWorkspace splits the images and the overlay from these same floors
+  // (balanced_canvas_split), so the two canvases stand equally far over
+  // them; the canvases' own minimums stay small so the window's minimum
+  // height does not grow on smaller screens. rediger-matches-readonly is
+  // the tightest default (read-only note, ICP line and banner all shown).
+  constexpr int kMinMatchCanvas = rux::qt::kMatchCanvasFloorPx;
+  for (auto *c : host.findChildren<rux::qt::MatchCanvas *>()) {
+    if (!c->isVisible() || c->image_size(rux::qt::MatchSide::a).isEmpty() ||
+        c->image_size(rux::qt::MatchSide::b).isEmpty())
+      continue;
+    std::fprintf(stderr, "rux-qt-gallery: match canvas %dx%d\n", c->width(),
+                 c->height());
+    if (args.width >= 1440 && args.height >= 900 &&
+        c->height() < kMinMatchCanvas) {
+      too_small = true;
+      std::fprintf(stderr,
+                   "rux-qt-gallery: ERROR MATCH CANVAS TOO SMALL: %d px tall, "
+                   "needs %d\n",
+                   c->height(), kMinMatchCanvas);
     }
   }
   // Rediger's pair strip: every edge row's actions are fully visible (the
@@ -295,7 +329,7 @@ int main(int argc, char **argv) {
                  args.screenshot.c_str());
     return 5;
   }
-  if (too_wide || too_small || strip_cut)
+  if (too_wide || too_small || strip_cut || gallery::page_failed())
     return 6;
   if (!missing.isEmpty() || !fonts.isEmpty()) {
     for (const QString &m : missing)

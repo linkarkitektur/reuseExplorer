@@ -50,6 +50,10 @@ class PropertyList;
 /// Which plane an image pane shows under the label overlay.
 enum class FrameLayer { color = 0, depth, confidence };
 
+/// The depth plane's colour table: index 0 (no return) transparent, then
+/// far = a dim tint over --color-canvas up to near = --color-on-chrome.
+QVector<QRgb> depth_colour_table();
+
 /// One image: the chosen plane fitted on the near-black canvas, the label
 /// overlay on top, and a caption chip (layer, range).
 class ImagePane : public QWidget {

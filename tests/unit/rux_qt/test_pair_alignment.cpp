@@ -14,6 +14,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 
 using namespace rux::qt;
@@ -109,6 +110,39 @@ TEST_CASE("ThinPoints_KeepsAtMostTheCapEvenlySpread", "[rux_qt][pair]") {
   CHECK(thin_points(pts, 5000).size() == 1000);
   CHECK(thin_points({}, 10).empty());
   CHECK(thin_points(pts, 0).empty());
+}
+
+TEST_CASE("ThinColours_StayIndexAlignedWithThinPoints", "[rux_qt][pair]") {
+  // reusex-xlg.10: RGB mode thins points and colours with the same cap, so
+  // colour i must still belong to point i afterwards.
+  CloudPoints pts;
+  CloudColours cols;
+  for (int i = 0; i < 1000; ++i) {
+    pts.push_back({static_cast<float>(i), 0.0f, 0.0f});
+    cols.push_back({static_cast<std::uint8_t>(i % 256),
+                    static_cast<std::uint8_t>(i / 256), 0});
+  }
+  const CloudPoints few = thin_points(pts, 300);
+  const CloudColours few_cols = thin_colours(cols, 300);
+  REQUIRE(few_cols.size() == few.size());
+  for (std::size_t k = 0; k < few.size(); ++k) {
+    const int i = static_cast<int>(few[k][0]);
+    INFO(k);
+    CHECK(few_cols[k][0] == i % 256);
+    CHECK(few_cols[k][1] == i / 256);
+  }
+  CHECK(thin_colours(cols, 5000).size() == 1000);
+  CHECK(thin_colours({}, 10).empty());
+}
+
+TEST_CASE("OverlayColouring_KeysRoundTrip_UnknownIsTint", "[rux_qt][pair]") {
+  for (OverlayColouring c : {OverlayColouring::tint, OverlayColouring::rgb})
+    CHECK(parse_overlay_colouring(overlay_colouring_key(c)) == c);
+  CHECK(overlay_colouring_key(OverlayColouring::rgb) == "rgb");
+  CHECK(overlay_colouring_key(OverlayColouring::tint) == "tint");
+  // A stale or hand-edited QSettings value falls back to the tint.
+  CHECK(parse_overlay_colouring("") == OverlayColouring::tint);
+  CHECK(parse_overlay_colouring("RGB?") == OverlayColouring::tint);
 }
 
 TEST_CASE("Centroid_OfPoints_AndOfNone", "[rux_qt][pair]") {

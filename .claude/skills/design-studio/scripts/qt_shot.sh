@@ -185,12 +185,19 @@ for page in "${PAGES[@]}"; do
     log="$WORK/${page}-${theme}.log"
     args=(--page "$page" --theme "$theme" --size "$SIZE" --scale "$SCALE"
           --project "$copy" --screenshot "$png" "${STYLE[@]}")
+    rc=0
     if [[ $GL -eq 1 ]]; then
-      # xvfb-run exits 1 from its own teardown even on success: judge by the PNG.
-      env -u WAYLAND_DISPLAY QT_QPA_PLATFORM=xcb "${XVFB[@]}" "$GALLERY" "${args[@]}" --gl >"$log" 2>&1 || true
+      # xvfb-run exits 1 from its own teardown even on success: judge by the
+      # PNG, the log and the gallery's own failure code (6), never by 1.
+      env -u WAYLAND_DISPLAY QT_QPA_PLATFORM=xcb "${XVFB[@]}" "$GALLERY" "${args[@]}" --gl >"$log" 2>&1 || rc=$?
     else
-      env -u DISPLAY -u WAYLAND_DISPLAY QT_QPA_PLATFORM=offscreen "$GALLERY" "${args[@]}" >"$log" 2>&1 || true
+      env -u DISPLAY -u WAYLAND_DISPLAY QT_QPA_PLATFORM=offscreen "$GALLERY" "${args[@]}" >"$log" 2>&1 || rc=$?
     fi
+    # Every gallery guard and page check prints "ERROR <WORDS> TOO SMALL /
+    # FAILED / NOT SHOWN / ..." and exits 6; match the shape, so a new check
+    # is covered without editing this list.
+    guard_re='ERROR ([A-Z]+ )*(FAILED|NOT [A-Z]+|TOO [A-Z]+|CLIPPED)'
+
     if grep -q "MISSING" "$log"; then
       grep "MISSING" "$log" | sort -u >&2
       echo "qt_shot.sh: FAIL $png — missing tokens or fonts (magenta / fallback faces in the image)" >&2
@@ -199,9 +206,9 @@ for page in "${PAGES[@]}"; do
       cat "$log" >&2
       echo "qt_shot.sh: FAIL no PNG for $page/$theme" >&2
       status=1
-    elif grep -qE "TOO WIDE|OVERLAY TOO SMALL|STRIP CLIPPED" "$log"; then
-      grep -E "TOO WIDE|OVERLAY TOO SMALL|STRIP CLIPPED" "$log" >&2
-      echo "qt_shot.sh: FAIL $png — wider than the window, Rediger's 3D overlay squeezed, or its pair strip clipped" >&2
+    elif [[ $rc -eq 6 ]] || grep -qE "$guard_re|TOO WIDE|OVERLAY TOO SMALL|MATCH CANVAS TOO SMALL|STRIP CLIPPED|DRAG NOT TRANSLATED|MATCH EDIT FAILED|RGB NOT SHOWN" "$log"; then
+      grep -E "ERROR|TOO WIDE|TOO SMALL|CLIPPED|NOT TRANSLATED|FAILED|NOT SHOWN" "$log" >&2 || true
+      echo "qt_shot.sh: FAIL $png — a layout guard or the page's own check failed (gallery exit $rc): wider than the window, Rediger's 3D overlay or match canvas squeezed, its pair strip clipped, B's box handle not translating, the match editor's check (MATCH EDIT FAILED) or RGB not shown" >&2
       status=6
     else
       grep -E "ERROR" "$log" >&2 || true

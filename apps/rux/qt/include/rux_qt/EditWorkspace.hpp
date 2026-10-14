@@ -103,6 +103,7 @@ class EditWorkspace : public QWidget {
     protected:
   /// Show what is wanted, and the overlay only with a complete pair.
   void sync_panes();
+  bool eventFilter(QObject *watched, QEvent *event) override;
   bool pair_complete_ = false;
 
     private:
@@ -112,6 +113,10 @@ class EditWorkspace : public QWidget {
   void sync_pair_header();
   void restore_layout();
   void save_layout() const;
+  /// Images over overlay so both canvases stand equally far over their
+  /// floors (balanced_canvas_split), the panes' chrome measured as laid out.
+  void balance_right_split();
+  void schedule_right_split();
   void on_session_state();
   void sync_run_buttons();
 
@@ -120,8 +125,13 @@ class EditWorkspace : public QWidget {
   bool persist_ = true;
   QSplitter *main_ = nullptr;
   QSplitter *left_ = nullptr;
+  QWidget *left_column_ = nullptr; ///< the pending banner over left_
   QSplitter *right_ = nullptr;
   QWidget *right_column_ = nullptr;
+  /// The user dragged the images/overlay handle, or a stored split was
+  /// restored: the split is theirs, never rebalanced.
+  bool right_split_chosen_ = false;
+  bool right_split_queued_ = false;
   std::array<PaneFrame *, kEditPaneCount> panes_{};
   std::array<bool, kEditPaneCount> wanted_{true, true, true, true};
   std::array<QAction *, kEditPaneCount> pane_actions_{};

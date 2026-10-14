@@ -14,13 +14,14 @@
 #include <reusex/visualize/scene.hpp>
 
 #include <QApplication>
-#include <QDoubleSpinBox>
+#include <QButtonGroup>
 #include <QFrame>
 #include <QGridLayout>
+#include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
-#include <QLocale>
 #include <QPointer>
+#include <QPushButton>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
 
@@ -28,18 +29,23 @@
 #include <vtkBoxRepresentation.h>
 #include <vtkBoxWidget2.h>
 #include <vtkCallbackCommand.h>
+#include <vtkCamera.h>
 #include <vtkCellArray.h>
 #include <vtkCommand.h>
 #include <vtkMatrix4x4.h>
 #include <vtkNew.h>
+#include <vtkPointData.h>
 #include <vtkPoints.h>
 #include <vtkPolyData.h>
 #include <vtkPolyDataMapper.h>
 #include <vtkProperty.h>
+#include <vtkRenderWindow.h>
 #include <vtkRenderWindowInteractor.h>
 #include <vtkRenderer.h>
 #include <vtkSmartPointer.h>
+#include <vtkSphereSource.h>
 #include <vtkTransform.h>
+#include <vtkUnsignedCharArray.h>
 
 #include <cmath>
 #include <thread>
@@ -51,8 +57,12 @@ constexpr double kPointPx = 2.0; ///< logical pixels
 const char *const kTokenA = "--label-1";
 const char *const kTokenB = "--label-0";
 
-vtkSmartPointer<vtkActor> points_actor(const CloudPoints &pts, const QColor &c,
-                                       double point_px) {
+/// @p colours (index-aligned RGB, may be empty) ride along as the points'
+/// scalars, shown only while the mapper's scalar visibility is on (RGB
+/// mode); the actor colour @p c is the tint otherwise.
+vtkSmartPointer<vtkActor> points_actor(const CloudPoints &pts,
+                                       const CloudColours &colours,
+                                       const QColor &c, double point_px) {
   vtkNew<vtkPoints> p;
   p->SetNumberOfPoints(static_cast<vtkIdType>(pts.size()));
   vtkNew<vtkCellArray> verts;
@@ -64,8 +74,21 @@ vtkSmartPointer<vtkActor> points_actor(const CloudPoints &pts, const QColor &c,
   vtkNew<vtkPolyData> poly;
   poly->SetPoints(p);
   poly->SetVerts(verts);
+  if (!colours.empty() && colours.size() == pts.size()) {
+    vtkNew<vtkUnsignedCharArray> rgb;
+    rgb->SetName("rgb");
+    rgb->SetNumberOfComponents(3);
+    rgb->SetNumberOfTuples(static_cast<vtkIdType>(colours.size()));
+    for (vtkIdType i = 0; i < static_cast<vtkIdType>(colours.size()); ++i) {
+      const auto &q = colours[static_cast<std::size_t>(i)];
+      rgb->SetTypedTuple(i, q.data());
+    }
+    poly->GetPointData()->SetScalars(rgb);
+  }
   vtkNew<vtkPolyDataMapper> mapper;
   mapper->SetInputData(poly);
+  mapper->SetColorModeToDirectScalars();
+  mapper->ScalarVisibilityOff(); // the tint until apply_colouring()
   auto actor = vtkSmartPointer<vtkActor>::New();
   actor->SetMapper(mapper);
   actor->GetProperty()->SetColor(c.redF(), c.greenF(), c.blueF());
@@ -101,9 +124,49 @@ class RigidBoxRepresentation : public vtkBoxRepresentation {
       this->Handle[i]->PickableOff();
     }
   }
+  /// World radius of the centre (translate) handle.
+  double centre_handle_radius() const {
+    return this->HandleGeometry[6]->GetRadius();
+  }
+  const double *centre() const { return this->Points->GetPoint(14); }
+  /// Handle radius in LOGICAL pixels of @p canvas, converted to display
+  /// pixels with its device pixel ratio each time the handles are sized
+  /// (the window may move to another screen); 0 keeps VTK's own sizing.
+  void set_handle_logical_px(double px, QWidget *canvas) {
+    handle_px_ = px;
+    canvas_ = canvas;
+  }
 
     protected:
   RigidBoxRepresentation() = default;
+  void SizeHandles() override {
+    Superclass::SizeHandles();
+    vtkRenderer *r = this->Renderer;
+    if (handle_px_ <= 0.0 || !canvas_ || !r || !r->GetActiveCamera())
+      return;
+    const double display_px = handle_px_ * canvas_->devicePixelRatioF();
+    // The world length of display_px display pixels at the box centre.
+    double c[3];
+    this->Points->GetPoint(14, c);
+    r->SetWorldPoint(c[0], c[1], c[2], 1.0);
+    r->WorldToDisplay();
+    double d[3];
+    r->GetDisplayPoint(d);
+    r->SetDisplayPoint(d[0] + display_px, d[1], d[2]);
+    r->DisplayToWorld();
+    double w[4];
+    r->GetWorldPoint(w);
+    if (w[3] != 0.0)
+      for (int i = 0; i < 3; ++i)
+        w[i] /= w[3];
+    const double radius = std::sqrt((w[0] - c[0]) * (w[0] - c[0]) +
+                                    (w[1] - c[1]) * (w[1] - c[1]) +
+                                    (w[2] - c[2]) * (w[2] - c[2]));
+    for (int i = 0; i < 7; ++i)
+      this->HandleGeometry[i]->SetRadius(radius);
+  }
+  double handle_px_ = 0.0;
+  QPointer<QWidget> canvas_;
 };
 
 void on_box(vtkObject *caller, unsigned long, void *client, void *) {
@@ -123,6 +186,7 @@ void on_box(vtkObject *caller, unsigned long, void *client, void *) {
 struct PairOverlay::Clouds {
   unsigned generation = 0;
   CloudPoints a, b;
+  CloudColours a_rgb, b_rgb; ///< empty: that frame has no colour image
   Vec3 pivot{};
   QString error;
 };
@@ -131,6 +195,8 @@ struct PairOverlay::Vtk {
   vtkSmartPointer<vtkActor> a, b;
   vtkSmartPointer<vtkBoxWidget2> box;
   vtkSmartPointer<vtkCallbackCommand> observer;
+  /// Layer 1 above the clouds, sharing their camera: the box widget.
+  vtkSmartPointer<vtkRenderer> top;
   reusex::visualize::SceneBounds bounds; ///< both clouds, unmoved
 };
 
@@ -138,74 +204,51 @@ PairOverlay::PairOverlay(ProjectSession &session, bool interactive,
                          QWidget *parent)
     : QWidget(parent), session_(session), vtk_(std::make_unique<Vtk>()) {
   setObjectName("pairOverlay");
-  const Theme &t = theme();
   auto *v = new QVBoxLayout(this);
   v->setContentsMargins(0, 0, 0, 0);
   v->setSpacing(0);
   view_ = new SceneView(interactive);
   v->addWidget(view_, 1);
 
-  auto *fields = new QFrame;
-  fields->setObjectName("offsetFields");
-  auto *g = new QGridLayout(fields);
-  g->setContentsMargins(t.px("--space-3"), t.px("--space-2"), t.px("--space-3"),
-                        t.px("--space-2"));
-  g->setHorizontalSpacing(t.px("--space-2"));
-  g->setVerticalSpacing(t.px("--space-1"));
-  // Two rows of three — shift over turn — each label beside its field and
-  // the unit in the field, so the fields take two lines of the overlay's
-  // height, not four, and the pane never widens the window.
-  const char *labels[6] = {"X", "Y", "Z", "Drej", "Hæld", "Rul"};
-  const char *tips[6] = {"Flyt B langs verdens x-akse",
-                         "Flyt B langs verdens y-akse",
-                         "Flyt B langs verdens z-akse",
-                         "Drej B om lodret (z) gennem dens midtpunkt",
-                         "Hæld B om y-aksen gennem dens midtpunkt",
-                         "Rul B om x-aksen gennem dens midtpunkt"};
-  for (int i = 0; i < 6; ++i) {
-    auto *s = new QDoubleSpinBox;
-    s->setObjectName("offsetField");
-    s->setButtonSymbols(QAbstractSpinBox::NoButtons);
-    s->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    // Commit on Enter / focus out, not per keystroke: a per-keystroke
-    // valueChanged would reformat the very text being typed.
-    s->setKeyboardTracking(false);
-    s->setLocale(QLocale(QLocale::Danish, QLocale::Denmark));
-    if (i < 3) {
-      s->setRange(-kOffsetMaxM, kOffsetMaxM);
-      s->setDecimals(3);
-      s->setSingleStep(kNudgeM);
-      s->setSuffix(" m");
-    } else {
-      s->setRange(-180.0, 180.0);
-      s->setDecimals(2);
-      s->setSingleStep(kNudgeDeg);
-      s->setSuffix(" °");
-    }
-    s->setToolTip(tips[i]);
-    s->setMinimumWidth(t.px("--space-7") + t.px("--space-2"));
-    s->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    const int row = i / 3, col = (i % 3) * 2;
-    auto *label = new CapsLabel(labels[i], "fieldLabel");
-    label->setToolTip(tips[i]);
-    g->addWidget(label, row, col, Qt::AlignVCenter);
-    g->addWidget(s, row, col + 1);
-    g->setColumnStretch(col + 1, 1);
-    fields_[static_cast<std::size_t>(i)] = s;
-    connect(s, &QDoubleSpinBox::valueChanged, this, [this, i](double val) {
-      double *slot[6] = {&offset_.x,         &offset_.y,
-                         &offset_.z,         &offset_.yaw_deg,
-                         &offset_.pitch_deg, &offset_.roll_deg};
-      *slot[i] = val;
-      offset_ = normalized(offset_);
-      apply_offset(false);
-    });
-  }
-  // Shown in the pane header (status_label()), not under the fields.
+  // Shown in the pane header (status_label()); the overlay's whole height
+  // is canvas.
   status_ = new ElidedLabel(QString(), Qt::ElideRight);
   status_->setObjectName("statusText");
   status_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-  v->addWidget(fields);
+
+  // "Farve: Tint | RGB", floating in the canvas' top-right corner like the
+  // legend in its bottom-left: at 1440 px the pane header has no room for
+  // it beside the title, the status line and Nulstil (the status line was
+  // elided to nothing), so the tooltips carry the "Farve" caption.
+  auto *seg = new QFrame(view_);
+  seg->setObjectName("segmented");
+  auto *sl = new QHBoxLayout(seg);
+  sl->setContentsMargins(0, 0, 0, 0);
+  sl->setSpacing(0);
+  colour_group_ = new QButtonGroup(this);
+  const struct {
+    const char *text, *tip;
+  } modes[2] = {
+      {"Tint", "Farve: A og B i hver sin farve, så de er lette at skelne"},
+      {"RGB", "Farve: skyerne i billedernes egne farver (A og B ses i "
+              "forklaringen; et billede uden farvebillede beholder sin "
+              "farve)"}};
+  for (int i = 0; i < 2; ++i) {
+    auto *b = new QPushButton(NavItem::escape_mnemonic(modes[i].text));
+    b->setObjectName("segment");
+    b->setCheckable(true);
+    b->setCursor(Qt::PointingHandCursor);
+    b->setToolTip(modes[i].tip);
+    b->setProperty("position", i == 0 ? "first" : "last");
+    colour_group_->addButton(b, i);
+    sl->addWidget(b);
+  }
+  colour_group_->button(0)->setChecked(true);
+  colour_switch_ = seg;
+  place_legend();
+  connect(colour_group_, &QButtonGroup::idClicked, this, [this](int id) {
+    set_colouring(id == 1 ? OverlayColouring::rgb : OverlayColouring::tint);
+  });
 
   setFocusPolicy(Qt::StrongFocus);
   installEventFilter(this);
@@ -246,9 +289,16 @@ void PairOverlay::load() {
   if (vtk_->box)
     vtk_->box->Off();
   vtk_->box = nullptr;
+  if (vtk_->top) {
+    if (vtkRenderWindow *rw = vtk_->top->GetRenderWindow())
+      rw->RemoveRenderer(vtk_->top);
+    vtk_->top = nullptr;
+  }
   vtk_->a = vtk_->b = nullptr;
   delete legend_;
   legend_ = nullptr;
+  a_points_ = b_points_ = 0;
+  a_has_rgb_ = b_has_rgb_ = false;
   view_->clear_scene();
   apply_offset(false);
   if (!session_.is_open() || a_ < 0 || b_ < 0 || a_ == b_) {
@@ -266,10 +316,14 @@ void PairOverlay::load() {
     c->generation = gen;
     try {
       reusex::ProjectDB db(path, /*readOnly=*/true);
-      c->a = thin_points(reusex::slam::frame_world_points(db, a),
-                         kOverlayMaxPoints);
-      c->b = thin_points(reusex::slam::frame_world_points(db, b),
-                         kOverlayMaxPoints);
+      // Colours always come along, so the Tint | RGB switch never reloads;
+      // thinned with the same stride as their points.
+      auto ca = reusex::slam::frame_world_colored_points(db, a);
+      auto cb = reusex::slam::frame_world_colored_points(db, b);
+      c->a = thin_points(ca.points, kOverlayMaxPoints);
+      c->a_rgb = thin_colours(ca.colors, kOverlayMaxPoints);
+      c->b = thin_points(cb.points, kOverlayMaxPoints);
+      c->b_rgb = thin_colours(cb.colors, kOverlayMaxPoints);
       c->pivot = centroid(c->b);
     } catch (const std::exception &e) {
       c->error = QString::fromUtf8(e.what());
@@ -299,9 +353,13 @@ void PairOverlay::loaded(std::shared_ptr<Clouds> c) {
   // Okabe-Ito sky blue and orange: apart in hue and luminance, colour-blind
   // safe, and drawn for the near-black canvas in both themes.
   const double px = kPointPx * view_->devicePixelRatioF();
-  vtk_->a = points_actor(c->a, t.color(kTokenA), px);
-  vtk_->b = points_actor(c->b, t.color(kTokenB), px);
-  build_legend(c->a.size(), c->b.size());
+  vtk_->a = points_actor(c->a, c->a_rgb, t.color(kTokenA), px);
+  vtk_->b = points_actor(c->b, c->b_rgb, t.color(kTokenB), px);
+  a_points_ = c->a.size();
+  b_points_ = c->b.size();
+  a_has_rgb_ = !c->a_rgb.empty();
+  b_has_rgb_ = !c->b_rgb.empty();
+  apply_colouring(); // also builds the legend
   vtkRenderer *r = view_->renderer();
   r->AddActor(vtk_->a);
   r->AddActor(vtk_->b);
@@ -322,16 +380,68 @@ void PairOverlay::loaded(std::shared_ptr<Clouds> c) {
     rep->OutlineCursorWiresOff();
     rep->PlaceWidget(vtk_->b->GetBounds()); // untransformed B
     rep->hide_face_handles();
+    // The centre sphere is the only translate grip: --space-2 logical px
+    // radius on any screen, so a HiDPI display does not shrink it to a
+    // speck while the faces (rotate) stay easy to hit.
+    rep->set_handle_logical_px(t.px("--space-2"), view_);
     vtk_->box->SetRepresentation(rep);
     vtk_->observer = vtkSmartPointer<vtkCallbackCommand>::New();
     vtk_->observer->SetCallback(on_box);
     vtk_->observer->SetClientData(this);
     vtk_->box->AddObserver(vtkCommand::InteractionEvent, vtk_->observer);
+    // The box and its handles in a layer above the clouds, sharing the
+    // camera, so B's points never hide the grip (the centre sphere sits
+    // inside B's cloud, behind whatever surface faces the camera).
+    vtkRenderWindow *rw = r->GetRenderWindow();
+    vtk_->top = vtkSmartPointer<vtkRenderer>::New();
+    vtk_->top->SetLayer(1);
+    vtk_->top->InteractiveOff();
+    vtk_->top->SetActiveCamera(r->GetActiveCamera());
+    if (rw->GetNumberOfLayers() < 2)
+      rw->SetNumberOfLayers(2);
+    rw->AddRenderer(vtk_->top);
+    vtk_->box->SetCurrentRenderer(vtk_->top);
     vtk_->box->On();
   }
   view_->set_message({});
+  // The view's stacked layout raises the canvas it switches to above the
+  // floating Tint | RGB switch and the legend: raise them again (without
+  // this they stayed hidden until the next resize, e.g. on rediger-pair).
+  place_legend();
   ready_ = true;
   apply_offset(false);
+}
+
+void PairOverlay::set_colouring(OverlayColouring c) {
+  if (QAbstractButton *b =
+          colour_group_->button(c == OverlayColouring::rgb ? 1 : 0)) {
+    const QSignalBlocker block(colour_group_);
+    b->setChecked(true);
+  }
+  if (c == colouring_)
+    return;
+  colouring_ = c;
+  apply_colouring();
+  emit colouring_changed(c);
+}
+
+bool PairOverlay::shows_rgb_a() const {
+  return ready_ && colouring_ == OverlayColouring::rgb && a_has_rgb_;
+}
+bool PairOverlay::shows_rgb_b() const {
+  return ready_ && colouring_ == OverlayColouring::rgb && b_has_rgb_;
+}
+
+void PairOverlay::apply_colouring() {
+  const bool rgb = colouring_ == OverlayColouring::rgb;
+  if (vtk_->a)
+    vtk_->a->GetMapper()->SetScalarVisibility(rgb && a_has_rgb_);
+  if (vtk_->b)
+    vtk_->b->GetMapper()->SetScalarVisibility(rgb && b_has_rgb_);
+  if (vtk_->a || vtk_->b) {
+    build_legend();
+    view_->request_render();
+  }
 }
 
 void PairOverlay::frame_camera() {
@@ -352,15 +462,14 @@ void PairOverlay::set_offset(const ManualOffset &o) {
 void PairOverlay::widget_moved(const Mat4 &m) {
   const ManualOffset raw = offset_from_matrix(m, pivot_);
   offset_ = normalized(raw);
-  // A drag past the fields' range is clamped: put the box back where the
-  // clamped ΔT has it, so box, cloud and fields agree.
+  // A drag past ΔT's range is clamped: put the box back where the clamped
+  // ΔT has it, so the box and the cloud agree.
   const bool clamped =
       raw.x != offset_.x || raw.y != offset_.y || raw.z != offset_.z;
   apply_offset(/*from_widget=*/!clamped);
 }
 
 void PairOverlay::apply_offset(bool from_widget) {
-  sync_fields();
   if (vtk_->b) {
     vtkNew<vtkMatrix4x4> m;
     to_vtk(delta(), m);
@@ -379,6 +488,8 @@ void PairOverlay::apply_offset(bool from_widget) {
       QString::fromStdString(format_decimal_da(shift * 100.0, 1));
   const QString deg =
       QString::fromStdString(format_decimal_da(rotation_angle_deg(delta()), 1));
+  const QString grips =
+      "Træk kuglen i midten for at flytte B; træk en side for at dreje.\n";
   const QString keys = "Klik på lærredet, og flyt B med tasterne: ←/→ x · "
                        "↑/↓ y · PgUp/PgDn z · [ / ] drej · Shift: ×10";
   status_->set_full_text(!ready_ ? QString() // the canvas says why
@@ -387,27 +498,16 @@ void PairOverlay::apply_offset(bool from_widget) {
                              : QString("Flyttet %1 cm · %2°").arg(cm, deg));
   status_->setToolTip(
       offset_.is_zero()
-          ? QString("B står på sin gemte pose.\n") + keys
-          : QString("B er flyttet %1 cm og drejet %2° i forhold til den "
-                    "gemte pose.\n")
+          ? grips + QString("B står på sin gemte pose.\n") + keys
+          : grips +
+                QString("B er flyttet %1 cm og drejet %2° i forhold til den "
+                        "gemte pose.\n")
                     .arg(cm, deg) +
                 keys);
   emit offset_changed();
 }
 
 QWidget *PairOverlay::status_label() const { return status_; }
-
-void PairOverlay::sync_fields() {
-  const double values[6] = {offset_.x,         offset_.y,
-                            offset_.z,         offset_.yaw_deg,
-                            offset_.pitch_deg, offset_.roll_deg};
-  for (int i = 0; i < 6; ++i) {
-    QDoubleSpinBox *s = fields_[static_cast<std::size_t>(i)];
-    const QSignalBlocker b(s);
-    s->setValue(values[i]);
-    s->setEnabled(ready_);
-  }
-}
 
 bool PairOverlay::handle_key(int key, bool shift) {
   NudgeKey k;
@@ -445,9 +545,10 @@ bool PairOverlay::handle_key(int key, bool shift) {
   return true;
 }
 
-void PairOverlay::build_legend(std::size_t a_points, std::size_t b_points) {
+void PairOverlay::build_legend() {
   delete legend_;
   const Theme &t = theme();
+  const bool rgb = colouring_ == OverlayColouring::rgb;
   legend_ = new QFrame(view_);
   legend_->setObjectName("overlayLegend");
   legend_->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -461,13 +562,20 @@ void PairOverlay::build_legend(std::size_t a_points, std::size_t b_points) {
     const char *token;
     QString name;
     std::size_t points;
-  } rows[2] = {{kTokenA, QString("A · %1").arg(a_), a_points},
-               {kTokenB, QString("B · %1").arg(b_), b_points}};
+    bool has_rgb;
+  } rows[2] = {{kTokenA, QString("A · %1").arg(a_), a_points_, a_has_rgb_},
+               {kTokenB, QString("B · %1").arg(b_), b_points_, b_has_rgb_}};
   for (int r = 0; r < 2; ++r) {
+    // In RGB mode the swatch still says which cloud is which; a frame
+    // without a colour image keeps its tint, and the row says so.
     g->addWidget(new Swatch(rows[r].token), r, 0, Qt::AlignVCenter);
-    auto *name = new QLabel(rows[r].name);
-    name->setObjectName("legendText");
-    g->addWidget(name, r, 1);
+    QString name = rows[r].name;
+    if (rgb)
+      name += rows[r].has_rgb ? QString(" · RGB")
+                              : QString(" · intet farvebillede");
+    auto *label = new QLabel(name);
+    label->setObjectName("legendText");
+    g->addWidget(label, r, 1);
     auto *count =
         new QLabel(format_count(static_cast<qulonglong>(rows[r].points)));
     count->setObjectName("legendCount");
@@ -480,10 +588,15 @@ void PairOverlay::build_legend(std::size_t a_points, std::size_t b_points) {
 }
 
 void PairOverlay::place_legend() {
+  const int m = theme().px("--space-2");
+  if (colour_switch_) {
+    colour_switch_->adjustSize();
+    colour_switch_->move(view_->width() - colour_switch_->width() - m, m);
+    colour_switch_->raise();
+  }
   if (!legend_)
     return;
   legend_->adjustSize();
-  const int m = theme().px("--space-2");
   legend_->move(m, view_->height() - legend_->height() - m);
   legend_->raise();
 }
@@ -497,6 +610,56 @@ bool PairOverlay::eventFilter(QObject *watched, QEvent *event) {
       return true;
   }
   return QWidget::eventFilter(watched, event);
+}
+
+namespace {
+/// World point -> logical widget px of the overlay canvas (VTK's display
+/// origin is bottom-left, in device pixels).
+std::optional<QPointF> to_logical(SceneView *view, const double w[3]) {
+  vtkRenderer *r = view->renderer();
+  if (!r || !r->GetRenderWindow())
+    return std::nullopt;
+  r->SetWorldPoint(w[0], w[1], w[2], 1.0);
+  r->WorldToDisplay();
+  double d[3];
+  r->GetDisplayPoint(d);
+  const double dpr = view->devicePixelRatioF();
+  const int h = r->GetRenderWindow()->GetSize()[1];
+  return QPointF(d[0] / dpr, (h - d[1]) / dpr);
+}
+} // namespace
+
+std::optional<QPointF> PairOverlay::box_centre_px() const {
+  if (!vtk_->box)
+    return std::nullopt;
+  auto *rep =
+      static_cast<RigidBoxRepresentation *>(vtk_->box->GetRepresentation());
+  const double *c = rep->centre();
+  const double w[3] = {c[0], c[1], c[2]};
+  return to_logical(view_, w);
+}
+
+double PairOverlay::handle_radius_px() const {
+  if (!vtk_->box)
+    return 0.0;
+  auto *rep =
+      static_cast<RigidBoxRepresentation *>(vtk_->box->GetRepresentation());
+  const double *c = rep->centre();
+  double up[3];
+  view_->renderer()->GetActiveCamera()->GetViewUp(up);
+  const double r = rep->centre_handle_radius();
+  const double a[3] = {c[0], c[1], c[2]};
+  const double b[3] = {c[0] + up[0] * r, c[1] + up[1] * r, c[2] + up[2] * r};
+  const auto pa = to_logical(view_, a), pb = to_logical(view_, b);
+  if (!pa || !pb)
+    return 0.0;
+  return std::hypot(pb->x() - pa->x(), pb->y() - pa->y());
+}
+
+int PairOverlay::box_state() const {
+  if (!vtk_->box)
+    return -1;
+  return vtk_->box->GetRepresentation()->GetInteractionState();
 }
 
 } // namespace rux::qt

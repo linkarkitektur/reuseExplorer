@@ -5,16 +5,20 @@
 #include <rux_qt/EdgeListPanel.hpp>
 #include <rux_qt/EditWorkspace.hpp>
 #include <rux_qt/GraphPanel.hpp>
+#include <rux_qt/MatchCanvas.hpp>
 #include <rux_qt/PairImages.hpp>
 #include <rux_qt/PairOverlay.hpp>
 #include <rux_qt/PairStrip.hpp>
 #include <rux_qt/PendingBanner.hpp>
 #include <rux_qt/ProjectSession.hpp>
+#include <rux_qt/SceneView.hpp>
 #include <rux_qt/Theme.hpp>
 #include <rux_qt/widgets.hpp>
 #include <rux_qt/workspace_logic.hpp>
 
 #include <QAction>
+#include <QEvent>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
@@ -56,8 +60,10 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   v->setContentsMargins(0, 0, 0, 0);
   v->setSpacing(0);
   v->addWidget(make_toolbar());
+  // Over the left column only: the right column's match canvas and 3D
+  // overlay are the height-critical panes (their floors), while the graph
+  // and the edge list give up height freely.
   banner_ = new PendingBanner(editor_);
-  v->addWidget(banner_);
 
   graph_ = new GraphPanel(session_, editor_, view_settings, persist_);
   panes_[0] = new PaneFrame("Graf");
@@ -68,11 +74,26 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   panes_[2] = new PaneFrame("Billeder");
   // Each side says which click fills it while its slot is empty.
   panes_[2]->set_content(images_ = new PairImages(session_));
-  panes_[2]->add_header_widget(images_->layer_switch());
+  panes_[2]->add_header_widget(images_->mode_switch());
+  images_->set_shortcut_scope(this);
   panes_[3] = new PaneFrame("3D-overlay");
   panes_[3]->set_content(overlay_ = new PairOverlay(session_, interactive_3d));
   // Nearly all the spare header width: the gap after the title has 1.
   panes_[3]->add_header_widget(overlay_->status_label(), 100);
+  if (persist_) {
+    const QString key = QSettings().value("rediger/overlay_colour").toString();
+    overlay_->set_colouring(parse_overlay_colouring(key.toStdString()));
+  }
+  connect(
+      overlay_, &PairOverlay::colouring_changed, this,
+      [this](OverlayColouring c) {
+        if (!persist_)
+          return;
+        const std::string_view k = overlay_colouring_key(c);
+        QSettings().setValue(
+            "rediger/overlay_colour",
+            QString::fromLatin1(k.data(), static_cast<qsizetype>(k.size())));
+      });
   auto *reset = new QPushButton(NavItem::escape_mnemonic("Nulstil"));
   reset->setProperty("kind", "ghost");
   reset->setCursor(Qt::PointingHandCursor);
@@ -90,40 +111,24 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   left_->addWidget(panes_[1]);
   left_->setStretchFactor(0, 3);
   left_->setStretchFactor(1, 2);
+  left_column_ = new QWidget;
+  auto *lc = new QVBoxLayout(left_column_);
+  lc->setContentsMargins(0, 0, 0, 0);
+  lc->setSpacing(0);
+  lc->addWidget(banner_);
+  lc->addWidget(left_, 1);
+  lc->addStretch(0); // the banner stays on top with both left panes hidden
   right_ = new QSplitter(Qt::Vertical);
   right_->addWidget(panes_[2]);
   right_->addWidget(panes_[3]);
-  // The overlay is where B is moved by hand (spec §5.2): it gets the
-  // column's height first, the images a reference strip above it.
+  // Growth is shared evenly: both canvases are worked in (matches are
+  // picked in the images, B is checked and moved in the overlay).
   right_->setStretchFactor(0, 1);
-  right_->setStretchFactor(1, 3);
+  right_->setStretchFactor(1, 1);
   right_column_ = new QWidget;
   auto *rc = new QVBoxLayout(right_column_);
   rc->setContentsMargins(0, 0, 0, 0);
   rc->setSpacing(0);
-  auto *head = new QFrame;
-  head->setObjectName("paneHeader");
-  auto *hl = new QHBoxLayout(head);
-  hl->setContentsMargins(t.px("--space-3"), t.px("--space-2"),
-                         t.px("--space-3"), t.px("--space-2"));
-  hl->setSpacing(t.px("--space-3"));
-  hl->addWidget(new CapsLabel("Par", "panelTitle"));
-  pair_a_ = new QLabel;
-  pair_a_->setObjectName("pairIds");
-  pair_b_ = new QLabel;
-  pair_b_->setObjectName("pairIds");
-  hl->addWidget(pair_a_);
-  hl->addWidget(pair_b_);
-  next_hint_ = new QLabel;
-  next_hint_->setObjectName("toolbarMeta");
-  next_hint_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-  hl->addWidget(next_hint_, 1);
-  auto *swap = new QPushButton(NavItem::escape_mnemonic("Byt A og B"));
-  swap->setProperty("kind", "ghost");
-  swap->setCursor(Qt::PointingHandCursor);
-  connect(swap, &QPushButton::clicked, this, [this] { set_pair(b(), a()); });
-  hl->addWidget(swap);
-  rc->addWidget(head);
   rc->addWidget(right_, 1);
   strip_ = new PairStrip(session_, editor_);
   rc->addWidget(strip_);
@@ -131,7 +136,7 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   // of 0 gets none while right_ is shown with 1).
   rc->addStretch(0);
   main_ = new QSplitter(Qt::Horizontal);
-  main_->addWidget(left_);
+  main_->addWidget(left_column_);
   main_->addWidget(right_column_);
   main_->setStretchFactor(0, 3);
   main_->setStretchFactor(1, 2);
@@ -148,16 +153,21 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   main_->setSizes({3 * kUnit, 2 * kUnit});
   // The edge list gets room for a screenful of suspicious rows.
   left_->setSizes({3 * kUnit, 2 * kUnit});
-  // The images over the overlay, 1:3: the overlay's fields take a fixed
-  // share of its part, and its canvas must stay usable at 1440x900 with
-  // the pending banner and a few edge rows (an even split left ~30 px).
-  right_->setSizes({kUnit, 3 * kUnit});
+  // The match editor over the overlay: split from the canvases' floors
+  // (balance_right_split) once the column has its height, and again
+  // whenever it changes — the pending banner, an ICP line or the read-only
+  // note take height from the column — until the user drags the handle or
+  // a stored layout is restored.
+  right_->setSizes({kUnit, kUnit});
+  right_->installEventFilter(this);
 
   for (int i = 0; i < kEditPaneCount; ++i)
     connect(panes_[i], &PaneFrame::hide_requested, this,
             [this, i] { set_pane_visible(static_cast<EditPane>(i), false); });
   for (QSplitter *s : {main_, left_, right_})
     connect(s, &QSplitter::splitterMoved, this, [this] { save_layout(); });
+  connect(right_, &QSplitter::splitterMoved, this,
+          [this] { right_split_chosen_ = true; });
   connect(graph_, &GraphPanel::selection_changed, this,
           [this](const Selection &s) {
             selection_ = s;
@@ -178,6 +188,11 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   // which drops its row; the graph keeps the highlighted edge across a
   // reload of the same project, so the row follows it back. Queued: after
   // the list's own rebuild for the same change.
+  // The banner shows and hides itself (after these, connected first): the
+  // left column follows it while both left panes are hidden.
+  connect(&editor_, &EdgeEditor::changed, this, &EditWorkspace::sync_panes);
+  connect(&editor_, &EdgeEditor::save_finished, this,
+          &EditWorkspace::sync_panes);
   connect(&editor_, &EdgeEditor::changed, this, [this] {
     QTimer::singleShot(0, this, [this] {
       if (const auto &h = graph_->highlight();
@@ -206,6 +221,23 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
               overlay_->set_offset(
                   offset_from_matrix(delta, overlay_->pivot()));
           });
+  // Placér B fra match: the fit's world_delta is the overlay's ΔT (the
+  // same matrix ICP's world_delta is), placed exactly as ICP's result is.
+  connect(images_, &PairImages::align_ready, this,
+          [this](int a, int b, const Mat4 &delta) {
+            const bool placed =
+                a == slots_.a() && b == slots_.b() && overlay_->ready();
+            if (placed)
+              overlay_->set_offset(
+                  offset_from_matrix(delta, overlay_->pivot()));
+            images_->align_applied(placed ? std::optional(overlay_->delta())
+                                          : std::nullopt);
+          });
+  // The fit status stops claiming B's placement once B leaves it.
+  connect(overlay_, &PairOverlay::offset_changed, images_, [this] {
+    images_->b_moved(overlay_->ready() ? std::optional(overlay_->delta())
+                                       : std::nullopt);
+  });
   // An ICP fit counts only while B stays where ICP put it.
   connect(overlay_, &PairOverlay::offset_changed, strip_,
           &PairStrip::refresh_icp);
@@ -260,6 +292,31 @@ QWidget *EditWorkspace::make_toolbar() {
                          t.px("--space-4"), t.px("--space-2"));
   bl->setSpacing(t.px("--space-3"));
   bl->addWidget(new CapsLabel("Rediger", "panelTitle"));
+  // The pair (A, B, which slot the next click fills, Byt A og B) is the
+  // workspace's selection: it sits here, not in a header row of its own
+  // over the right column, whose height the match canvas and the 3D overlay
+  // both need (reusex-xlg.2.5: canvas >= 200 px, overlay >= 250 px at
+  // 1440x900).
+  bl->addSpacing(t.px("--space-3"));
+  bl->addWidget(new CapsLabel("Par", "panelTitle"));
+  pair_a_ = new QLabel;
+  pair_a_->setObjectName("pairIds");
+  pair_b_ = new QLabel;
+  pair_b_->setObjectName("pairIds");
+  bl->addWidget(pair_a_);
+  bl->addWidget(pair_b_);
+  next_hint_ = new QLabel;
+  next_hint_->setObjectName("toolbarMeta");
+  // As wide as its widest text, so "Byt A og B" stays put when the hint
+  // flips between A and B (the width is set once the QSS font applies, in
+  // sync_pair_header).
+  bl->addWidget(next_hint_);
+  auto *swap = new QPushButton(NavItem::escape_mnemonic("Byt A og B"));
+  swap->setProperty("kind", "ghost");
+  swap->setCursor(Qt::PointingHandCursor);
+  swap->setMinimumHeight(swap->sizeHint().height());
+  connect(swap, &QPushButton::clicked, this, [this] { set_pair(b(), a()); });
+  bl->addWidget(swap);
   meta_ = new QLabel;
   meta_->setObjectName("toolbarMeta");
   // A long status (a discover run's counts) is cut, never widens the window;
@@ -432,8 +489,14 @@ void EditWorkspace::sync_pair_header() {
   auto id = [](int v) { return v >= 0 ? QString::number(v) : QString("—"); };
   pair_a_->setText("A  " + id(slots_.a()));
   pair_b_->setText("B  " + id(slots_.b()));
-  next_hint_->setText(slots_.next() == Slot::a ? QString("Næste klik: A")
-                                               : QString("Næste klik: B"));
+  const QString hints[2] = {"Næste klik: A", "Næste klik: B"};
+  next_hint_->setText(hints[slots_.next() == Slot::a ? 0 : 1]);
+  next_hint_->ensurePolished(); // the toolbarMeta font, not the default
+  const QFontMetrics fm = next_hint_->fontMetrics();
+  next_hint_->setMinimumWidth(
+      std::max(fm.horizontalAdvance(hints[0]), fm.horizontalAdvance(hints[1])) +
+      next_hint_->contentsMargins().left() +
+      next_hint_->contentsMargins().right());
 }
 
 int EditWorkspace::pending_edits() const { return editor_.pending(); }
@@ -462,12 +525,49 @@ void EditWorkspace::sync_panes() {
   }
   // A splitter with nothing visible would leave an empty strip.
   left_->setVisible(wanted_[0] || wanted_[1]);
+  left_column_->setVisible(!left_->isHidden() || !banner_->isHidden());
   const bool right_shown = !panes_[2]->isHidden() || !panes_[3]->isHidden();
   right_->setVisible(right_shown);
-  // The right column also holds the pair header and the pair strip, outside
-  // the splitter and not hideable: it stays while the strip shows, so hiding
-  // both panes leaves the pair and its edges on screen.
+  // The right column also holds the pair strip, outside the splitter and
+  // not hideable: it stays while the strip shows, so hiding both panes
+  // leaves the pair's edges on screen.
   right_column_->setVisible(right_shown || (strip_ && !strip_->isHidden()));
+  schedule_right_split();
+}
+
+bool EditWorkspace::eventFilter(QObject *watched, QEvent *event) {
+  if (watched == right_ && event->type() == QEvent::Resize)
+    schedule_right_split();
+  return QWidget::eventFilter(watched, event);
+}
+
+void EditWorkspace::schedule_right_split() {
+  if (right_split_chosen_ || right_split_queued_)
+    return;
+  // After the panes have laid out at the new height: their chrome is
+  // measured from it.
+  right_split_queued_ = true;
+  QTimer::singleShot(0, this, [this] {
+    right_split_queued_ = false;
+    balance_right_split();
+  });
+}
+
+void EditWorkspace::balance_right_split() {
+  if (right_split_chosen_ || !right_->isVisible() || panes_[2]->isHidden() ||
+      panes_[3]->isHidden())
+    return;
+  const QWidget *match = images_->canvas();
+  const QWidget *view = overlay_->view();
+  if (match->height() <= 0 || view->height() <= 0)
+    return; // not laid out yet
+  const QList<int> now = right_->sizes();
+  const int total = now.value(0) + now.value(1);
+  const auto want =
+      balanced_canvas_split(total, panes_[2]->height() - match->height(),
+                            panes_[3]->height() - view->height());
+  if (now.value(0) != want[0] || now.value(1) != want[1])
+    right_->setSizes({want[0], want[1]});
 }
 
 void EditWorkspace::restore_layout() {
@@ -476,7 +576,8 @@ void EditWorkspace::restore_layout() {
   QSettings s;
   main_->restoreState(s.value("rediger/split/main").toByteArray());
   left_->restoreState(s.value("rediger/split/left").toByteArray());
-  right_->restoreState(s.value("rediger/split/right").toByteArray());
+  if (right_->restoreState(s.value("rediger/split/right").toByteArray()))
+    right_split_chosen_ = true;
   for (int i = 0; i < kEditPaneCount; ++i) {
     wanted_[i] =
         s.value("rediger/visible/" + key_of(static_cast<EditPane>(i)), true)
