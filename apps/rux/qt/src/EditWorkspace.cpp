@@ -222,6 +222,17 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
               overlay_->set_offset(
                   offset_from_matrix(delta, overlay_->pivot()));
           });
+  // Placér B fra match: the fit's world_delta is the overlay's ΔT (the
+  // same matrix ICP's world_delta is), placed exactly as ICP's result is.
+  connect(images_, &PairImages::align_ready, this,
+          [this](int a, int b, const Mat4 &delta) {
+            const bool placed =
+                a == slots_.a() && b == slots_.b() && overlay_->ready();
+            if (placed)
+              overlay_->set_offset(
+                  offset_from_matrix(delta, overlay_->pivot()));
+            images_->align_applied(placed);
+          });
   // An ICP fit counts only while B stays where ICP put it.
   connect(overlay_, &PairOverlay::offset_changed, strip_,
           &PairStrip::refresh_icp);

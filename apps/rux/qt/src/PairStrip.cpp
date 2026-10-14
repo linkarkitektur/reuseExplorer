@@ -432,8 +432,7 @@ void PairStrip::refresh_icp() {
     const QString weight =
         QString("ny kant får vægt %1")
             .arg(weight_text(weight_from_icp_fitness(o.fitness)));
-    const QString from =
-        o.seeded ? QString("Fra din manuelle placering · ") : QString();
+    const QString from = o.seeded ? QString("Fra B's placering · ") : QString();
     // The point counts and the weight in the tooltip: two lines, not three,
     // under the 3D overlay.
     detail = QString("%1 · %2").arg(points, weight);

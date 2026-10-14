@@ -419,6 +419,11 @@ void MatchCanvas::mouseReleaseEvent(QMouseEvent *e) {
 }
 
 void MatchCanvas::mouseDoubleClickEvent(QMouseEvent *e) {
+  // In Vælg the double-click's first click already toggled the line under
+  // it: toggle it back, so a double-click only resets the view.
+  if (e->button() == Qt::LeftButton && mode_ == MatchMode::select)
+    if (const int l = line_at(e->position()); l >= 0)
+      emit line_clicked(l);
   if (const auto side = side_at(e->position())) {
     views_[idx(*side)] = {};
     hover_ = -1;

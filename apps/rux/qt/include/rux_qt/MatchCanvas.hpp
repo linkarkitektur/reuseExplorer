@@ -5,13 +5,13 @@
 
 // Rediger's match canvas (reusex-xlg.2.4): A and B side by side on the
 // near-black canvas, each with its own zoom (wheel, about the cursor;
-// double-click resets) and pan (drag in Vælg, middle-drag in any mode),
-// the keypoints (hollow = no depth) and the match lines across the gap —
-// inlier --color-status-succeeded, outlier --color-status-failed,
-// excluded --color-text-faint, before any fit --color-accent; manual
-// lines dashed; the hovered line thicker with both ends ringed. Vælg:
-// click a line; Tilføj: click a point; Område: drag a rectangle. Esc
-// cancels a half-made match. All state lives in the MatchSet it is given.
+// double-click resets, and leaves a line it lands on as it was) and pan (drag
+// in Vælg, middle-drag in any mode), the keypoints (hollow = no depth) and the
+// match lines across the gap — inlier --color-status-succeeded, outlier
+// --color-status-failed, excluded --color-text-faint, before any fit
+// --color-accent; manual lines dashed; the hovered line thicker with both ends
+// ringed. Vælg: click a line; Tilføj: click a point; Område: drag a rectangle.
+// Esc cancels a half-made match. All state lives in the MatchSet it is given.
 
 #include <rux_qt/FrameBrowser.hpp>
 #include <rux_qt/match_editor.hpp>

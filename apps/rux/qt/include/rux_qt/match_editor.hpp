@@ -128,6 +128,14 @@ std::string match_fit_text(int inliers, double rms_m);
 std::string match_fit_failure_text(MatchFitFailure f, int pairs, int inliers,
                                    double inlier_dist_m);
 
+/// Why a frame cannot be matched or fitted: what Find match and Placér B
+/// check up front, so the status names the frame in Danish instead of the
+/// library's English error.
+enum class FrameProblem { no_colour, no_depth, no_pose };
+/// "billede 2241 har ingen dybde" (no_depth), "… intet farvebillede",
+/// "… ingen pose".
+std::string frame_problem_text(int frame_id, FrameProblem p);
+
 // ---------------------------------------------------------- canvas geometry
 
 struct ViewRect {

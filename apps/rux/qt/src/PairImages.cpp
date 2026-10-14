@@ -2,20 +2,134 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <rux_qt/FrameImageLoader.hpp>
+#include <rux_qt/MatchCanvas.hpp>
 #include <rux_qt/PairImages.hpp>
 #include <rux_qt/ProjectSession.hpp>
 #include <rux_qt/Theme.hpp>
-#include <rux_qt/graph_view.hpp>
+#include <rux_qt/background.hpp>
 #include <rux_qt/widgets.hpp>
 
+#include <reusex/core/ProjectDB.hpp>
+#include <reusex/slam/frame_pair_matches.hpp>
+
+#include <opencv2/core/mat.hpp>
+
+#include <QApplication>
 #include <QButtonGroup>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPointer>
 #include <QPushButton>
+#include <QShortcut>
+#include <QVBoxLayout>
+
+#include <optional>
+#include <thread>
 
 namespace rux::qt {
+namespace slam = reusex::slam;
+
+namespace {
+/// Rediger's fit threshold: rigid_from_matches' default, named for the text.
+constexpr double kInlierDistM = 0.05;
+
+MatchPoint to_point(const slam::FrameKeypoint &k) {
+  MatchPoint p;
+  p.u = k.u;
+  p.v = k.v;
+  p.xyz = k.xyz; // Vec3 is the library's std::array<double, 3>
+  return p;
+}
+
+std::optional<slam::PixelRect> to_rect(const std::optional<PixelBox> &b) {
+  if (!b)
+    return std::nullopt;
+  return slam::PixelRect{b->x, b->y, b->w, b->h};
+}
+
+/// What would make the library refuse frame @p id, checked up front so the
+/// status names it in Danish (R13). A node without a sensor frame (a
+/// panorama) has no depth either.
+struct Needs {
+  bool colour = false, depth = false, pose = false;
+};
+std::optional<FrameProblem> frame_problem(const reusex::ProjectDB &db, int id,
+                                          Needs need) {
+  if (need.depth &&
+      (!db.has_sensor_frame(id) || db.sensor_frame_depth(id).empty()))
+    return FrameProblem::no_depth;
+  if (need.pose && !db.has_sensor_frame_pose(id))
+    return FrameProblem::no_pose;
+  if (need.colour && db.sensor_frame_image(id).empty())
+    return FrameProblem::no_colour;
+  return std::nullopt;
+}
+
+QString problem_text(int id, FrameProblem p) {
+  return QString::fromStdString(frame_problem_text(id, p));
+}
+
+QPushButton *segment(const QString &text, int position, int count) {
+  auto *b = new QPushButton(NavItem::escape_mnemonic(text));
+  b->setObjectName("segment");
+  b->setCheckable(true);
+  b->setCursor(Qt::PointingHandCursor);
+  b->setProperty("position", position == 0           ? "first"
+                             : position == count - 1 ? "last"
+                                                     : "middle");
+  return b;
+}
+
+/// Run @p work on a detached thread with its own read-only connection and
+/// hand its result to @p done on the GUI thread, unless @p self is gone
+/// meanwhile. Counted (BackgroundWork), so quitting waits for it.
+template <class Result, class Work, class Done>
+void run_detached(PairImages *self, const std::string &path, Work work,
+                  Done done) {
+  auto token = std::make_shared<BackgroundWork>();
+  QPointer<PairImages> guard(self);
+  std::thread([path, work, done, guard, token]() mutable {
+    auto r = std::make_shared<Result>();
+    try {
+      reusex::ProjectDB db(path, /*readOnly=*/true);
+      work(db, *r);
+    } catch (const std::exception &e) {
+      r->detail = QString::fromUtf8(e.what());
+    }
+    QMetaObject::invokeMethod(
+        qApp,
+        [guard, done, r] {
+          if (guard)
+            done(guard.data(), r);
+        },
+        Qt::QueuedConnection);
+    token.reset(); // last: counted until the thread has let go of everything
+  }).detach();
+}
+} // namespace
+
+// Each result: the generation it was started under, a Danish problem
+// (frame_problem) or the library's English what() (detail), and its data.
+struct PairImages::Found {
+  unsigned generation = 0;
+  QString problem, detail;
+  std::vector<MatchPoint> a, b;
+  std::vector<MatchLine> lines;
+};
+struct PairImages::Lifted {
+  unsigned generation = 0;
+  QString problem, detail;
+  MatchSide side = MatchSide::a;
+  std::optional<MatchPoint> point;
+};
+struct PairImages::Fitted {
+  unsigned generation = 0;
+  QString problem, detail;
+  FitInput input;
+  slam::RigidFit fit;
+};
 
 PairImages::PairImages(ProjectSession &session, QWidget *parent)
     : QWidget(parent), session_(session) {
@@ -28,97 +142,204 @@ PairImages::PairImages(ProjectSession &session, QWidget *parent)
   g->setHorizontalSpacing(t.px("--space-2"));
   g->setVerticalSpacing(t.px("--space-1"));
 
+  // Farve / Dybde, placed in the pane header by EditWorkspace.
   auto *seg = new QFrame;
   seg->setObjectName("segmented");
   auto *sl = new QHBoxLayout(seg);
   sl->setContentsMargins(0, 0, 0, 0);
   sl->setSpacing(0);
   layers_ = new QButtonGroup(this);
-  const char *names[] = {"Farve", "Dybde"};
+  const char *layer_names[] = {"Farve", "Dybde"};
   for (int i = 0; i < 2; ++i) {
-    auto *b = new QPushButton(NavItem::escape_mnemonic(names[i]));
-    b->setObjectName("segment");
-    b->setCheckable(true);
-    b->setCursor(Qt::PointingHandCursor);
-    b->setProperty("position", i == 0 ? "first" : "last");
+    auto *b = segment(layer_names[i], i, 2);
     layers_->addButton(b, i);
     sl->addWidget(b);
   }
   layers_->button(0)->setChecked(true);
-  layer_switch_ = seg; // placed in the pane header by EditWorkspace
+  layer_switch_ = seg;
+
+  // Row 1: Find match and the mode; row 2: Placér B, Ryd område, status.
+  // Two rows: the column is ~375 px at 1440 and must never widen it.
+  auto *row1 = new QHBoxLayout;
+  row1->setSpacing(t.px("--space-2"));
+  find_ = new QPushButton(NavItem::escape_mnemonic("Find match"));
+  find_->setProperty("kind", "secondary");
+  find_->setCursor(Qt::PointingHandCursor);
+  find_->setToolTip("Find ORB-match mellem A og B (inden for områderne, "
+                    "hvis du har tegnet nogen). Ændrer ikke projektet.");
+  row1->addWidget(find_);
+  auto *modes = new QFrame;
+  modes->setObjectName("segmented");
+  auto *ml = new QHBoxLayout(modes);
+  ml->setContentsMargins(0, 0, 0, 0);
+  ml->setSpacing(0);
+  modes_ = new QButtonGroup(this);
+  const char *mode_names[] = {"Vælg", "Tilføj", "Område"};
+  const char *mode_tips[] = {
+      "Klik på en linje for at udelade eller tage den med; træk for at "
+      "panorere, hjul zoomer, dobbeltklik nulstiller",
+      "Klik et punkt i A og så det samme i B (Esc fortryder)",
+      "Træk et rektangel i A eller B: næste Find match søger kun der"};
+  for (int i = 0; i < 3; ++i) {
+    auto *b = segment(mode_names[i], i, 3);
+    b->setToolTip(mode_tips[i]);
+    modes_->addButton(b, i);
+    ml->addWidget(b);
+  }
+  modes_->button(0)->setChecked(true);
+  row1->addWidget(modes);
+  row1->addStretch(1);
+
+  auto *row2 = new QHBoxLayout;
+  row2->setSpacing(t.px("--space-2"));
+  align_ = new QPushButton(NavItem::escape_mnemonic("Placér B fra match"));
+  align_->setProperty("kind", "primary");
+  align_->setCursor(Qt::PointingHandCursor);
+  align_->setToolTip(
+      "Flyt B i 3D-overlayet til den stive placering, de "
+      "valgte match med dybde giver. ICP-forfin starter derfra.");
+  row2->addWidget(align_);
+  clear_region_ = new QPushButton(NavItem::escape_mnemonic("Ryd område"));
+  clear_region_->setObjectName("regionChip");
+  clear_region_->setProperty("kind", "ghost");
+  clear_region_->setCursor(Qt::PointingHandCursor);
+  row2->addWidget(clear_region_);
+  status_ = new ElidedLabel(QString(), Qt::ElideRight);
+  status_->setObjectName("matchStatus");
+  status_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+  row2->addWidget(status_, 1);
+
+  // No QSS rule of its own (R9): the name is for tests and the gallery.
+  auto *bar = new QFrame;
+  bar->setObjectName("matchToolbar");
+  auto *bv = new QVBoxLayout(bar);
+  bv->setContentsMargins(0, 0, 0, 0);
+  bv->setSpacing(t.px("--space-1"));
+  bv->addLayout(row1);
+  bv->addLayout(row2);
+  g->addWidget(bar, 0, 0, 1, 2);
 
   caption_a_ = new QLabel;
   caption_a_->setObjectName("pairCaptionA");
   caption_b_ = new QLabel;
   caption_b_->setObjectName("pairCaptionB");
-  g->addWidget(caption_a_, 0, 0);
-  g->addWidget(caption_b_, 0, 1);
-  pane_a_ = new ImagePane;
-  pane_b_ = new ImagePane;
-  for (ImagePane *p : {pane_a_, pane_b_}) {
-    p->set_overlay(false, 0);
-    // Small is fine here: the pane yields height to the 3D overlay, and
-    // Oversigt has the full-size frames.
-    p->setMinimumSize(t.px("--space-7"), t.px("--space-7"));
-  }
-  g->addWidget(pane_a_, 1, 0);
-  g->addWidget(pane_b_, 1, 1);
-  g->setRowStretch(1, 1);
+  g->addWidget(caption_a_, 1, 0);
+  g->addWidget(caption_b_, 1, 1);
+  canvas_ = new MatchCanvas;
+  canvas_->set_data(&set_, &pick_);
+  g->addWidget(canvas_, 2, 0, 1, 2);
+  g->setRowStretch(2, 1);
   // A and B always get the same width, whatever their captions say.
   g->setColumnStretch(0, 1);
   g->setColumnStretch(1, 1);
 
+  // Esc reaches a half-made match even when focus has left the canvas (a
+  // mode button, the overlay); off otherwise, so it never takes Esc from
+  // anything else in the window.
+  escape_ = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+  escape_->setContext(Qt::WindowShortcut);
+  escape_->setEnabled(false);
+  connect(escape_, &QShortcut::activated, this, &PairImages::cancel_pick);
+
   connect(layers_, &QButtonGroup::idClicked, this, [this](int id) {
     set_layer(id == 1 ? FrameLayer::depth : FrameLayer::color);
   });
+  connect(modes_, &QButtonGroup::idClicked, this,
+          [this](int id) { set_mode(static_cast<MatchMode>(id)); });
+  connect(find_, &QPushButton::clicked, this, &PairImages::find_matches);
+  connect(align_, &QPushButton::clicked, this, &PairImages::align_from_matches);
+  connect(clear_region_, &QPushButton::clicked, this,
+          &PairImages::clear_regions);
+  connect(canvas_, &MatchCanvas::line_clicked, this, &PairImages::toggle_line);
+  connect(canvas_, &MatchCanvas::pixel_clicked, this, &PairImages::pick);
+  connect(canvas_, &MatchCanvas::region_dragged, this, &PairImages::set_region);
+  connect(canvas_, &MatchCanvas::cancel_requested, this,
+          &PairImages::cancel_pick);
   connect(loader_, &FrameImageLoader::frame_ready, this,
           &PairImages::frame_ready);
   connect(&session_, &ProjectSession::state_changed, this, &PairImages::reload);
   reload();
 }
 
+bool PairImages::pair_ok() const {
+  return session_.is_open() && a_ >= 0 && b_ >= 0 && a_ != b_;
+}
+
+void PairImages::restart() {
+  ++generation_; // anything still running describes the old state
+  busy_ = Busy::none;
+  pick_.cancel();
+  note_.clear();
+  tone_.clear();
+  detail_.clear();
+  canvas_->reset_views();
+  canvas_->set_data(&set_, &pick_); // the lines changed: no stale hover
+}
+
 void PairImages::reload() {
   loader_->set_project(session_.is_open() ? session_.path() : QString());
-  sync();
+  // The same pair after a reload is still a fresh start: the project (and
+  // so every keypoint's depth and pose) may have changed under it.
+  set_.clear();
+  set_.set_pair(-1, -1);
+  set_.set_pair(a_, b_);
+  restart();
+  sync_images();
+  refresh();
 }
 
 void PairImages::set_pair(int a, int b, Slot next) {
-  if (a == a_ && b == b_ && next == next_)
-    return;
+  const bool new_pair = a != a_ || b != b_;
   a_ = a;
   b_ = b;
   next_ = next;
-  sync();
+  if (new_pair) {
+    set_.set_pair(a, b); // a swap is a new pair too: clears
+    restart();
+  }
+  sync_images();
+  refresh();
 }
 
 void PairImages::set_layer(FrameLayer layer) {
   layer_ = layer;
   if (QAbstractButton *b = layers_->button(layer == FrameLayer::depth ? 1 : 0))
     b->setChecked(true);
-  pane_a_->set_layer(layer);
-  pane_b_->set_layer(layer);
+  canvas_->set_layer(layer);
 }
 
-void PairImages::sync() {
-  auto side = [this](ImagePane *pane, QLabel *caption, Slot slot, int id) {
+void PairImages::set_mode(MatchMode mode) {
+  mode_ = mode;
+  if (QAbstractButton *b = modes_->button(static_cast<int>(mode)))
+    b->setChecked(true);
+  if (mode != MatchMode::add && pick_.pending()) {
+    pick_.cancel();
+    note_.clear();
+  }
+  canvas_->set_mode(mode);
+  refresh();
+}
+
+void PairImages::sync_images() {
+  auto side = [this](MatchSide s, QLabel *caption, Slot slot, int id) {
     caption->setText(QString::fromStdString(pair_image_caption(slot, id)));
     if (id < 0) {
-      pane->set_message(
-          QString::fromStdString(pair_image_hint(slot, a_, b_, next_)));
+      canvas_->set_message(
+          s, QString::fromStdString(pair_image_hint(slot, a_, b_, next_)));
       return;
     }
     if (auto f = loader_->frame(id)) {
-      pane->set_frame(f);
+      canvas_->set_frame(s, f);
       return;
     }
     // Never the previous frame under the new caption: blank, "Henter …",
     // until this one is decoded (frame_ready() drops any other id).
-    pane->set_message({});
-    pane->set_loading(true);
+    canvas_->set_message(s, {});
+    canvas_->set_loading(s, true);
     loader_->request(id);
   };
-  side(pane_a_, caption_a_, Slot::a, a_);
-  side(pane_b_, caption_b_, Slot::b, b_);
+  side(MatchSide::a, caption_a_, Slot::a, a_);
+  side(MatchSide::b, caption_b_, Slot::b, b_);
 }
 
 void PairImages::frame_ready(int id) {
@@ -129,9 +350,248 @@ void PairImages::frame_ready(int id) {
   if (!f)
     return;
   if (id == a_)
-    pane_a_->set_frame(f);
+    canvas_->set_frame(MatchSide::a, f);
   if (id == b_)
-    pane_b_->set_frame(f);
+    canvas_->set_frame(MatchSide::b, f);
+}
+
+void PairImages::find_matches() {
+  if (!pair_ok() || busy_ != Busy::none)
+    return;
+  slam::FrameMatchOptions o;
+  o.region_a = to_rect(set_.region(MatchSide::a));
+  o.region_b = to_rect(set_.region(MatchSide::b));
+  busy_ = Busy::finding;
+  note("Finder match …", "wait");
+  const int a = a_, b = b_;
+  const unsigned gen = generation_;
+  run_detached<Found>(
+      this, session_.path().toStdString(),
+      [a, b, o](const reusex::ProjectDB &db, Found &r) {
+        for (int id : {a, b})
+          if (const auto p = frame_problem(db, id, {true, true, true})) {
+            r.problem = problem_text(id, *p);
+            return;
+          }
+        const auto m = slam::match_frame_pair(db, a, b, o);
+        for (const auto &k : m.keypoints_a)
+          r.a.push_back(to_point(k));
+        for (const auto &k : m.keypoints_b)
+          r.b.push_back(to_point(k));
+        for (const auto &mm : m.matches) {
+          MatchLine l;
+          l.a = mm.a;
+          l.b = mm.b;
+          l.distance = mm.distance;
+          r.lines.push_back(l);
+        }
+      },
+      [gen](PairImages *self, std::shared_ptr<Found> r) {
+        r->generation = gen; // set here, so also when the work threw
+        self->found(std::move(r));
+      });
+}
+
+void PairImages::found(std::shared_ptr<Found> r) {
+  if (r->generation != generation_)
+    return; // another pair (or a reload) meanwhile: dropped
+  busy_ = Busy::none;
+  if (!r->problem.isEmpty()) {
+    note(r->problem, "crit");
+    return;
+  }
+  if (!r->detail.isEmpty()) {
+    note("Find match fejlede", "crit", r->detail);
+    return;
+  }
+  set_.set_detected(std::move(r->a), std::move(r->b), std::move(r->lines));
+  canvas_->set_data(&set_, &pick_); // new lines: no stale hover index
+  note({}, {});
+}
+
+void PairImages::pick(MatchSide side, float u, float v) {
+  if (!pair_ok() || busy_ != Busy::none)
+    return;
+  busy_ = Busy::lifting;
+  refresh();
+  const int id = side == MatchSide::a ? a_ : b_;
+  const unsigned gen = generation_;
+  run_detached<Lifted>(
+      this, session_.path().toStdString(),
+      [id, side, u, v](const reusex::ProjectDB &db, Lifted &r) {
+        r.side = side;
+        if (const auto p = frame_problem(db, id, {true, true, false})) {
+          r.problem = problem_text(id, *p);
+          return;
+        }
+        if (const auto k = slam::lift_pixel(db, id, u, v))
+          r.point = to_point(*k);
+      },
+      [gen](PairImages *self, std::shared_ptr<Lifted> r) {
+        r->generation = gen;
+        self->lifted(std::move(r));
+      });
+}
+
+void PairImages::lifted(std::shared_ptr<Lifted> r) {
+  if (r->generation != generation_)
+    return;
+  busy_ = Busy::none;
+  if (!r->problem.isEmpty()) {
+    note(r->problem, "crit");
+    return;
+  }
+  if (!r->detail.isEmpty()) {
+    note("Punktet kunne ikke læses", "crit", r->detail);
+    return;
+  }
+  if (mode_ != MatchMode::add) { // the mode changed while it lifted
+    refresh();
+    return;
+  }
+  if (!r->point) {
+    note("ingen dybde her — klik tættere på en flade med dybde", "warn");
+    return;
+  }
+  if (const auto done = pick_.pick(r->side, *r->point)) {
+    set_.add_manual(done->first, done->second);
+    canvas_->set_data(&set_, &pick_);
+    note({}, {});
+    return;
+  }
+  note(r->side == MatchSide::a ? "Klik nu det samme punkt i B (Esc fortryder)"
+                               : "Klik nu det samme punkt i A (Esc fortryder)",
+       {});
+}
+
+void PairImages::cancel_pick() {
+  if (!pick_.pending())
+    return;
+  pick_.cancel();
+  note({}, {});
+}
+
+void PairImages::toggle_line(int line) {
+  set_.toggle_excluded(line);
+  note({}, {}); // refresh() repaints the canvas: the new colour shows now
+}
+
+void PairImages::set_region(MatchSide side, PixelBox box) {
+  set_.set_region(side, box);
+  note(side == MatchSide::a ? "Område i A — Find match søger kun der"
+                            : "Område i B — Find match søger kun der",
+       {});
+}
+
+void PairImages::clear_regions() {
+  set_.clear_regions();
+  note({}, {});
+}
+
+void PairImages::align_from_matches() {
+  if (!pair_ok() || busy_ != Busy::none)
+    return;
+  const FitInput in = set_.fit_input();
+  if (in.pairs.size() < 3) {
+    note(QString::fromStdString(match_fit_failure_text(
+             MatchFitFailure::too_few_pairs, static_cast<int>(in.pairs.size()),
+             0, kInlierDistM)),
+         "warn");
+    return;
+  }
+  busy_ = Busy::aligning;
+  note("Placerer B …", "wait");
+  const int a = a_, b = b_;
+  const unsigned gen = generation_;
+  run_detached<Fitted>(
+      this, session_.path().toStdString(),
+      [a, b, in](const reusex::ProjectDB &db, Fitted &r) {
+        r.input = in;
+        for (int id : {a, b})
+          if (const auto p = frame_problem(db, id, {false, false, true})) {
+            r.problem = problem_text(id, *p);
+            return;
+          }
+        // FitInput's pairs are (A xyz, B xyz) as std::array<double, 3>:
+        // exactly slam::PointPair.
+        r.fit = slam::rigid_from_matches(db.sensor_frame_pose(a),
+                                         db.sensor_frame_pose(b), in.pairs,
+                                         kInlierDistM);
+      },
+      [gen](PairImages *self, std::shared_ptr<Fitted> r) {
+        r->generation = gen;
+        self->fitted(std::move(r));
+      });
+}
+
+void PairImages::fitted(std::shared_ptr<Fitted> r) {
+  if (r->generation != generation_)
+    return; // never moves B of a pair shown since
+  busy_ = Busy::none;
+  if (!r->problem.isEmpty()) {
+    note(r->problem, "crit");
+    return;
+  }
+  if (!r->detail.isEmpty()) {
+    note("Placér B fejlede", "crit", r->detail);
+    return;
+  }
+  const slam::RigidFit &f = r->fit;
+  if (!f.ok) {
+    const MatchFitFailure why =
+        f.failure == slam::RigidFitFailure::too_few_pairs
+            ? MatchFitFailure::too_few_pairs
+        : f.failure == slam::RigidFitFailure::degenerate
+            ? MatchFitFailure::degenerate
+            : MatchFitFailure::no_consensus;
+    note(QString::fromStdString(match_fit_failure_text(
+             why, static_cast<int>(r->input.pairs.size()),
+             static_cast<int>(f.inliers.size()), kInlierDistM)),
+         "warn", QString::fromStdString(f.reason));
+    return;
+  }
+  set_.apply_fit(r->input, f.inliers);
+  last_inliers_ = static_cast<int>(f.inliers.size());
+  last_rms_ = f.rms_m;
+  refresh(); // the lines' new colours, before B moves
+  emit align_ready(a_, b_, f.world_delta); // EditWorkspace: align_applied
+}
+
+void PairImages::align_applied(bool placed) {
+  const QString fit =
+      QString::fromStdString(match_fit_text(last_inliers_, last_rms_));
+  note(placed ? fit : fit + " — B er ikke flyttet: 3D-overlayet var ikke klar.",
+       placed ? "good" : "warn");
+}
+
+void PairImages::note(const QString &text, const QString &tone,
+                      const QString &detail) {
+  note_ = text;
+  tone_ = tone;
+  detail_ = detail;
+  refresh();
+}
+
+QString PairImages::status_text() const { return status_->full_text(); }
+
+void PairImages::refresh() {
+  const QString readout = QString::fromStdString(match_readout(set_.counts()));
+  status_->set_full_text(note_.isEmpty() ? readout : note_);
+  QString tip = note_.isEmpty() ? readout : note_ + "\n" + readout;
+  if (!detail_.isEmpty())
+    tip += "\n" + detail_;
+  status_->setToolTip(tip);
+  status_->setProperty("tone", tone_.isEmpty() ? QVariant() : QVariant(tone_));
+  repolish(status_);
+  const bool ok = pair_ok();
+  const bool idle = busy_ == Busy::none;
+  find_->setEnabled(ok && idle);
+  align_->setEnabled(ok && idle && !set_.lines().empty());
+  for (QAbstractButton *b : modes_->buttons())
+    b->setEnabled(ok);
+  clear_region_->setVisible(set_.has_region());
+  escape_->setEnabled(pick_.pending());
+  canvas_->update();
 }
 
 } // namespace rux::qt

@@ -1104,6 +1104,20 @@ QLabel#icpLine[tone="warn"] { color: var(--tone-warn-ink); }
 QLabel#icpLine[tone="crit"] { color: var(--color-status-failed); }
 QLabel#icpLine[tone="wait"] { color: var(--color-status-running); }
 
+/* Rediger's match editor: the status line under its toolbar. */
+QLabel#matchStatus {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+QLabel#matchStatus[tone="good"] { color: var(--color-status-succeeded); }
+QLabel#matchStatus[tone="warn"] { color: var(--tone-warn-ink); }
+QLabel#matchStatus[tone="crit"] { color: var(--color-status-failed); }
+QLabel#matchStatus[tone="wait"] { color: var(--color-status-running); }
+QPushButton#regionChip {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-xs);
+}
+
 /* ---- pending-edits banner (the web's WriteBanner) */
 QFrame#pendingBanner {
   background: var(--tone-accent-bg);

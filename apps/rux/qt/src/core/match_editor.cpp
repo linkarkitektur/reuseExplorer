@@ -197,6 +197,19 @@ std::string match_fit_failure_text(MatchFitFailure f, int pairs, int inliers,
          "billedet.";
 }
 
+std::string frame_problem_text(int frame_id, FrameProblem p) {
+  const std::string head = "billede " + std::to_string(frame_id) + " har ";
+  switch (p) {
+  case FrameProblem::no_colour:
+    return head + "intet farvebillede";
+  case FrameProblem::no_depth:
+    return head + "ingen dybde";
+  case FrameProblem::no_pose:
+    break;
+  }
+  return head + "ingen pose";
+}
+
 std::array<ViewRect, 2> pair_slots(double width, double height, double gap) {
   const double w = std::max(0.0, (width - gap) / 2.0);
   return {ViewRect{0.0, 0.0, w, height}, ViewRect{w + gap, 0.0, w, height}};

@@ -149,6 +149,15 @@ TEST_CASE("MatchFitTexts_AreDanish", "[rux_qt][matches]") {
         "billedet.");
 }
 
+TEST_CASE("FrameProblemText_IsDanish_AndNamesTheFrame", "[rux_qt][matches]") {
+  CHECK(frame_problem_text(2241, FrameProblem::no_depth) ==
+        "billede 2241 har ingen dybde");
+  CHECK(frame_problem_text(7, FrameProblem::no_colour) ==
+        "billede 7 har intet farvebillede");
+  CHECK(frame_problem_text(12, FrameProblem::no_pose) ==
+        "billede 12 har ingen pose");
+}
+
 TEST_CASE("ImageMapping_RoundTrips_AndCentresPixels", "[rux_qt][matches]") {
   const ViewRect slot{10, 20, 200, 100};
   const ViewRect r = image_rect(slot, 400, 100, {}); // fits the width
