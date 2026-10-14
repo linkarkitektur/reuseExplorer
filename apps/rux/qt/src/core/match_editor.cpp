@@ -258,6 +258,10 @@ int nearest_segment(const std::vector<Segment> &segs, double x, double y,
   return best;
 }
 
+bool in_image(double u, double v, int img_w, int img_h) {
+  return u >= -0.5 && v >= -0.5 && u < img_w - 0.5 && v < img_h - 0.5;
+}
+
 PixelBox box_from_drag(double u0, double v0, double u1, double v1, int img_w,
                        int img_h, int min_px) {
   if (std::abs(u1 - u0) < min_px || std::abs(v1 - v0) < min_px)

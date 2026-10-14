@@ -210,3 +210,14 @@ TEST_CASE("BoxFromDrag_ClampsToTheImage_AndIgnoresAClick",
   CHECK(box_from_drag(10, 10, 12, 11, 200, 100).empty());
   CHECK(box_from_drag(300, 300, 400, 400, 200, 100).empty()); // off-image
 }
+
+TEST_CASE("InImage_UsesThePixelCentreRange", "[rux_qt][matches]") {
+  // Pixel u's centre is u, so the image spans [-0.5, w - 0.5).
+  CHECK(in_image(-0.5, -0.5, 4, 3));
+  CHECK(in_image(3.49, 2.49, 4, 3));
+  CHECK(in_image(0, 0, 4, 3));
+  CHECK_FALSE(in_image(-0.51, 0, 4, 3));
+  CHECK_FALSE(in_image(3.5, 0, 4, 3));
+  CHECK_FALSE(in_image(0, 2.5, 4, 3));
+  CHECK_FALSE(in_image(0, 0, 0, 3));
+}

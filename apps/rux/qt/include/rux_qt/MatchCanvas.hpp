@@ -16,6 +16,7 @@
 #include <rux_qt/FrameBrowser.hpp>
 #include <rux_qt/match_editor.hpp>
 
+#include <QImage>
 #include <QPointF>
 #include <QRectF>
 #include <QVector>
@@ -74,15 +75,26 @@ class MatchCanvas : public QWidget {
   /// A's and B's slots for the current size (R8: not named after the
   /// Qt `slots` keyword macro).
   std::array<ViewRect, 2> slot_rects() const;
+  /// One side's geometry for the current size and view, computed once per
+  /// paint or mouse event rather than per keypoint.
+  struct SideGeometry {
+    ViewRect slot, drawn;
+    int w = 0, h = 0; ///< image_size(); 0 without a frame
+  };
+  std::array<SideGeometry, 2> geometry() const;
   std::optional<MatchSide> side_at(QPointF p) const;
-  /// Canvas position of keypoint @p k on @p side, or nullopt when it is
-  /// outside that side's slot (zoomed or panned away). A keypoint need not
-  /// lie inside the search region or even the image.
-  std::optional<QPointF> at(MatchSide side, const MatchPoint &k) const;
+  /// Canvas position of keypoint @p k, or nullopt when it is outside that
+  /// side's slot (zoomed or panned away). A keypoint need not lie inside
+  /// the search region or even the image.
+  static std::optional<QPointF> at(const SideGeometry &g, const MatchPoint &k);
   /// The visible lines as segments, and the MatchSet line each one is.
-  std::vector<Segment> segments(std::vector<int> &line_of) const;
+  std::vector<Segment> segments(const std::array<SideGeometry, 2> &g,
+                                std::vector<int> &line_of) const;
   int line_at(QPointF p) const;
-  void paint_side(QPainter &p, MatchSide side) const;
+  /// The depth plane with the theme's colour table, rebuilt per frame and
+  /// theme change instead of copied on every paint.
+  void rebuild_depth(int side);
+  void paint_side(QPainter &p, MatchSide side, const SideGeometry &g) const;
 
   std::array<std::shared_ptr<const DecodedFrame>, 2> frames_;
   std::array<QString, 2> messages_;
@@ -93,6 +105,7 @@ class MatchCanvas : public QWidget {
   const ManualPick *pick_ = nullptr;
   MatchMode mode_ = MatchMode::select;
   QVector<QRgb> depth_table_;
+  std::array<QImage, 2> depth_shown_;
   int hover_ = -1;
   // One press: which button, where, on which side, and whether it moved
   // past the click slop (then it pans or draws a region, never clicks).

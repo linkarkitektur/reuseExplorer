@@ -47,6 +47,8 @@ MatchCanvas::MatchCanvas(QWidget *parent) : QWidget(parent) {
   depth_table_ = depth_colour_table();
   connect(&theme(), &Theme::changed, this, [this] {
     depth_table_ = depth_colour_table();
+    rebuild_depth(0);
+    rebuild_depth(1);
     update();
   });
 }
@@ -61,11 +63,13 @@ void MatchCanvas::set_frame(MatchSide side,
   frames_[idx(side)] = std::move(frame);
   messages_[idx(side)].clear();
   loading_[idx(side)] = false;
+  rebuild_depth(idx(side));
   update();
 }
 
 void MatchCanvas::set_message(MatchSide side, const QString &text) {
   frames_[idx(side)].reset();
+  depth_shown_[idx(side)] = QImage();
   messages_[idx(side)] = text;
   update();
 }
@@ -90,6 +94,7 @@ void MatchCanvas::set_data(const MatchSet *set, const ManualPick *pick) {
 void MatchCanvas::set_mode(MatchMode mode) {
   mode_ = mode;
   rubber_.reset();
+  hover_ = -1; // only Vælg highlights a line
   setCursor(mode == MatchMode::select ? Qt::OpenHandCursor : Qt::CrossCursor);
   update();
 }
@@ -114,9 +119,20 @@ QSize MatchCanvas::image_size(MatchSide side) const {
 }
 
 ViewRect MatchCanvas::drawn_rect(MatchSide side) const {
-  const QSize s = image_size(side);
-  return image_rect(slot_rects()[idx(side)], s.width(), s.height(),
-                    views_[idx(side)]);
+  return geometry()[idx(side)].drawn;
+}
+
+std::array<MatchCanvas::SideGeometry, 2> MatchCanvas::geometry() const {
+  const auto slots_now = slot_rects();
+  std::array<SideGeometry, 2> g;
+  for (int i = 0; i < 2; ++i) {
+    const QSize s = image_size(i == 0 ? MatchSide::a : MatchSide::b);
+    g[i].slot = slots_now[i];
+    g[i].w = s.width();
+    g[i].h = s.height();
+    g[i].drawn = image_rect(slots_now[i], g[i].w, g[i].h, views_[i]);
+  }
+  return g;
 }
 
 std::optional<MatchSide> MatchCanvas::side_at(QPointF p) const {
@@ -128,19 +144,18 @@ std::optional<MatchSide> MatchCanvas::side_at(QPointF p) const {
   return std::nullopt;
 }
 
-std::optional<QPointF> MatchCanvas::at(MatchSide side,
-                                       const MatchPoint &k) const {
-  const QSize s = image_size(side);
-  if (s.isEmpty())
+std::optional<QPointF> MatchCanvas::at(const SideGeometry &g,
+                                       const MatchPoint &k) {
+  if (g.w <= 0 || g.h <= 0)
     return std::nullopt;
-  const auto c =
-      image_to_canvas(drawn_rect(side), s.width(), s.height(), k.u, k.v);
-  if (!slot_rects()[idx(side)].contains(c[0], c[1]))
+  const auto c = image_to_canvas(g.drawn, g.w, g.h, k.u, k.v);
+  if (!g.slot.contains(c[0], c[1]))
     return std::nullopt;
   return QPointF(c[0], c[1]);
 }
 
-std::vector<Segment> MatchCanvas::segments(std::vector<int> &line_of) const {
+std::vector<Segment> MatchCanvas::segments(const std::array<SideGeometry, 2> &g,
+                                           std::vector<int> &line_of) const {
   std::vector<Segment> out;
   line_of.clear();
   if (!set_)
@@ -153,8 +168,8 @@ std::vector<Segment> MatchCanvas::segments(std::vector<int> &line_of) const {
     const MatchLine &l = set_->lines()[static_cast<std::size_t>(i)];
     if (l.a < 0 || l.a >= na || l.b < 0 || l.b >= nb)
       continue;
-    const auto pa = at(MatchSide::a, ka[static_cast<std::size_t>(l.a)]);
-    const auto pb = at(MatchSide::b, kb[static_cast<std::size_t>(l.b)]);
+    const auto pa = at(g[0], ka[static_cast<std::size_t>(l.a)]);
+    const auto pb = at(g[1], kb[static_cast<std::size_t>(l.b)]);
     if (!pa || !pb)
       continue; // an end zoomed or panned out of view: not drawn, not hit
     out.push_back({pa->x(), pa->y(), pb->x(), pb->y()});
@@ -165,14 +180,23 @@ std::vector<Segment> MatchCanvas::segments(std::vector<int> &line_of) const {
 
 int MatchCanvas::line_at(QPointF p) const {
   std::vector<int> line_of;
-  const int s =
-      nearest_segment(segments(line_of), p.x(), p.y(), theme().px("--space-2"));
+  const int s = nearest_segment(segments(geometry(), line_of), p.x(), p.y(),
+                                theme().px("--space-2"));
   return s < 0 ? -1 : line_of[static_cast<std::size_t>(s)];
 }
 
-void MatchCanvas::paint_side(QPainter &p, MatchSide side) const {
+void MatchCanvas::rebuild_depth(int side) {
+  const auto &f = frames_[side];
+  QImage d = f ? f->depth : QImage();
+  if (!d.isNull())
+    d.setColorTable(depth_table_); // detaches once here, not per paint
+  depth_shown_[side] = d;
+}
+
+void MatchCanvas::paint_side(QPainter &p, MatchSide side,
+                             const SideGeometry &g) const {
   const Theme &t = theme();
-  const ViewRect slot = slot_rects()[idx(side)];
+  const ViewRect slot = g.slot;
   const QRectF sr(slot.x, slot.y, slot.w, slot.h);
   p.save();
   QPainterPath clip;
@@ -198,10 +222,9 @@ void MatchCanvas::paint_side(QPainter &p, MatchSide side) const {
     p.restore();
     return;
   }
-  QImage base = layer_ == FrameLayer::depth ? f->depth : f->color;
-  if (layer_ == FrameLayer::depth && !base.isNull())
-    base.setColorTable(depth_table_);
-  const ViewRect d = drawn_rect(side);
+  const QImage &base =
+      layer_ == FrameLayer::depth ? depth_shown_[idx(side)] : f->color;
+  const ViewRect d = g.drawn;
   if (!base.isNull()) {
     p.setRenderHint(QPainter::SmoothPixmapTransform, true);
     p.drawImage(QRectF(d.x, d.y, d.w, d.h), base);
@@ -209,7 +232,7 @@ void MatchCanvas::paint_side(QPainter &p, MatchSide side) const {
     centred(layer_ == FrameLayer::depth ? "Intet dybdebillede"
                                         : "Intet farvebillede");
   }
-  const QSize s = image_size(side);
+  const QSize s(g.w, g.h);
   // The search region, dashed accent.
   if (set_ && set_->region(side) && !s.isEmpty()) {
     const PixelBox &b = *set_->region(side);
@@ -227,7 +250,7 @@ void MatchCanvas::paint_side(QPainter &p, MatchSide side) const {
     const double r = t.px("--space-1") * 0.5;
     const QColor ink = t.color("--color-on-chrome-muted");
     for (const MatchPoint &k : set_->keypoints(side)) {
-      const auto c = at(side, k);
+      const auto c = at(g, k);
       if (!c)
         continue;
       p.setPen(k.xyz ? Qt::NoPen : QPen(ink, 1.0));
@@ -247,12 +270,13 @@ void MatchCanvas::paintEvent(QPaintEvent *) {
   const Theme &t = theme();
   QPainter p(this);
   p.setRenderHint(QPainter::Antialiasing);
-  paint_side(p, MatchSide::a);
-  paint_side(p, MatchSide::b);
+  const auto g = geometry();
+  paint_side(p, MatchSide::a, g[0]);
+  paint_side(p, MatchSide::b, g[1]);
   if (set_) {
     // The lines, each over a scrim halo so it reads on any photo.
     std::vector<int> line_of;
-    const auto segs = segments(line_of);
+    const auto segs = segments(g, line_of);
     QColor halo = t.color("--color-scrim");
     halo.setAlphaF(0.6);
     const double ring = t.px("--space-2") * 0.75;
@@ -288,7 +312,7 @@ void MatchCanvas::paintEvent(QPaintEvent *) {
   }
   // The half-made manual match: a ring where the first click landed.
   if (pick_ && pick_->pending() && pick_->side()) {
-    if (const auto c = at(*pick_->side(), *pick_->point())) {
+    if (const auto c = at(g[idx(*pick_->side())], *pick_->point())) {
       p.setPen(QPen(t.color("--color-accent"), 2.0));
       p.setBrush(Qt::NoBrush);
       const double ring = t.px("--space-2");
@@ -316,7 +340,7 @@ void MatchCanvas::mousePressEvent(QMouseEvent *e) {
 void MatchCanvas::mouseMoveEvent(QMouseEvent *e) {
   const QPointF pos = e->position();
   if (button_ == Qt::NoButton) {
-    const int h = line_at(pos);
+    const int h = mode_ == MatchMode::select ? line_at(pos) : -1;
     if (h != hover_) {
       hover_ = h;
       update();
@@ -352,22 +376,32 @@ void MatchCanvas::mouseReleaseEvent(QMouseEvent *e) {
   button_ = Qt::NoButton;
   if (mode_ == MatchMode::select)
     setCursor(Qt::OpenHandCursor);
-  if (b != Qt::LeftButton || !press_side_)
+  if (b != Qt::LeftButton)
     return;
+  if (mode_ == MatchMode::select) {
+    // Lines cross the gap between the slots, so a click there counts too.
+    if (!dragged_)
+      if (const int l = line_at(pos); l >= 0)
+        emit line_clicked(l);
+    return;
+  }
+  if (!press_side_) {
+    rubber_.reset();
+    update();
+    return;
+  }
   const MatchSide side = *press_side_;
-  const QSize s = image_size(side);
+  const SideGeometry g = geometry()[idx(side)];
+  const bool has_image = g.w > 0 && g.h > 0;
   if (mode_ == MatchMode::region && rubber_) {
     rubber_.reset();
-    if (!s.isEmpty()) {
+    if (has_image) {
       // The drag may run outside the image or the slot: box_from_drag
       // clamps it, and a click-sized drag comes back empty.
-      const ViewRect d = drawn_rect(side);
       const auto p0 =
-          canvas_to_image(d, s.width(), s.height(), press_.x(), press_.y());
-      const auto p1 =
-          canvas_to_image(d, s.width(), s.height(), pos.x(), pos.y());
-      const PixelBox box =
-          box_from_drag(p0[0], p0[1], p1[0], p1[1], s.width(), s.height());
+          canvas_to_image(g.drawn, g.w, g.h, press_.x(), press_.y());
+      const auto p1 = canvas_to_image(g.drawn, g.w, g.h, pos.x(), pos.y());
+      const PixelBox box = box_from_drag(p0[0], p0[1], p1[0], p1[1], g.w, g.h);
       if (!box.empty())
         emit region_dragged(side, box);
     }
@@ -375,15 +409,10 @@ void MatchCanvas::mouseReleaseEvent(QMouseEvent *e) {
     return;
   }
   if (dragged_)
-    return; // a pan or a drag, not a click
-  if (mode_ == MatchMode::select) {
-    if (const int l = line_at(pos); l >= 0)
-      emit line_clicked(l);
-  } else if (mode_ == MatchMode::add && !s.isEmpty()) {
-    const auto px = canvas_to_image(drawn_rect(side), s.width(), s.height(),
-                                    pos.x(), pos.y());
-    if (px[0] >= 0 && px[1] >= 0 && px[0] <= s.width() - 1 &&
-        px[1] <= s.height() - 1)
+    return; // a drag, not a click
+  if (mode_ == MatchMode::add && has_image) {
+    const auto px = canvas_to_image(g.drawn, g.w, g.h, pos.x(), pos.y());
+    if (in_image(px[0], px[1], g.w, g.h))
       emit pixel_clicked(side, static_cast<float>(px[0]),
                          static_cast<float>(px[1]));
   }

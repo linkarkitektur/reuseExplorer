@@ -167,6 +167,10 @@ struct Segment {
 /// the lowest index.
 int nearest_segment(const std::vector<Segment> &segs, double x, double y,
                     double max_dist);
+/// Whether image point (u, v) lies on an @p img_w x @p img_h image, by the
+/// pixel-centre convention: pixel u spans [u - 0.5, u + 0.5), so the image
+/// is [-0.5, w - 0.5) x [-0.5, h - 0.5).
+bool in_image(double u, double v, int img_w, int img_h);
 /// A dragged rectangle in image px, normalised and clamped to the image;
 /// empty when it is smaller than @p min_px either way (a click, not a drag)
 /// or lies outside the image.
