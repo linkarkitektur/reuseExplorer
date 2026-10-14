@@ -325,7 +325,7 @@ void PairStrip::rebuild() {
 
   // ICP result for this pair, if one was run.
   const auto key = std::make_pair(a_, b_);
-  if (icp_running_ == key) {
+  if (pair_ok && icp_running_ == key) {
     icp_line_->setText("ICP kører …");
     icp_line_->setProperty("tone", "wait");
   } else if (auto it = icp_results_.find(key); it != icp_results_.end()) {
