@@ -4,7 +4,8 @@
 // The A<->B pair strip of Rediger: the pose-graph edges between the
 // two frames (stored and pending), how far apart the frames are, and the
 // three edits — ICP refine (slam::refine_frame_pair_icp, on a detached thread
-// with its own read-only connection), add an edge, delete one.
+// with its own read-only connection, seeded with B's manual offset and
+// moving B to its result), add an edge, delete one.
 
 #include <rux_qt/EdgeEditor.hpp>
 #include <rux_qt/PairStrip.hpp>
@@ -333,22 +334,31 @@ void PairStrip::rebuild() {
     if (!o.ok) {
       icp_line_->setText("ICP fejlede: " + o.error);
       icp_line_->setProperty("tone", "crit");
+    } else if (o.stale) {
+      icp_line_->setText("ICP-resultatet er droppet: B blev flyttet, mens ICP "
+                         "kørte. Kør ICP-forfin igen.");
+      icp_line_->setProperty("tone", "warn");
     } else {
       // B's camera centre moves by the shift; the angle is the rotation.
       icp_line_->setText(
           o.converged
-              ? QString("ICP konvergerede · RMS %1 cm · %2 % inden for 5 cm "
-                        "· B flyttes %3 cm og drejes %4° · %5 / %6 punkter · "
-                        "ny kant får vægt %7")
-                    .arg(dec(o.fitness * 100.0, 1), dec(o.inliers * 100.0, 0),
-                         dec(o.center_shift_m * 100.0, 1),
-                         dec(o.rotation_deg, 2),
-                         format_count(static_cast<qulonglong>(o.source_points)),
-                         format_count(static_cast<qulonglong>(o.target_points)),
-                         weight_text(weight_from_icp_fitness(o.fitness)))
+              ? (o.seeded ? QString("Fra din manuelle placering · ")
+                          : QString()) +
+                    QString("ICP konvergerede · RMS %1 cm · %2 % inden for "
+                            "5 cm · B flyttes %3 cm og drejes %4° · %5 / %6 "
+                            "punkter · ny kant får vægt %7")
+                        .arg(dec(o.fitness * 100.0, 1),
+                             dec(o.inliers * 100.0, 0),
+                             dec(o.center_shift_m * 100.0, 1),
+                             dec(o.rotation_deg, 2),
+                             format_count(
+                                 static_cast<qulonglong>(o.source_points)),
+                             format_count(
+                                 static_cast<qulonglong>(o.target_points)),
+                             weight_text(weight_from_icp_fitness(o.fitness)))
               : QString("ICP konvergerede ikke · RMS %1 cm · %2 % inden for "
                         "5 cm — billederne deler for lidt geometri. En ny kant "
-                        "får vægt 1.")
+                        "får vægt 1. B bliver stående.")
                     .arg(dec(o.fitness * 100.0, 1), dec(o.inliers * 100.0, 0)));
       icp_line_->setProperty("tone", o.converged ? "good" : "warn");
     }
@@ -379,7 +389,8 @@ void PairStrip::add_edge() {
   e.weight = 1.0;
   // An ICP fit of this pair makes the weight honest: 1/σ² from its RMS.
   if (auto it = icp_results_.find({a_, b_});
-      it != icp_results_.end() && it->second.ok && it->second.converged)
+      it != icp_results_.end() && it->second.ok && it->second.converged &&
+      !it->second.stale)
     e.weight = weight_from_icp_fitness(it->second.fitness);
   const auto r = editor_.add(e);
   if (r == PendingEdgeEdits::Result::replaced) {
@@ -401,6 +412,10 @@ void PairStrip::run_icp() {
       !session_.is_open())
     return;
   const int a = a_, b = b_;
+  // Seeded with B's manual offset, if any; asked again when ICP finishes.
+  std::optional<Mat4> guess;
+  if (delta_source_)
+    guess = delta_source_();
   icp_running_ = {a, b};
   rebuild();
   // A detached thread with its own read-only connection: ICP over two
@@ -409,13 +424,18 @@ void PairStrip::run_icp() {
   const std::string path = session_.path().toStdString();
   auto work = std::make_shared<BackgroundWork>();
   QPointer<PairStrip> guard(this);
-  std::thread([path, a, b, guard, work]() mutable {
+  std::thread([path, a, b, guess, guard, work]() mutable {
     IcpOutcome o;
     try {
       reusex::ProjectDB db(path, /*readOnly=*/true);
+      reusex::slam::FramePairIcpOptions opts;
+      opts.initial_guess = guess;
       // B onto A: "from" B, "to" A, as an edge A -> B constrains B.
-      const auto r = reusex::slam::refine_frame_pair_icp(db, b, a);
+      const auto r = reusex::slam::refine_frame_pair_icp(db, b, a, opts);
       o.ok = true;
+      o.world_delta = r.world_delta;
+      o.seeded = guess.has_value();
+      o.information = reusex::slam::icp_edge_information(r);
       o.fitness = r.fitness;
       o.inliers = r.inlier_fraction;
       o.converged = r.converged;
@@ -428,19 +448,33 @@ void PairStrip::run_icp() {
     }
     QMetaObject::invokeMethod(
         qApp,
-        [guard, a, b, o] {
+        [guard, a, b, guess, o] {
           if (guard)
-            guard->icp_finished(a, b, o);
+            guard->icp_finished(a, b, guess, o);
         },
         Qt::QueuedConnection);
     work.reset(); // last: counted until the thread has let go of everything
   }).detach();
 }
 
-void PairStrip::icp_finished(int a, int b, IcpOutcome outcome) {
-  icp_results_[{a, b}] = std::move(outcome);
+void PairStrip::icp_finished(int a, int b, const std::optional<Mat4> &guess,
+                             IcpOutcome outcome) {
   icp_running_ = {-1, -1};
+  // Another pair meanwhile: the overlay started that pair unmoved, so the
+  // result describes nothing on screen. Dropped.
+  if (a != a_ || b != b_) {
+    rebuild();
+    return;
+  }
+  // B moved, reset or nudged while ICP ran: say so, never move B.
+  const std::optional<Mat4> now =
+      delta_source_ ? delta_source_() : std::optional<Mat4>{};
+  outcome.stale = outcome.ok && !icp_seed_unchanged(guess, now);
+  icp_results_[{a, b}] = std::move(outcome);
   rebuild();
+  const IcpOutcome &o = icp_results_[{a, b}];
+  if (o.ok && o.converged && !o.stale)
+    emit icp_aligned(a, b, o.world_delta);
 }
 
 } // namespace rux::qt

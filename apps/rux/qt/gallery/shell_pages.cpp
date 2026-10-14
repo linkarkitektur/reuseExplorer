@@ -332,6 +332,25 @@ QWidget *make_rediger_offset(const PageContext &ctx) {
   return shell;
 }
 
+/// Move B by hand, then ICP-forfin from there: B snaps onto A. Logs the
+/// manual and the ICP offset so a run shows B was pulled back.
+QWidget *make_rediger_icp(const PageContext &ctx) {
+  auto *shell = make_pg(ctx);
+  settle(); // clouds loaded
+  PairOverlay *ov = shell->edit()->overlay();
+  ov->set_offset({0.05, -0.03, 0.0, 2.0, 0.0, 0.0});
+  for (auto *b : shell->edit()->strip()->findChildren<QPushButton *>())
+    if (b->text() == "ICP-forfin")
+      b->click();
+  settle(); // ICP landed, B moved
+  const ManualOffset &o = ov->offset();
+  std::fprintf(stderr,
+               "rediger-icp: manual x=0.0500 y=-0.0300 yaw=2.000 -> ICP "
+               "x=%.4f y=%.4f z=%.4f yaw=%.3f pitch=%.3f roll=%.3f\n",
+               o.x, o.y, o.z, o.yaw_deg, o.pitch_deg, o.roll_deg);
+  return shell;
+}
+
 namespace {
 /// One left-button drag on the overlay's interactor, in render-window
 /// pixels (VTK's y is up), the way a mouse drives the box widget.
@@ -1013,6 +1032,9 @@ void register_shell_pages() {
   register_page({"rediger-offset",
                  "Rediger: B flyttet 20 cm i x og drejet 5° i 3D-overlayet",
                  make_rediger_offset});
+  register_page({"rediger-icp",
+                 "Rediger: B flyttet i hånden, så ICP-forfin derfra",
+                 make_rediger_icp});
   register_page(
       {"rediger-xz", "Rediger: grafen i opstalt, set fra −y", make_rediger_xz});
   register_page(

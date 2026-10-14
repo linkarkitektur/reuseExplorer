@@ -12,6 +12,7 @@
 #include <rux_qt/pair_alignment.hpp>
 
 #include <cstddef>
+#include <optional>
 
 using namespace rux::qt;
 using Catch::Approx;
@@ -153,4 +154,18 @@ TEST_CASE("RotationAngle_IsTheTrueAngleNotTheEulerSum", "[rux_qt][pair]") {
         Approx(120.0));
   CHECK(rotation_angle_deg(offset_matrix({0, 0, 0, 180.0, 0, 0}, {})) ==
         Approx(180.0));
+}
+
+TEST_CASE("IcpSeedUnchanged_OnlyTheSameSeedMayMoveB", "[rux_qt][pair]") {
+  const Mat4 moved =
+      offset_matrix({0.05, -0.03, 0.0, 2.0, 0.0, 0.0}, {1.0, 2.0, 0.5});
+  // No guess then and none now: the result still applies.
+  CHECK(icp_seed_unchanged(std::nullopt, std::nullopt));
+  CHECK(icp_seed_unchanged(moved, moved));
+  // B moved by hand, reset, or moved again while ICP ran: stale.
+  CHECK_FALSE(icp_seed_unchanged(std::nullopt, moved));
+  CHECK_FALSE(icp_seed_unchanged(moved, std::nullopt));
+  Mat4 nudged = moved;
+  nudged[3] += 1e-6;
+  CHECK_FALSE(icp_seed_unchanged(moved, nudged));
 }

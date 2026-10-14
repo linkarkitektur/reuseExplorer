@@ -25,6 +25,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <optional>
 
 namespace rux::qt {
 namespace {
@@ -172,6 +173,18 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
     selection_ = s;
     emit selection_changed(s);
   });
+  // ICP-forfin starts from B's manual offset and moves B to its result.
+  strip_->set_delta_source([this]() -> std::optional<Mat4> {
+    if (!overlay_->ready() || overlay_->offset().is_zero())
+      return std::nullopt;
+    return overlay_->delta();
+  });
+  connect(strip_, &PairStrip::icp_aligned, this,
+          [this](int a, int b, const Mat4 &delta) {
+            if (a == slots_.a() && b == slots_.b() && overlay_->ready())
+              overlay_->set_offset(
+                  offset_from_matrix(delta, overlay_->pivot()));
+          });
   connect(&session_, &ProjectSession::state_changed, this,
           &EditWorkspace::on_session_state);
   restore_layout();

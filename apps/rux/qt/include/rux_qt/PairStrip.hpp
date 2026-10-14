@@ -8,11 +8,15 @@
 // delete.
 
 #include <rux_qt/database_logic.hpp>
+#include <rux_qt/pair_alignment.hpp>
 #include <rux_qt/selection.hpp>
 
 #include <QFrame>
 
+#include <array>
+#include <functional>
 #include <map>
+#include <optional>
 
 class QComboBox;
 class QLabel;
@@ -32,10 +36,19 @@ class PairStrip : public QFrame {
   PairStrip(ProjectSession &session, EdgeEditor &editor,
             QWidget *parent = nullptr);
   void set_pair(int a_id, int b_id);
+  /// Where ICP-forfin starts from: B's manual world-space offset ΔT, or
+  /// nullopt for the stored poses alone. Asked again when ICP finishes; a
+  /// different answer then makes the result stale.
+  void set_delta_source(std::function<std::optional<Mat4>()> source) {
+    delta_source_ = std::move(source);
+  }
 
     signals:
   /// An edge row was clicked: show it in the inspector.
   void edge_selected(const rux::qt::Selection &selection);
+  /// ICP of B onto A converged for the current pair from the current ΔT:
+  /// @p world_delta is B's new world-space offset (the seed included).
+  void icp_aligned(int a, int b, const rux::qt::Mat4 &world_delta);
 
     private:
   struct IcpOutcome {
@@ -45,10 +58,17 @@ class PairStrip : public QFrame {
     bool converged = false;
     int source_points = 0, target_points = 0;
     double center_shift_m = 0, rotation_deg = 0;
+    Mat4 world_delta = mat4_identity(); ///< ICP's offset on B, seed included
+    bool seeded = false;                ///< started from a manual ΔT
+    /// The ICP edge's information (slam::icp_edge_information).
+    std::array<double, 36> information{};
+    /// B was moved by hand while ICP ran: shown, never applied.
+    bool stale = false;
   };
   void rebuild();
   void run_icp();
-  void icp_finished(int a, int b, IcpOutcome outcome);
+  void icp_finished(int a, int b, const std::optional<Mat4> &guess,
+                    IcpOutcome outcome);
   void add_edge();
   ProjectSession &session_;
   EdgeEditor &editor_;
@@ -63,6 +83,7 @@ class PairStrip : public QFrame {
   QLabel *note_ = nullptr;
   std::map<std::pair<int, int>, IcpOutcome> icp_results_;
   std::pair<int, int> icp_running_{-1, -1};
+  std::function<std::optional<Mat4>()> delta_source_;
 };
 
 } // namespace rux::qt

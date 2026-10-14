@@ -179,4 +179,9 @@ Vec3 centroid(const CloudPoints &points) {
   return {sx / n, sy / n, sz / n};
 }
 
+bool icp_seed_unchanged(const std::optional<Mat4> &launched,
+                        const std::optional<Mat4> &current) {
+  return launched == current;
+}
+
 } // namespace rux::qt

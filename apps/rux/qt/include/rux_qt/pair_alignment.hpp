@@ -15,6 +15,7 @@
 
 #include <array>
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 namespace rux::qt {
@@ -67,6 +68,13 @@ double rotation_angle_deg(const Mat4 &m);
 /// T_from^-1 · @p world_delta_on_to · T_to.
 Mat4 edge_measurement(const Mat4 &pose_from, const Mat4 &pose_to,
                       const Mat4 &world_delta_on_to);
+
+/// Whether an ICP run launched with seed @p launched may still move B: the
+/// seed the pair panel would give now, @p current, is the same (nullopt = no
+/// manual offset). Exact: ΔT only changes through an edit, and a moved,
+/// reset or re-nudged B makes the result stale.
+bool icp_seed_unchanged(const std::optional<Mat4> &launched,
+                        const std::optional<Mat4> &current);
 
 /// A back-projected depth cloud (slam::frame_world_points' element type).
 using CloudPoints = std::vector<std::array<float, 3>>;
