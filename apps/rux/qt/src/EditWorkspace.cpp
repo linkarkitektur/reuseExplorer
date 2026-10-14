@@ -230,8 +230,14 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
             if (placed)
               overlay_->set_offset(
                   offset_from_matrix(delta, overlay_->pivot()));
-            images_->align_applied(placed);
+            images_->align_applied(placed ? std::optional(overlay_->delta())
+                                          : std::nullopt);
           });
+  // The fit status stops claiming B's placement once B leaves it.
+  connect(overlay_, &PairOverlay::offset_changed, images_, [this] {
+    images_->b_moved(overlay_->ready() ? std::optional(overlay_->delta())
+                                       : std::nullopt);
+  });
   // An ICP fit counts only while B stays where ICP put it.
   connect(overlay_, &PairOverlay::offset_changed, strip_,
           &PairStrip::refresh_icp);

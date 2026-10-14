@@ -590,7 +590,7 @@ QWidget *make_rediger_matches(const PageContext &ctx) {
   im->align_from_matches();
   settle();
   log_matches("rediger-matches aligned", im);
-  const ManualOffset &o = shell->edit()->overlay()->offset();
+  const ManualOffset o = shell->edit()->overlay()->offset();
   std::fprintf(stderr,
                "rediger-matches: B at x=%.4f y=%.4f z=%.4f yaw=%.3f "
                "pitch=%.3f roll=%.3f (moved %.1f cm, %.2f deg)\n",
@@ -607,6 +607,13 @@ QWidget *make_rediger_matches(const PageContext &ctx) {
     std::fprintf(stderr,
                  "rediger-matches: after ICP x=%.4f y=%.4f z=%.4f yaw=%.3f\n",
                  p.x, p.y, p.z, p.yaw_deg);
+    // B left the fit's placement: the fit status must not still claim it.
+    const QString status = im->status_text();
+    std::fprintf(stderr, "rediger-matches: fit status after ICP \"%s\"\n",
+                 qPrintable(status));
+    if (!(p.x == o.x && p.y == o.y && p.z == o.z && p.yaw_deg == o.yaw_deg) &&
+        status.startsWith("Fra matches"))
+      match_page_failed("the fit status still claims B after ICP moved it");
   }
   return shell;
 }
@@ -643,6 +650,18 @@ QWidget *make_rediger_matches_edit(const PageContext &ctx) {
   PairImages *im = shell->edit()->images();
   im->find_matches();
   settle();
+  // A toggle while a Find runs would land on lines the Find then replaces:
+  // it is refused with the busy note instead of being lost.
+  if (!im->matches().lines().empty()) {
+    im->find_matches();
+    im->toggle_line(0);
+    const QString busy = im->status_text();
+    std::fprintf(stderr, "rediger-matches-edit: toggle during Find -> \"%s\"\n",
+                 qPrintable(busy));
+    if (busy != "Vent — finder match …")
+      match_page_failed("a toggle during Find was not refused");
+    settle();
+  }
   im->align_from_matches();
   settle();
   const auto &lines = im->matches().lines();

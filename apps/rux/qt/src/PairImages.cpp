@@ -267,6 +267,7 @@ void PairImages::restart() {
   ++generation_; // anything still running describes the old state
   busy_ = Busy::none;
   pick_.cancel();
+  placed_at_.reset();
   note_.clear();
   tone_.clear();
   detail_.clear();
@@ -492,8 +493,9 @@ void PairImages::cancel_pick() {
 
 void PairImages::toggle_line(int line) {
   // A fit running reads the lines it was started with: a toggle now would
-  // be coloured by a fit that never saw it.
-  if (busy_ == Busy::aligning) {
+  // be coloured by a fit that never saw it. A Find running replaces the
+  // lines when it lands: a toggle now would be lost with the old ones.
+  if (busy_ == Busy::aligning || busy_ == Busy::finding) {
     refuse_busy();
     return;
   }
@@ -582,12 +584,24 @@ void PairImages::fitted(std::shared_ptr<Fitted> r) {
   emit align_ready(a_, b_, f.world_delta); // EditWorkspace: align_applied
 }
 
-void PairImages::align_applied(bool placed) {
+void PairImages::align_applied(const std::optional<Mat4> &placed_at) {
   const QString fit =
       QString::fromStdString(match_fit_text(last_inliers_, last_rms_));
-  note(placed ? fit
-              : fit + " — B er ikke flyttet: 3D-overlayet var ikke klart.",
-       placed ? "good" : "warn");
+  placed_at_ = placed_at;
+  note(placed_at ? fit
+                 : fit + " — B er ikke flyttet: 3D-overlayet var ikke klart.",
+       placed_at ? "good" : "warn");
+}
+
+void PairImages::b_moved(const std::optional<Mat4> &now) {
+  if (!placed_at_ || icp_seed_unchanged(placed_at_, now))
+    return;
+  placed_at_.reset();
+  // Neutral, not "good": the fit no longer describes where B is. The news
+  // first: the status elides at its right end.
+  note("B er flyttet siden · " +
+           QString::fromStdString(match_fit_text(last_inliers_, last_rms_)),
+       {});
 }
 
 void PairImages::note(const QString &text, const QString &tone,

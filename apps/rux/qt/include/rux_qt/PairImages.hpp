@@ -67,8 +67,12 @@ class PairImages : public QWidget {
   void toggle_line(int line);
   void set_region(MatchSide side, PixelBox box);
   void clear_regions();
-  /// Whether EditWorkspace placed B on the last align_ready.
-  void align_applied(bool placed);
+  /// Where EditWorkspace placed B on the last align_ready (the overlay's
+  /// ΔT), or nullopt when it could not.
+  void align_applied(const std::optional<rux::qt::Mat4> &placed_at);
+  /// B's placement changed to @p now (the overlay's ΔT): once B has left
+  /// the fit's placement (ICP-forfin, a drag), the fit status says so.
+  void b_moved(const std::optional<rux::qt::Mat4> &now);
   const MatchSet &matches() const { return set_; }
   MatchCanvas *canvas() const { return canvas_; }
   QString status_text() const;
@@ -126,6 +130,9 @@ class PairImages : public QWidget {
   QString note_, tone_, detail_; ///< the last event; empty = the read-out
   int last_inliers_ = 0;
   double last_rms_ = 0.0;
+  /// B's ΔT right after Placér B fra match placed it; reset by restart()
+  /// and once B has moved off it.
+  std::optional<Mat4> placed_at_;
 };
 
 } // namespace rux::qt
