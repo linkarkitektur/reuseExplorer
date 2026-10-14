@@ -11,7 +11,10 @@
 // keys — ←/→ x, ↑/↓ y, PgUp/PgDn z, [ / ] yaw, Shift ×10 (VTK's own keys,
 // e/q/r/…, are left alone). "Nulstil" clears ΔT. Clouds load off the GUI
 // thread on their own read-only connection, thinned to kOverlayMaxPoints
-// per frame; a result for a pair no longer shown is dropped.
+// per frame; a result for a pair no longer shown is dropped. "Farve: Tint |
+// RGB" (colour_switch(), over the canvas' top-right corner) draws both clouds
+// in their frames' own colours instead (slam::frame_world_colored_points); a
+// frame without a colour image keeps its tint, and the legend says so.
 
 #include <rux_qt/pair_alignment.hpp>
 
@@ -23,6 +26,7 @@
 #include <memory>
 #include <optional>
 
+class QButtonGroup;
 class QDoubleSpinBox;
 class QFrame;
 class QLabel;
@@ -53,6 +57,15 @@ class PairOverlay : public QWidget {
   /// Where B stands, one line ("B flyttet 1,8 cm · drejet 3,6°"), for the
   /// pane header: a status row under the fields took the canvas' height.
   QWidget *status_label() const;
+  /// "Farve: Tint | RGB", floating over the canvas' top-right corner.
+  QWidget *colour_switch() const { return colour_switch_; }
+  OverlayColouring colouring() const { return colouring_; }
+  /// Recolours the drawn clouds in place (no reload).
+  void set_colouring(OverlayColouring c);
+  /// The clouds' colours drawn right now: true for A / B when that cloud
+  /// shows its RGB (RGB mode and the frame has a colour image).
+  bool shows_rgb_a() const;
+  bool shows_rgb_b() const;
   /// The box widget moved B (called by its VTK observer).
   void widget_moved(const Mat4 &m);
   /// Test probes for the gallery's Qt-level drag (rediger-drag-qt): the
@@ -65,6 +78,7 @@ class PairOverlay : public QWidget {
 
     signals:
   void offset_changed();
+  void colouring_changed(rux::qt::OverlayColouring c);
 
     protected:
   bool eventFilter(QObject *watched, QEvent *event) override;
@@ -75,7 +89,8 @@ class PairOverlay : public QWidget {
   void load();
   void loaded(std::shared_ptr<Clouds> c);
   void frame_camera();
-  void build_legend(std::size_t a_points, std::size_t b_points);
+  void build_legend();
+  void apply_colouring();
   void place_legend();
   void apply_offset(bool from_widget);
   void sync_fields();
@@ -85,6 +100,11 @@ class PairOverlay : public QWidget {
   std::array<QDoubleSpinBox *, 6> fields_{};
   ElidedLabel *status_ = nullptr;
   QFrame *legend_ = nullptr; ///< A / B swatches over the canvas
+  QWidget *colour_switch_ = nullptr;
+  QButtonGroup *colour_group_ = nullptr;
+  OverlayColouring colouring_ = OverlayColouring::tint;
+  std::size_t a_points_ = 0, b_points_ = 0; ///< drawn, for the legend
+  bool a_has_rgb_ = false, b_has_rgb_ = false;
   std::unique_ptr<Vtk> vtk_;
   ManualOffset offset_;
   Vec3 pivot_{};

@@ -20,7 +20,9 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 namespace rux::qt {
@@ -137,7 +139,21 @@ inline constexpr std::size_t kOverlayMaxPoints = 50000;
 /// Every k-th point (k = ceil(n / max_count)), spread over the whole cloud;
 /// @p points unchanged when it already fits.
 CloudPoints thin_points(const CloudPoints &points, std::size_t max_count);
+/// RGB per point, index-aligned with a CloudPoints
+/// (slam::frame_world_colored_points' colours).
+using CloudColours = std::vector<std::array<std::uint8_t, 3>>;
+/// thin_points() for colours: the same stride for the same size and cap,
+/// so thinned colours stay aligned with the thinned points.
+CloudColours thin_colours(const CloudColours &colours, std::size_t max_count);
 /// Mean of @p points; the origin for none.
 Vec3 centroid(const CloudPoints &points);
+
+/// How the overlay colours A's and B's clouds (reusex-xlg.10): a flat tint
+/// each (A --label-1, B --label-0) or the frames' own RGB.
+enum class OverlayColouring { tint, rgb };
+/// The QSettings value (rediger/overlay_colour).
+std::string_view overlay_colouring_key(OverlayColouring c);
+/// tint for anything that is not a known key.
+OverlayColouring parse_overlay_colouring(std::string_view key);
 
 } // namespace rux::qt

@@ -14,13 +14,16 @@
 #include <reusex/visualize/scene.hpp>
 
 #include <QApplication>
+#include <QButtonGroup>
 #include <QDoubleSpinBox>
 #include <QFrame>
 #include <QGridLayout>
+#include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLocale>
 #include <QPointer>
+#include <QPushButton>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
 
@@ -33,6 +36,7 @@
 #include <vtkCommand.h>
 #include <vtkMatrix4x4.h>
 #include <vtkNew.h>
+#include <vtkPointData.h>
 #include <vtkPoints.h>
 #include <vtkPolyData.h>
 #include <vtkPolyDataMapper.h>
@@ -43,6 +47,7 @@
 #include <vtkSmartPointer.h>
 #include <vtkSphereSource.h>
 #include <vtkTransform.h>
+#include <vtkUnsignedCharArray.h>
 
 #include <cmath>
 #include <thread>
@@ -54,8 +59,12 @@ constexpr double kPointPx = 2.0; ///< logical pixels
 const char *const kTokenA = "--label-1";
 const char *const kTokenB = "--label-0";
 
-vtkSmartPointer<vtkActor> points_actor(const CloudPoints &pts, const QColor &c,
-                                       double point_px) {
+/// @p colours (index-aligned RGB, may be empty) ride along as the points'
+/// scalars, shown only while the mapper's scalar visibility is on (RGB
+/// mode); the actor colour @p c is the tint otherwise.
+vtkSmartPointer<vtkActor> points_actor(const CloudPoints &pts,
+                                       const CloudColours &colours,
+                                       const QColor &c, double point_px) {
   vtkNew<vtkPoints> p;
   p->SetNumberOfPoints(static_cast<vtkIdType>(pts.size()));
   vtkNew<vtkCellArray> verts;
@@ -67,8 +76,21 @@ vtkSmartPointer<vtkActor> points_actor(const CloudPoints &pts, const QColor &c,
   vtkNew<vtkPolyData> poly;
   poly->SetPoints(p);
   poly->SetVerts(verts);
+  if (!colours.empty() && colours.size() == pts.size()) {
+    vtkNew<vtkUnsignedCharArray> rgb;
+    rgb->SetName("rgb");
+    rgb->SetNumberOfComponents(3);
+    rgb->SetNumberOfTuples(static_cast<vtkIdType>(colours.size()));
+    for (vtkIdType i = 0; i < static_cast<vtkIdType>(colours.size()); ++i) {
+      const auto &q = colours[static_cast<std::size_t>(i)];
+      rgb->SetTypedTuple(i, q.data());
+    }
+    poly->GetPointData()->SetScalars(rgb);
+  }
   vtkNew<vtkPolyDataMapper> mapper;
   mapper->SetInputData(poly);
+  mapper->SetColorModeToDirectScalars();
+  mapper->ScalarVisibilityOff(); // the tint until apply_colouring()
   auto actor = vtkSmartPointer<vtkActor>::New();
   actor->SetMapper(mapper);
   actor->GetProperty()->SetColor(c.redF(), c.greenF(), c.blueF());
@@ -166,6 +188,7 @@ void on_box(vtkObject *caller, unsigned long, void *client, void *) {
 struct PairOverlay::Clouds {
   unsigned generation = 0;
   CloudPoints a, b;
+  CloudColours a_rgb, b_rgb; ///< empty: that frame has no colour image
   Vec3 pivot{};
   QString error;
 };
@@ -252,6 +275,40 @@ PairOverlay::PairOverlay(ProjectSession &session, bool interactive,
   status_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
   v->addWidget(fields);
 
+  // "Farve: Tint | RGB", floating in the canvas' top-right corner like the
+  // legend in its bottom-left: at 1440 px the pane header has no room for
+  // it beside the title, the status line and Nulstil (the status line was
+  // elided to nothing), so the tooltips carry the "Farve" caption.
+  auto *seg = new QFrame(view_);
+  seg->setObjectName("segmented");
+  auto *sl = new QHBoxLayout(seg);
+  sl->setContentsMargins(0, 0, 0, 0);
+  sl->setSpacing(0);
+  colour_group_ = new QButtonGroup(this);
+  const struct {
+    const char *text, *tip;
+  } modes[2] = {
+      {"Tint", "Farve: A og B i hver sin farve, så de er lette at skelne"},
+      {"RGB", "Farve: skyerne i billedernes egne farver (A og B ses i "
+              "forklaringen; et billede uden farvebillede beholder sin "
+              "farve)"}};
+  for (int i = 0; i < 2; ++i) {
+    auto *b = new QPushButton(NavItem::escape_mnemonic(modes[i].text));
+    b->setObjectName("segment");
+    b->setCheckable(true);
+    b->setCursor(Qt::PointingHandCursor);
+    b->setToolTip(modes[i].tip);
+    b->setProperty("position", i == 0 ? "first" : "last");
+    colour_group_->addButton(b, i);
+    sl->addWidget(b);
+  }
+  colour_group_->button(0)->setChecked(true);
+  colour_switch_ = seg;
+  place_legend();
+  connect(colour_group_, &QButtonGroup::idClicked, this, [this](int id) {
+    set_colouring(id == 1 ? OverlayColouring::rgb : OverlayColouring::tint);
+  });
+
   setFocusPolicy(Qt::StrongFocus);
   installEventFilter(this);
   view_->installEventFilter(this);
@@ -299,6 +356,8 @@ void PairOverlay::load() {
   vtk_->a = vtk_->b = nullptr;
   delete legend_;
   legend_ = nullptr;
+  a_points_ = b_points_ = 0;
+  a_has_rgb_ = b_has_rgb_ = false;
   view_->clear_scene();
   apply_offset(false);
   if (!session_.is_open() || a_ < 0 || b_ < 0 || a_ == b_) {
@@ -316,10 +375,14 @@ void PairOverlay::load() {
     c->generation = gen;
     try {
       reusex::ProjectDB db(path, /*readOnly=*/true);
-      c->a = thin_points(reusex::slam::frame_world_points(db, a),
-                         kOverlayMaxPoints);
-      c->b = thin_points(reusex::slam::frame_world_points(db, b),
-                         kOverlayMaxPoints);
+      // Colours always come along, so the Tint | RGB switch never reloads;
+      // thinned with the same stride as their points.
+      auto ca = reusex::slam::frame_world_colored_points(db, a);
+      auto cb = reusex::slam::frame_world_colored_points(db, b);
+      c->a = thin_points(ca.points, kOverlayMaxPoints);
+      c->a_rgb = thin_colours(ca.colors, kOverlayMaxPoints);
+      c->b = thin_points(cb.points, kOverlayMaxPoints);
+      c->b_rgb = thin_colours(cb.colors, kOverlayMaxPoints);
       c->pivot = centroid(c->b);
     } catch (const std::exception &e) {
       c->error = QString::fromUtf8(e.what());
@@ -349,9 +412,13 @@ void PairOverlay::loaded(std::shared_ptr<Clouds> c) {
   // Okabe-Ito sky blue and orange: apart in hue and luminance, colour-blind
   // safe, and drawn for the near-black canvas in both themes.
   const double px = kPointPx * view_->devicePixelRatioF();
-  vtk_->a = points_actor(c->a, t.color(kTokenA), px);
-  vtk_->b = points_actor(c->b, t.color(kTokenB), px);
-  build_legend(c->a.size(), c->b.size());
+  vtk_->a = points_actor(c->a, c->a_rgb, t.color(kTokenA), px);
+  vtk_->b = points_actor(c->b, c->b_rgb, t.color(kTokenB), px);
+  a_points_ = c->a.size();
+  b_points_ = c->b.size();
+  a_has_rgb_ = !c->a_rgb.empty();
+  b_has_rgb_ = !c->b_rgb.empty();
+  apply_colouring(); // also builds the legend
   vtkRenderer *r = view_->renderer();
   r->AddActor(vtk_->a);
   r->AddActor(vtk_->b);
@@ -398,6 +465,38 @@ void PairOverlay::loaded(std::shared_ptr<Clouds> c) {
   view_->set_message({});
   ready_ = true;
   apply_offset(false);
+}
+
+void PairOverlay::set_colouring(OverlayColouring c) {
+  if (QAbstractButton *b =
+          colour_group_->button(c == OverlayColouring::rgb ? 1 : 0)) {
+    const QSignalBlocker block(colour_group_);
+    b->setChecked(true);
+  }
+  if (c == colouring_)
+    return;
+  colouring_ = c;
+  apply_colouring();
+  emit colouring_changed(c);
+}
+
+bool PairOverlay::shows_rgb_a() const {
+  return ready_ && colouring_ == OverlayColouring::rgb && a_has_rgb_;
+}
+bool PairOverlay::shows_rgb_b() const {
+  return ready_ && colouring_ == OverlayColouring::rgb && b_has_rgb_;
+}
+
+void PairOverlay::apply_colouring() {
+  const bool rgb = colouring_ == OverlayColouring::rgb;
+  if (vtk_->a)
+    vtk_->a->GetMapper()->SetScalarVisibility(rgb && a_has_rgb_);
+  if (vtk_->b)
+    vtk_->b->GetMapper()->SetScalarVisibility(rgb && b_has_rgb_);
+  if (vtk_->a || vtk_->b) {
+    build_legend();
+    view_->request_render();
+  }
 }
 
 void PairOverlay::frame_camera() {
@@ -514,9 +613,10 @@ bool PairOverlay::handle_key(int key, bool shift) {
   return true;
 }
 
-void PairOverlay::build_legend(std::size_t a_points, std::size_t b_points) {
+void PairOverlay::build_legend() {
   delete legend_;
   const Theme &t = theme();
+  const bool rgb = colouring_ == OverlayColouring::rgb;
   legend_ = new QFrame(view_);
   legend_->setObjectName("overlayLegend");
   legend_->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -530,13 +630,20 @@ void PairOverlay::build_legend(std::size_t a_points, std::size_t b_points) {
     const char *token;
     QString name;
     std::size_t points;
-  } rows[2] = {{kTokenA, QString("A · %1").arg(a_), a_points},
-               {kTokenB, QString("B · %1").arg(b_), b_points}};
+    bool has_rgb;
+  } rows[2] = {{kTokenA, QString("A · %1").arg(a_), a_points_, a_has_rgb_},
+               {kTokenB, QString("B · %1").arg(b_), b_points_, b_has_rgb_}};
   for (int r = 0; r < 2; ++r) {
+    // In RGB mode the swatch still says which cloud is which; a frame
+    // without a colour image keeps its tint, and the row says so.
     g->addWidget(new Swatch(rows[r].token), r, 0, Qt::AlignVCenter);
-    auto *name = new QLabel(rows[r].name);
-    name->setObjectName("legendText");
-    g->addWidget(name, r, 1);
+    QString name = rows[r].name;
+    if (rgb)
+      name += rows[r].has_rgb ? QString(" · RGB")
+                              : QString(" · intet farvebillede");
+    auto *label = new QLabel(name);
+    label->setObjectName("legendText");
+    g->addWidget(label, r, 1);
     auto *count =
         new QLabel(format_count(static_cast<qulonglong>(rows[r].points)));
     count->setObjectName("legendCount");
@@ -549,10 +656,15 @@ void PairOverlay::build_legend(std::size_t a_points, std::size_t b_points) {
 }
 
 void PairOverlay::place_legend() {
+  const int m = theme().px("--space-2");
+  if (colour_switch_) {
+    colour_switch_->adjustSize();
+    colour_switch_->move(view_->width() - colour_switch_->width() - m, m);
+    colour_switch_->raise();
+  }
   if (!legend_)
     return;
   legend_->adjustSize();
-  const int m = theme().px("--space-2");
   legend_->move(m, view_->height() - legend_->height() - m);
   legend_->raise();
 }

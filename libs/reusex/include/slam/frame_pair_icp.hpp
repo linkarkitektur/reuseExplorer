@@ -10,6 +10,7 @@
 // surfaces report the same numbers for the same pair.
 
 #include <array>
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -86,6 +87,27 @@ FramePairIcpResult refine_frame_pair_icp(const ProjectDB &db, int from_id,
 std::vector<std::array<float, 3>>
 frame_world_points(const ProjectDB &db, int node_id,
                    const FramePairIcpOptions &opts = {});
+
+/// frame_world_points() with each point's colour (reusex-xlg.10, the Qt
+/// overlay's RGB mode).
+struct FrameWorldCloud {
+  /// Exactly frame_world_points(db, node_id, opts): same pixels, same order.
+  std::vector<std::array<float, 3>> points;
+  /// RGB (0..255) of the stored colour image at each point's depth pixel,
+  /// index-aligned with @c points; EMPTY when the frame has no usable colour
+  /// image (missing or undecodable), so the caller can fall back to a tint.
+  std::vector<std::array<std::uint8_t, 3>> colors;
+};
+
+/// frame_world_points() plus colours. A depth pixel (u, v) samples the
+/// colour image at (u * colour_w / depth_w, v * colour_h / depth_h): the two
+/// may differ in resolution (an iPad stores depth at 192x256 against
+/// 720x960 colour). A frame without a usable colour image logs a warning
+/// naming it and returns its points with no colours.
+/// @throws std::runtime_error as frame_world_points().
+FrameWorldCloud
+frame_world_colored_points(const ProjectDB &db, int node_id,
+                           const FramePairIcpOptions &opts = {});
 
 /// Diagonal 6x6 information (GTSAM order rx, ry, rz, tx, ty, tz, row-major)
 /// for a pose-graph edge measured by ICP: sigma_t = max(fitness, 0.01) m and

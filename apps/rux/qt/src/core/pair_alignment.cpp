@@ -155,17 +155,30 @@ double rotation_angle_deg(const Mat4 &m) {
   return std::acos(c) * 180.0 / std::numbers::pi;
 }
 
-CloudPoints thin_points(const CloudPoints &points, std::size_t max_count) {
+namespace {
+/// Every k-th element, k = ceil(n / max_count): thin_points' and
+/// thin_colours' one stride.
+template <class T>
+std::vector<T> thin_every(const std::vector<T> &in, std::size_t max_count) {
   if (max_count == 0)
     return {};
-  if (points.size() <= max_count)
-    return points;
-  const std::size_t stride = (points.size() + max_count - 1) / max_count;
-  CloudPoints out;
-  out.reserve(points.size() / stride + 1);
-  for (std::size_t i = 0; i < points.size(); i += stride)
-    out.push_back(points[i]);
+  if (in.size() <= max_count)
+    return in;
+  const std::size_t stride = (in.size() + max_count - 1) / max_count;
+  std::vector<T> out;
+  out.reserve(in.size() / stride + 1);
+  for (std::size_t i = 0; i < in.size(); i += stride)
+    out.push_back(in[i]);
   return out;
+}
+} // namespace
+
+CloudPoints thin_points(const CloudPoints &points, std::size_t max_count) {
+  return thin_every(points, max_count);
+}
+
+CloudColours thin_colours(const CloudColours &colours, std::size_t max_count) {
+  return thin_every(colours, max_count);
 }
 
 Vec3 centroid(const CloudPoints &points) {
@@ -277,6 +290,14 @@ EdgeRecord canonical_edge(EdgeRecord e) {
     e.transform = rigid_inverse(*e.transform);
   }
   return e;
+}
+
+std::string_view overlay_colouring_key(OverlayColouring c) {
+  return c == OverlayColouring::rgb ? "rgb" : "tint";
+}
+
+OverlayColouring parse_overlay_colouring(std::string_view key) {
+  return key == "rgb" ? OverlayColouring::rgb : OverlayColouring::tint;
 }
 
 } // namespace rux::qt

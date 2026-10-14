@@ -385,6 +385,34 @@ QWidget *make_rediger_offset(const PageContext &ctx) {
   return shell;
 }
 
+/// The 3D overlay in one colouring (reusex-xlg.10). Logs what each cloud
+/// shows; RGB mode with neither cloud in colour fails the page (both frames
+/// of the fixture have colour images).
+QWidget *make_rediger_colouring(const PageContext &ctx, OverlayColouring c) {
+  auto *shell = make_pg(ctx);
+  PairOverlay *ov = shell->edit()->overlay();
+  ov->set_colouring(c);
+  settle(); // clouds loaded
+  const std::string_view key = overlay_colouring_key(c);
+  std::fprintf(stderr, "rediger-%.*s: ready=%d A rgb=%d B rgb=%d\n",
+               static_cast<int>(key.size()), key.data(), ov->ready() ? 1 : 0,
+               ov->shows_rgb_a() ? 1 : 0, ov->shows_rgb_b() ? 1 : 0);
+  if (c == OverlayColouring::rgb &&
+      (!ov->ready() || (!ov->shows_rgb_a() && !ov->shows_rgb_b()))) {
+    std::fprintf(stderr, "rux-qt-gallery: ERROR RGB NOT SHOWN: %s\n",
+                 ov->ready() ? "neither cloud has colours"
+                             : "A's and B's clouds did not load");
+    report_page_failure();
+  }
+  return shell;
+}
+QWidget *make_rediger_rgb(const PageContext &ctx) {
+  return make_rediger_colouring(ctx, OverlayColouring::rgb);
+}
+QWidget *make_rediger_tint(const PageContext &ctx) {
+  return make_rediger_colouring(ctx, OverlayColouring::tint);
+}
+
 /// Move B by hand, then ICP-forfin from there: B snaps onto A. Logs the
 /// manual and the ICP offset so a run shows B was pulled back.
 AppShell *make_rediger_icp_shell(const PageContext &ctx) {
@@ -1461,6 +1489,12 @@ void register_shell_pages() {
   register_page({"rediger-offset",
                  "Rediger: B flyttet 20 cm i x og drejet 5° i 3D-overlayet",
                  make_rediger_offset});
+  register_page({"rediger-rgb",
+                 "Rediger: 3D-overlayet i billedernes egne farver (RGB)",
+                 make_rediger_rgb});
+  register_page({"rediger-tint",
+                 "Rediger: 3D-overlayet med A og B i hver sin farve (Tint)",
+                 make_rediger_tint});
   register_page({"rediger-icp",
                  "Rediger: B flyttet i hånden, så ICP-forfin derfra",
                  make_rediger_icp});

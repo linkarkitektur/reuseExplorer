@@ -73,6 +73,20 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   panes_[3]->set_content(overlay_ = new PairOverlay(session_, interactive_3d));
   // Nearly all the spare header width: the gap after the title has 1.
   panes_[3]->add_header_widget(overlay_->status_label(), 100);
+  if (persist_) {
+    const QString key = QSettings().value("rediger/overlay_colour").toString();
+    overlay_->set_colouring(parse_overlay_colouring(key.toStdString()));
+  }
+  connect(
+      overlay_, &PairOverlay::colouring_changed, this,
+      [this](OverlayColouring c) {
+        if (!persist_)
+          return;
+        const std::string_view k = overlay_colouring_key(c);
+        QSettings().setValue(
+            "rediger/overlay_colour",
+            QString::fromLatin1(k.data(), static_cast<qsizetype>(k.size())));
+      });
   auto *reset = new QPushButton(NavItem::escape_mnemonic("Nulstil"));
   reset->setProperty("kind", "ghost");
   reset->setCursor(Qt::PointingHandCursor);
