@@ -461,7 +461,12 @@ void PairStrip::add_edge() {
       pose_a = db->sensor_frame_pose(a_);
       pose_b = db->sensor_frame_pose(b_);
     }
-  } catch (const std::exception &) {
+  } catch (const std::exception &e) {
+    // A read error is not a missing pose: say what the project said.
+    note_->setText(QString("Poserne kunne ikke læses: %1")
+                       .arg(QString::fromUtf8(e.what())));
+    note_->setVisible(true);
+    return;
   }
   if (!pose_a || !pose_b) {
     note_->setText("Begge billeder skal have en pose, før en kant kan måles.");
@@ -481,11 +486,14 @@ void PairStrip::add_edge() {
   switch (editor_.add(e)) {
   case PendingEdgeEdits::Result::added:
     break;
-  case PendingEdgeEdits::Result::replaced:
+  case PendingEdgeEdits::Result::replaced: {
+    // As the list and the rows show it: the store's direction.
+    const EdgeKey k = canonical_key(e.key);
     msg = QString("Kanten %1 → %2 får den nye måling ved gem.")
-              .arg(e.key.from)
-              .arg(e.key.to);
+              .arg(k.from)
+              .arg(k.to);
     break;
+  }
   case PendingEdgeEdits::Result::revived:
     msg = "Den afviste kant genoplives, og den nye måling erstatter den "
           "gemte ved gem.";
