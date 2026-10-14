@@ -24,9 +24,10 @@ apps/rux/qt/
 │   ├── SceneView.hpp         3D canvas: QVTKOpenGLNativeWidget or EGL
 │   │                         offscreen image; LOD swap; hardware picking
 │   ├── Viewer3DWorkspace.hpp Q3: layers, colour-by + legend, cut, presets
-│   ├── EditWorkspace.hpp     Rediger: GraphPanel + EdgeListPanel left, the
-│   │                         selected pair (images, 3D overlay) + PairStrip
-│   │                         right, under PendingBanner
+│   ├── EditWorkspace.hpp     Rediger: PendingBanner over GraphPanel +
+│   │                         EdgeListPanel left, the selected pair (images,
+│   │                         3D overlay, split from the canvas floors) +
+│   │                         PairStrip right
 │   ├── GraphPanel.hpp        Rediger graph pane: XY/XZ/YZ, view yaw, ticks,
 │   │                         edges coloured by type/status/residual/…
 │   ├── EdgeListPanel.hpp     Rediger edge list: sortable/filterable QTableView
@@ -126,7 +127,17 @@ Find started before Byt A og B is dropped and that, on a scratch copy with
 A's depth / pose / colour NULLed, Find match says "billede N har ingen
 dybde" / "… ingen pose" / "… intet farvebillede"), `rediger-matches-edit`
 (two lines excluded, one manual match added through the click path, a
-region in A). `RUX_QT_PAGE=rediger rux -p <copy> --quit-after-ms N`
+region in A), `rediger-matches-readonly` (the tightest right column of
+normal use: a read-only project with staged edits and a refused save, Find
+match, Placér B and ICP-forfin, the read-only note — the canvas guards must
+hold here; pass `RUX_MATCHES_A/B` on a real copy). The images/overlay split
+is not tuned by hand: `EditWorkspace` gives each pane its measured chrome
+plus its canvas floor (`kMatchCanvasFloorPx` / `kOverlayCanvasFloorPx`,
+`workspace_logic.hpp`, the same constants the guards use) and shares the
+rest evenly (`balanced_canvas_split`), until the user drags the handle. The
+pending banner sits over the left column only, and the strip's ICP line and
+note are one elided line each, so neither takes height from the canvases.
+`RUX_QT_PAGE=rediger rux -p <copy> --quit-after-ms N`
 smokes the workspace in the real binary (`posegraf` is gone, not an alias).
 The overlay has no ΔT fields: B is moved by the box widget, the keys, the
 match editor or ICP-forfin, and its header reads out the move.
@@ -215,8 +226,13 @@ B's box centre handle with Qt mouse events and logs `DRAG NOT TRANSLATED`
 when B does not move, the handle is too small, or the page cannot run;
 `rediger-matches` / `rediger-matches-edit` log `MATCH EDIT FAILED` when a
 stale Find lands on the swapped pair, a missing depth / pose / colour is
-not named in Danish, or the manual match was not added.
-`qt_shot.sh` fails on all six.
+not named in Danish, a line toggle during Find is not refused, the manual
+match was not added, or (`RUX_MATCHES_ICP=1`) the fit status still reads
+"Fra matches …" after ICP-forfin moved B; `rediger-rgb` /
+`rediger-tint` log
+`RGB NOT SHOWN`. Every one prints `ERROR <WORDS> (TOO …|NOT …|FAILED|
+CLIPPED)` and makes the gallery exit 6: `qt_shot.sh` fails on that exit code
+and on that shape of line, so a new page check needs no edit there.
 `RUX_QT_DUMP_QSS=<file>` writes the resolved stylesheet for debugging.
 
 ## 3. Token mapping

@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Povl Filip Sonne-Frederiksen
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Rediger's match editor, the Qt-free half (spec 2026-10-14 §4.4).
+// Rediger's match editor, the Qt-free half (bead reusex-xlg.2, its tasks
+// reusex-xlg.2.1-2.7).
 
 #include <catch2/catch_test_macros.hpp>
 

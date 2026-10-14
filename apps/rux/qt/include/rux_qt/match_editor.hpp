@@ -3,12 +3,13 @@
 
 #pragma once
 
-// Rediger's match editor, Qt-free (spec 2026-10-14 §4.4): the working set
-// of correspondences between A and B (automatic and manual, excluded or
-// not, coloured by the last fit), a half-made manual match, the Danish
-// read-outs, and the canvas geometry — image <-> canvas mapping under a
-// per-image zoom/pan, zoom about the cursor, line hit-testing, a dragged
-// region. Nothing here is stored: a different pair clears it all (C4).
+// Rediger's match editor, Qt-free (bead reusex-xlg.2, its tasks
+// reusex-xlg.2.1-2.7): the working set of correspondences between A and B
+// (automatic and manual, excluded or not, coloured by the last fit), a
+// half-made manual match, the Danish read-outs, and the canvas geometry — image
+// <-> canvas mapping under a per-image zoom/pan, zoom about the cursor, line
+// hit-testing, a dragged region. Nothing here is stored: a different pair
+// clears it all (C4).
 
 #include <rux_qt/pair_alignment.hpp>
 
