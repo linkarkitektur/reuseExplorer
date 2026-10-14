@@ -75,8 +75,9 @@ enough to act on** and **cheap enough to produce** for a real building.
    pairwise point-to-plane cannot express global consistency — hence the owned
    plane-landmark back-end in #225. This is priority one because no amount of
    work on the stages above it can recover geometry the poses have destroyed.
-2. **Solid model / scan-to-BIM** — anchor: beads `reusex-z1v`
-   ([design](design/solid-model-floor-plan-design.md)).
+2. **Solid model / scan-to-BIM** — anchor: beads `reusex-z1v` (the design
+   doc was fully migrated into the beads graph 2026-10-14, see its epic
+   description and design field).
    The mission's output is a typed building model, and today's product is one
    unlabelled envelope mesh from a MIP fed infinite wall lines and
    semantically blind planes. Floor-plan-first reconstruction (storeys, walls
@@ -113,7 +114,7 @@ a `workstream: *` label so alignment can be queried with
 | Gaussian splatting | `workstream: gsplat` | #240 | Native C++/CUDA 3DGS trained from `ProjectDB` — point-cloud-seeded Gaussians, sensor frames and sliced 360 panoramas as views, Apache-licensed gsplat kernels under a GPL trainer |
 | 360 integration | `workstream: 360-integration` | #236 | Turn panoramas into wide-baseline pose-graph constraints; a panorama that sees many temporally-distant frames supplies exactly the loop closures the plane-landmark back-end cannot. Mechanism landed and tested (`rux graph discover --use-panoramas`); **blocked on matcher quality** — cross-camera ORB resections are too weak to help, see [`research/panorama-loop-closure.md`](research/panorama-loop-closure.md) |
 | Agent-driven modeling | `workstream: agent-modeling` | #267 | Evaluate an agent + MCP gateway + Blender path to a simplified, tagged building model as a complement to the geometric pipeline; requires headless rendering so the agent has eyes |
-| Solid model / scan-to-BIM | `workstream: solid-model` | beads `reusex-z1v` | Replace the one-envelope MIP mesh with a typed building model — storeys, walls with measured thickness, spaces with polygons, openings — stored in `ProjectDB` with evidence, deterministic GUIDs and re-run-safe manual edits; exported as IFC4, DXF, Rhino, Speckle; feeding the survey with measured quantities. Design: [`design/solid-model-floor-plan-design.md`](design/solid-model-floor-plan-design.md); research: [`research/solid-model-scan-to-bim.md`](research/solid-model-scan-to-bim.md). The MIP stays as an optional refinement |
+| Solid model / scan-to-BIM | `workstream: solid-model` | beads `reusex-z1v` | Replace the one-envelope MIP mesh with a typed building model — storeys, walls with measured thickness, spaces with polygons, openings — stored in `ProjectDB` with evidence, deterministic GUIDs and re-run-safe manual edits; exported as IFC4, DXF, Rhino, Speckle; feeding the survey with measured quantities. Design: beads `reusex-z1v` (migrated into the graph 2026-10-14); research: [`research/solid-model-scan-to-bim.md`](research/solid-model-scan-to-bim.md). The MIP stays as an optional refinement |
 | Infrastructure & test health | `workstream: infra` | #268 | Keep the build, test and coverage loop fast and trustworthy so agents can iterate — includes #262 (parallel-ctest flakiness) and hosted CI (#202) |
 
 Work that fits none of these rows is either a bugfix, a standing maintenance
@@ -244,8 +245,8 @@ changelog — that history is the point of keeping it in the repo.
   output drops room and wall labels. Three verified defects were confirmed on
   the tree (the label-0 collision that makes the first SAM3 prompt class
   unlabeled; dead `create mesh -a/-l` flags; docs calling the envelope mesh
-  room-partitioned). The design
-  [`design/solid-model-floor-plan-design.md`](design/solid-model-floor-plan-design.md)
+  room-partitioned). The design (migrated into the beads graph `reusex-z1v`
+  2026-10-14, see its epic description and design field)
   keeps the research's phases, differs on four points (native IFC writer
   with ifcopenshell test-only; entity tables with GUIDs instead of a
   `plane_classes` cloud; planes kept as the axis-family source; own scans as
