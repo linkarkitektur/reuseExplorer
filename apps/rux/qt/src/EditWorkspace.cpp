@@ -5,6 +5,7 @@
 #include <rux_qt/EdgeListPanel.hpp>
 #include <rux_qt/EditWorkspace.hpp>
 #include <rux_qt/GraphPanel.hpp>
+#include <rux_qt/PairImages.hpp>
 #include <rux_qt/PairStrip.hpp>
 #include <rux_qt/PendingBanner.hpp>
 #include <rux_qt/ProjectSession.hpp>
@@ -69,8 +70,8 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   edges_ = new EdgeListPanel(editor_, persist_);
   panes_[1]->set_content(edges_);
   panes_[2] = new PaneFrame("Billeder");
-  panes_[2]->set_content(
-      empty_state("Klik på en node for A, og en til for B."));
+  // Each side says which click fills it while its slot is empty.
+  panes_[2]->set_content(images_ = new PairImages(session_));
   panes_[3] = new PaneFrame("3D-overlay");
   panes_[3]->set_content(empty_state("Vælg A og B for at se deres skyer."));
 
@@ -82,6 +83,9 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   right_ = new QSplitter(Qt::Vertical);
   right_->addWidget(panes_[2]);
   right_->addWidget(panes_[3]);
+  // The images are what a pair is judged by: they get the larger share.
+  right_->setStretchFactor(0, 3);
+  right_->setStretchFactor(1, 2);
   right_column_ = new QWidget;
   auto *rc = new QVBoxLayout(right_column_);
   rc->setContentsMargins(0, 0, 0, 0);
@@ -133,7 +137,8 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   main_->setSizes({3 * kUnit, 2 * kUnit});
   // The edge list gets room for a screenful of suspicious rows.
   left_->setSizes({3 * kUnit, 2 * kUnit});
-  right_->setSizes({kUnit, kUnit});
+  // The images over the overlay: portrait frames need the height.
+  right_->setSizes({3 * kUnit, 2 * kUnit});
 
   for (int i = 0; i < kEditPaneCount; ++i)
     connect(panes_[i], &PaneFrame::hide_requested, this,
@@ -376,6 +381,7 @@ void EditWorkspace::set_pair(int a, int b) {
 void EditWorkspace::apply_pair() {
   graph_->set_pair(slots_.a(), slots_.b());
   strip_->set_pair(slots_.a(), slots_.b());
+  images_->set_pair(slots_.a(), slots_.b());
   pair_complete_ = slots_.complete();
   sync_pair_header();
   sync_panes();

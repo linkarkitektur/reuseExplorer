@@ -269,4 +269,24 @@ bool SlotPicker::forget_missing(const std::vector<int> &frame_ids) {
   return false;
 }
 
+std::string pair_image_hint(Slot side, int a, int b) {
+  if (side == Slot::a) {
+    if (a >= 0)
+      return {};
+    return b >= 0 ? "Klik på en node for A."
+                  : "Klik på en node i grafen for A.";
+  }
+  if (b >= 0)
+    return {};
+  return a >= 0 ? "Klik på en node mere for B."
+                : "Shift-klik på en node for B.";
+}
+
+std::string pair_image_caption(Slot side, int id) {
+  std::string s = side == Slot::a ? "A" : "B";
+  if (id >= 0)
+    s += " · billede " + std::to_string(id);
+  return s;
+}
+
 } // namespace rux::qt

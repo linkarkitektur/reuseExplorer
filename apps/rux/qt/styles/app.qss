@@ -1050,6 +1050,17 @@ QLabel#pairDelta, QLabel#edgeMeta {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
 }
+/* Rediger's pair images: A | B captions in the slot colours (A = accent,
+   as the graph marks it; B in the muted ink). */
+QLabel#pairCaptionA,
+QLabel#pairCaptionB {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+QLabel#pairCaptionA {
+  color: var(--color-accent-deep);
+}
 QLabel#pairNone, QLabel#pairNote {
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);

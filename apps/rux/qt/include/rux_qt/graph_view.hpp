@@ -174,4 +174,10 @@ class SlotPicker {
   Slot next_ = Slot::a;
 };
 
+/// What one side of Rediger's pair images says while its slot is empty
+/// (empty when the slot holds a frame): which click fills it next.
+std::string pair_image_hint(Slot side, int a, int b);
+/// The caption over one side: "A · billede 12", or just "A" when empty.
+std::string pair_image_caption(Slot side, int id);
+
 } // namespace rux::qt

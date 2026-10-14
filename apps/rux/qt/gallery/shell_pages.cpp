@@ -14,6 +14,7 @@
 #include <rux_qt/EditWorkspace.hpp>
 #include <rux_qt/FrameBrowser.hpp>
 #include <rux_qt/GraphPanel.hpp>
+#include <rux_qt/PairImages.hpp>
 #include <rux_qt/PairStrip.hpp>
 #include <rux_qt/PipelineWorkspace.hpp>
 #include <rux_qt/ProjectSession.hpp>
@@ -298,6 +299,22 @@ AppShell *make_pg(const PageContext &ctx) {
 }
 
 QWidget *make_rediger(const PageContext &ctx) { return make_pg(ctx); }
+
+/// The pair images: A | B in colour (make_rediger sets the pair; the
+/// gallery waits for the off-thread decode before it shoots).
+QWidget *make_rediger_pair(const PageContext &ctx) { return make_rediger(ctx); }
+/// The same pair in depth.
+QWidget *make_rediger_pair_depth(const PageContext &ctx) {
+  auto *shell = make_pg(ctx);
+  shell->edit()->images()->set_layer(FrameLayer::depth);
+  return shell;
+}
+/// Only A chosen: B's side says which click fills it.
+QWidget *make_rediger_pair_half(const PageContext &ctx) {
+  auto *shell = make_pg(ctx);
+  shell->edit()->set_pair(shell->edit()->a(), -1);
+  return shell;
+}
 
 QWidget *make_rediger_plane(const PageContext &ctx, ViewPlane plane) {
   auto *shell = make_pg(ctx);
@@ -892,6 +909,13 @@ void register_shell_pages() {
       {"3d-labels", "3D: semantiske mærkater ovenfra", make_3d_labels});
   register_page({"rediger", "Rediger: posegraf, A/B og ventende løkkelukninger",
                  make_rediger});
+  register_page({"rediger-pair", "Rediger: billederne af A og B i farve",
+                 make_rediger_pair});
+  register_page({"rediger-pair-depth", "Rediger: billederne af A og B i dybde",
+                 make_rediger_pair_depth});
+  register_page({"rediger-pair-half",
+                 "Rediger: kun A valgt; B's side siger, hvad der mangler",
+                 make_rediger_pair_half});
   register_page(
       {"rediger-xz", "Rediger: grafen i opstalt, set fra −y", make_rediger_xz});
   register_page(

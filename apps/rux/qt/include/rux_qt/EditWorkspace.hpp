@@ -32,6 +32,7 @@ namespace rux::qt {
 
 class EdgeEditor;
 class EdgeListPanel;
+class PairImages;
 class PairStrip;
 class PaneFrame;
 class PendingBanner;
@@ -65,6 +66,7 @@ class EditWorkspace : public QWidget {
   int b() const { return slots_.b(); }
   Slot next_slot() const { return slots_.next(); }
   PairStrip *strip() const { return strip_; }
+  PairImages *images() const { return images_; }
   /// Pending pose-graph edits not yet saved.
   int pending_edits() const;
   /// Start saving them (off the GUI thread); false when it cannot start.
@@ -128,6 +130,7 @@ class EditWorkspace : public QWidget {
   SlotPicker slots_;
   PendingBanner *banner_ = nullptr;
   PairStrip *strip_ = nullptr;
+  PairImages *images_ = nullptr;
   QLabel *pair_a_ = nullptr;
   QLabel *pair_b_ = nullptr;
   QLabel *next_hint_ = nullptr;

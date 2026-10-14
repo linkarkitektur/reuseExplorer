@@ -348,3 +348,28 @@ TEST_CASE("FitAvoidingCorner_ReserveFillsViewport_IgnoresIt",
   CHECK(f.cx == Approx(0.0));
   CHECK(f.cy == Approx(0.0));
 }
+
+TEST_CASE("PairImageHint_OnlyForAnEmptySlot_AndSaysWhatToClick",
+          "[rux_qt][graphview][slots]") {
+  // Nothing chosen: A asks for a click, B for a Shift-click (a plain one
+  // would fill A first).
+  CHECK(pair_image_hint(Slot::a, -1, -1) == "Klik på en node i grafen for A.");
+  CHECK(pair_image_hint(Slot::b, -1, -1) == "Shift-klik på en node for B.");
+  // A chosen: B asks for one more node, A shows its image.
+  CHECK(pair_image_hint(Slot::a, 4, -1).empty());
+  CHECK(pair_image_hint(Slot::b, 4, -1) == "Klik på en node mere for B.");
+  // B forced first with Shift: the next click fills A.
+  CHECK(pair_image_hint(Slot::a, -1, 9) == "Klik på en node for A.");
+  CHECK(pair_image_hint(Slot::b, -1, 9).empty());
+  // A complete pair: no hint on either side.
+  CHECK(pair_image_hint(Slot::a, 4, 9).empty());
+  CHECK(pair_image_hint(Slot::b, 4, 9).empty());
+}
+
+TEST_CASE("PairImageCaption_NamesTheSlotAndTheFrame",
+          "[rux_qt][graphview][slots]") {
+  CHECK(pair_image_caption(Slot::a, 12) == "A · billede 12");
+  CHECK(pair_image_caption(Slot::b, 0) == "B · billede 0");
+  CHECK(pair_image_caption(Slot::a, -1) == "A");
+  CHECK(pair_image_caption(Slot::b, -1) == "B");
+}
