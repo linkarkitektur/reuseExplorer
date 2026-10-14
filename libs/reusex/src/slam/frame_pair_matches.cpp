@@ -45,6 +45,20 @@ RigidFit rigid_from_matches(const std::array<double, 16> &pose_a,
                             const std::vector<PointPair> &pairs,
                             double inlier_dist_m, int iterations,
                             std::uint32_t seed) {
+  if (iterations <= 0)
+    throw std::invalid_argument(fmt::format(
+        "rigid_from_matches: iterations must be positive, got {}", iterations));
+  if (!std::isfinite(inlier_dist_m) || inlier_dist_m < 0.0)
+    throw std::invalid_argument(fmt::format(
+        "rigid_from_matches: inlier_dist_m must be finite and >= 0, got {}",
+        inlier_dist_m));
+  for (const auto *p : {&pose_a, &pose_b})
+    for (double x : *p)
+      if (!std::isfinite(x))
+        throw std::invalid_argument(
+            fmt::format("rigid_from_matches: pose {} is not finite",
+                        p == &pose_a ? "A" : "B"));
+
   RigidFit fit;
   const int n = static_cast<int>(pairs.size());
   for (int k = 0; k < n; ++k)
@@ -73,8 +87,26 @@ RigidFit rigid_from_matches(const std::array<double, 16> &pose_a,
   o.ransac_inlier_dist = static_cast<float>(inlier_dist_m);
   std::mt19937 rng(seed);
   Eigen::Matrix4d M_fit = Eigen::Matrix4d::Identity();
-  std::vector<int> inliers =
+  const std::vector<int> consensus =
       geometry::detail::ransac_rigid(src, dst, o, rng, M_fit);
+
+  // ransac_rigid returns the best HYPOTHESIS' inliers with the transform
+  // refit on them; the refit can gain or lose pairs at the gate. Report the
+  // inliers and RMS of the transform actually returned.
+  std::vector<int> inliers;
+  double sq = 0.0;
+  if (consensus.size() >= 3) {
+    const double thr2 = inlier_dist_m * inlier_dist_m;
+    for (int k = 0; k < n; ++k) {
+      const double e2 =
+          ((M_fit * src.col(k).homogeneous()).head<3>() - dst.col(k))
+              .squaredNorm();
+      if (e2 <= thr2) {
+        inliers.push_back(k);
+        sq += e2;
+      }
+    }
+  }
   const int m = static_cast<int>(inliers.size());
   if (m < 3) {
     fit.failure = RigidFitFailure::no_consensus;
@@ -85,27 +117,26 @@ RigidFit rigid_from_matches(const std::array<double, 16> &pose_a,
     return fit;
   }
 
-  // Collinear inliers leave the rotation about their line free.
+  // Collinear inliers leave the rotation about their line free. The RMS
+  // distance of the (centred) inliers off their best-fit line is
+  // sqrt((s2^2 + s3^2) / m) from the singular values s1 >= s2 >= s3.
   Eigen::Matrix3Xd d(3, m);
   for (int k = 0; k < m; ++k)
     d.col(k) = dst.col(inliers[static_cast<std::size_t>(k)]);
   d.colwise() -= d.rowwise().mean();
   const Eigen::JacobiSVD<Eigen::Matrix3Xd> svd(d);
+  const Eigen::Vector3d s = svd.singularValues();
   const double spread =
-      svd.singularValues()(1) / std::sqrt(static_cast<double>(m));
+      std::sqrt((s(1) * s(1) + s(2) * s(2)) / static_cast<double>(m));
   if (spread < kMinFitSpreadM) {
     fit.failure = RigidFitFailure::degenerate;
     fit.inliers = std::move(inliers);
     fit.reason = fmt::format("inlier points are (nearly) collinear: {:.4f} m "
-                             "spread off their line, {:.3f} m needed",
+                             "RMS off their line, {:.3f} m needed",
                              spread, kMinFitSpreadM);
     return fit;
   }
 
-  double sq = 0.0;
-  for (int i : inliers)
-    sq += ((M_fit * src.col(i).homogeneous()).head<3>() - dst.col(i))
-              .squaredNorm();
   fit.rms_m = std::sqrt(sq / m);
   fit.world_delta = to_array(TA * M_fit * TA.inverse());
   fit.inliers = std::move(inliers);

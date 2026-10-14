@@ -102,16 +102,20 @@ enum class RigidFitFailure {
   degenerate,    ///< the inliers are (nearly) collinear
 };
 
-/// Inliers spread less than this (m) off their best-fit line are collinear.
+/// Inliers whose RMS distance off their best-fit line is below this (m)
+/// are collinear.
 inline constexpr double kMinFitSpreadM = 0.01;
 
 struct RigidFit {
   bool ok = false;
-  /// World-space correction applied to B (row-major 4x4), see the header.
+  /// World-space correction applied to B (row-major 4x4):
+  /// world_delta · T_B · p_b ≈ T_A · p_a.
   std::array<double, 16> world_delta{1, 0, 0, 0, 0, 1, 0, 0,
                                      0, 0, 1, 0, 0, 0, 0, 1};
-  std::vector<int> inliers; ///< indices into the `pairs` argument, ascending
-  double rms_m = 0;         ///< RMS 3D residual over the inliers
+  /// Indices into the `pairs` argument, ascending: the pairs within
+  /// inlier_dist_m under the returned world_delta.
+  std::vector<int> inliers;
+  double rms_m = 0;   ///< RMS 3D residual over the inliers, under world_delta
   std::string reason; ///< when !ok, e.g. "3 matches with depth needed, 2 given"
   RigidFitFailure failure = RigidFitFailure::none;
 };
@@ -119,7 +123,9 @@ struct RigidFit {
 /// RANSAC rigid fit of B onto A from 3D correspondences (fixed @p seed:
 /// deterministic, STANDARDS §6). @p pose_a / @p pose_b are the frames'
 /// current stored poses (row-major).
-/// @throws std::invalid_argument when a pair has a non-finite coordinate.
+/// @throws std::invalid_argument when a pair or a pose has a non-finite
+///         value, @p iterations <= 0, or @p inlier_dist_m is negative or
+///         not finite.
 RigidFit rigid_from_matches(const std::array<double, 16> &pose_a,
                             const std::array<double, 16> &pose_b,
                             const std::vector<PointPair> &pairs,

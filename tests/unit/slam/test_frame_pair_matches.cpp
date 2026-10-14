@@ -16,7 +16,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <random>
+#include <stdexcept>
 #include <vector>
 
 using reusex::slam::PointPair;
@@ -174,7 +176,63 @@ TEST_CASE("RigidFromMatches_FixedSeed_IsDeterministic", "[slam][matches]") {
   pairs.push_back({{1, 0, 1}, {-3, 2, 0}});
   const auto a = rigid_from_matches(kPoseA, kPoseB, pairs, 0.05, 500, 7);
   const auto b = rigid_from_matches(kPoseA, kPoseB, pairs, 0.05, 500, 7);
+  REQUIRE(a.ok);
   CHECK(a.world_delta == b.world_delta);
   CHECK(a.inliers == b.inliers);
   CHECK(a.rms_m == b.rms_m);
+}
+
+TEST_CASE("RigidFromMatches_InvalidParameters_Throw", "[slam][matches]") {
+  const auto pairs = synthetic_pairs(kPoseA, kPoseB, true_delta(), 10, 2);
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double inf = std::numeric_limits<double>::infinity();
+  CHECK_THROWS_AS(rigid_from_matches(kPoseA, kPoseB, pairs, 0.05, 0),
+                  std::invalid_argument);
+  CHECK_THROWS_AS(rigid_from_matches(kPoseA, kPoseB, pairs, 0.05, -3),
+                  std::invalid_argument);
+  CHECK_THROWS_AS(rigid_from_matches(kPoseA, kPoseB, pairs, -0.01),
+                  std::invalid_argument);
+  CHECK_THROWS_AS(rigid_from_matches(kPoseA, kPoseB, pairs, nan),
+                  std::invalid_argument);
+  CHECK_THROWS_AS(rigid_from_matches(kPoseA, kPoseB, pairs, inf),
+                  std::invalid_argument);
+  auto bad = kPoseB;
+  bad[3] = nan;
+  CHECK_THROWS_AS(rigid_from_matches(kPoseA, bad, pairs),
+                  std::invalid_argument);
+  CHECK_THROWS_AS(rigid_from_matches(bad, kPoseB, pairs),
+                  std::invalid_argument);
+}
+
+TEST_CASE("RigidFromMatches_InliersAndRms_AreThoseOfTheReturnedTransform",
+          "[slam][matches]") {
+  // Noisy pairs: whatever RANSAC's hypothesis counted, the reported inliers
+  // and RMS are measured under the refit transform actually returned.
+  auto pairs = synthetic_pairs(kPoseA, kPoseB, true_delta(), 60, 21);
+  std::mt19937 rng(4);
+  std::normal_distribution<double> n(0.0, 0.02);
+  for (auto &pr : pairs)
+    for (int i = 0; i < 3; ++i)
+      pr.second[static_cast<std::size_t>(i)] += n(rng);
+  const double thr = 0.04;
+  const auto fit = rigid_from_matches(kPoseA, kPoseB, pairs, thr, 300, 3);
+  REQUIRE(fit.ok);
+  const Eigen::Matrix4d W = M(fit.world_delta);
+  std::vector<int> expect;
+  double sq = 0.0;
+  for (std::size_t k = 0; k < pairs.size(); ++k) {
+    const auto &[pa, pb] = pairs[k];
+    const Eigen::Vector3d e =
+        (W * M(kPoseB) * Eigen::Vector3d(pb[0], pb[1], pb[2]).homogeneous())
+            .head<3>() -
+        (M(kPoseA) * Eigen::Vector3d(pa[0], pa[1], pa[2]).homogeneous())
+            .head<3>();
+    if (e.squaredNorm() <= thr * thr) {
+      expect.push_back(static_cast<int>(k));
+      sq += e.squaredNorm();
+    }
+  }
+  CHECK(fit.inliers == expect);
+  CHECK(std::abs(fit.rms_m -
+                 std::sqrt(sq / static_cast<double>(expect.size()))) < 1e-9);
 }
