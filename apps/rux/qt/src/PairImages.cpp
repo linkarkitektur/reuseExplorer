@@ -19,7 +19,6 @@
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
-#include <QLabel>
 #include <QPointer>
 #include <QPushButton>
 #include <QShortcut>
@@ -137,12 +136,15 @@ PairImages::PairImages(ProjectSession &session, QWidget *parent)
   const Theme &t = theme();
   loader_ = new FrameImageLoader(this);
   auto *g = new QGridLayout(this);
-  g->setContentsMargins(t.px("--space-2"), t.px("--space-2"), t.px("--space-2"),
-                        t.px("--space-2"));
+  g->setContentsMargins(t.px("--space-2"), t.px("--space-1"), t.px("--space-2"),
+                        t.px("--space-1"));
   g->setHorizontalSpacing(t.px("--space-2"));
   g->setVerticalSpacing(t.px("--space-1"));
 
-  // Farve / Dybde, placed in the pane header by EditWorkspace.
+  // Farve / Dybde floats in the canvas' bottom-right corner, like the 3D
+  // overlay's Tint | RGB; the mode is the pane header's (mode_switch()).
+  // Only the toolbar takes a row of its own: at 1440x900 the canvas must
+  // stay >= 200 px tall beside a >= 250 px overlay.
   auto *seg = new QFrame;
   seg->setObjectName("segmented");
   auto *sl = new QHBoxLayout(seg);
@@ -150,24 +152,17 @@ PairImages::PairImages(ProjectSession &session, QWidget *parent)
   sl->setSpacing(0);
   layers_ = new QButtonGroup(this);
   const char *layer_names[] = {"Farve", "Dybde"};
+  const char *layer_tips[] = {"Vis farvebillederne",
+                              "Vis dybdebillederne (match vises stadig)"};
   for (int i = 0; i < 2; ++i) {
     auto *b = segment(layer_names[i], i, 2);
+    b->setToolTip(layer_tips[i]);
     layers_->addButton(b, i);
     sl->addWidget(b);
   }
   layers_->button(0)->setChecked(true);
   layer_switch_ = seg;
 
-  // Row 1: Find match and the mode; row 2: Placér B, Ryd område, status.
-  // Two rows: the column is ~375 px at 1440 and must never widen it.
-  auto *row1 = new QHBoxLayout;
-  row1->setSpacing(t.px("--space-2"));
-  find_ = new QPushButton(NavItem::escape_mnemonic("Find match"));
-  find_->setProperty("kind", "secondary");
-  find_->setCursor(Qt::PointingHandCursor);
-  find_->setToolTip("Find ORB-match mellem A og B (inden for områderne, "
-                    "hvis du har tegnet nogen). Ændrer ikke projektet.");
-  row1->addWidget(find_);
   auto *modes = new QFrame;
   modes->setObjectName("segmented");
   auto *ml = new QHBoxLayout(modes);
@@ -187,59 +182,54 @@ PairImages::PairImages(ProjectSession &session, QWidget *parent)
     ml->addWidget(b);
   }
   modes_->button(0)->setChecked(true);
-  row1->addWidget(modes);
-  row1->addStretch(1);
+  mode_switch_ = modes;
 
-  auto *row2 = new QHBoxLayout;
-  row2->setSpacing(t.px("--space-2"));
+  // One row: Find match, Placér B fra match, Ryd område (with a region).
+  auto *row = new QHBoxLayout;
+  row->setSpacing(t.px("--space-2"));
+  find_ = new QPushButton(NavItem::escape_mnemonic("Find match"));
+  find_->setProperty("kind", "secondary");
+  find_->setCursor(Qt::PointingHandCursor);
+  find_->setToolTip("Find ORB-match mellem A og B (inden for områderne, "
+                    "hvis du har tegnet nogen). Ændrer ikke projektet.");
+  row->addWidget(find_);
   align_ = new QPushButton(NavItem::escape_mnemonic("Placér B fra match"));
   align_->setProperty("kind", "primary");
   align_->setCursor(Qt::PointingHandCursor);
   align_->setToolTip(
       "Flyt B i 3D-overlayet til den stive placering, de "
       "valgte match med dybde giver. ICP-forfin starter derfra.");
-  row2->addWidget(align_);
+  row->addWidget(align_);
   clear_region_ = new QPushButton(NavItem::escape_mnemonic("Ryd område"));
   clear_region_->setObjectName("regionChip");
   clear_region_->setProperty("kind", "ghost");
   clear_region_->setCursor(Qt::PointingHandCursor);
-  row2->addWidget(clear_region_);
-  status_ = new ElidedLabel(QString(), Qt::ElideRight);
-  status_->setObjectName("matchStatus");
-  status_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-  row2->addWidget(status_, 1);
+  row->addWidget(clear_region_);
+  row->addStretch(1);
 
   // No QSS rule of its own (R9): the name is for tests and the gallery.
   auto *bar = new QFrame;
   bar->setObjectName("matchToolbar");
-  auto *bv = new QVBoxLayout(bar);
-  bv->setContentsMargins(0, 0, 0, 0);
-  bv->setSpacing(t.px("--space-1"));
-  bv->addLayout(row1);
-  bv->addLayout(row2);
-  g->addWidget(bar, 0, 0, 1, 2);
+  bar->setLayout(row);
+  row->setContentsMargins(0, 0, 0, 0);
+  g->addWidget(bar, 0, 0);
 
-  caption_a_ = new QLabel;
-  caption_a_->setObjectName("pairCaptionA");
-  caption_b_ = new QLabel;
-  caption_b_->setObjectName("pairCaptionB");
-  g->addWidget(caption_a_, 1, 0);
-  g->addWidget(caption_b_, 1, 1);
   canvas_ = new MatchCanvas;
   canvas_->set_data(&set_, &pick_);
-  g->addWidget(canvas_, 2, 0, 1, 2);
-  g->setRowStretch(2, 1);
-  // A and B always get the same width, whatever their captions say.
-  g->setColumnStretch(0, 1);
-  g->setColumnStretch(1, 1);
+  canvas_->set_corner_widget(layer_switch_);
+  g->addWidget(canvas_, 1, 0);
+  g->setRowStretch(1, 1);
+
+  // The status floats in the canvas' bottom-left corner, beside Farve /
+  // Dybde, like the 3D overlay's legend: a row of its own would cost the
+  // canvas the height it needs.
+  status_ = new ElidedLabel(QString(), Qt::ElideRight);
+  status_->setObjectName("matchStatus");
+  canvas_->set_status_widget(status_);
 
   // Esc reaches a half-made match even when focus has left the canvas (a
-  // mode button, the overlay); off otherwise, so it never takes Esc from
-  // anything else in the window.
-  escape_ = new QShortcut(QKeySequence(Qt::Key_Escape), this);
-  escape_->setContext(Qt::WindowShortcut);
-  escape_->setEnabled(false);
-  connect(escape_, &QShortcut::activated, this, &PairImages::cancel_pick);
+  // mode button); EditWorkspace widens it to the whole workspace.
+  set_shortcut_scope(this);
 
   connect(layers_, &QButtonGroup::idClicked, this, [this](int id) {
     set_layer(id == 1 ? FrameLayer::depth : FrameLayer::color);
@@ -321,8 +311,9 @@ void PairImages::set_mode(MatchMode mode) {
 }
 
 void PairImages::sync_images() {
-  auto side = [this](MatchSide s, QLabel *caption, Slot slot, int id) {
-    caption->setText(QString::fromStdString(pair_image_caption(slot, id)));
+  auto side = [this](MatchSide s, Slot slot, int id) {
+    canvas_->set_caption(s,
+                         QString::fromStdString(pair_image_caption(slot, id)));
     if (id < 0) {
       canvas_->set_message(
           s, QString::fromStdString(pair_image_hint(slot, a_, b_, next_)));
@@ -338,8 +329,8 @@ void PairImages::sync_images() {
     canvas_->set_loading(s, true);
     loader_->request(id);
   };
-  side(MatchSide::a, caption_a_, Slot::a, a_);
-  side(MatchSide::b, caption_b_, Slot::b, b_);
+  side(MatchSide::a, Slot::a, a_);
+  side(MatchSide::b, Slot::b, b_);
 }
 
 void PairImages::frame_ready(int id) {
@@ -410,7 +401,7 @@ void PairImages::found(std::shared_ptr<Found> r) {
 }
 
 void PairImages::pick(MatchSide side, float u, float v) {
-  if (!pair_ok() || busy_ != Busy::none)
+  if (!pair_ok() || refuse_busy())
     return;
   busy_ = Busy::lifting;
   refresh();
@@ -464,6 +455,26 @@ void PairImages::lifted(std::shared_ptr<Lifted> r) {
        {});
 }
 
+void PairImages::set_shortcut_scope(QWidget *scope) {
+  // Only while a pick waits, and only with focus inside @p scope: never Esc
+  // from the command palette or a dialog elsewhere in the window.
+  delete escape_;
+  escape_ = new QShortcut(QKeySequence(Qt::Key_Escape), scope);
+  escape_->setContext(Qt::WidgetWithChildrenShortcut);
+  escape_->setEnabled(pick_.pending());
+  connect(escape_, &QShortcut::activated, this, &PairImages::cancel_pick);
+}
+
+bool PairImages::refuse_busy() {
+  if (busy_ == Busy::none)
+    return false;
+  note(busy_ == Busy::finding   ? "Vent — finder match …"
+       : busy_ == Busy::lifting ? "Vent — læser punktet …"
+                                : "Vent — placerer B …",
+       "wait");
+  return true;
+}
+
 void PairImages::cancel_pick() {
   if (!pick_.pending())
     return;
@@ -472,6 +483,12 @@ void PairImages::cancel_pick() {
 }
 
 void PairImages::toggle_line(int line) {
+  // A fit running reads the lines it was started with: a toggle now would
+  // be coloured by a fit that never saw it.
+  if (busy_ == Busy::aligning) {
+    refuse_busy();
+    return;
+  }
   set_.toggle_excluded(line);
   note({}, {}); // refresh() repaints the canvas: the new colour shows now
 }
@@ -560,7 +577,8 @@ void PairImages::fitted(std::shared_ptr<Fitted> r) {
 void PairImages::align_applied(bool placed) {
   const QString fit =
       QString::fromStdString(match_fit_text(last_inliers_, last_rms_));
-  note(placed ? fit : fit + " — B er ikke flyttet: 3D-overlayet var ikke klar.",
+  note(placed ? fit
+              : fit + " — B er ikke flyttet: 3D-overlayet var ikke klart.",
        placed ? "good" : "warn");
 }
 

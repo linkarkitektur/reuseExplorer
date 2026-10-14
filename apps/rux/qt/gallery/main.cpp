@@ -8,12 +8,14 @@
 // Exit codes: 0 ok, 2 bad command line, 3 a token or a bundled font family
 // was missing (the PNG is still written, with magenta where the token was), 4
 // project or page could not be opened, 5 the PNG could not be written, 6 a
-// layout regression (TOO WIDE, OVERLAY TOO SMALL, STRIP CLIPPED) or a page's
+// layout regression (TOO WIDE, OVERLAY TOO SMALL, MATCH CANVAS TOO SMALL,
+// STRIP CLIPPED) or a page's
 // own check (DRAG NOT TRANSLATED).
 
 #include "demo_pages.hpp"
 
 #include <rux_qt/FrameImageLoader.hpp>
+#include <rux_qt/MatchCanvas.hpp>
 #include <rux_qt/PairOverlay.hpp>
 #include <rux_qt/Theme.hpp>
 #include <rux_qt/background.hpp>
@@ -225,6 +227,24 @@ int main(int argc, char **argv) {
                    "rux-qt-gallery: ERROR OVERLAY TOO SMALL: %d px tall, "
                    "needs %d\n",
                    canvas->height(), kMinOverlayCanvas);
+    }
+  }
+  // Rediger's match canvas: with A and B both shown, the images must be
+  // big enough to click a keypoint and draw a region in (reusex-xlg.2.5).
+  constexpr int kMinMatchCanvas = 200;
+  for (auto *c : host.findChildren<rux::qt::MatchCanvas *>()) {
+    if (!c->isVisible() || c->image_size(rux::qt::MatchSide::a).isEmpty() ||
+        c->image_size(rux::qt::MatchSide::b).isEmpty())
+      continue;
+    std::fprintf(stderr, "rux-qt-gallery: match canvas %dx%d\n", c->width(),
+                 c->height());
+    if (args.width >= 1440 && args.height >= 900 &&
+        c->height() < kMinMatchCanvas) {
+      too_small = true;
+      std::fprintf(stderr,
+                   "rux-qt-gallery: ERROR MATCH CANVAS TOO SMALL: %d px tall, "
+                   "needs %d\n",
+                   c->height(), kMinMatchCanvas);
     }
   }
   // Rediger's pair strip: every edge row's actions are fully visible (the

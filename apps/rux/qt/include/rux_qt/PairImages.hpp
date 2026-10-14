@@ -28,7 +28,6 @@
 #include <memory>
 
 class QButtonGroup;
-class QLabel;
 class QPushButton;
 class QShortcut;
 
@@ -48,8 +47,13 @@ class PairImages : public QWidget {
   void set_pair(int a, int b, Slot next);
   void set_layer(FrameLayer layer);
   FrameLayer layer() const { return layer_; }
-  /// The Farve / Dybde switch, for the pane header.
+  /// The Farve / Dybde switch (floating in the canvas).
   QWidget *layer_switch() const { return layer_switch_; }
+  /// The Vælg / Tilføj / Område switch, for the pane header.
+  QWidget *mode_switch() const { return mode_switch_; }
+  /// Where Esc cancels a half-made match: focus anywhere inside @p scope
+  /// (EditWorkspace passes itself; default this widget).
+  void set_shortcut_scope(QWidget *scope);
 
   void find_matches();
   void align_from_matches();
@@ -94,20 +98,21 @@ class PairImages : public QWidget {
             const QString &detail = {});
   void refresh();
   bool pair_ok() const;
+  /// A click while find, lift or fit runs: says to wait; true if busy.
+  bool refuse_busy();
 
   ProjectSession &session_;
   FrameImageLoader *loader_ = nullptr;
   MatchCanvas *canvas_ = nullptr;
-  QLabel *caption_a_ = nullptr;
-  QLabel *caption_b_ = nullptr;
   QButtonGroup *layers_ = nullptr;
   QWidget *layer_switch_ = nullptr;
+  QWidget *mode_switch_ = nullptr;
   QButtonGroup *modes_ = nullptr;
   QPushButton *find_ = nullptr;
   QPushButton *align_ = nullptr;
   QPushButton *clear_region_ = nullptr;
   ElidedLabel *status_ = nullptr;
-  /// Esc for a half-made match wherever focus is in the window (the canvas
+  /// Esc for a half-made match with focus in the shortcut scope (the canvas
   /// handles its own Esc too); enabled only while a pick waits.
   QShortcut *escape_ = nullptr;
   FrameLayer layer_ = FrameLayer::color;

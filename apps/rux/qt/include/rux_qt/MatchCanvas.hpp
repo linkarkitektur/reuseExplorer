@@ -42,6 +42,15 @@ class MatchCanvas : public QWidget {
   /// that side's frame.
   void set_message(MatchSide side, const QString &text);
   void set_loading(MatchSide side, bool loading);
+  /// "A · billede 1998", painted in that side's top-left corner (no row
+  /// of its own over the canvas: the column's height goes to the images).
+  void set_caption(MatchSide side, const QString &text);
+  /// A control floating in the canvas' bottom-right corner (Farve / Dybde),
+  /// like the 3D overlay's Tint | RGB switch; reparented, not owned.
+  void set_corner_widget(QWidget *w);
+  /// A label floating in the bottom-left corner (the match status), as
+  /// wide as the corner widget leaves; reparented, not owned.
+  void set_status_widget(QWidget *w);
   void set_layer(FrameLayer layer);
   /// The match set and half-made pick to draw; not owned, may be null.
   void set_data(const MatchSet *set, const ManualPick *pick);
@@ -70,6 +79,7 @@ class MatchCanvas : public QWidget {
   void wheelEvent(QWheelEvent *e) override;
   void keyPressEvent(QKeyEvent *e) override;
   void leaveEvent(QEvent *e) override;
+  void resizeEvent(QResizeEvent *e) override;
 
     private:
   /// A's and B's slots for the current size (R8: not named after the
@@ -95,9 +105,14 @@ class MatchCanvas : public QWidget {
   /// theme change instead of copied on every paint.
   void rebuild_depth(int side);
   void paint_side(QPainter &p, MatchSide side, const SideGeometry &g) const;
+  void paint_caption(QPainter &p, MatchSide side, const QRectF &slot) const;
 
   std::array<std::shared_ptr<const DecodedFrame>, 2> frames_;
   std::array<QString, 2> messages_;
+  std::array<QString, 2> captions_;
+  QWidget *corner_ = nullptr;
+  QWidget *status_ = nullptr;
+  void place_floating();
   std::array<bool, 2> loading_{};
   std::array<ImageView, 2> views_{};
   FrameLayer layer_ = FrameLayer::color;
@@ -107,6 +122,8 @@ class MatchCanvas : public QWidget {
   QVector<QRgb> depth_table_;
   std::array<QImage, 2> depth_shown_;
   int hover_ = -1;
+  /// The line the last Vælg click toggled (a double-click undoes it).
+  int clicked_line_ = -1;
   // One press: which button, where, on which side, and whether it moved
   // past the click slop (then it pans or draws a region, never clicks).
   Qt::MouseButton button_ = Qt::NoButton;

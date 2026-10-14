@@ -195,14 +195,17 @@ exit codes: 2 bad flags, 4 project/page not found, 5 PNG not written, 6 a
 layout regression: the page's minimum width is wider than the window
 (`TOO WIDE` — the inspector would be off a 1440 px screen), or, at 1440x900,
 Rediger's 3D overlay canvas with A and B loaded is under 250 px tall
-(`OVERLAY TOO SMALL`; every shot logs `overlay canvas WxH`), or Rediger's
+(`OVERLAY TOO SMALL`; every shot logs `overlay canvas WxH`), or, at
+1440x900, Rediger's match canvas with both A and B images loaded is under
+200 px tall (`MATCH CANVAS TOO SMALL`; every shot logs `match canvas WxH`),
+or Rediger's
 pair strip is clipped (`STRIP CLIPPED`: an edge row's action button runs past
 the rows' right edge, the edge list shows less than its first row, or the
 strip ends below the window; every shot logs `pair strip bottom Y of H`).
 A page can also fail its own check: `rediger-drag-qt` (needs `--gl`) drags
 B's box centre handle with Qt mouse events and logs `DRAG NOT TRANSLATED`
 when B does not move, the handle is too small, or the page cannot run.
-`qt_shot.sh` fails on all four.
+`qt_shot.sh` fails on all five.
 `RUX_QT_DUMP_QSS=<file>` writes the resolved stylesheet for debugging.
 
 ## 3. Token mapping

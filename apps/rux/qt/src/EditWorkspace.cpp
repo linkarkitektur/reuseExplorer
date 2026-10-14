@@ -68,7 +68,8 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   panes_[2] = new PaneFrame("Billeder");
   // Each side says which click fills it while its slot is empty.
   panes_[2]->set_content(images_ = new PairImages(session_));
-  panes_[2]->add_header_widget(images_->layer_switch());
+  panes_[2]->add_header_widget(images_->mode_switch());
+  images_->set_shortcut_scope(this);
   panes_[3] = new PaneFrame("3D-overlay");
   panes_[3]->set_content(overlay_ = new PairOverlay(session_, interactive_3d));
   // Nearly all the spare header width: the gap after the title has 1.
@@ -107,37 +108,14 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   right_ = new QSplitter(Qt::Vertical);
   right_->addWidget(panes_[2]);
   right_->addWidget(panes_[3]);
-  // The overlay is where B is moved by hand (spec §5.2): it gets the
-  // column's height first, the images a reference strip above it.
-  right_->setStretchFactor(0, 2);
-  right_->setStretchFactor(1, 3);
+  // Growth is shared evenly: both canvases are worked in (matches are
+  // picked in the images, B is checked and moved in the overlay).
+  right_->setStretchFactor(0, 1);
+  right_->setStretchFactor(1, 1);
   right_column_ = new QWidget;
   auto *rc = new QVBoxLayout(right_column_);
   rc->setContentsMargins(0, 0, 0, 0);
   rc->setSpacing(0);
-  auto *head = new QFrame;
-  head->setObjectName("paneHeader");
-  auto *hl = new QHBoxLayout(head);
-  hl->setContentsMargins(t.px("--space-3"), t.px("--space-2"),
-                         t.px("--space-3"), t.px("--space-2"));
-  hl->setSpacing(t.px("--space-3"));
-  hl->addWidget(new CapsLabel("Par", "panelTitle"));
-  pair_a_ = new QLabel;
-  pair_a_->setObjectName("pairIds");
-  pair_b_ = new QLabel;
-  pair_b_->setObjectName("pairIds");
-  hl->addWidget(pair_a_);
-  hl->addWidget(pair_b_);
-  next_hint_ = new QLabel;
-  next_hint_->setObjectName("toolbarMeta");
-  next_hint_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-  hl->addWidget(next_hint_, 1);
-  auto *swap = new QPushButton(NavItem::escape_mnemonic("Byt A og B"));
-  swap->setProperty("kind", "ghost");
-  swap->setCursor(Qt::PointingHandCursor);
-  connect(swap, &QPushButton::clicked, this, [this] { set_pair(b(), a()); });
-  hl->addWidget(swap);
-  rc->addWidget(head);
   rc->addWidget(right_, 1);
   strip_ = new PairStrip(session_, editor_);
   rc->addWidget(strip_);
@@ -162,12 +140,13 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   main_->setSizes({3 * kUnit, 2 * kUnit});
   // The edge list gets room for a screenful of suspicious rows.
   left_->setSizes({3 * kUnit, 2 * kUnit});
-  // The images (now the match editor) over the overlay, 2:3: without the
-  // ΔT fields the overlay is all canvas, but an even 1:1 split still left
-  // it under the gallery's 250 px OVERLAY TOO SMALL floor at 1440x900 with
-  // the pending banner and a few edge rows (measured as low as 230 px), so
-  // the overlay keeps the larger share.
-  right_->setSizes({2 * kUnit, 3 * kUnit});
+  // The match editor over the overlay, ~1:1 of the panes' height. At
+  // 1440x900 the tightest default (rediger-staged: the pending banner and
+  // an ICP result in the pair strip) leaves the two canvases ~453 px, and
+  // the gallery guards want >= 200 (MATCH CANVAS TOO SMALL) and >= 250
+  // (OVERLAY TOO SMALL). The images pane carries ~44 px more chrome (its
+  // toolbar row) than the overlay's, so 494:506 gives ~201 / ~252 there.
+  right_->setSizes({494, 506});
 
   for (int i = 0; i < kEditPaneCount; ++i)
     connect(panes_[i], &PaneFrame::hide_requested, this,
@@ -287,6 +266,28 @@ QWidget *EditWorkspace::make_toolbar() {
                          t.px("--space-4"), t.px("--space-2"));
   bl->setSpacing(t.px("--space-3"));
   bl->addWidget(new CapsLabel("Rediger", "panelTitle"));
+  // The pair (A, B, which slot the next click fills, Byt A og B) is the
+  // workspace's selection: it sits here, not in a header row of its own
+  // over the right column, whose height the match canvas and the 3D overlay
+  // both need (reusex-xlg.2.5: canvas >= 200 px, overlay >= 250 px at
+  // 1440x900).
+  bl->addSpacing(t.px("--space-3"));
+  bl->addWidget(new CapsLabel("Par", "panelTitle"));
+  pair_a_ = new QLabel;
+  pair_a_->setObjectName("pairIds");
+  pair_b_ = new QLabel;
+  pair_b_->setObjectName("pairIds");
+  bl->addWidget(pair_a_);
+  bl->addWidget(pair_b_);
+  next_hint_ = new QLabel;
+  next_hint_->setObjectName("toolbarMeta");
+  bl->addWidget(next_hint_);
+  auto *swap = new QPushButton(NavItem::escape_mnemonic("Byt A og B"));
+  swap->setProperty("kind", "ghost");
+  swap->setCursor(Qt::PointingHandCursor);
+  swap->setMinimumHeight(swap->sizeHint().height());
+  connect(swap, &QPushButton::clicked, this, [this] { set_pair(b(), a()); });
+  bl->addWidget(swap);
   meta_ = new QLabel;
   meta_->setObjectName("toolbarMeta");
   // A long status (a discover run's counts) is cut, never widens the window;
@@ -491,9 +492,9 @@ void EditWorkspace::sync_panes() {
   left_->setVisible(wanted_[0] || wanted_[1]);
   const bool right_shown = !panes_[2]->isHidden() || !panes_[3]->isHidden();
   right_->setVisible(right_shown);
-  // The right column also holds the pair header and the pair strip, outside
-  // the splitter and not hideable: it stays while the strip shows, so hiding
-  // both panes leaves the pair and its edges on screen.
+  // The right column also holds the pair strip, outside the splitter and
+  // not hideable: it stays while the strip shows, so hiding both panes
+  // leaves the pair's edges on screen.
   right_column_->setVisible(right_shown || (strip_ && !strip_->isHidden()));
 }
 

@@ -9,6 +9,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QResizeEvent>
 #include <QWheelEvent>
 
 #include <cmath>
@@ -77,6 +78,53 @@ void MatchCanvas::set_message(MatchSide side, const QString &text) {
 void MatchCanvas::set_loading(MatchSide side, bool loading) {
   loading_[idx(side)] = loading;
   update();
+}
+
+void MatchCanvas::set_caption(MatchSide side, const QString &text) {
+  captions_[idx(side)] = text;
+  update();
+}
+
+void MatchCanvas::set_corner_widget(QWidget *w) {
+  corner_ = w;
+  if (w) {
+    w->setParent(this);
+    w->show();
+  }
+  place_floating();
+}
+
+void MatchCanvas::set_status_widget(QWidget *w) {
+  status_ = w;
+  if (w) {
+    w->setParent(this);
+    w->show();
+  }
+  place_floating();
+}
+
+void MatchCanvas::resizeEvent(QResizeEvent *e) {
+  QWidget::resizeEvent(e);
+  place_floating();
+}
+
+void MatchCanvas::place_floating() {
+  const int m = theme().px("--space-2");
+  int right = width() - m; // the status line ends where the switch starts
+  if (corner_) {
+    corner_->adjustSize();
+    corner_->move(width() - corner_->width() - m,
+                  height() - corner_->height() - m);
+    corner_->raise();
+    right = corner_->x() - m;
+  }
+  if (status_) {
+    const int h = status_->sizeHint().height();
+    const int bottom =
+        corner_ ? corner_->y() + corner_->height() : height() - m;
+    status_->setGeometry(m, bottom - h, std::max(0, right - m), h);
+    status_->raise();
+  }
 }
 
 void MatchCanvas::set_layer(FrameLayer layer) {
@@ -214,11 +262,13 @@ void MatchCanvas::paint_side(QPainter &p, MatchSide side,
     centred(!messages_[idx(side)].isEmpty() ? messages_[idx(side)]
             : loading_[idx(side)]           ? QString("Henter billedet …")
                                             : QString());
+    paint_caption(p, side, sr);
     p.restore();
     return;
   }
   if (!f->error.isEmpty()) {
     centred("Billedet kunne ikke læses.\n" + f->error);
+    paint_caption(p, side, sr);
     p.restore();
     return;
   }
@@ -263,7 +313,31 @@ void MatchCanvas::paint_side(QPainter &p, MatchSide side,
     veil.setAlphaF(0.45);
     p.fillRect(sr, veil);
   }
+  paint_caption(p, side, sr);
   p.restore();
+}
+
+void MatchCanvas::paint_caption(QPainter &p, MatchSide side,
+                                const QRectF &slot) const {
+  const QString &text = captions_[idx(side)];
+  if (text.isEmpty())
+    return;
+  const Theme &t = theme();
+  const QFont font = t.font(FontRole::mono, "--font-size-xs");
+  const QFontMetrics fm(font);
+  const int pad = t.px("--space-1");
+  const QString shown = fm.elidedText(text, Qt::ElideRight,
+                                      static_cast<int>(slot.width()) - 4 * pad);
+  const QRectF box(slot.x() + pad, slot.y() + pad,
+                   fm.horizontalAdvance(shown) + 2 * pad, fm.height() + pad);
+  QColor scrim = t.color("--color-scrim");
+  scrim.setAlphaF(0.6);
+  p.setPen(Qt::NoPen);
+  p.setBrush(scrim);
+  p.drawRoundedRect(box, t.px("--radius-sm"), t.px("--radius-sm"));
+  p.setFont(font);
+  p.setPen(t.color("--color-on-chrome"));
+  p.drawText(box, Qt::AlignCenter, shown);
 }
 
 void MatchCanvas::paintEvent(QPaintEvent *) {
@@ -329,6 +403,7 @@ void MatchCanvas::paintEvent(QPaintEvent *) {
 }
 
 void MatchCanvas::mousePressEvent(QMouseEvent *e) {
+  clicked_line_ = -1;
   button_ = e->button();
   press_ = last_ = e->position();
   press_side_ = side_at(e->position());
@@ -381,8 +456,10 @@ void MatchCanvas::mouseReleaseEvent(QMouseEvent *e) {
   if (mode_ == MatchMode::select) {
     // Lines cross the gap between the slots, so a click there counts too.
     if (!dragged_)
-      if (const int l = line_at(pos); l >= 0)
+      if (const int l = line_at(pos); l >= 0) {
+        clicked_line_ = l;
         emit line_clicked(l);
+      }
     return;
   }
   if (!press_side_) {
@@ -419,11 +496,12 @@ void MatchCanvas::mouseReleaseEvent(QMouseEvent *e) {
 }
 
 void MatchCanvas::mouseDoubleClickEvent(QMouseEvent *e) {
-  // In Vælg the double-click's first click already toggled the line under
-  // it: toggle it back, so a double-click only resets the view.
-  if (e->button() == Qt::LeftButton && mode_ == MatchMode::select)
-    if (const int l = line_at(e->position()); l >= 0)
-      emit line_clicked(l);
+  // In Vælg the double-click's first click already toggled a line: toggle
+  // that same line back (not whatever lies under the second click), so a
+  // double-click only resets the view.
+  if (e->button() == Qt::LeftButton && clicked_line_ >= 0)
+    emit line_clicked(clicked_line_);
+  clicked_line_ = -1;
   if (const auto side = side_at(e->position())) {
     views_[idx(*side)] = {};
     hover_ = -1;

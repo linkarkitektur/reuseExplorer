@@ -1059,15 +1059,6 @@ QLabel#pairDelta, QLabel#edgeMeta {
 }
 /* Rediger's pair images: A | B captions in the slot colours (A = accent,
    as the graph marks it; B in the muted ink). */
-QLabel#pairCaptionA,
-QLabel#pairCaptionB {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-}
-QLabel#pairCaptionA {
-  color: var(--color-accent-deep);
-}
 QLabel#pairNone, QLabel#pairNote {
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
@@ -1104,8 +1095,14 @@ QLabel#icpLine[tone="warn"] { color: var(--tone-warn-ink); }
 QLabel#icpLine[tone="crit"] { color: var(--color-status-failed); }
 QLabel#icpLine[tone="wait"] { color: var(--color-status-running); }
 
-/* Rediger's match editor: the status line under its toolbar. */
+/* Rediger's match editor: the status line, floating in the canvas'
+   bottom-left corner beside the Farve / Dybde switch, and styled like it
+   (a raised surface), so the status inks keep their contrast. */
 QLabel#matchStatus {
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-2);
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
 }

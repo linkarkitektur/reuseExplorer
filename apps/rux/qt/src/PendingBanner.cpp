@@ -18,8 +18,9 @@ PendingBanner::PendingBanner(EdgeEditor &editor, QWidget *parent)
   const Theme &t = theme();
   setObjectName("pendingBanner");
   auto *bl = new QHBoxLayout(this);
-  bl->setContentsMargins(t.px("--space-4"), t.px("--space-2"),
-                         t.px("--space-4"), t.px("--space-2"));
+  // Thin: Rediger's right column needs the height (match canvas + overlay).
+  bl->setContentsMargins(t.px("--space-4"), t.px("--space-1"),
+                         t.px("--space-4"), t.px("--space-1"));
   bl->setSpacing(t.px("--space-3"));
   auto *dot = new QLabel;
   dot->setObjectName("bannerDot");
@@ -46,7 +47,7 @@ PendingBanner::PendingBanner(EdgeEditor &editor, QWidget *parent)
   // Buttons in a layout do not size their row by themselves (qt-client.md).
   for (QPushButton *b : {save_, discard_})
     b->setMinimumHeight(b->sizeHint().height());
-  setMinimumHeight(save_->sizeHint().height() + 2 * t.px("--space-2"));
+  setMinimumHeight(save_->sizeHint().height() + 2 * t.px("--space-1"));
 
   connect(save_, &QPushButton::clicked, this, [this] { editor_.save(); });
   connect(discard_, &QPushButton::clicked, this, [this] { editor_.discard(); });

@@ -139,13 +139,14 @@ PairStrip::PairStrip(ProjectSession &session, EdgeEditor &editor,
   setObjectName("pairStrip");
   const Theme &t = theme();
   auto *v = new QVBoxLayout(this);
-  const int pad = t.px("--space-3");
+  // Tight: the match canvas and the 3D overlay above need the height.
+  const int pad = t.px("--space-2");
   v->setContentsMargins(t.px("--space-4"), pad, t.px("--space-4"), pad);
-  v->setSpacing(t.px("--space-1")); // tight: the 3D overlay above needs it
+  v->setSpacing(t.px("--space-1"));
 
   auto *head = new QHBoxLayout;
   head->setSpacing(t.px("--space-3"));
-  // The ids are in Rediger's pair header just above.
+  // The ids are in Rediger's toolbar (the pair).
   head->addWidget(new CapsLabel("Kant A ↔ B", "panelTitle"));
   delta_ = new QLabel;
   delta_->setObjectName("pairDelta");
@@ -368,13 +369,14 @@ void PairStrip::rebuild() {
   }
 
   // As tall as the rows, up to the first row and a sliver of the next
-  // (which shows that there are more); the rest scrolls.
+  // (which shows that there are more, beside the scroll bar); the rest
+  // scrolls.
   rows_layout_->activate();
   int cap = rows_->sizeHint().height();
   if (rows_layout_->count() > 1)
     if (QWidget *first = rows_layout_->itemAt(0)->widget())
       cap = first->sizeHint().height() + rows_layout_->spacing() +
-            t.px("--space-2");
+            t.px("--space-1");
   rows_scroll_->setFixedHeight(std::min(rows_->sizeHint().height(), cap));
 
   refresh_icp();
