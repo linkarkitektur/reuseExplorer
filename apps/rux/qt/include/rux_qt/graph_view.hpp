@@ -161,7 +161,8 @@ class SlotPicker {
   /// A click on frame @p id: the slot it filled, or nullopt (no change) when
   /// @p id is already in the other slot.
   std::optional<Slot> click(int id, bool force_b);
-  /// Both at once (an edge or a list row); the next click is A again.
+  /// Both at once (an edge, a list row, a swap). The next click is B when
+  /// only A is filled, else A.
   void set_pair(int a, int b);
   void clear();
   /// After a reload of the same project: keep the pair while every chosen
@@ -175,8 +176,10 @@ class SlotPicker {
 };
 
 /// What one side of Rediger's pair images says while its slot is empty
-/// (empty when the slot holds a frame): which click fills it next.
-std::string pair_image_hint(Slot side, int a, int b);
+/// (empty when the slot holds a frame): which click fills it, given the
+/// slot the next plain click fills (SlotPicker::next(), the header's
+/// "Næste klik").
+std::string pair_image_hint(Slot side, int a, int b, Slot next);
 /// The caption over one side: "A · billede 12", or just "A" when empty.
 std::string pair_image_caption(Slot side, int id);
 

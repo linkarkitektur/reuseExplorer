@@ -78,11 +78,12 @@ void PairImages::reload() {
   sync();
 }
 
-void PairImages::set_pair(int a, int b) {
-  if (a == a_ && b == b_)
+void PairImages::set_pair(int a, int b, Slot next) {
+  if (a == a_ && b == b_ && next == next_)
     return;
   a_ = a;
   b_ = b;
+  next_ = next;
   sync();
 }
 
@@ -98,7 +99,8 @@ void PairImages::sync() {
   auto side = [this](ImagePane *pane, QLabel *caption, Slot slot, int id) {
     caption->setText(QString::fromStdString(pair_image_caption(slot, id)));
     if (id < 0) {
-      pane->set_message(QString::fromStdString(pair_image_hint(slot, a_, b_)));
+      pane->set_message(
+          QString::fromStdString(pair_image_hint(slot, a_, b_, next_)));
       return;
     }
     if (auto f = loader_->frame(id)) {

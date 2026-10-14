@@ -349,23 +349,49 @@ TEST_CASE("FitAvoidingCorner_ReserveFillsViewport_IgnoresIt",
   CHECK(f.cy == Approx(0.0));
 }
 
-TEST_CASE("PairImageHint_OnlyForAnEmptySlot_AndSaysWhatToClick",
+TEST_CASE("SlotPicker_SetPair_NextFollowsWhatIsFilled",
           "[rux_qt][graphview][slots]") {
-  // Nothing chosen: A asks for a click, B for a Shift-click (a plain one
-  // would fill A first).
-  CHECK(pair_image_hint(Slot::a, -1, -1) == "Klik på en node i grafen for A.");
-  CHECK(pair_image_hint(Slot::b, -1, -1) == "Shift-klik på en node for B.");
-  // A chosen: B asks for one more node, A shows its image.
-  CHECK(pair_image_hint(Slot::a, 4, -1).empty());
-  CHECK(pair_image_hint(Slot::b, 4, -1) == "Klik på en node mere for B.");
-  // B forced first with Shift: the next click fills A.
-  CHECK(pair_image_hint(Slot::a, -1, 9) == "Klik på en node for A.");
-  CHECK(pair_image_hint(Slot::b, -1, 9).empty());
-  // A complete pair: no hint on either side.
-  CHECK(pair_image_hint(Slot::a, 4, 9).empty());
-  CHECK(pair_image_hint(Slot::b, 4, 9).empty());
+  // Only A (a swap of B-only, or set_pair(a, -1)): the next click is B.
+  SlotPicker s;
+  s.set_pair(5, -1);
+  CHECK(s.next() == Slot::b);
+  // Only B, both, or neither: the next click is A.
+  s.set_pair(-1, 9);
+  CHECK(s.next() == Slot::a);
+  s.set_pair(5, 9);
+  CHECK(s.next() == Slot::a);
+  s.set_pair(-1, -1);
+  CHECK(s.next() == Slot::a);
+  // A swap of an A-only pair leaves B; the swap back asks for B again.
+  s.set_pair(5, -1);
+  s.set_pair(s.b(), s.a());
+  CHECK(s.next() == Slot::a);
+  s.set_pair(s.b(), s.a());
+  CHECK(s.next() == Slot::b);
 }
 
+TEST_CASE("PairImageHint_OnlyForAnEmptySlot_AndFollowsTheNextClick",
+          "[rux_qt][graphview][slots]") {
+  // Nothing chosen, next A: A asks for a click, B for a Shift-click.
+  CHECK(pair_image_hint(Slot::a, -1, -1, Slot::a) ==
+        "Klik på en node i grafen for A.");
+  CHECK(pair_image_hint(Slot::b, -1, -1, Slot::a) ==
+        "Shift-klik på en node for B.");
+  // A chosen, next B: B asks for one more node, A shows its image.
+  CHECK(pair_image_hint(Slot::a, 4, -1, Slot::b).empty());
+  CHECK(pair_image_hint(Slot::b, 4, -1, Slot::b) ==
+        "Klik på en node mere for B.");
+  // The hint follows the picker, not the fill state: A chosen but the next
+  // click is A (it would replace A), so B needs a Shift-click.
+  CHECK(pair_image_hint(Slot::b, 4, -1, Slot::a) ==
+        "Shift-klik på en node for B.");
+  // B forced first with Shift: the next click fills A.
+  CHECK(pair_image_hint(Slot::a, -1, 9, Slot::a) == "Klik på en node for A.");
+  CHECK(pair_image_hint(Slot::b, -1, 9, Slot::a).empty());
+  // A complete pair: no hint on either side.
+  CHECK(pair_image_hint(Slot::a, 4, 9, Slot::a).empty());
+  CHECK(pair_image_hint(Slot::b, 4, 9, Slot::a).empty());
+}
 TEST_CASE("PairImageCaption_NamesTheSlotAndTheFrame",
           "[rux_qt][graphview][slots]") {
   CHECK(pair_image_caption(Slot::a, 12) == "A · billede 12");

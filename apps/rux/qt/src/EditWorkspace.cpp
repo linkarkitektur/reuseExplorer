@@ -381,7 +381,7 @@ void EditWorkspace::set_pair(int a, int b) {
 void EditWorkspace::apply_pair() {
   graph_->set_pair(slots_.a(), slots_.b());
   strip_->set_pair(slots_.a(), slots_.b());
-  images_->set_pair(slots_.a(), slots_.b());
+  images_->set_pair(slots_.a(), slots_.b(), slots_.next());
   pair_complete_ = slots_.complete();
   sync_pair_header();
   sync_panes();

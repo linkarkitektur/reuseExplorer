@@ -10,6 +10,7 @@
 // B moved on is dropped.
 
 #include <rux_qt/FrameBrowser.hpp>
+#include <rux_qt/graph_view.hpp>
 
 #include <QWidget>
 
@@ -25,7 +26,9 @@ class PairImages : public QWidget {
   Q_OBJECT
     public:
   explicit PairImages(ProjectSession &session, QWidget *parent = nullptr);
-  void set_pair(int a, int b);
+  /// A and B (-1 = empty) and the slot the next plain click fills, which
+  /// an empty side's hint names.
+  void set_pair(int a, int b, Slot next);
   void set_layer(FrameLayer layer);
   FrameLayer layer() const { return layer_; }
 
@@ -42,6 +45,7 @@ class PairImages : public QWidget {
   QButtonGroup *layers_ = nullptr;
   FrameLayer layer_ = FrameLayer::color;
   int a_ = -1, b_ = -1;
+  Slot next_ = Slot::a;
 };
 
 } // namespace rux::qt

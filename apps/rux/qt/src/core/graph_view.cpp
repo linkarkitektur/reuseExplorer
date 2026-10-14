@@ -253,7 +253,9 @@ std::optional<Slot> SlotPicker::click(int id, bool force_b) {
 void SlotPicker::set_pair(int a, int b) {
   a_ = a;
   b_ = b;
-  next_ = Slot::a;
+  // Only A filled: the next click completes the pair (as after a click on
+  // A); otherwise it is A, so "Næste klik" and the images' hints agree.
+  next_ = a_ >= 0 && b_ < 0 ? Slot::b : Slot::a;
 }
 
 void SlotPicker::clear() { set_pair(-1, -1); }
@@ -269,17 +271,19 @@ bool SlotPicker::forget_missing(const std::vector<int> &frame_ids) {
   return false;
 }
 
-std::string pair_image_hint(Slot side, int a, int b) {
+std::string pair_image_hint(Slot side, int a, int b, Slot next) {
   if (side == Slot::a) {
     if (a >= 0)
       return {};
+    // An empty A is always next (SlotPicker never points past it), so
+    // only B's state changes the wording.
     return b >= 0 ? "Klik på en node for A."
                   : "Klik på en node i grafen for A.";
   }
   if (b >= 0)
     return {};
-  return a >= 0 ? "Klik på en node mere for B."
-                : "Shift-klik på en node for B.";
+  return next == Slot::b ? "Klik på en node mere for B."
+                         : "Shift-klik på en node for B.";
 }
 
 std::string pair_image_caption(Slot side, int id) {
