@@ -525,8 +525,8 @@ const char *box_state_name(int s) {
 /// Drag B's centre handle with Qt mouse events (needs --gl), once exactly
 /// on the handle and once 6 logical px beside it (a realistic aim). Logs
 /// dpr, sizes, the handle radius, the state at the press and the ΔT; fails
-/// the shot (DRAG NOT TRANSLATED) when the on-handle drag does not move B
-/// by >= 1 cm without turning it. Shoot with --gl --scale 1 and --scale 2.
+/// the shot (DRAG NOT TRANSLATED) when either drag does not move B by
+/// >= 1 cm without turning it. Shoot with --gl --scale 1 and --scale 2.
 QWidget *make_rediger_drag_qt(const PageContext &ctx) {
   auto *shell = make_pg(ctx);
   shell->show();
@@ -564,7 +564,9 @@ QWidget *make_rediger_drag_qt(const PageContext &ctx) {
                  "rediger-drag-qt: aim +%.0f px state=%s -> moved %.4f m "
                  "turned %.3f deg (x=%.4f y=%.4f z=%.4f)\n",
                  aim, box_state_name(state), moved, turned, o.x, o.y, o.z);
-    if (aim == 0.0 && (moved < 0.01 || turned > 0.5))
+    // Both aims must grab the translate grip: +6 px is inside a handle
+    // sized in logical px, and missed a VTK-sized one at dpr 2.
+    if (moved < 0.01 || turned > 0.5)
       failed = true;
   }
   if (failed) {

@@ -109,9 +109,38 @@ class RigidBoxRepresentation : public vtkBoxRepresentation {
     return this->HandleGeometry[6]->GetRadius();
   }
   const double *centre() const { return this->Points->GetPoint(14); }
+  /// Handle radius in DISPLAY pixels (logical px x the canvas' dpr); 0
+  /// keeps VTK's own sizing.
+  void set_handle_display_px(double px) { handle_px_ = px; }
 
     protected:
   RigidBoxRepresentation() = default;
+  void SizeHandles() override {
+    Superclass::SizeHandles();
+    vtkRenderer *r = this->Renderer;
+    if (handle_px_ <= 0.0 || !r || !r->GetActiveCamera())
+      return;
+    // The world length of handle_px_ display pixels at the box centre.
+    double c[3];
+    this->Points->GetPoint(14, c);
+    r->SetWorldPoint(c[0], c[1], c[2], 1.0);
+    r->WorldToDisplay();
+    double d[3];
+    r->GetDisplayPoint(d);
+    r->SetDisplayPoint(d[0] + handle_px_, d[1], d[2]);
+    r->DisplayToWorld();
+    double w[4];
+    r->GetWorldPoint(w);
+    if (w[3] != 0.0)
+      for (int i = 0; i < 3; ++i)
+        w[i] /= w[3];
+    const double radius = std::sqrt((w[0] - c[0]) * (w[0] - c[0]) +
+                                    (w[1] - c[1]) * (w[1] - c[1]) +
+                                    (w[2] - c[2]) * (w[2] - c[2]));
+    for (int i = 0; i < 7; ++i)
+      this->HandleGeometry[i]->SetRadius(radius);
+  }
+  double handle_px_ = 0.0;
 };
 
 void on_box(vtkObject *caller, unsigned long, void *client, void *) {
@@ -330,6 +359,10 @@ void PairOverlay::loaded(std::shared_ptr<Clouds> c) {
     rep->OutlineCursorWiresOff();
     rep->PlaceWidget(vtk_->b->GetBounds()); // untransformed B
     rep->hide_face_handles();
+    // The centre sphere is the only translate grip: --space-2 logical px
+    // radius on any screen, so a HiDPI display does not shrink it to a
+    // speck while the faces (rotate) stay easy to hit.
+    rep->set_handle_display_px(t.px("--space-2") * view_->devicePixelRatioF());
     vtk_->box->SetRepresentation(rep);
     vtk_->observer = vtkSmartPointer<vtkCallbackCommand>::New();
     vtk_->observer->SetCallback(on_box);
@@ -387,6 +420,8 @@ void PairOverlay::apply_offset(bool from_widget) {
       QString::fromStdString(format_decimal_da(shift * 100.0, 1));
   const QString deg =
       QString::fromStdString(format_decimal_da(rotation_angle_deg(delta()), 1));
+  const QString grips =
+      "Træk kuglen i midten for at flytte B; træk en side for at dreje.\n";
   const QString keys = "Klik på lærredet, og flyt B med tasterne: ←/→ x · "
                        "↑/↓ y · PgUp/PgDn z · [ / ] drej · Shift: ×10";
   status_->set_full_text(!ready_ ? QString() // the canvas says why
@@ -395,9 +430,10 @@ void PairOverlay::apply_offset(bool from_widget) {
                              : QString("Flyttet %1 cm · %2°").arg(cm, deg));
   status_->setToolTip(
       offset_.is_zero()
-          ? QString("B står på sin gemte pose.\n") + keys
-          : QString("B er flyttet %1 cm og drejet %2° i forhold til den "
-                    "gemte pose.\n")
+          ? grips + QString("B står på sin gemte pose.\n") + keys
+          : grips +
+                QString("B er flyttet %1 cm og drejet %2° i forhold til den "
+                        "gemte pose.\n")
                     .arg(cm, deg) +
                 keys);
   emit offset_changed();
