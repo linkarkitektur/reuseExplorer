@@ -4,8 +4,8 @@
 
 #pragma once
 
-/// Resources out through a template (docs/superpowers/specs/
-/// 2026-10-02-resources-templates-ia-design.md §6.3): the backend CSV
+/// Resources out through a template (resources/templates design doc §6.3,
+/// removed 2026-10-14, see git history): the backend CSV
 /// (GET /resources/export.csv) and the PDF report's Ressourcetabel.
 
 #include "reusex/core/ProjectDB.hpp"

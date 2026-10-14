@@ -2,10 +2,10 @@ title: Open ruxd --local from a phone with a pairing code instead of a token URL
 labels: gui, enhancement, backend, security
 
 ## Background
-`rux gui` is gone; `ruxd --local` serves the web GUI (spec
-`docs/superpowers/specs/2026-10-08-ruxd-multiuser-and-qt-client-design.md`,
-phase S1), and the multi-user server (phase S3) has accounts, sessions and
-roles. What shipped for a phone on the LAN:
+`rux gui` is gone; `ruxd --local` serves the web GUI (the ruxd-multiuser
+design doc, phase S1, removed 2026-10-14 — see git history and
+`docs/DIRECTION.md`'s 2026-10-08 changelog entries), and the multi-user
+server (phase S3) has accounts, sessions and roles. What shipped for a phone on the LAN:
 - `ruxd --local <dir> --bind <LAN-IP> --auth-token <token>`: a bind beyond
   loopback is refused without a token, and the token is then required on
   every request and on the events WebSocket.

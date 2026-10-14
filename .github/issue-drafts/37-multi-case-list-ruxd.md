@@ -2,9 +2,9 @@ title: Sager: show a case's running job on its card
 labels: gui, enhancement, frontend
 
 ## Background
-Most of this draft's original scope shipped with the ruxd server work
-(spec `docs/superpowers/specs/2026-10-08-ruxd-multiuser-and-qt-client-design.md`,
-phases S2 and S3):
+Most of this draft's original scope shipped with the ruxd server work (the
+ruxd-multiuser design doc, phases S2 and S3, removed 2026-10-14 — see git
+history and `docs/DIRECTION.md`'s 2026-10-08 changelog entries):
 - `GET /api/v1/cases` lists cases (id, name, file name, size, archived, the
   caller's role) with each card's survey figures read without opening the
   case, and a server-rendered plan thumbnail (`/cases/{cid}/renders`).

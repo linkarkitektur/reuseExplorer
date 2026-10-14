@@ -4,8 +4,8 @@
 
 #pragma once
 
-/// The resource key catalogue (docs/superpowers/specs/
-/// 2026-10-02-resources-templates-ia-design.md §4.3): every key a resource
+/// The resource key catalogue (resources/templates design doc §4.3, removed
+/// 2026-10-14, see git history): every key a resource
 /// (survey part) can carry, and the ONE mapping from a key id to where its
 /// value is stored. The API and the frontend only see key ids; the storage
 /// field names (leksikon name_en, column display name) stay in here.

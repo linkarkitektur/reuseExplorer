@@ -2579,8 +2579,8 @@ class ProjectDB::Impl {
 
   void migrateToV25() {
     reusex::info("Migrating database to schema version 25");
-    // Resources and templates (docs/superpowers/specs/
-    // 2026-10-02-resources-templates-ia-design.md §4.2): one transaction, so
+    // Resources and templates (resources/templates design doc §4.2, removed
+    // 2026-10-14, see git history): one transaction, so
     // a v24 project upgrades whole or stays v24. Every step is guarded so a
     // test that rolls the version back and reopens re-runs it safely.
     execOrThrow("BEGIN TRANSACTION;");
@@ -2642,8 +2642,8 @@ class ProjectDB::Impl {
 
   void migrateToV27() {
     reusex::info("Migrating database to schema version 27");
-    // Resource view record (docs/superpowers/specs/
-    // 2026-10-13-resource-view-record-design.md §2): the chosen image of a
+    // Resource view record (resource-view-record design doc §2, removed
+    // 2026-10-14, see git history): the chosen image of a
     // survey part. ADD COLUMN cannot add a table constraint, so the
     // cross-column invariant is a column CHECK on view_h, the last column
     // added, when every column it names exists. Each step is guarded so a

@@ -10,10 +10,11 @@ Status: **implemented** (2026-10-02; phases 1–6 complete; proposed 2026-09-30)
 
 > **2026-10-02 (resources/templates redesign):** this doc is kept as the
 > record of what shipped in Phases 1–6, but two of its screens were since
-> folded into others — see
-> `docs/superpowers/specs/2026-10-02-resources-templates-ia-design.md`.
+> folded into others — see the resources/templates design doc (§8,
+> removed 2026-10-14, see git history and `docs/DIRECTION.md`'s
+> 2026-10-02 changelog entry).
 > **On-site** was removed from `rux gui` and moved to the mobile-app track
-> (§8 of that spec, and the note under "Sager and On-site screens" below).
+> (same §8, and the note under "Sager and On-site screens" below).
 > **Materialedata** and **Eksport** were retired: their content now lives in
 > Kortlægning (resources replace materials) and Rapport (CSV + PDF
 > Ressourcetabel export) respectively.
@@ -124,10 +125,10 @@ The token system stays the mechanism: the prototype's values go into
 **Sager and one project per server.** `ruxd --local` (formerly `rux gui`)
 serves one `.rux`. The Sager screen lists the open project as its card and
 says how to open another (`ruxd --local <fil>.rux`). Listing and switching
-between many cases is the multi-case ruxd's job (spec
-`docs/superpowers/specs/2026-10-08-ruxd-multiuser-and-qt-client-design.md`,
-phase S2); the screen is built so a longer list drops in without layout
-change.
+between many cases is the multi-case ruxd's job (the ruxd-multiuser design
+doc, phase S2, removed 2026-10-14, see git history and `docs/DIRECTION.md`'s
+2026-10-08 changelog entries); the screen is built so a longer list drops in
+without layout change.
 
 ## Kortlægning domain model
 
@@ -386,7 +387,8 @@ queue or awaiting a sample, a CSV download of the ready fractions, and
 
 > **2026-10-02:** On-site was removed from `rux gui` and its backend
 > (`samples.part_code` dropped in schema v25) and moved to the mobile-app
-> track — see `docs/superpowers/specs/2026-10-02-resources-templates-ia-design.md` §8.
+> track — see the resources/templates design doc §8 (removed 2026-10-14,
+> see git history).
 > The description below is kept as the design record for that app.
 
 **Sager** — a case list: one card per building survey, the fixture name and

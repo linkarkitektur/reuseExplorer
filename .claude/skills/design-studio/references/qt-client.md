@@ -1,7 +1,8 @@
 # The native Qt client — design loop reference
 
 The second surface of the one design system. Status: **in progress** (Stream
-Q of `docs/superpowers/specs/2026-10-08-ruxd-multiuser-and-qt-client-design.md`).
+Q of the ruxd-multiuser design doc, removed 2026-10-14 — see git history and
+`docs/DIRECTION.md`'s 2026-10-08 changelog entries).
 Q0 — this loop, the theme loader, the gallery and two demo pages — Q1 —
 the app shell plain `rux` opens — Q2 — the Database workspace — and Q3 —
 3D, Rediger, Pipeline and Log — are done. P4 renamed Posegraf to Rediger

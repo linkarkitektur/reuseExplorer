@@ -610,7 +610,7 @@ class ProjectDB {
   // --- Pose Graph ---
   //
   // The stored pose graph is the source of truth for `rux optimize` (schema
-  // v28, docs/superpowers/specs/2026-10-13-pose-graph-editor-design.md §3).
+  // v28, docs/design/2026-10-13-pose-graph-editor-design.md §3).
   // Rows are canonical: from_node_id < to_node_id, UNIQUE(from, to, type).
   // Node positions are read from `sensor_frames` (their current world poses,
   // and the snapshot in `initial_transform`), so there is no nodes table.
