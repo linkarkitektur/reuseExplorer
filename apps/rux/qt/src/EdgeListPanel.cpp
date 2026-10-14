@@ -206,7 +206,9 @@ EdgeListPanel::EdgeListPanel(EdgeEditor &editor, bool persist, QWidget *parent)
   rejected_->setCursor(Qt::PointingHandCursor);
   rejected_->setToolTip("Vis også afviste kanter under \"Alle\"");
   bl->addWidget(rejected_);
-  meta_ = new QLabel;
+  // Elided, never widening the column: the count is the first thing to go
+  // in a 1440 px window with the inspector open.
+  meta_ = new ElidedLabel(QString(), Qt::ElideLeft);
   meta_->setObjectName("toolbarMeta");
   meta_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
   bl->addWidget(meta_, 1);
@@ -436,10 +438,12 @@ void EdgeListPanel::rebuild() {
   filter_.type = type_->currentData().toString().toStdString();
   rejected_->setEnabled(filter_.status.empty());
   model_->set_rows(edge_table(all, filter_, sort_, descending_));
-  meta_->setText(
-      QString("%1 af %2 kanter")
-          .arg(format_count(static_cast<qulonglong>(model_->rowCount())))
-          .arg(format_count(static_cast<qulonglong>(all.size()))));
+  // "32 af 36": the pane is "Kanter"; the tooltip says it in full.
+  const QString shown =
+      format_count(static_cast<qulonglong>(model_->rowCount()));
+  const QString total = format_count(static_cast<qulonglong>(all.size()));
+  meta_->set_full_text(QString("%1 af %2").arg(shown, total));
+  meta_->setToolTip(QString("%1 af %2 kanter vist").arg(shown, total));
   if (keep)
     select_edge(*keep);
 }

@@ -199,6 +199,10 @@ for page in "${PAGES[@]}"; do
       cat "$log" >&2
       echo "qt_shot.sh: FAIL no PNG for $page/$theme" >&2
       status=1
+    elif grep -q "TOO WIDE" "$log"; then
+      grep "TOO WIDE" "$log" >&2
+      echo "qt_shot.sh: FAIL $png — wider than the window (the inspector is pushed off screen)" >&2
+      status=6
     else
       grep -E "ERROR" "$log" >&2 || true
       # A page's own measurement lines ("rediger-stress: 1234 nodes …"),

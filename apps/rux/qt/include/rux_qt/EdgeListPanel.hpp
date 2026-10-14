@@ -29,6 +29,7 @@ class QTableView;
 namespace rux::qt {
 
 class EdgeEditor;
+class ElidedLabel;
 
 class EdgeListModel : public QAbstractTableModel {
   Q_OBJECT
@@ -89,7 +90,7 @@ class EdgeListPanel : public QWidget {
   QComboBox *type_ = nullptr;
   QButtonGroup *status_ = nullptr;
   QCheckBox *rejected_ = nullptr;
-  QLabel *meta_ = nullptr;
+  ElidedLabel *meta_ = nullptr;
   EdgeFilter filter_;
   EdgeColumn sort_ = EdgeColumn::residual;
   bool descending_ = true;

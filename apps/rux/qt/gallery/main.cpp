@@ -182,6 +182,16 @@ int main(int argc, char **argv) {
     pump(6, 0);
   }
 
+  // The shell must fit the window it is shot at: a workspace whose minimum
+  // width pushes the inspector off a 1440 px laptop screen fails the shot
+  // (qt_shot.sh greps TOO WIDE), never passes silently as a wider PNG.
+  const int min_w = current ? current->minimumSizeHint().width() : 0;
+  const bool too_wide = min_w > args.width;
+  if (too_wide)
+    std::fprintf(stderr,
+                 "rux-qt-gallery: ERROR TOO WIDE: the page needs %d px, the "
+                 "window is %d px\n",
+                 min_w, args.width);
   const QImage img = host.grab().toImage();
   const bool saved = img.save(QString::fromStdString(args.screenshot));
   const QStringList missing = theme().missing();
@@ -204,6 +214,8 @@ int main(int argc, char **argv) {
                  args.screenshot.c_str());
     return 5;
   }
+  if (too_wide)
+    return 6;
   if (!missing.isEmpty() || !fonts.isEmpty()) {
     for (const QString &m : missing)
       std::fprintf(stderr, "rux-qt-gallery: ERROR MISSING token %s\n",

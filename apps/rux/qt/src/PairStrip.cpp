@@ -152,6 +152,7 @@ PairStrip::PairStrip(ProjectSession &session, EdgeEditor &editor,
   v->addLayout(head);
 
   // The edits on a line of their own, so the strip fits a narrow column.
+  // ("Nulstil" B is the 3D overlay's, beside the canvas it resets.)
   auto *actions = new QHBoxLayout;
   actions->setSpacing(t.px("--space-3"));
   icp_ = new QPushButton(NavItem::escape_mnemonic("ICP-forfin"));
@@ -160,11 +161,6 @@ PairStrip::PairStrip(ProjectSession &session, EdgeEditor &editor,
   icp_->setToolTip("Justér B's dybdesky mod A's med ICP og vis, hvor godt "
                    "de passer. Ændrer ikke projektet.");
   actions->addWidget(icp_);
-  reset_ = new QPushButton(NavItem::escape_mnemonic("Nulstil"));
-  reset_->setProperty("kind", "ghost");
-  reset_->setCursor(Qt::PointingHandCursor);
-  reset_->setToolTip("Sæt B tilbage på sin gemte pose");
-  actions->addWidget(reset_);
   type_ = new QComboBox;
   type_->setObjectName("edgeType");
   for (const char *k : {"loop_closure", "odometry", "panorama"})
@@ -199,7 +195,6 @@ PairStrip::PairStrip(ProjectSession &session, EdgeEditor &editor,
 
   connect(icp_, &QPushButton::clicked, this, &PairStrip::run_icp);
   connect(add_, &QPushButton::clicked, this, &PairStrip::add_edge);
-  connect(reset_, &QPushButton::clicked, this, &PairStrip::reset_requested);
   connect(type_, &QComboBox::currentIndexChanged, this,
           &PairStrip::refresh_add_label);
   connect(&editor_, &EdgeEditor::changed, this, &PairStrip::rebuild);
@@ -454,7 +449,6 @@ void PairStrip::refresh_icp() {
   icp_line_->setProperty("tone", tone.isEmpty() ? QVariant() : QVariant(tone));
   icp_line_->setVisible(!text.isEmpty());
   repolish(icp_line_);
-  reset_->setEnabled(pair_ok && current_delta().has_value());
 }
 
 void PairStrip::add_edge() {

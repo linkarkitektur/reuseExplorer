@@ -53,8 +53,6 @@ class PairStrip : public QFrame {
   /// ICP of B onto A converged for the current pair from the current ΔT:
   /// @p world_delta is B's new world-space offset (the seed included).
   void icp_aligned(int a, int b, const rux::qt::Mat4 &world_delta);
-  /// "Nulstil": put B back on its stored pose (clear the manual offset).
-  void reset_requested();
 
     private:
   struct IcpOutcome {
@@ -90,7 +88,6 @@ class PairStrip : public QFrame {
   QWidget *rows_ = nullptr;
   QVBoxLayout *rows_layout_ = nullptr;
   QPushButton *icp_ = nullptr;
-  QPushButton *reset_ = nullptr;
   QComboBox *type_ = nullptr;
   QPushButton *add_ = nullptr;
   QLabel *icp_line_ = nullptr;

@@ -73,7 +73,11 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   reset->setCursor(Qt::PointingHandCursor);
   reset->setToolTip("Sæt B tilbage på sin gemte pose");
   reset->setMinimumHeight(reset->sizeHint().height());
+  reset->setEnabled(false); // until B is moved
   connect(reset, &QPushButton::clicked, overlay_, &PairOverlay::reset_offset);
+  connect(overlay_, &PairOverlay::offset_changed, reset, [this, reset] {
+    reset->setEnabled(overlay_->ready() && !overlay_->offset().is_zero());
+  });
   panes_[3]->add_header_widget(reset);
 
   left_ = new QSplitter(Qt::Vertical);
@@ -185,8 +189,6 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
               overlay_->set_offset(
                   offset_from_matrix(delta, overlay_->pivot()));
           });
-  connect(strip_, &PairStrip::reset_requested, overlay_,
-          &PairOverlay::reset_offset);
   // An ICP fit counts only while B stays where ICP put it.
   connect(overlay_, &PairOverlay::offset_changed, strip_,
           &PairStrip::refresh_icp);

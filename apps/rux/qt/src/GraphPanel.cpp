@@ -568,7 +568,9 @@ GraphPanel::GraphPanel(ProjectSession &session, EdgeEditor &editor,
   yaw_slider_ = new QSlider(Qt::Horizontal);
   yaw_slider_->setObjectName("yawSlider");
   yaw_slider_->setRange(-179, 180); // (-180, 180]: -180 would snap to 180
-  yaw_slider_->setMinimumWidth(t.px("--layout-nav-width") / 2);
+  // Shrinks first when the left column is narrow (a 1440 px window with
+  // the inspector open): the spin box beside it holds the exact value.
+  yaw_slider_->setMinimumWidth(t.px("--space-7"));
   bl->addWidget(yaw_slider_);
   yaw_spin_ = new QDoubleSpinBox;
   yaw_spin_->setObjectName("yawSpin");
