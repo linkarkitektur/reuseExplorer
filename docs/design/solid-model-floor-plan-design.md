@@ -7,7 +7,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 # Solid model v2: floor-plan-first reconstruction, typed building elements, IFC
 
 **Status:** design, 2026-10-13; decisions D1–D8 closed 2026-10-13 (§8). Reviewed and extended from
-[`docs/research/solid-model-scan-to-bim.md`](../../research/solid-model-scan-to-bim.md)
+[`docs/research/solid-model-scan-to-bim.md`](../research/solid-model-scan-to-bim.md)
 (the research). This document is the **architecture of record** for the
 workstream; the **plan of record is the beads graph** (`bd show reusex-z1v`, the
 workstream epic, or `bd list -l workstream:solid-model`). Executor

@@ -76,7 +76,7 @@ enough to act on** and **cheap enough to produce** for a real building.
    plane-landmark back-end in #225. This is priority one because no amount of
    work on the stages above it can recover geometry the poses have destroyed.
 2. **Solid model / scan-to-BIM** — anchor: beads `reusex-z1v`
-   ([design](superpowers/specs/2026-10-13-solid-model-floor-plan-design.md)).
+   ([design](design/solid-model-floor-plan-design.md)).
    The mission's output is a typed building model, and today's product is one
    unlabelled envelope mesh from a MIP fed infinite wall lines and
    semantically blind planes. Floor-plan-first reconstruction (storeys, walls
@@ -113,7 +113,7 @@ a `workstream: *` label so alignment can be queried with
 | Gaussian splatting | `workstream: gsplat` | #240 | Native C++/CUDA 3DGS trained from `ProjectDB` — point-cloud-seeded Gaussians, sensor frames and sliced 360 panoramas as views, Apache-licensed gsplat kernels under a GPL trainer |
 | 360 integration | `workstream: 360-integration` | #236 | Turn panoramas into wide-baseline pose-graph constraints; a panorama that sees many temporally-distant frames supplies exactly the loop closures the plane-landmark back-end cannot. Mechanism landed and tested (`rux graph discover --use-panoramas`); **blocked on matcher quality** — cross-camera ORB resections are too weak to help, see [`research/panorama-loop-closure.md`](research/panorama-loop-closure.md) |
 | Agent-driven modeling | `workstream: agent-modeling` | #267 | Evaluate an agent + MCP gateway + Blender path to a simplified, tagged building model as a complement to the geometric pipeline; requires headless rendering so the agent has eyes |
-| Solid model / scan-to-BIM | `workstream: solid-model` | beads `reusex-z1v` | Replace the one-envelope MIP mesh with a typed building model — storeys, walls with measured thickness, spaces with polygons, openings — stored in `ProjectDB` with evidence, deterministic GUIDs and re-run-safe manual edits; exported as IFC4, DXF, Rhino, Speckle; feeding the survey with measured quantities. Design: [`superpowers/specs/2026-10-13-solid-model-floor-plan-design.md`](superpowers/specs/2026-10-13-solid-model-floor-plan-design.md); research: [`research/solid-model-scan-to-bim.md`](research/solid-model-scan-to-bim.md). The MIP stays as an optional refinement |
+| Solid model / scan-to-BIM | `workstream: solid-model` | beads `reusex-z1v` | Replace the one-envelope MIP mesh with a typed building model — storeys, walls with measured thickness, spaces with polygons, openings — stored in `ProjectDB` with evidence, deterministic GUIDs and re-run-safe manual edits; exported as IFC4, DXF, Rhino, Speckle; feeding the survey with measured quantities. Design: [`design/solid-model-floor-plan-design.md`](design/solid-model-floor-plan-design.md); research: [`research/solid-model-scan-to-bim.md`](research/solid-model-scan-to-bim.md). The MIP stays as an optional refinement |
 | Infrastructure & test health | `workstream: infra` | #268 | Keep the build, test and coverage loop fast and trustworthy so agents can iterate — includes #262 (parallel-ctest flakiness) and hosted CI (#202) |
 
 Work that fits none of these rows is either a bugfix, a standing maintenance
@@ -245,7 +245,7 @@ changelog — that history is the point of keeping it in the repo.
   the tree (the label-0 collision that makes the first SAM3 prompt class
   unlabeled; dead `create mesh -a/-l` flags; docs calling the envelope mesh
   room-partitioned). The design
-  [`superpowers/specs/2026-10-13-solid-model-floor-plan-design.md`](superpowers/specs/2026-10-13-solid-model-floor-plan-design.md)
+  [`design/solid-model-floor-plan-design.md`](design/solid-model-floor-plan-design.md)
   keeps the research's phases, differs on four points (native IFC writer
   with ifcopenshell test-only; entity tables with GUIDs instead of a
   `plane_classes` cloud; planes kept as the axis-family source; own scans as
@@ -298,7 +298,7 @@ changelog — that history is the point of keeping it in the repo.
     `io/speckle.hpp` here are unaffected — they push to any Speckle
     server/cloud instance, not to one this project hosts.
 - **2026-10-09** — **Repo split: `ruxd` and the web frontend move out**
-  ([design](superpowers/specs/2026-10-09-repo-split-design.md)). `ruxd` (the
+  (design doc, removed; see git history). `ruxd` (the
   HTTP service worker) and the React/Vite web GUI (`apps/rux/frontend`) now
   live in their own repos under the `ReUse-X` org — `ruxd` and
   `rux-frontend` — with history preserved via `git filter-repo`. This repo
@@ -333,7 +333,7 @@ changelog — that history is the point of keeping it in the repo.
   ruxd's `/posegraph/icp` is a thin adapter over `slam::refine_frame_pair_icp`,
   like the Qt client's pair strip.
 - **2026-10-08** — **Native Qt client, phase Q3: 3D, Posegraf, Pipeline, Log**
-  ([spec](superpowers/specs/2026-10-08-ruxd-multiuser-and-qt-client-design.md),
+  (spec, removed; see git history,
   Stream Q). The client's remaining workspaces. **3D** draws with
   `visualize::populate_scene()`, extracted from `render_view()` so `rux
   render` and the app share one scene builder (render output unchanged
@@ -361,7 +361,7 @@ changelog — that history is the point of keeping it in the repo.
   (`pipeline::mesh_options_from_parameters`, `apply_optimize_parameters`),
   and log them under the same keys.
 - **2026-10-08** — **Native Qt client, phase Q2: the Database workspace**
-  ([spec](superpowers/specs/2026-10-08-ruxd-multiuser-and-qt-client-design.md),
+  (spec, removed; see git history,
   Stream Q). RTABMap's DatabaseViewer, made calm: a project tree with
   counts; an A/B frame browser (colour, depth or confidence under the label
   overlay and legend; pose, camera and time; ←/→ and Shift+←/→; filmstrip)
@@ -375,7 +375,7 @@ changelog — that history is the point of keeping it in the repo.
   GUI's `/posegraph/icp` and is now shared by both clients. A WAL-mode
   project in a read-only directory now probes and opens read-only.
 - **2026-10-08** — **Native Qt client, phase Q1: plain `rux` is an app**
-  ([spec](superpowers/specs/2026-10-08-ruxd-multiuser-and-qt-client-design.md),
+  (spec, removed; see git history,
   Stream Q). `rux` with no subcommand (or `rux -p x.rux`) now opens the Qt
   client when there is a display, and prints help (exit 0) when there is
   none; every subcommand is unchanged. The shell has a title bar with schema
@@ -389,7 +389,7 @@ changelog — that history is the point of keeping it in the repo.
   designed placeholders until Q2/Q3. The installed `rux` is wrapped for Qt's
   platform plugins.
 - **2026-10-08** — **Native Qt client, phase Q0: the design loop**
-  ([spec](superpowers/specs/2026-10-08-ruxd-multiuser-and-qt-client-design.md),
+  (spec, removed; see git history,
   Stream Q). Before any Qt workspace is designed, the design-studio skill can
   see Qt: `apps/rux/qt/` adds `rux_qt_core` (Qt-free token parsing, light
   tests), `rux_qt_lib` (theme loader: `tokens.css` -> QSS template + QPalette
@@ -399,7 +399,7 @@ changelog — that history is the point of keeping it in the repo.
   re-shoots in ~1.3 s, a C++ edit in ~10 s. One design system, two renderers:
   the web GUI's tokens are now also the Qt client's. Plain-`rux` launch and the
   workspaces follow in Q1–Q3.
-- **2026-10-08** — **GUI: ruxd becomes a multi-user server** ([spec](superpowers/specs/2026-10-08-ruxd-multiuser-and-qt-client-design.md),
+- **2026-10-08** — **GUI: ruxd becomes a multi-user server** (spec, removed; see git history,
   Stream S, phase S3). `ruxd` without `--local` now serves the same frontend
   and API to many people:
   - **Postgres** holds users, sessions, API tokens, cases, case members, jobs
@@ -451,7 +451,7 @@ changelog — that history is the point of keeping it in the repo.
     multi-instance locks. Issue drafts 37 (multi-case list) and 38 (LAN
     pairing) are retargeted to what is left after S2/S3.
 
-- **2026-10-08** — **GUI: one ruxd serves many cases** ([spec](superpowers/specs/2026-10-08-ruxd-multiuser-and-qt-client-design.md),
+- **2026-10-08** — **GUI: one ruxd serves many cases** (spec, removed; see git history,
   Stream S, phase S2). A ruxd process is no longer bound to one project:
   - Every project route lives under **`/api/v1/cases/{cid}/…`**, the events
     WebSocket included; `/api/v1/cases` (list, create, rename/archive,
@@ -480,7 +480,7 @@ changelog — that history is the point of keeping it in the repo.
     S3 snapshots of case files and multi-instance advisory locks.
 
 - **2026-10-08** — **GUI: the web backend moves into `ruxd`; `rux gui` is
-  removed** ([spec](superpowers/specs/2026-10-08-ruxd-multiuser-and-qt-client-design.md),
+  removed** (spec, removed; see git history,
   Stream S, phase S1). The direction changes from "`rux gui` locally, `ruxd`
   headless" to "`ruxd` serves the web GUI, single-user now and multi-user
   next; plain `rux` becomes a native Qt client (Stream Q)":
@@ -507,7 +507,7 @@ changelog — that history is the point of keeping it in the repo.
     and multi-instance advisory locks (several ruxd hosts sharing cases).
 
 - **2026-10-06** — **GUI: Segmentering view and mask → resource**
-  ([spec](superpowers/specs/2026-10-06-kortlaegning-segmentering-fixes-design.md),
+  (spec, removed; see git history,
   Stream B). Interactive SAM3 segmentation gets its own screen and can now
   feed the survey:
   - **`/segmentering`** (§B3), a case-section nav entry between Viewport and
@@ -537,7 +537,7 @@ changelog — that history is the point of keeping it in the repo.
     the Viewport reloads them in place.
 
 - **2026-10-06** — **GUI: Kortlægning and navigation fixes**
-  ([spec](superpowers/specs/2026-10-06-kortlaegning-segmentering-fixes-design.md),
+  (spec, removed; see git history,
   Stream A). Several independent fixes to the 2026-09-30 GUI redesign, landed
   together:
   - **Reject ≠ delete** (§A3). Afvis keeps a type, now listed in its own
@@ -568,7 +568,7 @@ changelog — that history is the point of keeping it in the repo.
     the latter.
 
 - **2026-10-02** — **GUI: resources, templates and navigation cleanup**
-  ([spec](superpowers/specs/2026-10-02-resources-templates-ia-design.md)).
+  (spec, removed; see git history).
   Materials are now *resources* in the GUI: one per survey part, carrying any
   number of key/value pairs, with the material passport as one set of keys
   (schema v25). Project-stored **templates** select keys by category or one by

@@ -5,7 +5,7 @@
 #pragma once
 
 /// Templates
-/// (docs/superpowers/specs/2026-10-02-resources-templates-ia-design.md §5): an
+/// (resources/templates design doc §5, removed 2026-10-14, see git history): an
 /// ordered list of category and key members that resolves, against the live key
 /// catalogue, to an ordered list of key ids. The pure half is here first; the
 /// ProjectDB-backed service follows below.

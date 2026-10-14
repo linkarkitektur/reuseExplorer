@@ -2579,8 +2579,8 @@ class ProjectDB::Impl {
 
   void migrateToV25() {
     reusex::info("Migrating database to schema version 25");
-    // Resources and templates (docs/superpowers/specs/
-    // 2026-10-02-resources-templates-ia-design.md §4.2): one transaction, so
+    // Resources and templates (resources/templates design doc §4.2, removed
+    // 2026-10-14, see git history): one transaction, so
     // a v24 project upgrades whole or stays v24. Every step is guarded so a
     // test that rolls the version back and reopens re-runs it safely.
     execOrThrow("BEGIN TRANSACTION;");

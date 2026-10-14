@@ -5,7 +5,7 @@
 #pragma once
 
 /// Resources
-/// (docs/superpowers/specs/2026-10-02-resources-templates-ia-design.md §4): a
+/// (resources/templates design doc §4, removed 2026-10-14, see git history): a
 /// resource is one survey part; its values are addressed by key id
 /// (core/resource_keys.hpp) and routed by scope — the type, the part, or
 /// the part's own passport, created on the first passport write.

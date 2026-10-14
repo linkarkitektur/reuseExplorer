@@ -38,6 +38,23 @@ This file is the orientation/guidance layer. The **normative** rules live in:
 If this file and those two disagree, **they win** — and the disagreement is a bug
 worth fixing here.
 
+## Documentation Scope
+
+`docs/` holds durable project documentation only: standards, contracts,
+architecture, guides, research write-ups. It is **not** a home for
+development specs or implementation plans — those belong in beads (an
+epic's `--design`/`--notes`, a task's `--acceptance`), not in a committed
+file that drifts from the issue tracker once the work ships.
+
+This means `superpowers:brainstorming` and `superpowers:writing-plans`
+must **not** use their default save paths (`docs/superpowers/specs/...`,
+`docs/superpowers/plans/...`) in this repo — both skills honor a user
+location override. Save specs and plans under the gitignored
+`.superpowers/specs/` and `.superpowers/plans/` instead (sibling to the
+already-gitignored `.superpowers/sdd/`), and carry anything durable —
+architecture decisions, the step-level task breakdown — into the matching
+beads issue before the plan's workspace is deleted.
+
 ## Project Overview
 
 ReUseX is a C++20/CUDA project for processing 3D point cloud scans of building interiors. It combines geometric processing, deep learning, and computational geometry to create semantic 3D models for building reuse and renovation projects.
