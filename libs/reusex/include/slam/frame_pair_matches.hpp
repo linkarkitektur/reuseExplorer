@@ -71,7 +71,10 @@ struct FramePairMatches {
 };
 
 /// ORB keypoints of both frames and their ratio-test matches (B queried
-/// against A). Deterministic for a given project and options.
+/// against A). Deterministic for a given project and options. No keypoints
+/// on either side (e.g. a region with no texture, or wholly outside the
+/// image) is not an error: the result has no matches and a warning is
+/// logged with both keypoint counts and regions.
 /// @throws std::invalid_argument when @p a_id == @p b_id.
 /// @throws std::runtime_error naming the frame when it has no colour image,
 ///         no depth image, no stored pose, or unusable intrinsics.

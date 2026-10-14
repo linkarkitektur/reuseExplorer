@@ -27,7 +27,10 @@
 #include <opencv2/features2d.hpp>
 
 #include <array>
+#include <optional>
 #include <vector>
+
+#include "core/SensorIntrinsics.hpp"
 
 namespace reusex {
 class ProjectDB;
@@ -82,10 +85,30 @@ struct FrameFeatures {
 
 /// Detect ORB features in a frame's colour image and lift them to 3D using the
 /// stored depth map and intrinsics. Returns an empty result (no descriptors)
-/// when the frame has no colour/depth or degenerate intrinsics.
-FrameFeatures extract_frame_features(ProjectDB &db, int node_id,
-                                     const cv::Ptr<cv::ORB> &orb,
-                                     float min_depth, float max_depth);
+/// when the frame has no colour/depth or degenerate intrinsics. @p region
+/// restricts detection to that colour-image rectangle (clamped; nullopt =
+/// the whole image) — Rediger's match editor (frame_pair_matches.cpp).
+FrameFeatures
+extract_frame_features(const ProjectDB &db, int node_id,
+                       const cv::Ptr<cv::ORB> &orb, float min_depth,
+                       float max_depth,
+                       const std::optional<cv::Rect> &region = std::nullopt);
+
+/// Pinhole intrinsics scaled to a depth grid of @p depth_cols x
+/// @p depth_rows (the colour calibration is intr.width x intr.height).
+struct DepthPinhole {
+  double fx = 0, fy = 0, cx = 0, cy = 0;
+};
+DepthPinhole depth_pinhole(const core::SensorIntrinsics &intr, int depth_cols,
+                           int depth_rows);
+
+/// Optical-frame 3D point of depth pixel (@p ud, @p vd) of @p depth_m
+/// (CV_32F metres); nullopt outside the grid or when the depth is not
+/// finite or outside [min_depth, max_depth].
+std::optional<Eigen::Vector3d> lift_depth_pixel(const cv::Mat &depth_m,
+                                                const DepthPinhole &k, int ud,
+                                                int vd, float min_depth,
+                                                float max_depth);
 
 // --- bearing-space pose refinement ----------------------------------------
 

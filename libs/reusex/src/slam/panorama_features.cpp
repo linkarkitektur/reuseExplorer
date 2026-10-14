@@ -63,9 +63,10 @@ double bearing_angle(const Eigen::Matrix3d &Q, const Eigen::Vector3d &t,
   return std::acos(c);
 }
 
-FrameFeatures extract_frame_features(ProjectDB &db, int node_id,
+FrameFeatures extract_frame_features(const ProjectDB &db, int node_id,
                                      const cv::Ptr<cv::ORB> &orb,
-                                     float min_depth, float max_depth) {
+                                     float min_depth, float max_depth,
+                                     const std::optional<cv::Rect> &region) {
   FrameFeatures out;
   out.node_id = node_id;
 
@@ -86,12 +87,8 @@ FrameFeatures extract_frame_features(ProjectDB &db, int node_id,
   depth16.convertTo(depth_f, CV_32FC1, 1.0 / 1000.0); // mm -> m
 
   const core::SensorIntrinsics intr = db.sensor_frame_intrinsics(node_id);
-  const double sx = static_cast<double>(depth_f.cols) / std::max(1, intr.width);
-  const double sy =
-      static_cast<double>(depth_f.rows) / std::max(1, intr.height);
-  const double fx = intr.fx * sx, fy = intr.fy * sy;
-  const double cx = intr.cx * sx, cy = intr.cy * sy;
-  if (fx <= 0.0 || fy <= 0.0)
+  const DepthPinhole k = depth_pinhole(intr, depth_f.cols, depth_f.rows);
+  if (k.fx <= 0.0 || k.fy <= 0.0)
     return out;
 
   // T_world_cam turns this frame's depth into the WORLD 3D points a panorama
@@ -109,7 +106,14 @@ FrameFeatures extract_frame_features(ProjectDB &db, int node_id,
   }
   out.T_world_cam = to_matrix4(db.sensor_frame_pose(node_id));
 
-  orb->detectAndCompute(gray, cv::noArray(), out.keypoints, out.descriptors);
+  cv::Mat mask; // empty = the whole image
+  if (region) {
+    mask = cv::Mat::zeros(gray.size(), CV_8U);
+    const cv::Rect r = *region & cv::Rect(0, 0, gray.cols, gray.rows);
+    if (r.area() > 0)
+      mask(r).setTo(255);
+  }
+  orb->detectAndCompute(gray, mask, out.keypoints, out.descriptors);
   if (out.keypoints.empty()) {
     out.descriptors.release();
     return out;
@@ -117,20 +121,37 @@ FrameFeatures extract_frame_features(ProjectDB &db, int node_id,
 
   out.local.resize(out.keypoints.size());
   out.valid.assign(out.keypoints.size(), 0);
-  for (size_t k = 0; k < out.keypoints.size(); ++k) {
+  for (size_t i = 0; i < out.keypoints.size(); ++i) {
     const int ud = static_cast<int>(std::lround(
-        out.keypoints[k].pt.x * static_cast<double>(depth_f.cols) / gray.cols));
+        out.keypoints[i].pt.x * static_cast<double>(depth_f.cols) / gray.cols));
     const int vd = static_cast<int>(std::lround(
-        out.keypoints[k].pt.y * static_cast<double>(depth_f.rows) / gray.rows));
-    if (ud < 0 || vd < 0 || ud >= depth_f.cols || vd >= depth_f.rows)
-      continue;
-    const float z = depth_f.at<float>(vd, ud);
-    if (!std::isfinite(z) || z < min_depth || z > max_depth)
-      continue;
-    out.local[k] = Eigen::Vector3d((ud - cx) * z / fx, (vd - cy) * z / fy, z);
-    out.valid[k] = 1;
+        out.keypoints[i].pt.y * static_cast<double>(depth_f.rows) / gray.rows));
+    if (const auto p =
+            lift_depth_pixel(depth_f, k, ud, vd, min_depth, max_depth)) {
+      out.local[i] = *p;
+      out.valid[i] = 1;
+    }
   }
   return out;
+}
+
+DepthPinhole depth_pinhole(const core::SensorIntrinsics &intr, int depth_cols,
+                           int depth_rows) {
+  const double sx = static_cast<double>(depth_cols) / std::max(1, intr.width);
+  const double sy = static_cast<double>(depth_rows) / std::max(1, intr.height);
+  return {intr.fx * sx, intr.fy * sy, intr.cx * sx, intr.cy * sy};
+}
+
+std::optional<Eigen::Vector3d> lift_depth_pixel(const cv::Mat &depth_m,
+                                                const DepthPinhole &k, int ud,
+                                                int vd, float min_depth,
+                                                float max_depth) {
+  if (ud < 0 || vd < 0 || ud >= depth_m.cols || vd >= depth_m.rows)
+    return std::nullopt;
+  const float z = depth_m.at<float>(vd, ud);
+  if (!std::isfinite(z) || z < min_depth || z > max_depth)
+    return std::nullopt;
+  return Eigen::Vector3d((ud - k.cx) * z / k.fx, (vd - k.cy) * z / k.fy, z);
 }
 
 std::vector<int>

@@ -8,10 +8,20 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <reusex/core/ProjectDB.hpp>
+#include <reusex/core/SensorIntrinsics.hpp>
+#include <reusex/slam/frame_pair_icp.hpp>
 #include <reusex/slam/frame_pair_matches.hpp>
+
+#include "../../support/temp_path.hpp"
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
+
+#include <sqlite3.h>
 
 #include <algorithm>
 #include <array>
@@ -19,6 +29,7 @@
 #include <limits>
 #include <random>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 using reusex::slam::PointPair;
@@ -235,4 +246,283 @@ TEST_CASE("RigidFromMatches_InliersAndRms_AreThoseOfTheReturnedTransform",
   CHECK(fit.inliers == expect);
   CHECK(std::abs(fit.rms_m -
                  std::sqrt(sq / static_cast<double>(expect.size()))) < 1e-9);
+}
+
+// --------------------------------------------------- database-backed tests --
+
+using reusex::slam::FrameMatchOptions;
+using reusex::slam::lift_pixel;
+using reusex::slam::match_frame_pair;
+using reusex::test_support::TempPath;
+
+namespace {
+
+constexpr int kW = 320, kH = 240;
+constexpr double kF = 300.0;
+
+/// RTABMap's optical -> base rotation: a non-identity local_transform, so a
+/// keypoint's xyz must be local · optical to land where frame_world_points
+/// puts the pixel.
+reusex::core::SensorIntrinsics intrinsics() {
+  reusex::core::SensorIntrinsics k;
+  k.fx = k.fy = kF;
+  k.cx = kW / 2.0;
+  k.cy = kH / 2.0;
+  k.width = kW;
+  k.height = kH;
+  k.local_transform = {0, 0, 1, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0, 1};
+  return k;
+}
+
+/// Blocky random colour: strong, distinctive ORB corners.
+cv::Mat texture() {
+  cv::RNG rng(12345);
+  cv::Mat small(kH / 8, kW / 8, CV_8UC3);
+  rng.fill(small, cv::RNG::UNIFORM, 0, 256);
+  cv::Mat big;
+  cv::resize(small, big, cv::Size(kW, kH), 0, 0, cv::INTER_NEAREST);
+  return big;
+}
+
+/// A wedge (1.2 m rising to ~1.84 m left to right), a box 0.3 m nearer,
+/// and a 20x20 hole without depth at (20..39, 20..39): non-planar, so ICP
+/// is well-posed, and a hole for lift_pixel's snap.
+uint16_t depth_mm(int u, int v) {
+  if (u >= 20 && u < 40 && v >= 20 && v < 40)
+    return 0;
+  int z = 1200 + 2 * u;
+  if (u >= 200 && u < 260 && v >= 60 && v < 140)
+    z -= 300;
+  return static_cast<uint16_t>(z);
+}
+
+/// The depth image at cols/kW of the colour resolution.
+cv::Mat depth(int cols, int rows) {
+  cv::Mat d(rows, cols, CV_16UC1);
+  const int s = kW / cols;
+  for (int v = 0; v < rows; ++v)
+    for (int u = 0; u < cols; ++u)
+      d.at<uint16_t>(v, u) = depth_mm(u * s, v * s);
+  return d;
+}
+
+/// Frames 1 (A) and 2 (B): the SAME colour and depth, different stored
+/// poses — the true correction is world_delta = T_A · T_B^-1. Frame 3: A's
+/// view with half-resolution depth. Frame 4: colour, no depth. Frame 5:
+/// colour and depth, no pose.
+void write_fixture(const std::string &path) {
+  reusex::ProjectDB db(path, /*readOnly=*/false);
+  const auto k = intrinsics();
+  const cv::Mat c = texture();
+  const cv::Mat conf(kH, kW, CV_8UC1, cv::Scalar(255));
+  db.save_sensor_frame(1, c, depth(kW, kH), conf, kPoseA, k, 0.0);
+  db.save_sensor_frame(2, c, depth(kW, kH), conf, kPoseB, k, 1.0);
+  db.save_sensor_frame(3, c, depth(kW / 2, kH / 2),
+                       cv::Mat(kH / 2, kW / 2, CV_8UC1, cv::Scalar(255)),
+                       kPoseA, k, 2.0);
+  db.save_sensor_frame(4, c, cv::Mat{}, conf, kPoseA, k, 3.0);
+  db.save_sensor_frame(5, c, depth(kW, kH), conf, kPoseA, k, 4.0);
+}
+
+/// No public API stores a frame with depth but no pose
+/// (tests/unit/io/test_update_sensor_frame_pose.cpp says why), so NULL the
+/// transform with raw SQL — after the ProjectDB above has closed (WAL).
+void clear_pose(const std::string &path, int node_id) {
+  sqlite3 *raw = nullptr;
+  REQUIRE(sqlite3_open(path.c_str(), &raw) == SQLITE_OK);
+  const std::string sql = "UPDATE sensor_frames SET transform = NULL WHERE "
+                          "node_id = " +
+                          std::to_string(node_id) + ";";
+  REQUIRE(sqlite3_exec(raw, sql.c_str(), nullptr, nullptr, nullptr) ==
+          SQLITE_OK);
+  REQUIRE(sqlite3_changes(raw) == 1);
+  sqlite3_close(raw);
+}
+
+/// The fixture as every database test opens it.
+void make_fixture(const std::string &path) {
+  write_fixture(path);
+  clear_pose(path, 5);
+  reusex::ProjectDB db(path, /*readOnly=*/true);
+  REQUIRE_FALSE(db.has_sensor_frame_pose(5));
+  REQUIRE(db.has_sensor_frame_pose(1));
+}
+
+std::vector<PointPair> depth_pairs(const reusex::slam::FramePairMatches &m) {
+  std::vector<PointPair> out;
+  for (const auto &mm : m.matches) {
+    const auto &ka = m.keypoints_a[static_cast<std::size_t>(mm.a)];
+    const auto &kb = m.keypoints_b[static_cast<std::size_t>(mm.b)];
+    if (ka.xyz && kb.xyz)
+      out.emplace_back(*ka.xyz, *kb.xyz);
+  }
+  return out;
+}
+
+const Eigen::Matrix4d kTruth = M(kPoseA) * M(kPoseB).inverse();
+
+/// A rigid transform's inverse, row-major.
+std::array<double, 16> rigid_inverse(const std::array<double, 16> &t) {
+  Eigen::Matrix4d inv = Eigen::Matrix4d::Identity();
+  const Eigen::Matrix3d R = M(t).topLeftCorner<3, 3>();
+  inv.topLeftCorner<3, 3>() = R.transpose();
+  inv.topRightCorner<3, 1>() = -R.transpose() * M(t).topRightCorner<3, 1>();
+  return A(inv);
+}
+
+} // namespace
+
+TEST_CASE("FramePairMatches_IdenticalViews_RecoverTheStoredPoseDifference",
+          "[slam][matches]") {
+  const TempPath project("frame_pair_matches_recover");
+  make_fixture(project.path.string());
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  const auto m = match_frame_pair(db, 1, 2);
+  REQUIRE(m.matches.size() >= 50);
+  for (const auto &mm : m.matches) {
+    REQUIRE(mm.a >= 0);
+    REQUIRE(mm.a < static_cast<int>(m.keypoints_a.size()));
+    REQUIRE(mm.b >= 0);
+    REQUIRE(mm.b < static_cast<int>(m.keypoints_b.size()));
+  }
+  // The hole: keypoints there are kept, without xyz.
+  const auto fit = rigid_from_matches(kPoseA, kPoseB, depth_pairs(m));
+  REQUIRE(fit.ok);
+  CHECK(translation_error(fit.world_delta, kTruth) < 0.01);
+  CHECK(angle_error_deg(fit.world_delta, kTruth) < 0.5);
+}
+
+TEST_CASE("FramePairMatches_Region_DropsKeypointsOutside", "[slam][matches]") {
+  const TempPath project("frame_pair_matches_region");
+  make_fixture(project.path.string());
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  FrameMatchOptions o;
+  o.region_a = reusex::slam::PixelRect{0, 0, kW / 2, kH};
+  const auto m = match_frame_pair(db, 1, 2, o);
+  REQUIRE_FALSE(m.keypoints_a.empty());
+  // ORB's mask test rounds a keypoint to its pixel: allow half a pixel.
+  for (const auto &k : m.keypoints_a)
+    CHECK(k.u < kW / 2.0f + 0.5f);
+  const bool b_right =
+      std::any_of(m.keypoints_b.begin(), m.keypoints_b.end(),
+                  [](const auto &k) { return k.u > kW / 2.0f; });
+  CHECK(b_right); // B unrestricted
+}
+
+TEST_CASE("FramePairMatches_RegionPartlyOutside_KeepsTheIntersection",
+          "[slam][matches]") {
+  const TempPath project("frame_pair_matches_region_out");
+  make_fixture(project.path.string());
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  FrameMatchOptions o;
+  o.region_b = reusex::slam::PixelRect{kW / 2, -50, kW, kH + 100};
+  const auto m = match_frame_pair(db, 1, 2, o);
+  REQUIRE_FALSE(m.keypoints_b.empty());
+  for (const auto &k : m.keypoints_b)
+    CHECK(k.u >= kW / 2.0f - 0.5f);
+  o.region_b = reusex::slam::PixelRect{kW + 10, 0, 50, 50}; // all outside
+  const auto none = match_frame_pair(db, 1, 2, o);
+  CHECK(none.keypoints_b.empty());
+  CHECK(none.matches.empty());
+}
+
+TEST_CASE("FramePairMatches_FrameWithoutDepthOrPose_ThrowsNamingIt",
+          "[slam][matches]") {
+  const TempPath project("frame_pair_matches_missing");
+  make_fixture(project.path.string());
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  const auto message = [&](int a, int b) -> std::string {
+    try {
+      match_frame_pair(db, a, b);
+    } catch (const std::runtime_error &e) {
+      return e.what();
+    }
+    return {};
+  };
+  CHECK(message(1, 4).find("frame 4") != std::string::npos);
+  CHECK(message(5, 1).find("frame 5") != std::string::npos);
+  CHECK_THROWS_AS(match_frame_pair(db, 2, 2), std::invalid_argument);
+}
+
+TEST_CASE("LiftPixel_SnapsToNearestDepth_AndRefusesFarFromAny",
+          "[slam][matches]") {
+  const TempPath project("frame_pair_matches_lift");
+  make_fixture(project.path.string());
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  const auto direct = lift_pixel(db, 1, 100.0f, 80.0f);
+  REQUIRE(direct);
+  CHECK(direct->u == 100.0f);
+  CHECK(direct->v == 80.0f);
+  REQUIRE(direct->xyz);
+  const auto snapped = lift_pixel(db, 1, 22.0f, 30.0f); // 3 px into the hole
+  REQUIRE(snapped);
+  CHECK(snapped->u == 19.0f);
+  CHECK(snapped->v == 30.0f);
+  CHECK_FALSE(lift_pixel(db, 1, 30.0f, 30.0f)); // 10+ px from any depth
+  CHECK_FALSE(lift_pixel(db, 1, -5.0f, 30.0f)); // outside the image
+  CHECK_THROWS_AS(lift_pixel(db, 4, 10.0f, 10.0f), std::runtime_error);
+}
+
+TEST_CASE("LiftPixel_HalfResolutionDepth_MatchesFullResolutionLift",
+          "[slam][matches]") {
+  const TempPath project("frame_pair_matches_halfres");
+  make_fixture(project.path.string());
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  const auto full = lift_pixel(db, 1, 100.0f, 80.0f);
+  const auto half = lift_pixel(db, 3, 100.0f, 80.0f);
+  REQUIRE(full);
+  REQUIRE(half);
+  CHECK(half->u == 100.0f);
+  CHECK(half->v == 80.0f);
+  for (int i = 0; i < 3; ++i)
+    CHECK(std::abs((*half->xyz)[static_cast<std::size_t>(i)] -
+                   (*full->xyz)[static_cast<std::size_t>(i)]) < 1e-9);
+}
+
+TEST_CASE("LiftPixel_PoseTimesXyz_IsTheOverlaysWorldPoint", "[slam][matches]") {
+  // The stored-pose-frame convention: T_A · xyz must be a point of the very
+  // cloud the overlay draws (frame_world_points, every pixel).
+  const TempPath project("frame_pair_matches_world");
+  make_fixture(project.path.string());
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  const auto k = lift_pixel(db, 1, 150.0f, 100.0f);
+  REQUIRE(k);
+  REQUIRE(k->xyz);
+  const Eigen::Vector3d w =
+      (M(kPoseA) *
+       Eigen::Vector3d((*k->xyz)[0], (*k->xyz)[1], (*k->xyz)[2]).homogeneous())
+          .head<3>();
+  reusex::slam::FramePairIcpOptions o;
+  o.pixel_step = 1;
+  o.max_depth_m = 5.0f;
+  double best = 1e9;
+  for (const auto &p : reusex::slam::frame_world_points(db, 1, o))
+    best = std::min(best, (Eigen::Vector3d(p[0], p[1], p[2]) - w).norm());
+  CHECK(best < 1e-4);
+}
+
+TEST_CASE("RigidFromMatches_WorldDelta_RoundTripsWithIcpAndEdgeMeasurement",
+          "[slam][matches]") {
+  // The matches' world_delta is the ICP refinement's seed and, without ICP,
+  // the manual edge. ICP seeded with it stays there, and the manual A -> B
+  // edge T_A^-1 ΔT T_B is the inverse of ICP's B -> A edge_transform.
+  const TempPath project("frame_pair_matches_icp");
+  make_fixture(project.path.string());
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  const auto fit = rigid_from_matches(kPoseA, kPoseB,
+                                      depth_pairs(match_frame_pair(db, 1, 2)));
+  REQUIRE(fit.ok);
+  reusex::slam::FramePairIcpOptions o;
+  o.initial_guess = fit.world_delta;
+  const auto icp = reusex::slam::refine_frame_pair_icp(db, 2, 1, o);
+  REQUIRE(icp.converged);
+  CHECK(translation_error(icp.world_delta, M(fit.world_delta)) < 0.01);
+  CHECK(angle_error_deg(icp.world_delta, M(fit.world_delta)) < 0.5);
+  // The manual edge (A -> B), computed as the Qt client's
+  // edge_measurement does: T_A^-1 · ΔT · T_B.
+  const Eigen::Matrix4d manual =
+      M(kPoseA).inverse() * M(fit.world_delta) * M(kPoseB);
+  const auto icp_a_to_b = rigid_inverse(icp.edge_transform);
+  CHECK(translation_error(icp_a_to_b, manual) < 0.01);
+  CHECK(angle_error_deg(icp_a_to_b, manual) < 0.5);
 }
