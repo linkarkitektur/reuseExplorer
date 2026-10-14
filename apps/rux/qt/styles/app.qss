@@ -1100,6 +1100,11 @@ QFrame#edgeRow[state="rejected"] QLabel#edgeMeta {
 QFrame#edgeRow QLabel {
   background: transparent;
 }
+/* A row's actions sit on its second line beside the status pills: compact,
+   so a row with several edges in view still leaves the 3D overlay room. */
+QPushButton#edgeAction {
+  padding: var(--space-1) var(--space-3);
+}
 QLabel#icpLine {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);

@@ -111,6 +111,8 @@ kanter run from the toolbar, with the discover count shown), and, all on a
 seeded graph: `rediger-type`, `rediger-status` (rejected edges shown),
 `rediger-residual`, `rediger-deviation`, `rediger-seed` (the five colour
 modes), `rediger-list` (edge list sorted by residual, top row selected),
+`rediger-strip` (a pair with four edges in the strip — auto, confirmed with a
+staged un-confirm, rejected, pending — every row's actions in view),
 `rediger-roundtrip` (an edge from the list, B moved, ICP-forfin, Erstat
 måling, Gem, Optimer — each step and the stored row logged; on a real
 copy pass `RUX_ROUNDTRIP_A=<id>` for a pair ICP can fit), `rediger-reload` (zoom, a clicked edge, A/B and a yaw turned inside its
@@ -190,8 +192,11 @@ exit codes: 2 bad flags, 4 project/page not found, 5 PNG not written, 6 a
 layout regression: the page's minimum width is wider than the window
 (`TOO WIDE` — the inspector would be off a 1440 px screen), or, at 1440x900,
 Rediger's 3D overlay canvas with A and B loaded is under 250 px tall
-(`OVERLAY TOO SMALL`; every shot logs `overlay canvas WxH`). `qt_shot.sh`
-fails on both.
+(`OVERLAY TOO SMALL`; every shot logs `overlay canvas WxH`), or Rediger's
+pair strip is clipped (`STRIP CLIPPED`: an edge row's action button runs past
+the rows' right edge, the edge list shows less than its first row, or the
+strip ends below the window; every shot logs `pair strip bottom Y of H`).
+`qt_shot.sh` fails on all three.
 `RUX_QT_DUMP_QSS=<file>` writes the resolved stylesheet for debugging.
 
 ## 3. Token mapping

@@ -266,8 +266,11 @@ void PairStrip::rebuild() {
                               : v.pending != EdgeView::Pending::none
                                   ? "add"
                                   : "stored");
-    // Two lines, so the row fits Rediger's right column: what the edge is
-    // and its action, then its numbers and state.
+    // Two lines, so the row fits Rediger's right column at 1440 px with
+    // the rows' scrollbar showing: what the edge is and its figures (one
+    // eliding label takes the slack), then its state and its actions. The
+    // actions never share a line with fixed-width text that could push
+    // them past the column's edge.
     auto *rv = new QVBoxLayout(row);
     rv->setContentsMargins(t.px("--space-2"), t.px("--space-1"),
                            t.px("--space-1"), t.px("--space-1"));
@@ -275,7 +278,7 @@ void PairStrip::rebuild() {
     auto *h = new QHBoxLayout;
     h->setSpacing(t.px("--space-3"));
     auto *h2 = new QHBoxLayout;
-    h2->setSpacing(t.px("--space-3"));
+    h2->setSpacing(t.px("--space-2"));
     rv->addLayout(h);
     rv->addLayout(h2);
     h->addWidget(
@@ -285,11 +288,9 @@ void PairStrip::rebuild() {
         new QLabel(QString("%1 → %2").arg(v.edge.key.from).arg(v.edge.key.to));
     dir->setObjectName("edgeMono");
     h->addWidget(dir);
-    h->addStretch(1);
-    // One eliding label: a stored edge with a staged change carries two
-    // pills, and fixed-width figures beside them widened the window. The
-    // figures that judge an edge, the residual first, so a narrow column
-    // cuts the source, not the number the colour modes and the list sort by.
+    // The figures that judge an edge, the residual first, so a narrow
+    // column cuts the source, not the number the colour modes and the list
+    // sort by.
     const auto cell = [&v](EdgeColumn c) {
       return QString::fromStdString(edge_cell_text(v, c));
     };
@@ -311,11 +312,12 @@ void PairStrip::rebuild() {
                   "\nResidual: ½ · hvidet kvadratfejl efter seneste "
                   "optimering\nAfvigelse: kantens måling mod de optimerede "
                   "poser");
-    h2->addWidget(r, 1);
+    h->addWidget(r, 1);
     h2->addWidget(
         new Pill(status_da(v.edge.status), status_tone(v.edge.status)));
     if (v.pending != EdgeView::Pending::none)
       h2->addWidget(new Pill("Ikke gemt", "accent"));
+    h2->addStretch(1);
     const EdgeKey key = v.edge.key;
     auto action = [&](const QString &text, auto fn) {
       auto *b = new QPushButton(NavItem::escape_mnemonic(text));
@@ -325,7 +327,7 @@ void PairStrip::rebuild() {
       connect(b, &QPushButton::clicked, this,
               [this, key, fn] { fn(editor_, key); });
       b->setMinimumHeight(b->sizeHint().height());
-      h->addWidget(b);
+      h2->addWidget(b);
     };
     const bool stored = v.pending == EdgeView::Pending::none;
     if (stored && v.edge.status == "auto")
@@ -342,6 +344,10 @@ void PairStrip::rebuild() {
       action("Afvis", [](EdgeEditor &e, const EdgeKey &k) { e.reject(k); });
     row->setMinimumHeight(rv->sizeHint().height());
     rows_layout_->addWidget(row);
+    // Shown now, not on the queued show a visible parent schedules: a
+    // still-hidden row adds nothing to rows_' size hint, and the height
+    // below would be measured without it (0 on a rebuild while shown).
+    row->show();
   }
   if (views.empty()) {
     auto *none = new QLabel;
@@ -358,13 +364,18 @@ void PairStrip::rebuild() {
     else
       none->setText("Ingen kant mellem A og B.");
     rows_layout_->addWidget(none);
+    none->show();
   }
 
-  // As tall as the rows, up to one row (a sliver of the next shows that
-  // there are more); the rest scrolls.
+  // As tall as the rows, up to the first row and a sliver of the next
+  // (which shows that there are more); the rest scrolls.
   rows_layout_->activate();
-  rows_scroll_->setFixedHeight(std::min(rows_->sizeHint().height(),
-                                        t.px("--space-7") + t.px("--space-5")));
+  int cap = rows_->sizeHint().height();
+  if (rows_layout_->count() > 1)
+    if (QWidget *first = rows_layout_->itemAt(0)->widget())
+      cap = first->sizeHint().height() + rows_layout_->spacing() +
+            t.px("--space-2");
+  rows_scroll_->setFixedHeight(std::min(rows_->sizeHint().height(), cap));
 
   refresh_icp();
 

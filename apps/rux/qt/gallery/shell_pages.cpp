@@ -897,6 +897,53 @@ QWidget *make_rediger_click(const PageContext &ctx) {
   return shell;
 }
 
+/// A pair with several edges in the strip (WRITES them to the copy): an
+/// auto odometry edge, a confirmed loop closure, a rejected panorama edge
+/// shown with its un-reject, and a staged loop closure of a new type pair
+/// ("Ikke gemt"). Every row's actions must stay in view (the gallery's
+/// STRIP CLIPPED guard), with the rows scrolling inside the strip.
+QWidget *make_rediger_strip(const PageContext &ctx) {
+  seed_graph(ctx.project_path, 40);
+  int a = -1, b = -1;
+  if (!ctx.project_path.isEmpty()) {
+    reusex::ProjectDB db(ctx.project_path.toStdString());
+    const auto ids = db.sensor_frame_ids();
+    if (ids.size() > 3) {
+      a = ids[2];
+      b = ids[3];
+      const auto put = [&](const char *type, const char *status) {
+        reusex::ProjectDB::PoseGraphEdge e;
+        e.from_node_id = a;
+        e.to_node_id = b;
+        e.edge_type = type;
+        e.source = "orb";
+        e.status = status;
+        e.weight = 25.0;
+        e.residual = 3.4;
+        e.deviation_m = 0.12;
+        e.deviation_deg = 2.5;
+        db.upsert_pose_graph_edge(e, /*overwrite_rejected=*/true);
+      };
+      put("odometry", "auto");
+      put("loop_closure", "confirmed");
+      put("panorama", "rejected");
+    }
+  }
+  auto *shell = make_pg(ctx);
+  settle();
+  if (a < 0)
+    return shell;
+  shell->edit()->graph()->set_show_rejected(true);
+  shell->edit()->set_pair(a, b);
+  settle();
+  // A staged un-confirm on the confirmed loop closure: two pills on a row.
+  for (const auto &e : shell->edges().edits().base())
+    if (e.key.from == std::min(a, b) && e.key.to == std::max(a, b) &&
+        e.status == "confirmed")
+      shell->edges().unconfirm(e.key);
+  return shell;
+}
+
 /// The edge list sorted by residual with its first row selected: the graph
 /// highlights that edge and A/B follow.
 QWidget *make_rediger_list(const PageContext &ctx) {
@@ -1363,6 +1410,10 @@ void register_shell_pages() {
                  "Rediger: kanter farvet efter frøafvigelse, seedet graf "
                  "(skriver til projektkopien)",
                  make_rediger_seed});
+  register_page({"rediger-strip",
+                 "Rediger: et par med fire kanter i kantstrimlen — alle "
+                 "rækkers knapper synlige (skriver til projektkopien)",
+                 make_rediger_strip});
   register_page({"rediger-list",
                  "Rediger: kantlisten sorteret efter residual med første "
                  "række valgt, seedet graf (skriver til projektkopien)",
