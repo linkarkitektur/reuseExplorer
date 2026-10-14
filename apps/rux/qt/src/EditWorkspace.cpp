@@ -27,6 +27,12 @@
 namespace rux::qt {
 namespace {
 
+/// The Rediger button (and status) name of a stage it runs.
+QString run_button_name(reusex::pipeline::JobStage stage) {
+  return stage == reusex::pipeline::JobStage::optimize ? QString("Optimer")
+                                                       : QString("Find kanter");
+}
+
 QLabel *empty_state(const QString &text) {
   auto *l = new QLabel(text);
   l->setObjectName("emptyText");
@@ -232,12 +238,14 @@ QWidget *EditWorkspace::make_toolbar() {
   panes->setMenu(menu);
   panes->setMinimumHeight(panes->sizeHint().height());
 
-  discover_ = new QPushButton(NavItem::escape_mnemonic("Find kanter"));
+  discover_ = new QPushButton(NavItem::escape_mnemonic(
+      run_button_name(reusex::pipeline::JobStage::graph_discover)));
   discover_->setProperty("kind", "secondary");
   discover_->setCursor(Qt::PointingHandCursor);
   discover_->setToolTip("rux graph discover: nye løkkelukninger fra de "
                         "oprindelige poser (afviste kanter springes over)");
-  optimize_ = new QPushButton(NavItem::escape_mnemonic("Optimer"));
+  optimize_ = new QPushButton(NavItem::escape_mnemonic(
+      run_button_name(reusex::pipeline::JobStage::optimize)));
   optimize_->setProperty("kind", "primary");
   optimize_->setCursor(Qt::PointingHandCursor);
   optimize_->setToolTip("rux optimize: løs den gemte posegraf");
@@ -284,8 +292,7 @@ void EditWorkspace::show_job_result(reusex::pipeline::JobStage stage, bool ok,
   if (stage != JobStage::graph_discover && stage != JobStage::optimize)
     return;
   running_.clear(); // set_job_finished keeps this text
-  const QString name =
-      stage == JobStage::optimize ? QString("Optimer") : QString("Find kanter");
+  const QString name = run_button_name(stage);
   meta_->setToolTip(message);
   if (!ok) {
     meta_->setText(message.isEmpty()
@@ -293,13 +300,21 @@ void EditWorkspace::show_job_result(reusex::pipeline::JobStage stage, bool ok,
                        : QString("%1 fejlede: %2").arg(name, message));
     return;
   }
+  // With edits pending the reload that shows the result was skipped ("Kør
+  // uden dem"): the graph on screen is still the one before the run.
+  const QString hidden =
+      pending_edits() > 0
+          ? QString(" — gem eller kassér ændringerne for at se resultatet")
+          : QString();
   if (stage == JobStage::optimize) {
-    meta_->setText("Optimer er færdig — poser og kantmålinger er opdateret.");
+    meta_->setText(
+        QString("%1 er færdig — poser og kantmålinger er opdateret%2.")
+            .arg(name, hidden));
     return;
   }
   const auto c = parse_discover_summary(message.toStdString());
   if (!c) {
-    meta_->setText("Find kanter er færdig.");
+    meta_->setText(QString("%1 er færdig%2.").arg(name, hidden));
     return;
   }
   const auto n = [](int v) {
@@ -322,7 +337,7 @@ void EditWorkspace::show_job_result(reusex::pipeline::JobStage stage, bool ok,
                 .arg(n(c->odometry_initialised));
   const QString prefix = QString("%1%2").arg(
       c->dry_run ? QString("Prøvekørsel · ") : QString(), name);
-  meta_->setText(QString("%1: %2").arg(prefix, line.join(" · ")));
+  meta_->setText(QString("%1: %2%3").arg(prefix, line.join(" · "), hidden));
   QStringList all{
       QString("%1 foreslået, %2 matchet").arg(n(c->proposed), n(c->matched)),
       QString("%1 nye kanter").arg(n(c->added)),
@@ -341,9 +356,7 @@ void EditWorkspace::show_run_refused(reusex::pipeline::JobStage stage,
                                      const QString &reason) {
   if (reason.isEmpty())
     return; // e.g. the unsaved-edits prompt was answered "Annullér"
-  const QString name = stage == reusex::pipeline::JobStage::optimize
-                           ? QString("Optimer")
-                           : QString("Find kanter");
+  const QString name = run_button_name(stage);
   meta_->setToolTip({});
   meta_->setText(QString("%1 kan ikke køre: %2").arg(name, reason));
 }

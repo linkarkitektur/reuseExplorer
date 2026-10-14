@@ -92,6 +92,9 @@ inline StageResult run_graph_discover_stage(ProjectDB &db,
   }
   try {
     const auto r = slam::discover_loop_edges(db, options);
+    // Contract: the Qt client's rux_qt::parse_discover_summary reads the
+    // counts back out of this exact text for Rediger's status line (pinned
+    // by test_discover_summary). Change both together.
     const std::string summary = fmt::format(
         "{}{}{} proposed, {} matched, {} PCM-rejected, {} over the PCM cap, {} "
         "already stored, {} rejected before, {} added, {} stored rows given "
