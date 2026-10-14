@@ -1,6 +1,6 @@
 ---
 name: design-studio
-description: The design workflow for the native Qt client of the rux GUI (apps/rux/qt, in progress: QSS generated from tokens.css, screenshot loop via qt_shot.sh) and for the Ressourcekortlægning PDF report (Typst template apps/rux/resources/report.typ, page-screenshot loop via `nix develop .#report` / report-shots). Use this whenever you design, build, restyle, redesign, or "make it look better/more polished" for any Qt client page or workspace (Database/Oversigt, 3D/Viewer, Rediger, Pipeline, Log, the app shell); whenever you touch styles/app.qss or a Qt widget/page; whenever you work on the PDF report, its Typst template, its layout, its sample data or print quality; and whenever you work from docs/Design Review.md for a Qt page. Also use when matching the existing rux GUI look, or when a token in apps/rux/qt/theme/tokens.css needs refreshing from rux-frontend. The web half of the rux GUI (React/Vite/TS, apps/rux/frontend) moved to the standalone rux-frontend repo — its design-studio skill lives there now, not here.
+description: The design workflow for the native Qt client of the rux GUI (apps/rux/qt, in progress: QSS generated from tokens.css, screenshot loop via qt_shot.sh) and for the Ressourcekortlægning PDF report (Typst template apps/rux/resources/report.typ, page-screenshot loop via `nix develop .#report` / report-shots). Use this whenever you design, build, restyle, redesign, or "make it look better/more polished" for any Qt client page or workspace (Database/Oversigt, 3D/Viewer, Rediger, Pipeline, Log, the app shell); whenever you touch styles/app.qss or a Qt widget/page; whenever you work on the PDF report, its Typst template, its layout, its sample data or print quality; and whenever you work a design-backlog bead for a Qt page. Also use when matching the existing rux GUI look, or when a token in apps/rux/qt/theme/tokens.css needs refreshing from rux-frontend. The web half of the rux GUI (React/Vite/TS, apps/rux/frontend) moved to the standalone rux-frontend repo — its design-studio skill lives there now, not here.
 ---
 
 # Design Studio — the Qt client (rux GUI)
@@ -47,9 +47,10 @@ answers change the design:
   it runs stages and reads the project in-process.
 
 If the user wants speed or has already said enough, state your assumptions in
-one line and proceed. `docs/Design Review.md` is the current design backlog —
-treat its entries as briefs; a Qt-tagged entry is this repo's job, a web-tagged
-one belongs in `rux-frontend`.
+one line and proceed. Current design backlog items live in beads, not a
+docs/ file — check `bd ready` / `bd list -l workstream:gui` (or the
+equivalent in rux-frontend's own tracker for web-side work) before starting
+from scratch.
 
 ### 2. Locate the work in the existing system (this replaces "invent a design system")
 
