@@ -11,6 +11,7 @@
 
 #include <array>
 #include <optional>
+#include <vector>
 
 namespace reusex {
 class ProjectDB;
@@ -76,6 +77,15 @@ struct FramePairIcpResult {
 FramePairIcpResult refine_frame_pair_icp(const ProjectDB &db, int from_id,
                                          int to_id,
                                          const FramePairIcpOptions &opts = {});
+
+/// The depth image of @p node_id back-projected into WORLD space with its
+/// stored pose and intrinsics: exactly the cloud refine_frame_pair_icp()
+/// aligns (the Qt client's pair overlay draws it).
+/// @throws std::runtime_error when the frame has no depth or no valid pose,
+///         or its depth has no return inside the range.
+std::vector<std::array<float, 3>>
+frame_world_points(const ProjectDB &db, int node_id,
+                   const FramePairIcpOptions &opts = {});
 
 /// Diagonal 6x6 information (GTSAM order rx, ry, rz, tx, ty, tz, row-major)
 /// for a pose-graph edge measured by ICP: sigma_t = max(fitness, 0.01) m and

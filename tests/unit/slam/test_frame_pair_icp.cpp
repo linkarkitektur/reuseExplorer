@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 
@@ -252,4 +253,37 @@ TEST_CASE("FramePairIcp_EdgeTransform_IsInverseOfRelativePose", "[slam][icp]") {
   // translation precision = 1 / max(fitness, 0.01)^2
   const double st = std::max(r.fitness, 0.01);
   CHECK(info[21] == Catch::Approx(1.0 / (st * st)));
+}
+
+TEST_CASE("FrameWorldPoints_IsTheBackProjectedDepthInWorld", "[slam][icp]") {
+  const TempPath project("frame_world_points");
+  const auto intr = make_intr();
+  {
+    reusex::ProjectDB db(project.path, /*readOnly=*/false);
+    db.save_sensor_frame(1, dummy_color(), flat_depth(1000), full_confidence(),
+                         identity_pose(), intr, 0.0);
+    db.save_sensor_frame(2, dummy_color(), flat_depth(1000), full_confidence(),
+                         translate_pose(0.15), intr, 1.0);
+  }
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  const auto a = reusex::slam::frame_world_points(db, 1);
+  const auto b = reusex::slam::frame_world_points(db, 2);
+  // pixel_step 4 over 160x120: 40 x 30 samples, all at the 1 m plane.
+  REQUIRE(a.size() == 1200);
+  REQUIRE(b.size() == a.size());
+  for (std::size_t i = 0; i < a.size(); i += 97) {
+    CHECK(a[i][2] == Catch::Approx(1.0f));
+    CHECK(b[i][0] - a[i][0] == Catch::Approx(0.15f).margin(1e-5));
+  }
+}
+
+TEST_CASE("FrameWorldPoints_NoDepth_Throws", "[slam][icp]") {
+  const TempPath project("frame_world_points_nodepth");
+  {
+    reusex::ProjectDB db(project.path, /*readOnly=*/false);
+    db.save_sensor_frame(1, dummy_color(), cv::Mat{}, full_confidence(),
+                         identity_pose(), make_intr(), 0.0);
+  }
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  CHECK_THROWS_AS(reusex::slam::frame_world_points(db, 1), std::runtime_error);
 }
