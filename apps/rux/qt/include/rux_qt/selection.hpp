@@ -11,6 +11,7 @@
 #include <QImage>
 #include <QString>
 #include <QVector>
+#include <utility>
 
 namespace rux::qt {
 
@@ -20,6 +21,14 @@ struct SelectionRow {
     mono,  ///< a figure, id or code (JetBrains Mono)
     name,  ///< the key is a raw name (a column, a cloud): mono, not caps
   };
+  SelectionRow() = default;
+  /// Brace-initialisable as {key, value[, style[, swatch_token]]} without
+  /// -Wmissing-field-initializers for the members left out.
+  SelectionRow(QString key_, QString value_, Style style_ = Style::mono,
+               QString swatch_token_ = {})
+      : key(std::move(key_)), value(std::move(value_)), style(style_),
+        swatch_token(std::move(swatch_token_)) {}
+
   QString key;
   QString value;
   Style style = Style::mono;
