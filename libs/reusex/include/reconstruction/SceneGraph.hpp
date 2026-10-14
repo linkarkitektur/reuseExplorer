@@ -54,18 +54,9 @@ struct SceneEdgeData {
   //
 };
 
-// TODO: Fully implement SceneGraph as central scene representation
-// category=Geometry estimate=2w
-// SceneGraph is partially defined but needs complete implementation to become
-// the core data structure for ReUseX spatial reasoning. Required features:
-// 1. Hierarchical object relationships (rooms contain walls, walls contain
-// windows)
-// 2. Spatial queries (find objects in bounding box, nearest neighbors)
-// 3. Attribute management via Registry (materials, labels, metadata)
-// 4. Serialization/deserialization to HDF5 format
-// 5. Integration with CellComplex for 3D reconstruction pipeline
-// 6. Visitor pattern for scene traversal and operations
-// Major architectural work but enables modular scene manipulation
+// Superseded (decision D4, reusex-z1v.1.4): this stub is replaced by the
+// solid-model scene_relations table (reusex-z1v.8.6), not completed as
+// originally envisioned here — no HDF5 serialization anywhere in this build.
 class SceneGraph
     : public boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS,
                                    SceneVertexData, SceneEdgeData>,
