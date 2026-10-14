@@ -80,6 +80,7 @@ class MatchCanvas : public QWidget {
   void keyPressEvent(QKeyEvent *e) override;
   void leaveEvent(QEvent *e) override;
   void resizeEvent(QResizeEvent *e) override;
+  bool event(QEvent *e) override;
 
     private:
   /// A's and B's slots for the current size (R8: not named after the

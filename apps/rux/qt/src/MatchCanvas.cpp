@@ -12,6 +12,7 @@
 #include <QResizeEvent>
 #include <QWheelEvent>
 
+#include <algorithm>
 #include <cmath>
 
 namespace rux::qt {
@@ -119,12 +120,24 @@ void MatchCanvas::place_floating() {
     right = corner_->x() - m;
   }
   if (status_) {
-    const int h = status_->sizeHint().height();
+    // As wide as its text (elided past the switch), never a bar across the
+    // canvas: B's image under an empty stretch of chip stays clickable.
+    const QSize hint = status_->sizeHint();
     const int bottom =
         corner_ ? corner_->y() + corner_->height() : height() - m;
-    status_->setGeometry(m, bottom - h, std::max(0, right - m), h);
+    status_->setGeometry(m, bottom - hint.height(),
+                         std::clamp(hint.width(), 0, std::max(0, right - m)),
+                         hint.height());
     status_->raise();
   }
+}
+
+bool MatchCanvas::event(QEvent *e) {
+  // A floating child's updateGeometry() (the status text changed) posts a
+  // LayoutRequest to us, as there is no layout to take it.
+  if (e->type() == QEvent::LayoutRequest)
+    place_floating();
+  return QWidget::event(e);
 }
 
 void MatchCanvas::set_layer(FrameLayer layer) {
@@ -297,8 +310,11 @@ void MatchCanvas::paint_side(QPainter &p, MatchSide side,
   // Every keypoint, inside the region or not: a small dot, hollow without
   // depth.
   if (set_) {
-    const double r = t.px("--space-1") * 0.5;
-    const QColor ink = t.color("--color-on-chrome-muted");
+    // Small and a little translucent: thousands of them must not cover
+    // the photo, yet a hollow one (no depth) still reads.
+    const double r = t.px("--space-1") * 0.4;
+    QColor ink = t.color("--color-on-chrome-muted");
+    ink.setAlphaF(0.75);
     for (const MatchPoint &k : set_->keypoints(side)) {
       const auto c = at(g, k);
       if (!c)
@@ -354,7 +370,26 @@ void MatchCanvas::paintEvent(QPaintEvent *) {
     QColor halo = t.color("--color-scrim");
     halo.setAlphaF(0.6);
     const double ring = t.px("--space-2") * 0.75;
-    // The hovered line last, so it sits on top of its neighbours.
+    // Background first: lines no fit judged (neutral), then outliers,
+    // inliers, the user's own choices (excluded, then manual) on top; the
+    // hovered line last, so it sits on top of its neighbours.
+    const auto rank = [this](int line) {
+      const MatchLine &l = set_->lines()[static_cast<std::size_t>(line)];
+      if (l.manual && !l.excluded)
+        return 4;
+      switch (line_tone(l)) {
+      case LineTone::neutral:
+        return 0;
+      case LineTone::outlier:
+        return 1;
+      case LineTone::inlier:
+        return 2;
+      case LineTone::excluded:
+        return 3;
+      }
+      return 0;
+    };
+    const bool fitted = set_->counts().fitted;
     std::vector<std::size_t> order;
     order.reserve(segs.size());
     std::size_t hot_k = segs.size();
@@ -364,17 +399,34 @@ void MatchCanvas::paintEvent(QPaintEvent *) {
       else
         order.push_back(k);
     }
+    std::stable_sort(order.begin(), order.end(),
+                     [&](std::size_t x, std::size_t y) {
+                       return rank(line_of[x]) < rank(line_of[y]);
+                     });
     if (hot_k < segs.size())
       order.push_back(hot_k);
     for (const std::size_t k : order) {
       const MatchLine &l = set_->lines()[static_cast<std::size_t>(line_of[k])];
       const bool hot = k == hot_k;
-      const double w = hot ? 2 * kLineWidth : kLineWidth;
+      // After a fit, a line it did not use (no depth at both ends) is
+      // context, not a result: a thin translucent hairline with no halo,
+      // so hundreds of them leave the photo and the coloured fit readable.
+      // An excluded line keeps its halo: the user's choice reads at a
+      // glance, grey among the fit's green and red.
+      const LineTone tone = line_tone(l);
+      const bool quiet =
+          !hot && !l.manual && fitted && tone == LineTone::neutral;
+      const double w = hot ? 2 * kLineWidth : quiet ? 0.75 : kLineWidth;
       const QLineF line(segs[k].x0, segs[k].y0, segs[k].x1, segs[k].y1);
-      p.setPen(QPen(halo, w + 2.0, Qt::SolidLine, Qt::RoundCap));
-      p.drawLine(line);
-      p.setPen(QPen(t.color(tone_token(line_tone(l))), w,
-                    l.manual ? Qt::DashLine : Qt::SolidLine, Qt::RoundCap));
+      QColor ink = t.color(tone_token(tone));
+      if (quiet) {
+        ink.setAlphaF(0.22);
+      } else {
+        p.setPen(QPen(halo, w + 1.5, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(line);
+      }
+      p.setPen(
+          QPen(ink, w, l.manual ? Qt::DashLine : Qt::SolidLine, Qt::RoundCap));
       p.drawLine(line);
       if (hot) {
         p.setBrush(Qt::NoBrush);

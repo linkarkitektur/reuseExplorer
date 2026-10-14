@@ -199,9 +199,9 @@ for page in "${PAGES[@]}"; do
       cat "$log" >&2
       echo "qt_shot.sh: FAIL no PNG for $page/$theme" >&2
       status=1
-    elif grep -qE "TOO WIDE|OVERLAY TOO SMALL|MATCH CANVAS TOO SMALL|STRIP CLIPPED|DRAG NOT TRANSLATED" "$log"; then
-      grep -E "TOO WIDE|OVERLAY TOO SMALL|MATCH CANVAS TOO SMALL|STRIP CLIPPED|DRAG NOT TRANSLATED" "$log" >&2
-      echo "qt_shot.sh: FAIL $png — wider than the window, Rediger's 3D overlay squeezed, its pair strip clipped, or B's box handle not translating" >&2
+    elif grep -qE "TOO WIDE|OVERLAY TOO SMALL|MATCH CANVAS TOO SMALL|STRIP CLIPPED|DRAG NOT TRANSLATED|MATCH EDIT FAILED" "$log"; then
+      grep -E "TOO WIDE|OVERLAY TOO SMALL|MATCH CANVAS TOO SMALL|STRIP CLIPPED|DRAG NOT TRANSLATED|MATCH EDIT FAILED" "$log" >&2
+      echo "qt_shot.sh: FAIL $png — wider than the window, Rediger's 3D overlay or match canvas squeezed, its pair strip clipped, B's box handle not translating, or the match editor page's own check failed (MATCH EDIT FAILED)" >&2
       status=6
     else
       grep -E "ERROR" "$log" >&2 || true

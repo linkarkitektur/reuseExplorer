@@ -10,7 +10,7 @@
 // project or page could not be opened, 5 the PNG could not be written, 6 a
 // layout regression (TOO WIDE, OVERLAY TOO SMALL, MATCH CANVAS TOO SMALL,
 // STRIP CLIPPED) or a page's
-// own check (DRAG NOT TRANSLATED).
+// own check (DRAG NOT TRANSLATED, MATCH EDIT FAILED).
 
 #include "demo_pages.hpp"
 
@@ -231,6 +231,12 @@ int main(int argc, char **argv) {
   }
   // Rediger's match canvas: with A and B both shown, the images must be
   // big enough to click a keypoint and draw a region in (reusex-xlg.2.5).
+  // This guard and OVERLAY TOO SMALL are what EditWorkspace's hand-tuned
+  // images/overlay split (right_->setSizes({494, 506})) is tuned against:
+  // it is not derived from the panes' minimum heights, because pinning the
+  // canvases' minimums to 200 / 250 would raise the whole window's minimum
+  // height on smaller screens. A pane-chrome change means re-checking it
+  // on rediger-staged (the tightest default).
   constexpr int kMinMatchCanvas = 200;
   for (auto *c : host.findChildren<rux::qt::MatchCanvas *>()) {
     if (!c->isVisible() || c->image_size(rux::qt::MatchSide::a).isEmpty() ||

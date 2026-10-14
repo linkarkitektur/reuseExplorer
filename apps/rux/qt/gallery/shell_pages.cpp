@@ -14,6 +14,7 @@
 #include <rux_qt/EditWorkspace.hpp>
 #include <rux_qt/FrameBrowser.hpp>
 #include <rux_qt/GraphPanel.hpp>
+#include <rux_qt/MatchCanvas.hpp>
 #include <rux_qt/PairImages.hpp>
 #include <rux_qt/PairOverlay.hpp>
 #include <rux_qt/PairStrip.hpp>
@@ -27,12 +28,15 @@
 #include <rux_qt/Viewer3DWorkspace.hpp>
 #include <rux_qt/background.hpp>
 #include <rux_qt/graph_view.hpp>
+#include <rux_qt/match_editor.hpp>
 
 #include <reusex/core/ProjectDB.hpp>
 #include <reusex/pipeline/optimize_stage.hpp>
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
+
+#include <sqlite3.h>
 
 #include <vtkActor.h>
 #include <vtkActorCollection.h>
@@ -51,6 +55,7 @@
 #include <QFile>
 #include <QGraphicsView>
 #include <QItemSelectionModel>
+#include <QLabel>
 #include <QMouseEvent>
 #include <QProgressBar>
 #include <QPushButton>
@@ -441,6 +446,211 @@ QWidget *make_rediger_icp_moved(const PageContext &ctx) {
   auto *shell = make_rediger_icp_shell(ctx);
   PairOverlay *ov = shell->edit()->overlay();
   ov->set_offset(nudge(ov->offset(), NudgeKey::x_plus, false));
+  return shell;
+}
+
+// ---- Rediger's match editor (reusex-xlg.2.6)
+
+namespace {
+/// A page's own check failed: one guard string (R2) qt_shot.sh greps.
+void match_page_failed(const char *why) {
+  std::fprintf(stderr, "rux-qt-gallery: ERROR MATCH EDIT FAILED: %s\n", why);
+  report_page_failure();
+}
+
+/// The pair the match pages use: RUX_MATCHES_A / RUX_MATCHES_B on a real
+/// copy (e.g. NewOffice 2240 / 2241), else two neighbouring frames of the
+/// fixture (consecutive views overlap; make_pg's pair is 0.30 / 0.81).
+AppShell *matches_shell(const PageContext &ctx) {
+  auto *shell = make_pg(ctx);
+  bool ok_a = false, ok_b = false;
+  const int a = qEnvironmentVariableIntValue("RUX_MATCHES_A", &ok_a);
+  const int b = qEnvironmentVariableIntValue("RUX_MATCHES_B", &ok_b);
+  if (ok_a && ok_b) {
+    shell->edit()->set_pair(a, b);
+  } else {
+    const auto &ids = shell->database()->frames()->pair().ids();
+    if (ids.size() >= 2) {
+      const std::size_t i = ids.size() * 3 / 10;
+      shell->edit()->set_pair(ids[i], ids[std::min(i + 1, ids.size() - 1)]);
+    }
+  }
+  settle(); // images and clouds
+  const MatchCanvas *c = shell->edit()->images()->canvas();
+  std::fprintf(stderr, "rediger-matches: canvas %dx%d\n", c->width(),
+               c->height());
+  return shell;
+}
+
+void log_matches(const char *page, PairImages *im) {
+  const MatchCounts c = im->matches().counts();
+  std::fprintf(stderr,
+               "%s: %d matches, %d usable, %d inliers, %d manual, %d excluded "
+               "— \"%s\"\n",
+               page, c.total, c.usable, c.inliers, c.manual, c.excluded,
+               qPrintable(im->status_text()));
+}
+
+/// Review gap 2: a Find started before "Byt A og B" lands on a pair no
+/// longer shown, and must be dropped — never colour the swapped pair.
+void check_swap_drops_find(AppShell *shell) {
+  EditWorkspace *ed = shell->edit();
+  PairImages *im = ed->images();
+  const int a = ed->a(), b = ed->b();
+  im->find_matches(); // off-thread; its result arrives after the swap
+  ed->set_pair(b, a);
+  settle();
+  const MatchCounts c = im->matches().counts();
+  std::fprintf(stderr,
+               "rediger-matches: Find, then Byt A og B: %d matches on %d/%d "
+               "(searched=%d) — \"%s\"\n",
+               c.total, ed->a(), ed->b(), c.searched ? 1 : 0,
+               qPrintable(im->status_text()));
+  if (c.total != 0 || c.searched)
+    match_page_failed("a Find for the old pair landed on the swapped pair");
+  ed->set_pair(a, b); // back; a new pair again, so nothing carries over
+  settle();
+}
+
+/// Review gap 1, on a scratch copy of the project (never the shot's): A
+/// with its depth, pose or colour NULLed makes Find match say so in
+/// Danish. The copy is a consistent snapshot (VACUUM INTO also takes what
+/// the shell's connection still holds in the WAL).
+void check_missing_frame_data(const PageContext &ctx, int a, int b) {
+  if (ctx.project_path.isEmpty() || a < 0 || b < 0)
+    return;
+  QTemporaryDir dir;
+  const QString copy = dir.filePath("missing.rux");
+  const struct {
+    const char *column;
+    FrameProblem problem;
+  } cases[] = {{"depth", FrameProblem::no_depth},
+               {"transform", FrameProblem::no_pose},
+               {"color", FrameProblem::no_colour}};
+  for (const auto &k : cases) {
+    QFile::remove(copy);
+    sqlite3 *raw = nullptr;
+    bool ok = sqlite3_open_v2(ctx.project_path.toUtf8().constData(), &raw,
+                              SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK;
+    const std::string vacuum = "VACUUM INTO '" + copy.toStdString() + "';";
+    ok = ok && sqlite3_exec(raw, vacuum.c_str(), nullptr, nullptr, nullptr) ==
+                   SQLITE_OK;
+    sqlite3_close(raw);
+    raw = nullptr;
+    ok = ok && sqlite3_open(copy.toUtf8().constData(), &raw) == SQLITE_OK;
+    const std::string null =
+        std::string("UPDATE sensor_frames SET ") + k.column +
+        " = NULL WHERE node_id = " + std::to_string(a) + ";";
+    ok = ok &&
+         sqlite3_exec(raw, null.c_str(), nullptr, nullptr, nullptr) ==
+             SQLITE_OK &&
+         sqlite3_changes(raw) == 1;
+    sqlite3_close(raw);
+    if (!ok) {
+      match_page_failed("could not make the scratch copy");
+      return;
+    }
+    QString status;
+    {
+      ProjectSession session;
+      if (!session.open_blocking(copy)) {
+        match_page_failed("could not open the scratch copy");
+        return;
+      }
+      PairImages im(session); // never shown: the shot stays the real pair
+      im.set_pair(a, b, Slot::a);
+      im.find_matches();
+      settle();
+      status = im.status_text();
+    }
+    settle(); // the hidden editor's decodes have let go of the copy
+    const QString want =
+        QString::fromStdString(frame_problem_text(a, k.problem));
+    std::fprintf(stderr, "rediger-matches: A's %s NULL -> \"%s\"\n", k.column,
+                 qPrintable(status));
+    if (status != want)
+      match_page_failed("a frame without depth, pose or colour was not "
+                        "named in Danish");
+  }
+}
+} // namespace
+
+/// Find match, then Placér B fra match: inliers green, outliers red, B
+/// moved in the overlay. RUX_MATCHES_ICP=1 runs ICP-forfin after and logs
+/// it (the real-data check, reusex-xlg.2.7). First checks the review gaps:
+/// a Find dropped by Byt A og B, and the Danish missing-data messages.
+QWidget *make_rediger_matches(const PageContext &ctx) {
+  auto *shell = matches_shell(ctx);
+  PairImages *im = shell->edit()->images();
+  check_swap_drops_find(shell);
+  check_missing_frame_data(ctx, shell->edit()->a(), shell->edit()->b());
+  im->find_matches();
+  settle();
+  log_matches("rediger-matches found", im);
+  im->align_from_matches();
+  settle();
+  log_matches("rediger-matches aligned", im);
+  const ManualOffset &o = shell->edit()->overlay()->offset();
+  std::fprintf(stderr,
+               "rediger-matches: B at x=%.4f y=%.4f z=%.4f yaw=%.3f "
+               "pitch=%.3f roll=%.3f (moved %.1f cm, %.2f deg)\n",
+               o.x, o.y, o.z, o.yaw_deg, o.pitch_deg, o.roll_deg,
+               100.0 * std::sqrt(o.x * o.x + o.y * o.y + o.z * o.z),
+               rotation_angle_deg(shell->edit()->overlay()->delta()));
+  if (qEnvironmentVariableIntValue("RUX_MATCHES_ICP") == 1) {
+    click_strip_button(shell, {"ICP-forfin"});
+    settle();
+    for (auto *l : shell->edit()->strip()->findChildren<QLabel *>("icpLine"))
+      std::fprintf(stderr, "rediger-matches: ICP \"%s\"\n",
+                   qPrintable(l->text()));
+    const ManualOffset &p = shell->edit()->overlay()->offset();
+    std::fprintf(stderr,
+                 "rediger-matches: after ICP x=%.4f y=%.4f z=%.4f yaw=%.3f\n",
+                 p.x, p.y, p.z, p.yaw_deg);
+  }
+  return shell;
+}
+
+/// After align: two lines excluded, one manual match added through the
+/// real click path (lift_pixel off-thread), a region drawn in A, Område on.
+QWidget *make_rediger_matches_edit(const PageContext &ctx) {
+  auto *shell = matches_shell(ctx);
+  PairImages *im = shell->edit()->images();
+  im->find_matches();
+  settle();
+  im->align_from_matches();
+  settle();
+  const auto &lines = im->matches().lines();
+  for (int i = 0; i < std::min<int>(2, static_cast<int>(lines.size())); ++i)
+    im->toggle_line(i);
+  // A manual match: the first enabled keypoint pair with depth, re-lifted
+  // by click. Copied out first: the add reallocates the set's vectors.
+  std::optional<std::pair<MatchPoint, MatchPoint>> target;
+  for (const MatchLine &l : lines) {
+    const MatchPoint pa =
+        im->matches().keypoints(MatchSide::a)[static_cast<std::size_t>(l.a)];
+    const MatchPoint pb =
+        im->matches().keypoints(MatchSide::b)[static_cast<std::size_t>(l.b)];
+    if (!l.excluded && pa.xyz && pb.xyz) {
+      target = std::pair{pa, pb};
+      break;
+    }
+  }
+  if (target) {
+    im->set_mode(MatchMode::add);
+    im->pick(MatchSide::a, target->first.u + 3.0f, target->first.v + 3.0f);
+    settle();
+    im->pick(MatchSide::b, target->second.u + 3.0f, target->second.v + 3.0f);
+    settle();
+  }
+  const QSize s = im->canvas()->image_size(MatchSide::a);
+  im->set_region(MatchSide::a, PixelBox{s.width() / 8, s.height() / 4,
+                                        s.width() / 2, s.height() / 2});
+  im->set_mode(MatchMode::region);
+  log_matches("rediger-matches-edit", im);
+
+  if (im->matches().counts().manual != 1)
+    match_page_failed("the manual match was not added");
   return shell;
 }
 
@@ -1501,6 +1711,13 @@ void register_shell_pages() {
   register_page({"rediger-icp-moved",
                  "Rediger: B flyttet efter ICP — resultatet gælder ikke mere",
                  make_rediger_icp_moved});
+  register_page({"rediger-matches",
+                 "Rediger: Find match og Placér B fra match — inliers og "
+                 "outliers, B flyttet",
+                 make_rediger_matches});
+  register_page({"rediger-matches-edit",
+                 "Rediger: match udeladt, et manuelt match og et område i A",
+                 make_rediger_matches_edit});
   register_page(
       {"rediger-xz", "Rediger: grafen i opstalt, set fra −y", make_rediger_xz});
   register_page(

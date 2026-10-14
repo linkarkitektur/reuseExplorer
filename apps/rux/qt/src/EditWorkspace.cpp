@@ -15,6 +15,7 @@
 #include <rux_qt/workspace_logic.hpp>
 
 #include <QAction>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
@@ -145,7 +146,8 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   // an ICP result in the pair strip) leaves the two canvases ~453 px, and
   // the gallery guards want >= 200 (MATCH CANVAS TOO SMALL) and >= 250
   // (OVERLAY TOO SMALL). The images pane carries ~44 px more chrome (its
-  // toolbar row) than the overlay's, so 494:506 gives ~201 / ~252 there.
+  // toolbar row) than the overlay's, so 494:506 gives ~201 / ~252 there
+  // (hand-tuned, not derived: see the guards in gallery/main.cpp).
   right_->setSizes({494, 506});
 
   for (int i = 0; i < kEditPaneCount; ++i)
@@ -281,6 +283,9 @@ QWidget *EditWorkspace::make_toolbar() {
   bl->addWidget(pair_b_);
   next_hint_ = new QLabel;
   next_hint_->setObjectName("toolbarMeta");
+  // As wide as its widest text, so "Byt A og B" stays put when the hint
+  // flips between A and B (the width is set once the QSS font applies, in
+  // sync_pair_header).
   bl->addWidget(next_hint_);
   auto *swap = new QPushButton(NavItem::escape_mnemonic("Byt A og B"));
   swap->setProperty("kind", "ghost");
@@ -460,8 +465,14 @@ void EditWorkspace::sync_pair_header() {
   auto id = [](int v) { return v >= 0 ? QString::number(v) : QString("—"); };
   pair_a_->setText("A  " + id(slots_.a()));
   pair_b_->setText("B  " + id(slots_.b()));
-  next_hint_->setText(slots_.next() == Slot::a ? QString("Næste klik: A")
-                                               : QString("Næste klik: B"));
+  const QString hints[2] = {"Næste klik: A", "Næste klik: B"};
+  next_hint_->setText(hints[slots_.next() == Slot::a ? 0 : 1]);
+  next_hint_->ensurePolished(); // the toolbarMeta font, not the default
+  const QFontMetrics fm = next_hint_->fontMetrics();
+  next_hint_->setMinimumWidth(
+      std::max(fm.horizontalAdvance(hints[0]), fm.horizontalAdvance(hints[1])) +
+      next_hint_->contentsMargins().left() +
+      next_hint_->contentsMargins().right());
 }
 
 int EditWorkspace::pending_edits() const { return editor_.pending(); }

@@ -204,7 +204,10 @@ PairImages::PairImages(ProjectSession &session, QWidget *parent)
   clear_region_->setObjectName("regionChip");
   clear_region_->setProperty("kind", "ghost");
   clear_region_->setCursor(Qt::PointingHandCursor);
-  row->addWidget(clear_region_);
+  // Centred, not stretched: a Fixed-height chip with no alignment caps the
+  // whole row at its own (smaller) height, which cut Find match and Placér
+  // B fra match in half once the chip showed.
+  row->addWidget(clear_region_, 0, Qt::AlignVCenter);
   row->addStretch(1);
 
   // No QSS rule of its own (R9): the name is for tests and the gallery.

@@ -404,6 +404,10 @@ void PairOverlay::loaded(std::shared_ptr<Clouds> c) {
     vtk_->box->On();
   }
   view_->set_message({});
+  // The view's stacked layout raises the canvas it switches to above the
+  // floating Tint | RGB switch and the legend: raise them again (without
+  // this they stayed hidden until the next resize, e.g. on rediger-pair).
+  place_legend();
   ready_ = true;
   apply_offset(false);
 }
