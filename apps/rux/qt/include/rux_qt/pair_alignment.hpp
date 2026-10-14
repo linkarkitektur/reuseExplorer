@@ -10,8 +10,11 @@
 // T_A^-1 · ΔT · T_B (the store's convention); ICP from B onto A seeded with
 // ΔT returns a world_delta that replaces ΔT.
 //
-// ICP information is slam::icp_edge_information's, and edge direction is
-// canonicalised by the library's upsert — neither lives here.
+// ICP information is slam::icp_edge_information's. Edge direction is
+// canonicalised here exactly as the library's upsert does it
+// (canonical_edge mirrors ProjectDB::upsert_pose_graph_edge and
+// core::pose_graph::reverse_edge_information, which need Eigen), so the
+// editor holds the row the file will hold; a test pins the two together.
 
 #include <rux_qt/database_logic.hpp>
 
@@ -106,13 +109,25 @@ struct IcpEdgeMeasurement {
 /// The edge "Tilføj kant" stages between A and B, status "confirmed": ICP's
 /// B -> A measurement and information while its fit is usable (@p icp;
 /// source "icp"), else T_A^-1 · ΔT · T_B as A -> B with the optimizer's
-/// per-type default information (source "manual", weight NaN). @p delta is
-/// B's manual offset (nullopt = none: the stored relative pose). Direction
-/// is canonicalised by the store.
+/// per-type default information (source "manual"). The weight is NaN either
+/// way: the store derives it from the information. @p delta is B's manual
+/// offset (nullopt = none: the stored relative pose). Direction is
+/// canonicalised when it is staged (PendingEdgeEdits::add).
 EdgeRecord pair_edge_to_add(int a, int b, const std::string &type,
                             const Mat4 &pose_a, const Mat4 &pose_b,
                             const std::optional<Mat4> &delta,
                             const std::optional<IcpEdgeMeasurement> &icp);
+
+using Info6 = std::array<double, 36>;
+/// The information of the reversed edge j -> i, given the information of
+/// i -> j and its measurement T_ij: Ad(T_ji)^T · L · Ad(T_ji), symmetrised,
+/// with Ad in GTSAM's (rotation, translation) order. Mirrors
+/// reusex::core::pose_graph::reverse_edge_information.
+Info6 reverse_edge_information(const Info6 &info_ij, const Mat4 &T_ij);
+/// @p e with from < to: when from > to the key is swapped, the transform
+/// inverted and the information reversed; the weight is then cleared (NaN),
+/// since the store derives it from the information. Unchanged otherwise.
+EdgeRecord canonical_edge(EdgeRecord e);
 
 /// A back-projected depth cloud (slam::frame_world_points' element type).
 using CloudPoints = std::vector<std::array<float, 3>>;

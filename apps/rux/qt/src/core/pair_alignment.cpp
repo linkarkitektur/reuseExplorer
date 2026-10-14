@@ -5,7 +5,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
+#include <utility>
 
 namespace rux::qt {
 namespace {
@@ -212,15 +214,67 @@ EdgeRecord pair_edge_to_add(int a, int b, const std::string &type,
     e.key = {b, a, type}; // ICP ran B onto A
     e.transform = icp->edge_transform;
     e.information = icp->information;
-    e.source = "icp";
-    // What the store writes: the mean translational precision.
-    const auto &m = icp->information;
-    e.weight = (m[21] + m[28] + m[35]) / 3.0;
+    e.source = "icp"; // weight: the store derives it from the information
   } else {
     e.key = {a, b, type};
     e.transform =
         edge_measurement(pose_a, pose_b, delta.value_or(mat4_identity()));
     e.source = "manual"; // the optimizer's per-type default information
+  }
+  return e;
+}
+
+Info6 reverse_edge_information(const Info6 &info_ij, const Mat4 &T_ij) {
+  const Mat4 t = rigid_inverse(T_ij); // T_ji
+  // Ad(T_ji) = [[R, 0], [t^ R, R]] (rotation block first).
+  const double tx = t[3], ty = t[7], tz = t[11];
+  const double sk[9] = {0, -tz, ty, tz, 0, -tx, -ty, tx, 0};
+  std::array<double, 36> ad{};
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j) {
+      const double r = t[i * 4 + j];
+      ad[i * 6 + j] = r;             // top-left R
+      ad[(i + 3) * 6 + (j + 3)] = r; // bottom-right R
+      double s = 0.0;                // bottom-left t^ R
+      for (int k = 0; k < 3; ++k)
+        s += sk[i * 3 + k] * t[k * 4 + j];
+      ad[(i + 3) * 6 + j] = s;
+    }
+  // out = Ad^T · L · Ad
+  std::array<double, 36> la{};
+  for (int i = 0; i < 6; ++i)
+    for (int j = 0; j < 6; ++j) {
+      double s = 0.0;
+      for (int k = 0; k < 6; ++k)
+        s += info_ij[i * 6 + k] * ad[k * 6 + j];
+      la[i * 6 + j] = s;
+    }
+  Info6 out{};
+  for (int i = 0; i < 6; ++i)
+    for (int j = 0; j < 6; ++j) {
+      double s = 0.0;
+      for (int k = 0; k < 6; ++k)
+        s += ad[k * 6 + i] * la[k * 6 + j];
+      out[i * 6 + j] = s;
+    }
+  for (int i = 0; i < 6; ++i)
+    for (int j = i + 1; j < 6; ++j) {
+      const double m = 0.5 * (out[i * 6 + j] + out[j * 6 + i]);
+      out[i * 6 + j] = out[j * 6 + i] = m;
+    }
+  return out;
+}
+
+EdgeRecord canonical_edge(EdgeRecord e) {
+  if (e.key.from <= e.key.to)
+    return e;
+  std::swap(e.key.from, e.key.to);
+  if (e.transform) {
+    if (e.information) {
+      e.information = reverse_edge_information(*e.information, *e.transform);
+      e.weight = std::numeric_limits<double>::quiet_NaN();
+    }
+    e.transform = rigid_inverse(*e.transform);
   }
   return e;
 }

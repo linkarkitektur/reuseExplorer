@@ -976,7 +976,7 @@ void GraphPanel::rebuild_edges() {
       batch.dashed = st.dashed;
     }
     batch.lines.push_back(line);
-    if (highlight_ && v.edge.key == *highlight_)
+    if (highlight_ && same_edge_key(v.edge.key, *highlight_))
       highlight.lines.push_back(line);
   }
   std::vector<EdgesItem::Batch> ordered;
@@ -1108,6 +1108,8 @@ void GraphPanel::set_show_rejected(bool on) {
 }
 
 void GraphPanel::set_highlight(std::optional<EdgeKey> key) {
+  if (key)
+    key = canonical_key(*key);
   highlight_ = std::move(key);
   rebuild_edges();
 }
@@ -1190,15 +1192,17 @@ bool GraphPanel::click_edge(const EdgeKey &key) { return select_edge(key); }
 bool GraphPanel::select_edge(const EdgeKey &key) {
   const auto all = editor_.edits().effective();
   const auto it =
-      std::find_if(all.begin(), all.end(),
-                   [&key](const EdgeView &v) { return v.edge.key == key; });
+      std::find_if(all.begin(), all.end(), [&key](const EdgeView &v) {
+        return same_edge_key(v.edge.key, key);
+      });
   if (it == all.end())
     return false;
   const EdgeView v = *it;
+  const EdgeKey &stored = v.edge.key; // canonical, as the list shows it
   Selection s;
   s.kind = "Kant";
-  s.title = QString("%1 → %2").arg(key.from).arg(key.to);
-  s.subtitle = da_text(edge_type_da(key.type));
+  s.title = QString("%1 → %2").arg(stored.from).arg(stored.to);
+  s.subtitle = da_text(edge_type_da(stored.type));
   s.pill = da_text(edge_status_da(v.edge.status));
   s.pill_tone = v.edge.status == "confirmed"  ? "good"
                 : v.edge.status == "rejected" ? "crit"
@@ -1234,9 +1238,9 @@ bool GraphPanel::select_edge(const EdgeKey &key) {
                                         : da().toString(v.edge.weight, 'g', 4));
   s.sections.push_back(p);
   selection_ = s;
-  set_highlight(key);
+  set_highlight(stored);
   emit selection_changed(selection_);
-  emit pair_requested(key.from, key.to);
+  emit pair_requested(stored.from, stored.to);
   return true;
 }
 

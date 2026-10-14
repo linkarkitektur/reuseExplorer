@@ -86,6 +86,13 @@ struct EdgeKey {
   }
 };
 
+/// The store's canonical key: from < to (ProjectDB reads every row back
+/// that way). Compare edge identities with same_edge_key(), never ==, unless
+/// both sides are known canonical.
+EdgeKey canonical_key(EdgeKey key);
+/// The same edge: (min(from, to), max(from, to), type) are equal.
+bool same_edge_key(const EdgeKey &a, const EdgeKey &b);
+
 struct EdgeRecord {
   EdgeKey key;
   /// 0.5 x whitened squared residual after the last solve; NaN = never
@@ -128,7 +135,10 @@ struct EdgeView {
 ///
 /// Keys match in either direction ((min(from, to), max(from, to), type), the
 /// store's canonical key): staging 5 -> 1 over a stored 1 -> 5 acts on that
-/// edge, and the store's upsert inverts the measurement on save.
+/// edge. Every staged record is canonicalised on the way in
+/// (canonical_edge: key swapped, measurement inverted, information mapped
+/// as the store does), so the base, effective(), ops() and the saved base
+/// all hold from < to, exactly what the file holds.
 class PendingEdgeEdits {
     public:
   enum class Result {
@@ -160,9 +170,10 @@ class PendingEdgeEdits {
   const std::vector<EdgeRecord> &base() const { return base_; }
 
   /// Stage a measurement (always status "confirmed"; residual and metrics
-  /// cleared — optimize writes them). Over a stored key WITHOUT a transform
-  /// the store keeps the stored measurement and only confirms it: that is
-  /// Result::confirmed (or unchanged when it is confirmed already).
+  /// cleared — optimize writes them), canonicalised (canonical_edge). Over a
+  /// stored key WITHOUT a transform the store keeps the stored measurement and
+  /// only confirms it: that is Result::confirmed (or unchanged when it is
+  /// confirmed already).
   Result add(const EdgeRecord &edge);
   Result confirm(const EdgeKey &key);
   Result reject(const EdgeKey &key);

@@ -610,3 +610,36 @@ TEST_CASE("FitWithin_KeepsTheAspectAndNeverEnlarges",
   CHECK(fit_within(0, 100, 4096).width == 0);
   CHECK(fit_within(7, 3, 2).height >= 1); // never collapses to 0
 }
+
+TEST_CASE("PendingEdits_ReversedRestage_KeepsTheStoredKey",
+          "[rux_qt][database][pending]") {
+  // ICP stages B -> A; over a stored A -> B (from < to) the staged record,
+  // the effective view, the op and the saved base all keep the store's
+  // canonical key, with the measurement inverted.
+  PendingEdgeEdits e;
+  e.set_base({edge(1, 5, "loop_closure")});
+  EdgeRecord m = edge(5, 1, "loop_closure");
+  m.transform =
+      std::array<double, 16>{1, 0, 0, 0.5, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  REQUIRE(e.add(m) == R::replaced);
+  const auto eff = e.effective();
+  REQUIRE(eff.size() == 1);
+  CHECK(eff[0].edge.key == EdgeKey{1, 5, "loop_closure"});
+  REQUIRE(eff[0].edge.transform.has_value());
+  CHECK((*eff[0].edge.transform)[3] == Approx(-0.5));
+  REQUIRE(e.ops().size() == 1);
+  CHECK(e.ops()[0].edge.key == EdgeKey{1, 5, "loop_closure"});
+  e.commit_saved(e.ops());
+  REQUIRE(e.base().size() == 1);
+  CHECK(e.base()[0].key == EdgeKey{1, 5, "loop_closure"});
+
+  // A new key staged the other way round is canonical too.
+  REQUIRE(e.add(edge(9, 7, "odometry")) == R::added);
+  CHECK(e.effective().back().edge.key == EdgeKey{7, 9, "odometry"});
+  // So is a status change asked for the other way round.
+  REQUIRE(e.reject({5, 1, "loop_closure"}) == R::rejected);
+  CHECK(e.ops()[0].edge.key == EdgeKey{1, 5, "loop_closure"});
+  CHECK(canonical_key({5, 1, "x"}) == EdgeKey{1, 5, "x"});
+  CHECK(same_edge_key({5, 1, "x"}, {1, 5, "x"}));
+  CHECK_FALSE(same_edge_key({5, 1, "x"}, {1, 5, "y"}));
+}

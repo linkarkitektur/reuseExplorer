@@ -11,6 +11,7 @@
 
 #include <rux_qt/pair_alignment.hpp>
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <optional>
@@ -224,8 +225,8 @@ TEST_CASE("PairEdgeToAdd_WithAUsableIcpFit_StagesIcpsBToAEdge",
   CHECK(*e.information == icp.information);
   CHECK(e.source == "icp");
   CHECK(e.status == "confirmed");
-  // The store's weight: the mean translational precision.
-  CHECK(e.weight == Approx(2000.0));
+  // The store derives the weight from the information on save.
+  CHECK(std::isnan(e.weight));
 }
 
 TEST_CASE("PairEdgeToAdd_WithoutIcp_MeasuresTheManualPlacement",
@@ -248,4 +249,40 @@ TEST_CASE("PairEdgeToAdd_WithoutIcp_MeasuresTheManualPlacement",
       pair_edge_to_add(3, 9, "odometry", pa, pb, std::nullopt, std::nullopt);
   REQUIRE(stored.transform.has_value());
   check_mat(*stored.transform, translate(1, 1, 0));
+}
+
+TEST_CASE("CanonicalEdge_SwapsAndInvertsAReversedRecord", "[rux_qt][pair]") {
+  // T_ij = translation (1, 2, 0) with a 90° yaw; diagonal information.
+  Mat4 t = offset_matrix({1, 2, 0, 90, 0, 0}, {0, 0, 0});
+  std::array<double, 36> info{};
+  for (std::size_t i = 0; i < 3; ++i)
+    info[i * 7] = 400.0;
+  for (std::size_t i = 3; i < 6; ++i)
+    info[i * 7] = 1000.0 * static_cast<double>(i - 2);
+  EdgeRecord r;
+  r.key = {9, 3, "loop_closure"};
+  r.transform = t;
+  r.information = info;
+  r.weight = 5.0;
+  const EdgeRecord c = canonical_edge(r);
+  CHECK(c.key.from == 3);
+  CHECK(c.key.to == 9);
+  REQUIRE(c.transform.has_value());
+  check_mat(*c.transform, rigid_inverse(t));
+  REQUIRE(c.information.has_value());
+  // Reversing twice is the identity, and the result stays symmetric.
+  const auto twice = reverse_edge_information(*c.information, *c.transform);
+  for (std::size_t i = 0; i < 36; ++i) {
+    INFO(i);
+    CHECK(twice[i] == Approx(info[i]).margin(1e-6));
+    CHECK((*c.information)[i] ==
+          Approx((*c.information)[(i % 6) * 6 + i / 6]).margin(1e-9));
+  }
+  // The translation moves the rotational precision into the translational
+  // block: the stored weight is the store's to derive.
+  CHECK(std::isnan(c.weight));
+  // Already canonical: untouched.
+  const EdgeRecord same = canonical_edge(c);
+  CHECK(same.key.from == 3);
+  check_mat(*same.transform, *c.transform);
 }

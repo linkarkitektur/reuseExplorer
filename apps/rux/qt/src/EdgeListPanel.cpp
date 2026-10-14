@@ -99,7 +99,7 @@ const EdgeView *EdgeListModel::row_at(int row) const {
 
 int EdgeListModel::row_of(const EdgeKey &key) const {
   for (std::size_t i = 0; i < rows_.size(); ++i)
-    if (rows_[i].edge.key == key)
+    if (same_edge_key(rows_[i].edge.key, key))
       return static_cast<int>(i);
   return -1;
 }

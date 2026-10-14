@@ -7,11 +7,13 @@
 // leave the file untouched, and leave the edits pending; a read-only open
 // must classify as read-only.
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <core/ProjectDB.hpp>
 #include <rux_qt/database_logic.hpp>
 #include <rux_qt/edge_store.hpp>
+#include <rux_qt/pair_alignment.hpp>
 
 #include "../../support/temp_path.hpp"
 
@@ -265,4 +267,108 @@ TEST_CASE("EdgeSave_AddWithoutMeasurement_OverStored_MatchesTheStore",
   CHECK(back[0].source == "orb");
   CHECK(back[0].status == "confirmed");
   CHECK(same_record(back[0], edits.base()[0]));
+}
+
+namespace {
+
+/// Stage @p e on an empty base, save it to a fresh project and read the row
+/// back; @p staged gets the record the editor shows after the save.
+EdgeRecord save_and_load(const EdgeRecord &e, const char *name,
+                         EdgeRecord &staged) {
+  reusex::test_support::TempPath tmp(name);
+  ProjectDB db(tmp.path);
+  PendingEdgeEdits edits;
+  edits.set_base({});
+  REQUIRE(edits.add(e) == PendingEdgeEdits::Result::added);
+  const auto ops = edits.ops();
+  apply_edge_ops(db, ops);
+  edits.commit_saved(ops);
+  REQUIRE(edits.base().size() == 1);
+  staged = edits.base()[0];
+  const auto back = load(db);
+  REQUIRE(back.size() == 1);
+  return back[0];
+}
+
+void check_close(const std::array<double, 16> &a,
+                 const std::array<double, 16> &b) {
+  for (std::size_t i = 0; i < 16; ++i) {
+    INFO(i);
+    CHECK(a[i] == Catch::Approx(b[i]).margin(1e-9));
+  }
+}
+
+} // namespace
+
+TEST_CASE("EdgeSave_IcpBToA_AndManualAToB_StoreTheSameCanonicalRow",
+          "[rux_qt][database][save]") {
+  // One ΔT, measured two ways: ICP's B -> A (edge_transform, information)
+  // and the manual A -> B (T_A^-1 · ΔT · T_B). Whichever of A, B has the
+  // lower id, both land on the same canonical row, and what the editor
+  // holds after the save is what the file holds.
+  const Mat4 pose_lo = offset_matrix({1.0, 0.5, 0.0, 20, 0, 0}, {0, 0, 0});
+  const Mat4 pose_hi = offset_matrix({3.0, -1.0, 0.1, -35, 2, 1}, {0, 0, 0});
+  const Mat4 delta = offset_matrix({0.12, -0.05, 0.01, 4, 0, 0}, {3, -1, 0});
+  std::array<double, 36> info{};
+  for (std::size_t i = 0; i < 3; ++i)
+    info[i * 7] = 400.0;
+  for (std::size_t i = 3; i < 6; ++i)
+    info[i * 7] = 2500.0;
+
+  for (const bool a_is_low : {true, false}) {
+    INFO("a_is_low " << a_is_low);
+    const int a = a_is_low ? 3 : 7, b = a_is_low ? 7 : 3;
+    const Mat4 &pa = a_is_low ? pose_lo : pose_hi;
+    const Mat4 &pb = a_is_low ? pose_hi : pose_lo;
+    IcpEdgeMeasurement icp;
+    icp.edge_transform = rigid_inverse(edge_measurement(pa, pb, delta));
+    icp.information = info;
+    const EdgeRecord by_icp =
+        pair_edge_to_add(a, b, "loop_closure", pa, pb, delta, icp);
+    const EdgeRecord by_hand =
+        pair_edge_to_add(a, b, "loop_closure", pa, pb, delta, std::nullopt);
+
+    EdgeRecord staged_icp, staged_hand;
+    const EdgeRecord row_icp = save_and_load(by_icp, "edge_eq_icp", staged_icp);
+    const EdgeRecord row_hand =
+        save_and_load(by_hand, "edge_eq_hand", staged_hand);
+
+    const std::array<const EdgeRecord *, 4> all{&row_icp, &row_hand,
+                                                &staged_icp, &staged_hand};
+    for (const EdgeRecord *r : all) {
+      CHECK(r->key == EdgeKey{3, 7, "loop_closure"});
+      CHECK(r->status == "confirmed");
+      REQUIRE(r->transform.has_value());
+    }
+    check_close(*row_icp.transform, *row_hand.transform);
+    check_close(*staged_icp.transform, *row_icp.transform);
+    check_close(*staged_hand.transform, *row_hand.transform);
+    // Canonical lo -> hi: T_lo^-1 · T_hi with B moved by ΔT.
+    check_close(*row_hand.transform,
+                a_is_low ? edge_measurement(pa, pb, delta)
+                         : rigid_inverse(edge_measurement(pa, pb, delta)));
+    CHECK(row_icp.source == "icp");
+    CHECK(row_hand.source == "manual");
+    CHECK_FALSE(row_hand.information.has_value());
+
+    // The information is the library's reversal of ICP's B -> A one.
+    REQUIRE(row_icp.information.has_value());
+    REQUIRE(staged_icp.information.has_value());
+    namespace pg = reusex::core::pose_graph;
+    std::array<double, 36> expected = info;
+    if (b > a) // ICP's B -> A was the reversed direction
+      expected = pg::row_major_from_information(pg::reverse_edge_information(
+          pg::information_from_row_major(info),
+          pg::matrix_from_row_major(icp.edge_transform)));
+    for (std::size_t i = 0; i < 36; ++i) {
+      INFO(i);
+      CHECK((*row_icp.information)[i] ==
+            Catch::Approx(expected[i]).margin(1e-6));
+      CHECK((*staged_icp.information)[i] ==
+            Catch::Approx((*row_icp.information)[i]).margin(1e-6));
+    }
+    // The store derives the weight: the mean translational precision.
+    const auto &m = *row_icp.information;
+    CHECK(row_icp.weight == Catch::Approx((m[21] + m[28] + m[35]) / 3.0));
+  }
 }

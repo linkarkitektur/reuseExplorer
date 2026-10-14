@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <rux_qt/database_logic.hpp>
+#include <rux_qt/pair_alignment.hpp>
 #include <set>
 #include <tuple>
 
@@ -128,12 +129,21 @@ bool same_number(double a, double b) {
   return a == b || (std::isnan(a) && std::isnan(b));
 }
 
-/// The store's canonical key: (min(from, to), max(from, to), type).
 bool same_edge(const EdgeKey &a, const EdgeKey &b) {
+  return same_edge_key(a, b);
+}
+} // namespace
+
+EdgeKey canonical_key(EdgeKey key) {
+  if (key.from > key.to)
+    std::swap(key.from, key.to);
+  return key;
+}
+
+bool same_edge_key(const EdgeKey &a, const EdgeKey &b) {
   return a.type == b.type && std::min(a.from, a.to) == std::min(b.from, b.to) &&
          std::max(a.from, a.to) == std::max(b.from, b.to);
 }
-} // namespace
 
 bool same_record(const EdgeRecord &a, const EdgeRecord &b) {
   return a.key == b.key && same_number(a.residual, b.residual) &&
@@ -164,10 +174,13 @@ int PendingEdgeEdits::pending_index(const EdgeKey &k) const {
   return -1;
 }
 
-PendingEdgeEdits::Result PendingEdgeEdits::add(const EdgeRecord &edge) {
-  if (edge.key.from == edge.key.to || !is_edge_type(edge.key.type) ||
-      edge.weight <= 0.0)
+PendingEdgeEdits::Result PendingEdgeEdits::add(const EdgeRecord &staged) {
+  if (staged.key.from == staged.key.to || !is_edge_type(staged.key.type) ||
+      staged.weight <= 0.0)
     return Result::invalid;
+  // The store's direction from here on: list, graph, strip and the saved
+  // base compare the key the file will hold.
+  const EdgeRecord edge = canonical_edge(staged);
   Op op;
   op.kind = Op::Kind::upsert;
   op.edge = edge;
@@ -215,7 +228,7 @@ PendingEdgeEdits::stage_status(const EdgeKey &k, const std::string &status,
     return i >= 0 ? Result::unstaged : Result::unchanged;
   Op op;
   op.kind = Op::Kind::set_status;
-  op.edge.key = k;
+  op.edge.key = canonical_key(k);
   op.edge.status = status;
   op.from_status = s->status;
   pending_.push_back(op);
@@ -384,9 +397,7 @@ void PendingEdgeEdits::commit_saved(const std::vector<Op> &saved) {
       if (s)
         s->status = o.edge.status;
     } else if (s) {
-      // Until the next reload the base may hold it as staged (to > from);
-      // the store keeps it canonical with the measurement inverted.
-      *s = written;
+      *s = written; // staged canonical: what the store wrote
     } else {
       base_.push_back(written);
     }
