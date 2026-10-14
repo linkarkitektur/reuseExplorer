@@ -323,7 +323,7 @@ ReUseX/
 │   └── qt/                         # Native Qt client (in progress): rux_qt_core,
 │                                   #   rux_qt_lib, rux-qt-gallery; styles/app.qss;
 │                                   #   theme/tokens.css (vendored from rux-frontend);
-│                                   #   shell (Q1), Database (Q2), 3D, Posegraf,
+│                                   #   shell (Q1), Database (Q2), 3D, Rediger,
 │                                   #   Pipeline, Log (Q3)
 ├── apps/blender/reusex_panel/      # Blender add-on
 ├── bindings/python/                # pybind11 bindings (read-only ProjectDB access)
@@ -380,7 +380,10 @@ The shell lives in `rux_qt_lib` (`AppShell`, `ProjectSession`,
 `rux::run` a `GuiLauncher` (`rux_app.hpp`), so `rux_lib` and both test
 binaries carry no Qt client code. Hidden dev flag:
 `rux -p x.rux --quit-after-ms N`.
-The Qt client's 3D workspace and `rux render` share one scene builder,
+The Qt client's workspaces are Start, Oversigt (`DatabaseWorkspace`,
+read-only), 3D (`Viewer3DWorkspace`), Rediger (`EditWorkspace`: `GraphPanel`,
+`EdgeListPanel`, pair strip), Pipeline (`PipelineWorkspace`) and Log. The 3D
+workspace and `rux render` share one scene builder,
 `visualize::populate_scene()` (`visualize/scene.hpp`); its Pipeline workspace
 runs stages in-process through `pipeline::JobRunner` with
 `pipeline::stage_executor_with_optimize()` (which runs `optimize` and
@@ -388,8 +391,9 @@ runs stages in-process through `pipeline::JobRunner` with
 injects the same executor for the web GUI, from its own repo), and "Kopiér som
 rux-kommando" (`rux_qt/cli_command.hpp`) is round-trip tested against the real
 CLI (`tests/unit/rux_app/test_cli_command_roundtrip.cpp`, via
-`rux::set_stage_params_sink`). `RUX_QT_PAGE=database|3d|posegraf|pipeline|log`
-lands the smoke run on that page.
+`rux::set_stage_params_sink`). `RUX_QT_PAGE=oversigt|3d|rediger|pipeline|log`
+lands the smoke run on that page (`database` is still accepted as an alias
+for `oversigt`; `posegraf` is gone).
 `rux-qt-gallery` (`apps/rux/qt`) renders pages of the native Qt client
 headless to PNG for design review; its theme is generated at run time from
 `apps/rux/qt/theme/tokens.css`, a vendored copy of rux-frontend's tokens

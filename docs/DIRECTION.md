@@ -190,6 +190,19 @@ changelog — that history is the point of keeping it in the repo.
 
 ## Direction changelog
 
+- **2026-10-13** — **Qt client: Posegraf becomes Rediger** ([spec](superpowers/specs/2026-10-13-pose-graph-editor-design.md), P4).
+  The rail is Start · Oversigt · 3D · Rediger · Pipeline · Log. Oversigt
+  (formerly Database) is read-only; every pose-graph edit happens in Rediger:
+  graph in XY/XZ/YZ with a project-wide view yaw (`project_settings`
+  `view.yaw_deg`, also used by 3D and `rux render`) that keeps zoom level and
+  centre when it changes, edges coloured by type, status, residual (fixed χ²
+  scale), deviation or seed disagreement, a sortable/filterable edge list
+  that hides the degree columns by default and shows ticks on nodes once
+  zoomed in, and Find kanter / Optimer through the pipeline runner (Find
+  kanter reports its discover counts — new/filled/capped/odometry edges —
+  after it finishes). A user "delete" is now a rejection that later
+  discover/optimize runs keep.
+
 - **2026-10-13** — **Pose graph: the stored graph is the source of truth;
   `rux optimize` is repeatable** ([spec](superpowers/specs/2026-10-13-pose-graph-editor-design.md)).
   `pose_graph_edges` (schema v27) stores each edge's measurement, information,
