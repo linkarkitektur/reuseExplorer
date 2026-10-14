@@ -78,7 +78,9 @@ class PaneFrame : public QFrame {
   explicit PaneFrame(const QString &title, QWidget *parent = nullptr);
   void set_content(QWidget *content);
   QWidget *content() const { return content_; }
-  void add_header_widget(QWidget *w);
+  /// Before "Skjul"; @p stretch > 0 shares the header's spare width with
+  /// the gap after the title (an eliding status line).
+  void add_header_widget(QWidget *w, int stretch = 0);
 
     signals:
   void hide_requested();

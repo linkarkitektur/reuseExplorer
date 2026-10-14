@@ -12,6 +12,7 @@
 #include "demo_pages.hpp"
 
 #include <rux_qt/FrameImageLoader.hpp>
+#include <rux_qt/PairOverlay.hpp>
 #include <rux_qt/Theme.hpp>
 #include <rux_qt/background.hpp>
 #include <rux_qt/fonts.hpp>
@@ -192,6 +193,26 @@ int main(int argc, char **argv) {
                  "rux-qt-gallery: ERROR TOO WIDE: the page needs %d px, the "
                  "window is %d px\n",
                  min_w, args.width);
+  // Rediger's 3D overlay is where B is moved by hand: with A and B loaded
+  // its canvas must stay usable at the default 1440x900 (pending banner and
+  // edge rows included).
+  constexpr int kMinOverlayCanvas = 250;
+  bool too_small = false;
+  for (auto *o : host.findChildren<rux::qt::PairOverlay *>()) {
+    const QWidget *canvas = o->findChild<QWidget *>("viewport");
+    if (!canvas || !o->isVisible() || !o->ready())
+      continue;
+    std::fprintf(stderr, "rux-qt-gallery: overlay canvas %dx%d\n",
+                 canvas->width(), canvas->height());
+    if (args.width >= 1440 && args.height >= 900 &&
+        canvas->height() < kMinOverlayCanvas) {
+      too_small = true;
+      std::fprintf(stderr,
+                   "rux-qt-gallery: ERROR OVERLAY TOO SMALL: %d px tall, "
+                   "needs %d\n",
+                   canvas->height(), kMinOverlayCanvas);
+    }
+  }
   const QImage img = host.grab().toImage();
   const bool saved = img.save(QString::fromStdString(args.screenshot));
   const QStringList missing = theme().missing();
@@ -214,7 +235,7 @@ int main(int argc, char **argv) {
                  args.screenshot.c_str());
     return 5;
   }
-  if (too_wide)
+  if (too_wide || too_small)
     return 6;
   if (!missing.isEmpty() || !fonts.isEmpty()) {
     for (const QString &m : missing)

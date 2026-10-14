@@ -267,15 +267,19 @@ void ImagePane::paintEvent(QPaintEvent *) {
     p.setOpacity(1.0);
   }
 
-  // Caption chip, bottom left, on a scrim so it reads over any image.
-  if (!caption.isEmpty()) {
-    const QFont f =
-        t.font(FontRole::sans, "--font-size-xs", "--font-weight-medium");
-    p.setFont(f);
-    const QFontMetrics fm(f);
+  // Caption chip, bottom left, on a scrim so it reads over any image —
+  // but not over a thumbnail it would mostly cover (Rediger's pair images
+  // yield their height to the 3D overlay; its header names the layer).
+  const QFont chip_font =
+      t.font(FontRole::sans, "--font-size-xs", "--font-weight-medium");
+  const QFontMetrics fm(chip_font);
+  const QRect text_rect(0, 0,
+                        fm.horizontalAdvance(caption) + 2 * t.px("--space-2"),
+                        fm.height() + t.px("--space-1") * 2);
+  if (!caption.isEmpty() && target.height() >= 4 * text_rect.height() &&
+      target.width() >= 2 * text_rect.width()) {
+    p.setFont(chip_font);
     const int pad = t.px("--space-2");
-    const QRect text_rect(0, 0, fm.horizontalAdvance(caption) + 2 * pad,
-                          fm.height() + t.px("--space-1") * 2);
     const QRect chip = text_rect.translated(
         target.left() + pad, target.bottom() - pad - text_rect.height());
     QColor scrim = t.color("--color-scrim");

@@ -31,6 +31,9 @@ class PairImages : public QWidget {
   void set_pair(int a, int b, Slot next);
   void set_layer(FrameLayer layer);
   FrameLayer layer() const { return layer_; }
+  /// The Farve / Dybde switch, for the pane header (it takes no row of the
+  /// pane's own height, which the 3D overlay below needs).
+  QWidget *layer_switch() const { return layer_switch_; }
 
     private:
   void reload();
@@ -43,6 +46,7 @@ class PairImages : public QWidget {
   QLabel *caption_a_ = nullptr;
   QLabel *caption_b_ = nullptr;
   QButtonGroup *layers_ = nullptr;
+  QWidget *layer_switch_ = nullptr;
   FrameLayer layer_ = FrameLayer::color;
   int a_ = -1, b_ = -1;
   Slot next_ = Slot::a;

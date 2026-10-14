@@ -199,9 +199,9 @@ for page in "${PAGES[@]}"; do
       cat "$log" >&2
       echo "qt_shot.sh: FAIL no PNG for $page/$theme" >&2
       status=1
-    elif grep -q "TOO WIDE" "$log"; then
-      grep "TOO WIDE" "$log" >&2
-      echo "qt_shot.sh: FAIL $png — wider than the window (the inspector is pushed off screen)" >&2
+    elif grep -qE "TOO WIDE|OVERLAY TOO SMALL" "$log"; then
+      grep -E "TOO WIDE|OVERLAY TOO SMALL" "$log" >&2
+      echo "qt_shot.sh: FAIL $png — wider than the window, or Rediger's 3D overlay squeezed" >&2
       status=6
     else
       grep -E "ERROR" "$log" >&2 || true

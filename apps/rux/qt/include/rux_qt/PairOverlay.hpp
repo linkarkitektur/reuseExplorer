@@ -27,6 +27,7 @@ class QLabel;
 
 namespace rux::qt {
 
+class ElidedLabel;
 class ProjectSession;
 class SceneView;
 
@@ -47,6 +48,9 @@ class PairOverlay : public QWidget {
   /// Both clouds of the current pair are drawn.
   bool ready() const { return ready_; }
   SceneView *view() const { return view_; }
+  /// Where B stands, one line ("B flyttet 1,8 cm · drejet 3,6°"), for the
+  /// pane header: a status row under the fields took the canvas' height.
+  QWidget *status_label() const;
   /// The box widget moved B (called by its VTK observer).
   void widget_moved(const Mat4 &m);
 
@@ -70,7 +74,7 @@ class PairOverlay : public QWidget {
   ProjectSession &session_;
   SceneView *view_ = nullptr;
   std::array<QDoubleSpinBox *, 6> fields_{};
-  QLabel *status_ = nullptr;
+  ElidedLabel *status_ = nullptr;
   QFrame *legend_ = nullptr; ///< A / B swatches over the canvas
   std::unique_ptr<Vtk> vtk_;
   ManualOffset offset_;

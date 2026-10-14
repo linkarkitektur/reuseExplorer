@@ -21,6 +21,7 @@
 class QComboBox;
 class QLabel;
 class QPushButton;
+class QScrollArea;
 class QVBoxLayout;
 
 namespace rux::qt {
@@ -86,6 +87,9 @@ class PairStrip : public QFrame {
   int a_ = -1, b_ = -1;
   QLabel *delta_ = nullptr;
   QWidget *rows_ = nullptr;
+  /// The rows scroll past one row, so a pair with several edges does not
+  /// take the 3D overlay's height.
+  QScrollArea *rows_scroll_ = nullptr;
   QVBoxLayout *rows_layout_ = nullptr;
   QPushButton *icp_ = nullptr;
   QComboBox *type_ = nullptr;

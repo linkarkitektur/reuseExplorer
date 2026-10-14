@@ -111,7 +111,8 @@ kanter run from the toolbar, with the discover count shown), and, all on a
 seeded graph: `rediger-type`, `rediger-status` (rejected edges shown),
 `rediger-residual`, `rediger-deviation`, `rediger-seed` (the five colour
 modes), `rediger-list` (edge list sorted by residual, top row selected),
-`rediger-zoom` (zoomed to one node, pixel count logged — the
+`rediger-reload` (zoom, a clicked edge, A/B and a yaw turned inside its
+debounce all survive a same-project reload — logged), `rediger-zoom` (zoomed to one node, pixel count logged — the
 vanishing-node repro). `RUX_QT_PAGE=rediger rux -p <copy> --quit-after-ms N`
 smokes the workspace in the real binary (`posegraf` is gone, not an alias).
 
@@ -183,7 +184,12 @@ bundled font family that did not register (`MISSING font family …`) fails the
 same way. In CI, `AppQss_EveryVarReference_ResolvesAgainstRealTokens` and
 `QtSources_EveryTokenStringLiteral_ExistsInRealTokens` (light ctest) catch a
 design-side rename that `app.qss` or a `theme().color("--…")` still uses. Other
-exit codes: 2 bad flags, 4 project/page not found, 5 PNG not written.
+exit codes: 2 bad flags, 4 project/page not found, 5 PNG not written, 6 a
+layout regression: the page's minimum width is wider than the window
+(`TOO WIDE` — the inspector would be off a 1440 px screen), or, at 1440x900,
+Rediger's 3D overlay canvas with A and B loaded is under 250 px tall
+(`OVERLAY TOO SMALL`; every shot logs `overlay canvas WxH`). `qt_shot.sh`
+fails on both.
 `RUX_QT_DUMP_QSS=<file>` writes the resolved stylesheet for debugging.
 
 ## 3. Token mapping

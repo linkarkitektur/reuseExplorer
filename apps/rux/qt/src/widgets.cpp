@@ -147,8 +147,8 @@ void PaneFrame::set_content(QWidget *content) {
   body_->addWidget(content_, 1);
 }
 
-void PaneFrame::add_header_widget(QWidget *w) {
-  header_->insertWidget(header_->count() - 1, w); // before "Skjul"
+void PaneFrame::add_header_widget(QWidget *w, int stretch) {
+  header_->insertWidget(header_->count() - 1, w, stretch); // before "Skjul"
 }
 
 void Panel::add_header_widget(QWidget *w) {

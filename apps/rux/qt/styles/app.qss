@@ -1053,7 +1053,8 @@ QFrame#pairStrip {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
 }
-QFrame#pairStrip QLabel {
+QFrame#pairStrip QLabel,
+QScrollArea#edgeRowsScroll, QWidget#edgeRows {
   background: transparent;
 }
 QLabel#pairIds, QLabel#edgeMono {

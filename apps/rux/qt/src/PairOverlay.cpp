@@ -152,10 +152,10 @@ PairOverlay::PairOverlay(ProjectSession &session, bool interactive,
                         t.px("--space-2"));
   g->setHorizontalSpacing(t.px("--space-2"));
   g->setVerticalSpacing(t.px("--space-1"));
-  // Two rows of three — shift over turn — each field under its label, so
-  // the pane never widens the window and a field has room for "-179,99".
-  const char *labels[6] = {"X [m]",    "Y [m]",    "Z [m]",
-                           "Drej [°]", "Hæld [°]", "Rul [°]"};
+  // Two rows of three — shift over turn — each label beside its field and
+  // the unit in the field, so the fields take two lines of the overlay's
+  // height, not four, and the pane never widens the window.
+  const char *labels[6] = {"X", "Y", "Z", "Drej", "Hæld", "Rul"};
   const char *tips[6] = {"Flyt B langs verdens x-akse",
                          "Flyt B langs verdens y-akse",
                          "Flyt B langs verdens z-akse",
@@ -175,22 +175,22 @@ PairOverlay::PairOverlay(ProjectSession &session, bool interactive,
       s->setRange(-kOffsetMaxM, kOffsetMaxM);
       s->setDecimals(3);
       s->setSingleStep(kNudgeM);
+      s->setSuffix(" m");
     } else {
       s->setRange(-180.0, 180.0);
       s->setDecimals(2);
       s->setSingleStep(kNudgeDeg);
+      s->setSuffix(" °");
     }
     s->setToolTip(tips[i]);
     s->setMinimumWidth(t.px("--space-7") + t.px("--space-2"));
     s->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-    const int row = (i / 3) * 2, col = i % 3;
+    const int row = i / 3, col = (i % 3) * 2;
     auto *label = new CapsLabel(labels[i], "fieldLabel");
     label->setToolTip(tips[i]);
-    if (row > 0) // a little air between the shift and the turn rows
-      label->setContentsMargins(0, t.px("--space-1"), 0, 0);
-    g->addWidget(label, row, col);
-    g->addWidget(s, row + 1, col);
-    g->setColumnStretch(col, 1);
+    g->addWidget(label, row, col, Qt::AlignVCenter);
+    g->addWidget(s, row, col + 1);
+    g->setColumnStretch(col + 1, 1);
     fields_[static_cast<std::size_t>(i)] = s;
     connect(s, &QDoubleSpinBox::valueChanged, this, [this, i](double val) {
       double *slot[6] = {&offset_.x,         &offset_.y,
@@ -201,10 +201,10 @@ PairOverlay::PairOverlay(ProjectSession &session, bool interactive,
       apply_offset(false);
     });
   }
-  status_ = new QLabel;
+  // Shown in the pane header (status_label()), not under the fields.
+  status_ = new ElidedLabel(QString(), Qt::ElideRight);
   status_->setObjectName("statusText");
-  status_->setWordWrap(true);
-  g->addWidget(status_, 4, 0, 1, 3);
+  status_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
   v->addWidget(fields);
 
   setFocusPolicy(Qt::StrongFocus);
@@ -375,19 +375,27 @@ void PairOverlay::apply_offset(bool from_widget) {
   }
   const double shift = std::sqrt(offset_.x * offset_.x + offset_.y * offset_.y +
                                  offset_.z * offset_.z);
-  status_->setText(
-      !ready_ ? QString() // the canvas says why
-      : offset_.is_zero()
-          ? QString("B står på sin gemte pose. ←/→ x · ↑/↓ y · PgUp/PgDn z · "
-                    "[ / ] drej · Shift: ×10")
+  const QString cm =
+      QString::fromStdString(format_decimal_da(shift * 100.0, 1));
+  const QString deg =
+      QString::fromStdString(format_decimal_da(rotation_angle_deg(delta()), 1));
+  const QString keys = "Klik på lærredet, og flyt B med tasterne: ←/→ x · "
+                       "↑/↓ y · PgUp/PgDn z · [ / ] drej · Shift: ×10";
+  status_->set_full_text(!ready_ ? QString() // the canvas says why
+                         : offset_.is_zero()
+                             ? QString("B på gemt pose")
+                             : QString("Flyttet %1 cm · %2°").arg(cm, deg));
+  status_->setToolTip(
+      offset_.is_zero()
+          ? QString("B står på sin gemte pose.\n") + keys
           : QString("B er flyttet %1 cm og drejet %2° i forhold til den "
-                    "gemte pose.")
-                .arg(
-                    QString::fromStdString(format_decimal_da(shift * 100.0, 1)),
-                    QString::fromStdString(
-                        format_decimal_da(rotation_angle_deg(delta()), 1))));
+                    "gemte pose.\n")
+                    .arg(cm, deg) +
+                keys);
   emit offset_changed();
 }
+
+QWidget *PairOverlay::status_label() const { return status_; }
 
 void PairOverlay::sync_fields() {
   const double values[6] = {offset_.x,         offset_.y,

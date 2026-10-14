@@ -45,21 +45,25 @@ PairImages::PairImages(ProjectSession &session, QWidget *parent)
     sl->addWidget(b);
   }
   layers_->button(0)->setChecked(true);
-  g->addWidget(seg, 0, 0, 1, 2, Qt::AlignLeft);
+  layer_switch_ = seg; // placed in the pane header by EditWorkspace
 
   caption_a_ = new QLabel;
   caption_a_->setObjectName("pairCaptionA");
   caption_b_ = new QLabel;
   caption_b_->setObjectName("pairCaptionB");
-  g->addWidget(caption_a_, 1, 0);
-  g->addWidget(caption_b_, 1, 1);
+  g->addWidget(caption_a_, 0, 0);
+  g->addWidget(caption_b_, 0, 1);
   pane_a_ = new ImagePane;
   pane_b_ = new ImagePane;
-  for (ImagePane *p : {pane_a_, pane_b_})
+  for (ImagePane *p : {pane_a_, pane_b_}) {
     p->set_overlay(false, 0);
-  g->addWidget(pane_a_, 2, 0);
-  g->addWidget(pane_b_, 2, 1);
-  g->setRowStretch(2, 1);
+    // Small is fine here: the pane yields height to the 3D overlay, and
+    // Oversigt has the full-size frames.
+    p->setMinimumSize(t.px("--space-7"), t.px("--space-7"));
+  }
+  g->addWidget(pane_a_, 1, 0);
+  g->addWidget(pane_b_, 1, 1);
+  g->setRowStretch(1, 1);
   // A and B always get the same width, whatever their captions say.
   g->setColumnStretch(0, 1);
   g->setColumnStretch(1, 1);

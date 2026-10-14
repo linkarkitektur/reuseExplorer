@@ -66,8 +66,11 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   panes_[2] = new PaneFrame("Billeder");
   // Each side says which click fills it while its slot is empty.
   panes_[2]->set_content(images_ = new PairImages(session_));
+  panes_[2]->add_header_widget(images_->layer_switch());
   panes_[3] = new PaneFrame("3D-overlay");
   panes_[3]->set_content(overlay_ = new PairOverlay(session_, interactive_3d));
+  // Nearly all the spare header width: the gap after the title has 1.
+  panes_[3]->add_header_widget(overlay_->status_label(), 100);
   auto *reset = new QPushButton(NavItem::escape_mnemonic("Nulstil"));
   reset->setProperty("kind", "ghost");
   reset->setCursor(Qt::PointingHandCursor);
@@ -88,10 +91,10 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   right_ = new QSplitter(Qt::Vertical);
   right_->addWidget(panes_[2]);
   right_->addWidget(panes_[3]);
-  // The images and the overlay (its canvas over six offset fields) share
-  // the column evenly.
+  // The overlay is where B is moved by hand (spec §5.2): it gets the
+  // column's height first, the images a reference strip above it.
   right_->setStretchFactor(0, 1);
-  right_->setStretchFactor(1, 1);
+  right_->setStretchFactor(1, 3);
   right_column_ = new QWidget;
   auto *rc = new QVBoxLayout(right_column_);
   rc->setContentsMargins(0, 0, 0, 0);
@@ -143,9 +146,10 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   main_->setSizes({3 * kUnit, 2 * kUnit});
   // The edge list gets room for a screenful of suspicious rows.
   left_->setSizes({3 * kUnit, 2 * kUnit});
-  // The images over the overlay, half each: the overlay's fields take a
-  // fixed share of its half, so a 3:2 split left the canvas a sliver.
-  right_->setSizes({kUnit, kUnit});
+  // The images over the overlay, 1:3: the overlay's fields take a fixed
+  // share of its part, and its canvas must stay usable at 1440x900 with
+  // the pending banner and a few edge rows (an even split left ~30 px).
+  right_->setSizes({kUnit, 3 * kUnit});
 
   for (int i = 0; i < kEditPaneCount; ++i)
     connect(panes_[i], &PaneFrame::hide_requested, this,

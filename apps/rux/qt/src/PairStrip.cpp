@@ -27,8 +27,10 @@
 #include <QMouseEvent>
 #include <QPointer>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <thread>
@@ -139,7 +141,7 @@ PairStrip::PairStrip(ProjectSession &session, EdgeEditor &editor,
   auto *v = new QVBoxLayout(this);
   const int pad = t.px("--space-3");
   v->setContentsMargins(t.px("--space-4"), pad, t.px("--space-4"), pad);
-  v->setSpacing(t.px("--space-2"));
+  v->setSpacing(t.px("--space-1")); // tight: the 3D overlay above needs it
 
   auto *head = new QHBoxLayout;
   head->setSpacing(t.px("--space-3"));
@@ -182,7 +184,13 @@ PairStrip::PairStrip(ProjectSession &session, EdgeEditor &editor,
   rows_layout_ = new QVBoxLayout(rows_);
   rows_layout_->setContentsMargins(0, 0, 0, 0);
   rows_layout_->setSpacing(t.px("--space-1"));
-  v->addWidget(rows_);
+  rows_scroll_ = new QScrollArea;
+  rows_scroll_->setObjectName("edgeRowsScroll");
+  rows_scroll_->setFrameShape(QFrame::NoFrame);
+  rows_scroll_->setWidgetResizable(true);
+  rows_scroll_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  rows_scroll_->setWidget(rows_);
+  v->addWidget(rows_scroll_);
 
   icp_line_ = new QLabel;
   icp_line_->setObjectName("icpLine");
@@ -352,6 +360,12 @@ void PairStrip::rebuild() {
     rows_layout_->addWidget(none);
   }
 
+  // As tall as the rows, up to one row (a sliver of the next shows that
+  // there are more); the rest scrolls.
+  rows_layout_->activate();
+  rows_scroll_->setFixedHeight(std::min(rows_->sizeHint().height(),
+                                        t.px("--space-7") + t.px("--space-5")));
+
   refresh_icp();
 
   const bool editable = pair_ok && !same;
@@ -389,7 +403,7 @@ void PairStrip::refresh_icp() {
   // ICP result for this pair, if one was run.
   const auto key = std::make_pair(a_, b_);
   const bool pair_ok = session_.db() && a_ >= 0 && b_ >= 0;
-  QString text, tone;
+  QString text, tone, detail;
   if (pair_ok && icp_running_ == key) {
     text = "ICP kører …";
     tone = "wait";
@@ -409,6 +423,9 @@ void PairStrip::refresh_icp() {
             .arg(weight_text(weight_from_icp_fitness(o.fitness)));
     const QString from =
         o.seeded ? QString("Fra din manuelle placering · ") : QString();
+    // The point counts and the weight in the tooltip: two lines, not three,
+    // under the 3D overlay.
+    detail = QString("%1 · %2").arg(points, weight);
     switch (fit_state(o)) {
     case IcpFitState::failed:
       text = "ICP fejlede: " + o.error;
@@ -433,19 +450,20 @@ void PairStrip::refresh_icp() {
       break;
     case IcpFitState::aligned:
       text = from + QString("ICP konvergerede · %1 · B er lagt på ICP's "
-                            "placering · %2 · %3")
-                        .arg(fit, points, weight);
+                            "placering")
+                        .arg(fit);
       tone = "good";
       break;
     case IcpFitState::not_placed:
-      text = from + QString("ICP konvergerede · %1 · %2 · %3. B er ikke "
-                            "flyttet: 3D-overlayet var ikke klar.")
-                        .arg(fit, points, weight);
+      text = from + QString("ICP konvergerede · %1. B er ikke flyttet: "
+                            "3D-overlayet var ikke klar.")
+                        .arg(fit);
       tone = "good";
       break;
     }
   }
   icp_line_->setText(text);
+  icp_line_->setToolTip(detail.isEmpty() ? text : text + "\n" + detail);
   icp_line_->setProperty("tone", tone.isEmpty() ? QVariant() : QVariant(tone));
   icp_line_->setVisible(!text.isEmpty());
   repolish(icp_line_);
