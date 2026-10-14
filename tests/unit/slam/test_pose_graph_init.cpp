@@ -267,7 +267,7 @@ TEST_CASE("InitPoseGraph_PoselessFrame_IsSkipped", "[slam][pose_graph][init]") {
 
 TEST_CASE("InitPoseGraph_LegacyNullTransformOdometry_IsReplaced",
           "[slam][pose_graph][init]") {
-  // Review focus 4: rows left by a pre-v27 `rux optimize` must neither block
+  // Review focus 4: rows left by a pre-v28 `rux optimize` must neither block
   // init nor survive it.
   TempPath tmp("test_graph_init_legacy");
   ProjectDB db(tmp.path);

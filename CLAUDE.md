@@ -271,6 +271,11 @@ cmake --build build --target docs
 xdg-open docs/api/html/index.html
 ```
 
+The Ressourcekortlægning PDF template (`apps/rux/resources/report.typ`, the
+only copy — CMake embeds it) has its own light shell, `nix develop .#report`
+(`report-watch` / `report-build` / `report-shots`); data contract and loop:
+[`docs/guides/report-template.md`](docs/guides/report-template.md).
+
 ## Architecture
 
 **Repo split (2026-10-09, see `docs/DIRECTION.md`):** this repo is the
@@ -539,7 +544,12 @@ tree — if a doc mentions `RTABMapDatabase`, that doc is stale.
   (`core/resource_templates.hpp`). Schema v26 adds the tombstone table
   `survey_dismissed_instances`: a deleted scan-backed survey part's instance
   guid, which `sync_survey` skips so the part is not re-created. Schema v27
-  makes `pose_graph_edges` the stored pose graph (measurement, GTSAM-order
+  adds the resource view record (`survey_parts.view_*`, key `sys:view`,
+  `core/resource_view.hpp`): the one chosen image (sensor frame or panorama +
+  normalised region) a resource is shown by, set by `sync_survey` / mask →
+  resource and read with no fallback ranking; PATCHing a frame's `sys:view`
+  without a region fills in the instance's region (`core::complete_view_region`).
+  Schema v28 makes `pose_graph_edges` the stored pose graph (measurement, GTSAM-order
   information, source, status, metrics; canonical `from < to`,
   `UNIQUE(from, to, type)`; `upsert_pose_graph_edge` /
   `set_pose_graph_edge_status` / `update_pose_graph_edge_metrics`), adds
@@ -609,7 +619,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 |---|---|---|
 | `import` | `rtabmap`, `mushroom`, `arkitscenes`, `e57`, `ply`, `gsplat`, `materialepas`, `csv`, `360`, `photos` | `src/import/` |
 | `create` | `clouds`, `dense`, `annotate`, `annotate-360`, `material`, `project`, `planes`, `rooms`, `instances`, `materials`, `survey`, `mesh`, `texture`, `windows` | `src/create/` |
-| `export` | `ply`, `e57`, `materialepas`, `csv`, `rhino`, `semantic-images`, `speckle`, `colmap` | `src/export/` |
+| `export` | `ply`, `e57`, `materialepas`, `csv`, `rhino`, `semantic-images`, `speckle`, `colmap`, `pdf` | `src/export/` |
 | `align` | `360` (content-based panorama pose refinement) | `src/align/` |
 | `edit` | `downsample`, `perturb-poses` (drift synthesis, #338) | `src/edit/` |
 | `analyze` | `quality`, `accuracy` | `src/analyze/` |
@@ -958,3 +968,88 @@ Blender add-on.
 - Copyright: 2025 Povl Filip Sonne-Frederiksen
 - Follows REUSE specification for license compliance
 - All source files must have SPDX headers
+
+
+<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:1105d646 -->
+## Beads Issue Tracker
+
+This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
+
+### Quick Reference
+
+```bash
+bd ready              # Find available work
+bd show <id>          # View issue details
+bd update <id> --claim  # Claim work
+bd close <id>         # Complete work
+```
+
+### Rules
+
+- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
+- Run `bd prime` for detailed command reference and session close protocol
+- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
+
+**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md for details and anti-patterns.
+
+## Agent Context Profiles
+
+The managed Beads block is task-tracking guidance, not permission to override repository, user, or orchestrator instructions.
+
+- **Conservative (default)**: Use `bd` for task tracking. Do not run git commits, git pushes, or Dolt remote sync unless explicitly asked. At handoff, report changed files, validation, and suggested next commands.
+- **Minimal**: Keep tool instruction files as pointers to `bd prime`; use the same conservative git policy unless active instructions say otherwise.
+- **Team-maintainer**: Only when the repository explicitly opts in, agents may close beads, run quality gates, commit, and push as part of session close. A current "do not commit" or "do not push" instruction still wins.
+
+## Session Completion
+
+This protocol applies when ending a Beads implementation workflow. It is subordinate to explicit user, repository, and orchestrator instructions.
+
+1. **File issues for remaining work** - Create beads for anything that needs follow-up
+2. **Run quality gates** (if code changed) - Tests, linters, builds
+3. **Update issue status** - Close finished work, update in-progress items
+4. **Handle git/sync by active profile**:
+   ```bash
+   # Conservative/minimal/default: report status and proposed commands; wait for approval.
+   git status
+
+   # Team-maintainer opt-in only, unless current instructions forbid it:
+   git pull --rebase
+   git push
+   git status
+   ```
+5. **Hand off** - Summarize changes, validation, issue status, and any blocked sync/commit/push step
+
+**Critical rules:**
+- Explicit user or orchestrator instructions override this Beads block.
+- Do not commit or push without clear authority from the active profile or the current user request.
+- If a required sync or push is blocked, stop and report the exact command and error.
+<!-- END BEADS INTEGRATION -->
+
+## Beads: git hooks
+
+bd's git-hook sections have to coexist with the pre-commit framework hooks
+that git-hooks.nix installs: clang-format, reuse, alejandra, statix, deadnix
+and the check-* hooks on pre-commit, and its git-lfs hooks on pre-push,
+post-checkout, post-merge and post-commit. They do, in both places
+core.hooksPath can point:
+
+- **Shared git hooks dir** (`$(git rev-parse --git-common-dir)/hooks`, which
+  shell.nix pins as an absolute path on every entry, #317). `bd hooks install`
+  injects bd's marked section into each existing hook, above pre-commit's
+  final `exec`, and keeps the rest of the file. shell.nix runs it on every
+  entry, right after git-hooks.nix (re)installs its hooks and the #317 pin,
+  which also undoes a `core.hooksPath=.beads/hooks` left behind by `bd init`
+  or `bd hooks install --beads`. Without nix, run `bd hooks install` once.
+- **`.beads/hooks/`** (committed; used only if core.hooksPath points there).
+  Each file opens with a repo-local `HOOK CHAIN` block, outside bd's markers
+  so bd keeps it on reinstall. It runs the same hook from the shared dir
+  first, and execs it outright when it already carries bd's section, so bd
+  runs once either way. Keep that block if you regenerate the hooks.
+
+Both states were checked with a throwaway commit: the pre-commit framework's
+checks (reuse, clang-format, ...) and git-lfs's post-commit ran, and so did
+`bd hooks run pre-commit` and `prepare-commit-msg`, each once. Every bd
+section is guarded by `command -v bd` and skips when the checkout has no
+beads database, so CI and clones without bd are unaffected. A linked
+worktree uses the main checkout's database; run `bd bootstrap` there, not in
+the worktree.

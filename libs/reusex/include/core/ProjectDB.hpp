@@ -9,6 +9,7 @@
 // are forward-declared here (cv::Mat by value/reference, mesh types via
 // std::shared_ptr) to keep DB clients from transitively compiling them.
 #include "reusex/core/component_record.hpp"
+#include "reusex/core/resource_view.hpp"
 #include "reusex/core/survey.hpp"
 #include "reusex/types/point_types.hpp"
 
@@ -238,16 +239,16 @@ class ProjectDB {
   /// origin.
   bool has_sensor_frame_pose(int nodeId) const;
 
-  /// Snapshot of the pose `rux optimize` seeds from (schema v27,
+  /// Snapshot of the pose `rux optimize` seeds from (schema v28,
   /// sensor_frames.initial_transform). Written by `rux graph init` and
   /// `rux import rtabmap`; never by optimize.
   /// @throws std::invalid_argument if @p pose is not a rigid transform;
   ///         std::runtime_error if there is no such frame or the project is
-  ///         read-only / pre-v27.
+  ///         read-only / pre-v28.
   void set_initial_pose(int nodeId, const std::array<double, 16> &pose);
 
   /// nullopt when NULL, not a rigid transform, the frame is missing, or the
-  /// project predates v27 (a read-only open never migrates).
+  /// project predates v28 (a read-only open never migrates).
   std::optional<std::array<double, 16>> initial_pose(int nodeId) const;
 
   bool has_initial_pose(int nodeId) const;
@@ -289,6 +290,8 @@ class ProjectDB {
   cv::Mat panoramic_image(int id) const;
   cv::Mat panoramic_image(std::string_view filename) const;
   bool has_panoramic_image(std::string_view filename) const;
+  /// True when a panoramic_images row with this id exists.
+  bool has_panoramic_image(int id) const;
   void delete_panoramic_image(int id);
   void delete_panoramic_image(std::string_view filename);
   std::vector<PanoramicImage> list_panoramic_images() const;
@@ -607,13 +610,13 @@ class ProjectDB {
   // --- Pose Graph ---
   //
   // The stored pose graph is the source of truth for `rux optimize` (schema
-  // v27, docs/superpowers/specs/2026-10-13-pose-graph-editor-design.md §3).
+  // v28, docs/superpowers/specs/2026-10-13-pose-graph-editor-design.md §3).
   // Rows are canonical: from_node_id < to_node_id, UNIQUE(from, to, type).
   // Node positions are read from `sensor_frames` (their current world poses,
   // and the snapshot in `initial_transform`), so there is no nodes table.
 
   /// One edge stored in `pose_graph_edges`. The first five members keep their
-  /// pre-v27 order so `{from, to, type, residual, weight}` still initialises.
+  /// pre-v28 order so `{from, to, type, residual, weight}` still initialises.
   struct PoseGraphEdge {
     int from_node_id = 0;
     int to_node_id = 0;
@@ -647,7 +650,7 @@ class ProjectDB {
   };
 
   /// All stored edges (every status), ordered by id. Empty when the table
-  /// does not exist. On a pre-v27 project opened read-only the rows carry
+  /// does not exist. On a pre-v28 project opened read-only the rows carry
   /// source "legacy", status "auto" and no measurement.
   std::vector<PoseGraphEdge> list_pose_graph_edges() const;
 
@@ -725,9 +728,9 @@ class ProjectDB {
   int delete_pose_graph_edges(int from_node_id, int to_node_id,
                               std::string_view edge_type = "");
 
-  // --- Project settings (schema v27) ---
+  // --- Project settings (schema v28) ---
 
-  /// nullopt for an unknown key or a pre-v27 project.
+  /// nullopt for an unknown key or a pre-v28 project.
   std::optional<std::string> setting(std::string_view key) const;
   /// Insert or replace. @throws std::runtime_error on a read-only project.
   void set_setting(std::string_view key, std::string_view value);
@@ -1235,6 +1238,8 @@ class ProjectDB {
   bool delete_resource_template(int64_t id); // false when absent
 
   // --- Survey (Ressourcekortlægning, schema v22) ---
+  /// The chosen image of a resource (schema v27, core/resource_view.hpp).
+  using ResourceView = core::ResourceView;
   struct SurveyTypeRecord {
     int64_t id = 0;
     std::string name;
@@ -1283,8 +1288,15 @@ class ProjectDB {
     /// instances` re-runs because instance identity is reconciled on guid,
     /// not (cloud_id, instance_id). Nullable: a manually added part needs no
     /// instance. Read-only on a patch; set via cloud_name/instance_id on add.
-    /// Kept LAST so existing positional aggregate initializers still compile.
+    /// Kept before view so existing positional aggregate initializers still
+    /// compile.
     std::optional<std::string> instance_guid{};
+    /// The resource's chosen image (schema v27: survey_parts.view_*).
+    /// nullopt when none was chosen, before v27, or when the frame/panorama
+    /// it names no longer exists (logged at warn). Read-only on add/patch:
+    /// set through set_survey_part_view. Kept LAST so positional aggregate
+    /// initializers still compile.
+    std::optional<core::ResourceView> view{};
   };
   struct SurveyPartPatch {
     std::optional<int64_t> type_id;
@@ -1321,6 +1333,17 @@ class ProjectDB {
   std::string ensure_resource_passport(std::string_view code);
   /// @throws std::out_of_range when @p code is unknown.
   void delete_survey_part(std::string_view code);
+  /// Set, change, or clear (nullopt) a part's view record (schema v27).
+  /// Validates the shape (core::validate_view_shape) and that the frame /
+  /// panorama exists. A resource keeps its image once it has one: clearing
+  /// (nullopt) a part whose view is already set is refused
+  /// (core::KeyValueError, which derives from std::invalid_argument);
+  /// clearing an already-absent view is a no-op success. Does not open a
+  /// transaction (one UPDATE); call inside one to batch.
+  /// @throws std::invalid_argument (shape, or clearing a set view),
+  ///         std::out_of_range (no part, no sensor frame, no panorama).
+  void set_survey_part_view(std::string_view code,
+                            const std::optional<core::ResourceView> &view);
   /// Deletes a survey type; its parts and sample links cascade. Storage only:
   /// tombstones and passports are core::delete_survey_type's job.
   /// @throws std::out_of_range when @p id is unknown.

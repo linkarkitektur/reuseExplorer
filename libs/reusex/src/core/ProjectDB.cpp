@@ -408,15 +408,17 @@ class ProjectDB::Impl {
   bool hasPassportColumn = false;
   /// survey_dismissed_instances exists (schema v26); same lifetime rule.
   bool hasDismissedTable = false;
-  /// pose_graph_edges has the v27 columns. Same lifetime rule as above.
-  bool hasPoseGraphV27 = false;
-  /// sensor_frames.initial_transform exists (v27).
+  /// survey_parts.view_* exist (schema v27); same lifetime rule.
+  bool hasViewColumns = false;
+  /// pose_graph_edges has the v28 columns. Same lifetime rule as above.
+  bool hasPoseGraphV28 = false;
+  /// sensor_frames.initial_transform exists (v28).
   bool hasInitialTransform = false;
-  /// project_settings exists (v27).
+  /// project_settings exists (v28).
   bool hasSettingsTable = false;
 
   // cppcheck-suppress unusedStructMember
-  static constexpr int LATEST_SCHEMA_VERSION = 27;
+  static constexpr int LATEST_SCHEMA_VERSION = 28;
 
   // How long one statement waits for a lock another connection holds before
   // failing with SQLITE_BUSY. sqlite's default is not to wait at all.
@@ -535,7 +537,8 @@ class ProjectDB::Impl {
     }
     hasPassportColumn = columnExists("survey_parts", "passport_guid");
     hasDismissedTable = tableExists("survey_dismissed_instances");
-    hasPoseGraphV27 = columnExists("pose_graph_edges", "status");
+    hasViewColumns = columnExists("survey_parts", "view_h");
+    hasPoseGraphV28 = columnExists("pose_graph_edges", "status");
     hasInitialTransform = columnExists("sensor_frames", "initial_transform");
     hasSettingsTable = tableExists("project_settings");
   }
@@ -829,6 +832,10 @@ class ProjectDB::Impl {
 
     if (current < 27) {
       migrateToV27();
+    }
+
+    if (current < 28) {
+      migrateToV28();
     }
 
     reusex::trace("Schema version: {}", getCurrentSchemaVersion());
@@ -1637,9 +1644,9 @@ class ProjectDB::Impl {
   }
 
   /// Column list matching readPoseGraphEdge(); the legacy list serves a
-  /// pre-v27 project opened read-only.
+  /// pre-v28 project opened read-only.
   const char *poseGraphColumns() const {
-    return hasPoseGraphV27
+    return hasPoseGraphV28
                ? "id, from_node_id, to_node_id, edge_type, residual, weight, "
                  "transform, information, source, status, created_at, "
                  "seed_disagreement_m, seed_disagreement_deg, deviation_m, "
@@ -1657,7 +1664,7 @@ class ProjectDB::Impl {
         optionalDouble(s, 4).value_or(std::numeric_limits<double>::quiet_NaN());
     e.weight =
         optionalDouble(s, 5).value_or(std::numeric_limits<double>::quiet_NaN());
-    if (!hasPoseGraphV27) {
+    if (!hasPoseGraphV28) {
       e.source = std::string(core::pose_graph::kSourceLegacy);
       e.status = std::string(core::pose_graph::kStatusAuto);
       return e;
@@ -1696,7 +1703,7 @@ class ProjectDB::Impl {
   poseGraphEdge(int from, int to, std::string_view type) const {
     if (!tableExists("pose_graph_edges"))
       return std::nullopt;
-    // Pre-v27 rows are not canonical: match both orders there.
+    // Pre-v28 rows are not canonical: match both orders there.
     const std::string sel =
         std::string("SELECT ") + poseGraphColumns() +
         " FROM pose_graph_edges WHERE edge_type = ?3 AND "
@@ -1730,10 +1737,10 @@ class ProjectDB::Impl {
     return false;
   }
 
-  void requireV27PoseGraph(const char *who) const {
-    if (!hasPoseGraphV27)
+  void requireV28PoseGraph(const char *who) const {
+    if (!hasPoseGraphV28)
       throw std::runtime_error(std::string(who) +
-                               ": project schema predates v27; open it "
+                               ": project schema predates v28; open it "
                                "read-write once to migrate");
   }
 
@@ -1755,7 +1762,7 @@ class ProjectDB::Impl {
   bool upsertPoseGraphEdge(ProjectDB::PoseGraphEdge e, bool overwriteRejected) {
     namespace pg = core::pose_graph;
     checkWritable();
-    requireV27PoseGraph("upsert_pose_graph_edge");
+    requireV28PoseGraph("upsert_pose_graph_edge");
     if (e.from_node_id == e.to_node_id)
       throw std::invalid_argument("upsert_pose_graph_edge: self-loop on node " +
                                   std::to_string(e.from_node_id));
@@ -1856,7 +1863,7 @@ class ProjectDB::Impl {
   bool setPoseGraphEdgeStatus(int from, int to, std::string_view type,
                               std::string_view status) {
     checkWritable();
-    requireV27PoseGraph("set_pose_graph_edge_status");
+    requireV28PoseGraph("set_pose_graph_edge_status");
     if (!core::pose_graph::is_valid_status(status))
       throw std::invalid_argument(
           "set_pose_graph_edge_status: invalid status '" + std::string(status) +
@@ -1881,7 +1888,7 @@ class ProjectDB::Impl {
   int updatePoseGraphEdgeMetrics(
       std::span<const ProjectDB::PoseGraphEdgeMetrics> metrics) {
     checkWritable();
-    requireV27PoseGraph("update_pose_graph_edge_metrics");
+    requireV28PoseGraph("update_pose_graph_edge_metrics");
     Savepoint sp(db, "pose_graph_metrics");
     sqlite3_stmt *s = prepare_or_throw(
         db,
@@ -1914,7 +1921,7 @@ class ProjectDB::Impl {
 
   int deletePoseGraphEdgesFromSource(std::string_view source) {
     checkWritable();
-    requireV27PoseGraph("delete_pose_graph_edges_from_source");
+    requireV28PoseGraph("delete_pose_graph_edges_from_source");
     sqlite3_stmt *s = prepare_or_throw(
         db,
         "DELETE FROM pose_graph_edges WHERE source = ?1 AND status = "
@@ -2635,6 +2642,48 @@ class ProjectDB::Impl {
 
   void migrateToV27() {
     reusex::info("Migrating database to schema version 27");
+    // Resource view record (docs/superpowers/specs/
+    // 2026-10-13-resource-view-record-design.md §2): the chosen image of a
+    // survey part. ADD COLUMN cannot add a table constraint, so the
+    // cross-column invariant is a column CHECK on view_h, the last column
+    // added, when every column it names exists. Each step is guarded so a
+    // test that rolls the version back re-runs it safely. Existing rows stay
+    // NULL, which the CHECK accepts. 1e-9 = core::kViewRegionEpsilon.
+    static constexpr const char *kViewH =
+        "REAL CHECK ((view_kind IS NULL) = (view_id IS NULL) "
+        "AND (view_kind IS NOT NULL OR view_x IS NULL) "
+        "AND ((view_x IS NULL AND view_y IS NULL AND view_w IS NULL "
+        "AND view_h IS NULL) OR (view_x IS NOT NULL AND view_y IS NOT NULL "
+        "AND view_w IS NOT NULL AND view_h IS NOT NULL AND view_w > 0 "
+        "AND view_h > 0 AND view_x >= 0 AND view_y >= 0 "
+        "AND view_w <= 1.000000001 AND view_y + view_h <= 1.000000001)))";
+    const std::pair<const char *, const char *> columns[] = {
+        {"view_kind", "TEXT CHECK (view_kind IN ('frame','panorama'))"},
+        {"view_id", "INTEGER"},
+        {"view_x", "REAL"},
+        {"view_y", "REAL"},
+        {"view_w", "REAL"},
+        {"view_h", kViewH}};
+    execOrThrow("BEGIN TRANSACTION;");
+    try {
+      for (const auto &[name, decl] : columns)
+        if (!columnExists("survey_parts", name))
+          execOrThrow((std::string("ALTER TABLE survey_parts ADD COLUMN ") +
+                       name + " " + decl + ";")
+                          .c_str());
+      insertSchemaVersion(27, "Resource view record: survey_parts.view_* "
+                              "(sys:view, the chosen image of a resource)");
+      execOrThrow("COMMIT;");
+    } catch (...) {
+      if (sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr) != SQLITE_OK)
+        reusex::warn("migrateToV27: ROLLBACK failed: {}", sqlite3_errmsg(db));
+      throw;
+    }
+    reusex::info("Migration to schema version 27 complete");
+  }
+
+  void migrateToV28() {
+    reusex::info("Migrating database to schema version 28");
     // Pose-graph editor (spec §3): the stored graph becomes the source of
     // truth for `rux optimize`. pose_graph_edges is REBUILT rather than
     // ALTERed: v15 declared `residual REAL NOT NULL` (an unsolved edge has no
@@ -2642,11 +2691,11 @@ class ProjectDB::Impl {
     // tombstones match on. Rows are canonicalised to from < to, self-loops
     // dropped, and duplicates collapsed onto the lowest id (SQLite's
     // single-MIN() aggregate returns the bare columns of that row).
-    Savepoint sp(db, "migrate_v27");
+    Savepoint sp(db, "migrate_v28");
     if (tableExists("pose_graph_edges") &&
         !columnExists("pose_graph_edges", "status")) {
       execOrThrow(R"(
-        CREATE TABLE pose_graph_edges_v27 (
+        CREATE TABLE pose_graph_edges_v28 (
           id                    INTEGER PRIMARY KEY,
           from_node_id          INTEGER NOT NULL,
           to_node_id            INTEGER NOT NULL,
@@ -2666,7 +2715,7 @@ class ProjectDB::Impl {
           CHECK (from_node_id < to_node_id),
           UNIQUE (from_node_id, to_node_id, edge_type)
         );
-        INSERT INTO pose_graph_edges_v27
+        INSERT INTO pose_graph_edges_v28
           (id, from_node_id, to_node_id, edge_type, residual, weight,
            source, status)
         SELECT MIN(id), MIN(from_node_id, to_node_id),
@@ -2677,7 +2726,7 @@ class ProjectDB::Impl {
         GROUP BY MIN(from_node_id, to_node_id), MAX(from_node_id, to_node_id),
                  edge_type;
         DROP TABLE pose_graph_edges;
-        ALTER TABLE pose_graph_edges_v27 RENAME TO pose_graph_edges;
+        ALTER TABLE pose_graph_edges_v28 RENAME TO pose_graph_edges;
       )");
     }
     if (tableExists("sensor_frames") &&
@@ -2690,12 +2739,12 @@ class ProjectDB::Impl {
         value TEXT NOT NULL
       );
     )");
-    insertSchemaVersion(27, "Stored pose graph: edge measurements, "
+    insertSchemaVersion(28, "Stored pose graph: edge measurements, "
                             "information, provenance, status and metrics; "
                             "sensor_frames.initial_transform; "
                             "project_settings");
     sp.release();
-    reusex::info("Migration to schema version 27 complete");
+    reusex::info("Migration to schema version 28 complete");
   }
 
   /// 1-based position of a report version in generation order.
@@ -3249,7 +3298,7 @@ class ProjectDB::Impl {
     checkWritable();
     if (!hasInitialTransform)
       throw std::runtime_error("set_initial_pose: project schema predates "
-                               "v27; open it read-write once to migrate");
+                               "v28; open it read-write once to migrate");
     if (!core::pose_graph::is_rigid_transform(pose))
       throw std::invalid_argument("set_initial_pose: frame " +
                                   std::to_string(nodeId) +
@@ -3301,7 +3350,7 @@ class ProjectDB::Impl {
   void putSetting(std::string_view key, std::string_view value) {
     checkWritable();
     if (!hasSettingsTable)
-      throw std::runtime_error("set_setting: project schema predates v27");
+      throw std::runtime_error("set_setting: project schema predates v28");
     sqlite3_stmt *s = prepare_or_throw(
         db,
         "INSERT INTO project_settings (key, value) VALUES (?1, ?2) "
@@ -7336,6 +7385,15 @@ bool ProjectDB::has_panoramic_image(std::string_view filename) const {
   return impl_->hasPanoramicImage(filename);
 }
 
+bool ProjectDB::has_panoramic_image(int id) const {
+  sqlite3_stmt *stmt = prepare_or_throw(
+      impl_->db, "SELECT 1 FROM panoramic_images WHERE id = ?;",
+      "has_panoramic_image");
+  StmtGuard guard(stmt);
+  sqlite3_bind_int(stmt, 1, id);
+  return sqlite3_step(stmt) == SQLITE_ROW;
+}
+
 void ProjectDB::delete_panoramic_image(int id) {
   impl_->checkWritable();
   impl_->deletePanoramicImageById(id);
@@ -9308,23 +9366,34 @@ namespace {
 /// instance's link — but only when no other part owns that passport, so two
 /// parts never write through one passport (a part reads as passport-less
 /// instead; ensure_resource_passport gives it its own on first write).
-std::string survey_part_select(bool has_passport_column) {
-  return std::string(
-             "SELECT p.code, p.type_id, pc.name, i.instance_id, "
-             "p.room_id, p.room_name, p.quantity, p.starred, p.note, ") +
-         (has_passport_column
-              ? "COALESCE(p.passport_guid, CASE WHEN NOT EXISTS (SELECT 1 "
-                "FROM survey_parts o WHERE o.passport_guid = "
-                "im.material_guid) THEN im.material_guid END)"
-              : "im.material_guid") +
-         ", p.instance_guid FROM survey_parts p "
+std::string survey_part_select(bool has_passport_column,
+                               bool has_view_columns) {
+  std::string sql = "SELECT p.code, p.type_id, pc.name, i.instance_id, "
+                    "p.room_id, p.room_name, p.quantity, p.starred, p.note, ";
+  sql += has_passport_column
+             ? "COALESCE(p.passport_guid, CASE WHEN NOT EXISTS (SELECT 1 "
+               "FROM survey_parts o WHERE o.passport_guid = "
+               "im.material_guid) THEN im.material_guid END)"
+             : "im.material_guid";
+  sql += ", p.instance_guid";
+  // Columns 11-17: the view record, and whether its source still exists
+  // (a frame or panorama deleted after the choice reads as no view).
+  if (has_view_columns)
+    sql += ", p.view_kind, p.view_id, p.view_x, p.view_y, p.view_w, "
+           "p.view_h, CASE p.view_kind WHEN 'frame' THEN EXISTS (SELECT 1 "
+           "FROM sensor_frames f WHERE f.node_id = p.view_id) "
+           "WHEN 'panorama' THEN EXISTS (SELECT 1 FROM panoramic_images pi "
+           "WHERE pi.id = p.view_id) ELSE 0 END";
+  sql += " FROM survey_parts p "
          "LEFT JOIN instances i ON i.guid = p.instance_guid "
          "LEFT JOIN point_clouds pc ON pc.id = i.cloud_id "
          "LEFT JOIN instance_materials im ON im.cloud_id = i.cloud_id AND "
          "im.instance_id = i.instance_id ";
+  return sql;
 }
 
-ProjectDB::SurveyPartRecord read_survey_part(sqlite3_stmt *s) {
+ProjectDB::SurveyPartRecord read_survey_part(sqlite3_stmt *s,
+                                             bool has_view_columns) {
   ProjectDB::SurveyPartRecord r;
   r.code = column_text(s, 0);
   r.type_id = sqlite3_column_int64(s, 1);
@@ -9342,6 +9411,24 @@ ProjectDB::SurveyPartRecord read_survey_part(sqlite3_stmt *s) {
     r.material_guid = column_text(s, 9);
   if (sqlite3_column_type(s, 10) != SQLITE_NULL)
     r.instance_guid = column_text(s, 10);
+  if (has_view_columns && sqlite3_column_type(s, 11) != SQLITE_NULL) {
+    const std::string kind_text = column_text(s, 11);
+    const int id = sqlite3_column_int(s, 12);
+    const auto kind = core::view_kind_from_string(kind_text);
+    if (!kind || sqlite3_column_int(s, 17) == 0) {
+      // STANDARDS §5: a dangling view is not silently dropped.
+      reusex::warn("survey part {}: its view ({} #{}) no longer exists; read "
+                   "as no image",
+                   r.code, kind_text, id);
+    } else {
+      core::ResourceView v{*kind, id, std::nullopt};
+      if (sqlite3_column_type(s, 13) != SQLITE_NULL)
+        v.region = core::ViewRegion{
+            sqlite3_column_double(s, 13), sqlite3_column_double(s, 14),
+            sqlite3_column_double(s, 15), sqlite3_column_double(s, 16)};
+      r.view = v;
+    }
+  }
   return r;
 }
 } // namespace
@@ -9401,25 +9488,27 @@ void ProjectDB::add_survey_part(const SurveyPartRecord &rec) {
 
 std::vector<ProjectDB::SurveyPartRecord> ProjectDB::survey_parts() const {
   const std::string sql =
-      survey_part_select(impl_->hasPassportColumn) + "ORDER BY p.code;";
+      survey_part_select(impl_->hasPassportColumn, impl_->hasViewColumns) +
+      "ORDER BY p.code;";
   sqlite3_stmt *stmt = prepare_or_throw(impl_->db, sql.c_str(), "survey_parts");
   StmtGuard guard(stmt);
   std::vector<SurveyPartRecord> out;
   while (sqlite3_step(stmt) == SQLITE_ROW)
-    out.push_back(read_survey_part(stmt));
+    out.push_back(read_survey_part(stmt, impl_->hasViewColumns));
   return out;
 }
 
 std::optional<ProjectDB::SurveyPartRecord>
 ProjectDB::survey_part(std::string_view code) const {
   const std::string sql =
-      survey_part_select(impl_->hasPassportColumn) + "WHERE p.code = ?;";
+      survey_part_select(impl_->hasPassportColumn, impl_->hasViewColumns) +
+      "WHERE p.code = ?;";
   sqlite3_stmt *stmt = prepare_or_throw(impl_->db, sql.c_str(), "survey_part");
   StmtGuard guard(stmt);
   bind_text(stmt, 1, code);
   if (sqlite3_step(stmt) != SQLITE_ROW)
     return std::nullopt;
-  return read_survey_part(stmt);
+  return read_survey_part(stmt, impl_->hasViewColumns);
 }
 
 ProjectDB::SurveyPartRecord
@@ -9661,6 +9750,51 @@ void ProjectDB::delete_survey_part(std::string_view code) {
                              std::string(sqlite3_errmsg(impl_->db)));
   if (sqlite3_changes(impl_->db) == 0)
     throw std::out_of_range("no survey part '" + std::string(code) + "'");
+}
+
+void ProjectDB::set_survey_part_view(
+    std::string_view code, const std::optional<core::ResourceView> &view) {
+  impl_->checkWritable();
+  if (view)
+    core::validate_view_shape(*view);
+  const auto existing = survey_part(code);
+  if (!existing)
+    throw std::out_of_range("no survey part '" + std::string(code) + "'");
+  // A resource keeps its image once it has one: refuse to clear a set view.
+  // Clearing an already-absent view is a no-op success. No internal caller
+  // (sync_survey, mask -> resource) ever clears a set view, so the setter
+  // can be as strict as patch_resource's higher-level check.
+  if (!view && existing->view)
+    throw core::KeyValueError(
+        std::string(core::kViewKey),
+        "'" + std::string(core::kViewKey) +
+            "' already has a value and cannot be cleared");
+  if (view) {
+    const bool frame = view->kind == core::ViewKind::frame;
+    if (frame ? !has_sensor_frame(view->id) : !has_panoramic_image(view->id))
+      throw std::out_of_range(
+          std::string(frame ? "no sensor frame " : "no panorama ") +
+          std::to_string(view->id));
+  }
+  sqlite3_stmt *stmt = prepare_or_throw(
+      impl_->db,
+      "UPDATE survey_parts SET view_kind = ?, view_id = ?, view_x = ?, "
+      "view_y = ?, view_w = ?, view_h = ? WHERE code = ?;",
+      "set_survey_part_view");
+  StmtGuard guard(stmt);
+  for (int i = 1; i <= 6; ++i)
+    sqlite3_bind_null(stmt, i);
+  if (view) {
+    bind_text(stmt, 1, core::to_string(view->kind));
+    sqlite3_bind_int(stmt, 2, view->id);
+    if (view->region)
+      for (int i = 0; i < 4; ++i)
+        sqlite3_bind_double(stmt, 3 + i, (*view->region)[i]);
+  }
+  bind_text(stmt, 7, code);
+  if (sqlite3_step(stmt) != SQLITE_DONE)
+    throw std::runtime_error("set_survey_part_view '" + std::string(code) +
+                             "': " + sqlite3_errmsg(impl_->db));
 }
 
 void ProjectDB::delete_survey_type(int64_t id) {

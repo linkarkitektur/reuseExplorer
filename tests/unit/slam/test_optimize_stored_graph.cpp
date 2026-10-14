@@ -272,7 +272,7 @@ TEST_CASE("OptimizeStoredGraph_NoGraph_AutoInitialisesButDryRunWritesNothing",
 
 TEST_CASE("OptimizeStoredGraph_LegacyOdometryRows_StillAutoInitialise",
           "[slam][optimize][stored_graph]") {
-  // Review focus 4: a project carrying rows from a pre-v27 optimize.
+  // Review focus 4: a project carrying rows from a pre-v28 optimize.
   TempPath tmp("test_optimize_stored_legacy");
   ProjectDB db(tmp.path);
   make_project(db);

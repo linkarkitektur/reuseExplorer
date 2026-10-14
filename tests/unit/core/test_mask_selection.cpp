@@ -13,12 +13,14 @@
 // would sample the wrong pixel and the expected set would change.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <core/MaterialPassport.hpp>
 #include <core/ProjectDB.hpp>
 #include <core/SensorIntrinsics.hpp>
 #include <core/mask_selection.hpp>
+#include <core/resource_view.hpp>
 #include <core/survey_service.hpp>
 #include <types.hpp>
 
@@ -411,4 +413,75 @@ TEST_CASE("apply_mask_selection keeps cloud provenance and ignores stale "
   CHECK(db.point_cloud_storage_order("labels") == "morton_10bit");
   // A cloud created by the edit is attributed to it.
   CHECK(db.point_cloud_provenance("instances").first == "segment_resource");
+}
+
+TEST_CASE("MaskRegion_Rectangle_NormalisedUnpaddedBbox",
+          "[core][mask_selection]") {
+  using Catch::Matchers::WithinAbs;
+  const auto r =
+      reusex::core::mask_region(make_mask()); // 256², rect (100,100,80,80)
+  REQUIRE(r);
+  CHECK_THAT((*r)[0], WithinAbs(100.0 / 256.0, 1e-12));
+  CHECK_THAT((*r)[1], WithinAbs(100.0 / 256.0, 1e-12));
+  CHECK_THAT((*r)[2], WithinAbs(80.0 / 256.0, 1e-12));
+  CHECK_THAT((*r)[3], WithinAbs(80.0 / 256.0, 1e-12));
+  cv::Mat labels(4, 4, CV_32S, cv::Scalar(0));
+  labels.at<int>(2, 1) = 7;
+  CHECK(reusex::core::mask_region(labels) ==
+        reusex::core::ViewRegion{0.25, 0.5, 0.25, 0.25});
+  CHECK_FALSE(reusex::core::mask_region(cv::Mat(4, 4, CV_8UC1, cv::Scalar(0))));
+  CHECK_THROWS_AS(
+      reusex::core::mask_region(cv::Mat(4, 4, CV_8UC3, cv::Scalar(1, 1, 1))),
+      std::invalid_argument);
+}
+
+TEST_CASE("ApplyMaskSelection_WithFrame_SetsPaddedView",
+          "[core][mask_selection]") {
+  using Catch::Matchers::WithinAbs;
+  using reusex::core::ViewKind;
+  const TempPath tmp("mask_apply_view");
+  ProjectDB db(tmp.path);
+  db.save_point_cloud("cloud", line_cloud(10));
+  save_frame(db, 1);
+
+  SECTION("from the mask region the caller passes") {
+    MaskSelectionOptions opts;
+    opts.frame_id = 1;
+    opts.view_region = reusex::core::ViewRegion{0.375, 0.375, 0.25, 0.25};
+    const auto r = apply_mask_selection(db, {0, 2}, "Dør", opts);
+    REQUIRE(r.view);
+    CHECK(r.view->kind == ViewKind::frame);
+    CHECK(r.view->id == 1);
+    REQUIRE(r.view->region);
+    CHECK_THAT((*r.view->region)[0], WithinAbs(0.3375, 1e-12));
+    CHECK_THAT((*r.view->region)[2], WithinAbs(0.325, 1e-12));
+    CHECK(db.survey_part(r.resource_code)->view == r.view);
+  }
+  SECTION("without a region, from the selection projected into the frame") {
+    MaskSelectionOptions opts;
+    opts.frame_id = 1;
+    // Points 0 and 2 (x = 0, 0.02 at z = 2): u = 64, 65; v = 64.
+    const auto r = apply_mask_selection(db, {0, 2}, "Dør", opts);
+    REQUIRE(r.view);
+    REQUIRE(r.view->region);
+    CHECK_THAT((*r.view->region)[0], WithinAbs(63.7 / 128.0, 1e-6));
+    CHECK_THAT((*r.view->region)[2], WithinAbs(2.6 / 128.0, 1e-6));
+  }
+  SECTION("no frame, or an unknown one: no view, part still created") {
+    MaskSelectionOptions none;
+    CHECK_FALSE(apply_mask_selection(db, {0}, "Dør", none).view);
+    MaskSelectionOptions missing;
+    missing.frame_id = 99;
+    const auto r = apply_mask_selection(db, {1}, "Dør", missing);
+    CHECK_FALSE(r.view);
+    CHECK_FALSE(db.survey_part(r.resource_code)->view);
+  }
+  SECTION("an invalid region is refused before anything is written") {
+    MaskSelectionOptions bad;
+    bad.frame_id = 1;
+    bad.view_region = reusex::core::ViewRegion{0.1, 0.1, 0.0, 0.2};
+    CHECK_THROWS_AS(apply_mask_selection(db, {0}, "Dør", bad),
+                    std::invalid_argument);
+    CHECK(db.survey_parts().empty());
+  }
 }

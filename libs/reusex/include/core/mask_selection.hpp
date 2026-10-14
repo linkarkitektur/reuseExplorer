@@ -14,6 +14,7 @@
 /// frame's own depth image — no z-buffer, no RTABMap, no PCL in this header.
 
 #include "reusex/core/ProjectDB.hpp"
+#include "reusex/core/resource_view.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -78,6 +79,11 @@ std::vector<std::size_t>
 project_frame_mask(const ProjectDB &db, int frame_id, const cv::Mat &mask,
                    const MaskProjectionOptions &opts = {});
 
+/// Normalised, unpadded bbox [x, y, w, h] of the non-zero pixels of a
+/// single-channel CV_8U or CV_32S mask; nullopt when none is set.
+/// @throws std::invalid_argument for a multi-channel or other-depth mask.
+std::optional<ViewRegion> mask_region(const cv::Mat &mask);
+
 /// Tunables for `apply_mask_selection()`.
 struct MaskSelectionOptions {
   /// Base cloud the indices refer to; its size sizes a missing label cloud.
@@ -99,6 +105,11 @@ struct MaskSelectionOptions {
   /// Recorded in the pipeline log entry; `-1` when the selection did not come
   /// from a frame.
   int frame_id = -1;
+  /// The mask's bbox in frame_id's image (mask_region()), unpadded. The new
+  /// part's view is frame_id with this region padded 15 % per side. Unset
+  /// with frame_id >= 0: the selected points' bbox in that frame is used.
+  /// Validated up front (std::invalid_argument, nothing written).
+  std::optional<ViewRegion> view_region;
 };
 
 /// What `apply_mask_selection()` created.
@@ -113,6 +124,8 @@ struct MaskSelectionResult {
   int point_count = 0;
   /// Instances that gave up points to the new one, with their new counts.
   std::vector<std::pair<uint32_t, int>> shrunk_instances;
+  /// The new part's view (frame_id + region); nullopt without a frame.
+  std::optional<ResourceView> view;
 };
 
 /**
@@ -130,6 +143,9 @@ struct MaskSelectionResult {
  *   stay intact) and is reported with a `warn`.
  * - Survey part: linked to the new instance (so `sync_survey` will not add a
  *   second one), in the type chosen per `MaskSelectionOptions::type_id`.
+ * - View: with `frame_id >= 0` naming an existing frame, the part's view
+ *   (see MaskSelectionOptions::view_region); an unknown frame is logged at
+ *   warn and the part gets none.
  * - A `pipeline_log` entry (`segment_resource`) records the parameters.
  *
  * Existing instance rows are never deleted and re-inserted, so material links
@@ -139,8 +155,8 @@ struct MaskSelectionResult {
  * transaction (BEGIN IMMEDIATE), so a concurrent writer cannot be overwritten
  * from stale copies.
  *
- * @throws std::invalid_argument for an empty/blank `class_name` or an index
- *         out of range.
+ * @throws std::invalid_argument for an empty/blank `class_name`, an index
+ *         out of range, or an invalid `opts.view_region`.
  * @throws MaskSelectionError for an empty selection, a missing base cloud, or
  *         a label cloud whose size differs from the base cloud's.
  * @throws MaskSelectionError when `opts.type_id` names a rejected type.

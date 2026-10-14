@@ -22,7 +22,7 @@ const std::vector<Artifact> &artifacts() {
        "per-frame 2D semantic label images"},
       {"pose_graph_edges", ArtifactKind::table, Alignment::none,
        "the stored pose graph: odometry and loop edges with measurements, "
-       "status and solve metrics (schema v27)"},
+       "status and solve metrics (schema v28)"},
       {"cloud", ArtifactKind::point_cloud, Alignment::per_point,
        "the fused scan cloud (PointXYZRGB)"},
       {"normals", ArtifactKind::point_cloud, Alignment::per_point,

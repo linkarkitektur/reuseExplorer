@@ -38,7 +38,7 @@ using reusex::test_support::TempPath;
 
 namespace {
 
-/// A pre-v27 style edge: key, residual and weight only (designated
+/// A pre-v28 style edge: key, residual and weight only (designated
 /// initialisers would still trip -Wmissing-field-initializers).
 ProjectDB::PoseGraphEdge legacy_edge(int from, int to, std::string type,
                                      double residual, double weight) {

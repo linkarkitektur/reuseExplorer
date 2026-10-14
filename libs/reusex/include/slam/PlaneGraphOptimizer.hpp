@@ -504,7 +504,7 @@ legacy_graph_edges(const std::vector<FrameSurfels> &frames,
                    const std::vector<LoopEdge> &loop_edges);
 
 /// High-level entry point: solve the STORED pose graph of @p db
-/// (pose_graph_edges, schema v27). Seeds every frame from
+/// (pose_graph_edges, schema v28). Seeds every frame from
 /// sensor_frames.initial_transform (falling back to `transform` with a
 /// warning), adds one factor per active stored edge (auto + confirmed, with a
 /// measurement; confirmed loop edges are GNC known inliers), bridges a

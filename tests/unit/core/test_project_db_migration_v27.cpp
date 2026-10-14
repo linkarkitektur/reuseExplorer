@@ -1,205 +1,116 @@
 // SPDX-FileCopyrightText: 2026 Povl Filip Sonne-Frederiksen
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
-
-// Schema v26 -> v27 (pose-graph editor spec §3): pose_graph_edges gains the
-// measurement, information, provenance, status and metric columns plus a
-// UNIQUE(from, to, type) key on canonical (from < to) rows;
-// sensor_frames.initial_transform and project_settings appear. A fresh project
-// is rolled back to the exact v26 shape with raw SQL, seeded with the kinds of
-// rows `rux optimize` and ruxd wrote under v15..v26, then reopened.
+// Schema v26 -> v27 (resource view record): six nullable survey_parts.view_*
+// columns with a CHECK on the invariant. A fresh project is rolled back to
+// v26 with raw SQL, then reopened read-write so migrateToV27 runs on real
+// v26 data, and read-only to check a stale project still reads.
 
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
-#include <reusex/core/ProjectDB.hpp>
+#include <core/ProjectDB.hpp>
 
+#include "../../support/survey_fixture.hpp"
 #include "../../support/temp_path.hpp"
 
 #include <sqlite3.h>
 
-#include <cmath>
 #include <filesystem>
 #include <string>
 
-using Catch::Matchers::WithinAbs;
 using reusex::ProjectDB;
-using reusex::test_support::TempPath;
 namespace fs = std::filesystem;
+using namespace reusex::test_support;
 
 namespace {
+struct TempDB : TempPath {
+  TempDB() : TempPath("test_migration_v27") {}
+};
 
-void exec_raw(const fs::path &path, const std::string &sql) {
+int exec_rc(const fs::path &path, const std::string &sql) {
   sqlite3 *raw = nullptr;
   REQUIRE(sqlite3_open(path.string().c_str(), &raw) == SQLITE_OK);
-  char *err = nullptr;
-  const int rc = sqlite3_exec(raw, sql.c_str(), nullptr, nullptr, &err);
-  INFO((err ? err : ""));
-  sqlite3_free(err);
+  const int rc = sqlite3_exec(raw, sql.c_str(), nullptr, nullptr, nullptr);
   sqlite3_close(raw);
-  REQUIRE(rc == SQLITE_OK);
+  return rc;
 }
 
-bool column_exists(const fs::path &path, const char *table, const char *col) {
-  sqlite3 *raw = nullptr;
-  REQUIRE(sqlite3_open(path.string().c_str(), &raw) == SQLITE_OK);
-  sqlite3_stmt *s = nullptr;
-  const std::string sql = std::string("PRAGMA table_info(") + table + ");";
-  sqlite3_prepare_v2(raw, sql.c_str(), -1, &s, nullptr);
-  bool found = false;
-  while (sqlite3_step(s) == SQLITE_ROW)
-    if (std::string(
-            reinterpret_cast<const char *>(sqlite3_column_text(s, 1))) == col)
-      found = true;
-  sqlite3_finalize(s);
-  sqlite3_close(raw);
-  return found;
+/// view_h first: its CHECK names the other view columns, and SQLite refuses
+/// to drop a column another column's CHECK still names.
+void roll_back_to_v26(const fs::path &path) {
+  REQUIRE(exec_rc(path, "ALTER TABLE survey_parts DROP COLUMN view_h;"
+                        "ALTER TABLE survey_parts DROP COLUMN view_w;"
+                        "ALTER TABLE survey_parts DROP COLUMN view_y;"
+                        "ALTER TABLE survey_parts DROP COLUMN view_x;"
+                        "ALTER TABLE survey_parts DROP COLUMN view_id;"
+                        "ALTER TABLE survey_parts DROP COLUMN view_kind;"
+                        "DELETE FROM schema_version WHERE version >= 27;") ==
+          SQLITE_OK);
 }
-
-/// The exact v15..v26 pose_graph_edges DDL plus legacy rows: a duplicate in
-/// reverse direction, a self-loop, a reversed loop closure pair and a
-/// second type on the same pair.
-void roll_back_to_v26_with_legacy_rows(const fs::path &path) {
-  exec_raw(path, R"(
-    DROP TABLE pose_graph_edges;
-    CREATE TABLE pose_graph_edges (
-      id           INTEGER PRIMARY KEY,
-      from_node_id INTEGER NOT NULL,
-      to_node_id   INTEGER NOT NULL,
-      edge_type    TEXT    NOT NULL,
-      residual     REAL    NOT NULL,
-      weight       REAL
-    );
-    INSERT INTO pose_graph_edges VALUES (1, 1, 2, 'odometry',     0.1, 100.0);
-    INSERT INTO pose_graph_edges VALUES (2, 2, 1, 'odometry',     0.2,  50.0);
-    INSERT INTO pose_graph_edges VALUES (3, 9, 5, 'loop_closure', 0.5,  NULL);
-    INSERT INTO pose_graph_edges VALUES (4, 5, 9, 'loop_closure', 0.6,  25.0);
-    INSERT INTO pose_graph_edges VALUES (5, 3, 3, 'loop_closure', 0.7,  25.0);
-    INSERT INTO pose_graph_edges VALUES (6, 1, 2, 'loop_closure', 0.8,  25.0);
-    DROP TABLE project_settings;
-    ALTER TABLE sensor_frames DROP COLUMN initial_transform;
-    DELETE FROM schema_version WHERE version >= 27;
-  )");
-}
-
 } // namespace
 
-TEST_CASE("MigrationV27_FreshProject_HasNewColumnsAndTables",
-          "[projectdb][migration][pose_graph]") {
-  TempPath tmp("test_migration_v27_fresh");
+TEST_CASE("MigrationV27_FreshProject_HasViewColumnsAndCheck",
+          "[ProjectDB][migration]") {
+  TempDB tmp;
   {
     ProjectDB db(tmp.path);
-    CHECK(db.schema_version() == 27);
-    CHECK(ProjectDB::latest_schema_version() == 27);
-    CHECK(db.list_pose_graph_edges().empty());
+    CHECK(db.schema_version() == ProjectDB::latest_schema_version());
+    CHECK(ProjectDB::latest_schema_version() >= 27);
+    const auto t = make_type(db, "Døre");
+    make_part(db, "RX-001", t);
+    CHECK_FALSE(db.survey_part("RX-001")->view);
   }
-  for (const char *col :
-       {"transform", "information", "source", "status", "created_at",
-        "seed_disagreement_m", "seed_disagreement_deg", "deviation_m",
-        "deviation_deg"}) {
-    INFO(col);
-    CHECK(column_exists(tmp.path, "pose_graph_edges", col));
-  }
-  CHECK(column_exists(tmp.path, "sensor_frames", "initial_transform"));
-  CHECK(column_exists(tmp.path, "project_settings", "value"));
+  // The invariant holds in the schema, not only in the setter.
+  CHECK(exec_rc(tmp.path, "UPDATE survey_parts SET view_kind = 'frame';") !=
+        SQLITE_OK); // kind without id
+  CHECK(exec_rc(tmp.path, "UPDATE survey_parts SET view_kind = 'photo', "
+                          "view_id = 1;") != SQLITE_OK);
+  CHECK(exec_rc(tmp.path,
+                "UPDATE survey_parts SET view_kind = 'frame', "
+                "view_id = 1, view_x = 0.1;") != SQLITE_OK); // partial region
+  CHECK(exec_rc(tmp.path,
+                "UPDATE survey_parts SET view_kind = 'frame', view_id = 1, "
+                "view_x = 0, view_y = 0.6, view_w = 0.5, view_h = 0.5;") !=
+        SQLITE_OK); // y + h > 1
+  CHECK(exec_rc(tmp.path,
+                "UPDATE survey_parts SET view_kind = 'frame', view_id = 1, "
+                "view_x = 0.1, view_y = 0.1, view_w = 0.5, view_h = 0.5;") ==
+        SQLITE_OK);
 }
 
-TEST_CASE("MigrationV27_ReadOnlyV26_DegradesToLegacyRows",
-          "[projectdb][migration][pose_graph]") {
-  TempPath tmp("test_migration_v27_ro");
+TEST_CASE("MigrationV27_FromV26_KeepsPartsWithNullViews",
+          "[ProjectDB][migration]") {
+  TempDB tmp;
   {
     ProjectDB db(tmp.path);
+    make_instance_cloud(db, 1);
+    const auto t = make_type(db, "Døre");
+    make_part(db, "RX-001", t, 1u, 3.0);
   }
-  roll_back_to_v26_with_legacy_rows(tmp.path);
-
-  ProjectDB ro(tmp.path, /*readOnly=*/true);
-  REQUIRE(ro.schema_version() == 26);
-  const auto rows = ro.list_pose_graph_edges(); // must not throw
-  REQUIRE(rows.size() == 6);
-  CHECK(rows[0].source == "legacy");
-  CHECK(rows[0].status == "auto");
-  CHECK_FALSE(rows[0].transform.has_value());
-  CHECK(rows[0].id == 1);
-  CHECK(ro.has_pose_graph());
+  roll_back_to_v26(tmp.path);
+  {
+    ProjectDB db(tmp.path);
+    CHECK(db.schema_version() == ProjectDB::latest_schema_version());
+    const auto p = db.survey_part("RX-001");
+    REQUIRE(p);
+    CHECK(p->quantity == 3.0);
+    CHECK(p->instance_guid == "guid-inst-1");
+    CHECK_FALSE(p->view);
+  }
 }
 
-TEST_CASE("MigrationV27_FromV26_DeduplicatesCanonicalisesAndKeepsLowestId",
-          "[projectdb][migration][pose_graph]") {
-  TempPath tmp("test_migration_v27_dedup");
+TEST_CASE("MigrationV27_ReadOnlyV26_ReadsWithoutViews",
+          "[ProjectDB][migration]") {
+  TempDB tmp;
   {
     ProjectDB db(tmp.path);
+    const auto t = make_type(db, "Døre");
+    make_part(db, "RX-001", t);
   }
-  roll_back_to_v26_with_legacy_rows(tmp.path);
-
-  ProjectDB db(tmp.path);
-  REQUIRE(db.schema_version() == 27);
-  const auto rows = db.list_pose_graph_edges();
-  // (1,2,odometry) from ids 1+2 -> id 1; (5,9,loop_closure) from ids 3+4 ->
-  // id 3; self-loop id 5 dropped; (1,2,loop_closure) id 6 kept.
-  REQUIRE(rows.size() == 3);
-  CHECK(rows[0].id == 1);
-  CHECK(rows[0].from_node_id == 1);
-  CHECK(rows[0].to_node_id == 2);
-  CHECK(rows[0].edge_type == "odometry");
-  CHECK_THAT(rows[0].residual, WithinAbs(0.1, 1e-12));
-  CHECK(rows[1].id == 3);
-  CHECK(rows[1].from_node_id == 5);
-  CHECK(rows[1].to_node_id == 9);
-  CHECK_THAT(rows[1].residual, WithinAbs(0.5, 1e-12));
-  CHECK(std::isnan(rows[1].weight));
-  CHECK(rows[2].id == 6);
-  for (const auto &r : rows) {
-    CHECK(r.source == "legacy");
-    CHECK(r.status == "auto");
-    CHECK_FALSE(r.transform.has_value());
-    CHECK_FALSE(r.information.has_value());
-    CHECK_FALSE(r.deviation_m.has_value());
-  }
-  CHECK(column_exists(tmp.path, "sensor_frames", "initial_transform"));
-}
-
-TEST_CASE("MigrationV27_UniqueKey_RejectsRawDuplicate",
-          "[projectdb][migration][pose_graph]") {
-  TempPath tmp("test_migration_v27_unique");
-  {
-    ProjectDB db(tmp.path);
-  }
-  exec_raw(tmp.path, "INSERT INTO pose_graph_edges (from_node_id, to_node_id, "
-                     "edge_type, source, status) VALUES (1, 2, 'odometry', "
-                     "'manual', 'auto');");
-  sqlite3 *raw = nullptr;
-  REQUIRE(sqlite3_open(tmp.path.string().c_str(), &raw) == SQLITE_OK);
-  const int dup = sqlite3_exec(
-      raw,
-      "INSERT INTO pose_graph_edges (from_node_id, to_node_id, edge_type, "
-      "source, status) VALUES (1, 2, 'odometry', 'manual', 'auto');",
-      nullptr, nullptr, nullptr);
-  const int reversed = sqlite3_exec(
-      raw,
-      "INSERT INTO pose_graph_edges (from_node_id, to_node_id, edge_type, "
-      "source, status) VALUES (2, 1, 'loop_closure', 'manual', 'auto');",
-      nullptr, nullptr, nullptr);
-  sqlite3_close(raw);
-  CHECK(dup == SQLITE_CONSTRAINT);
-  CHECK(reversed == SQLITE_CONSTRAINT); // CHECK (from_node_id < to_node_id)
-}
-
-TEST_CASE("PoseGraphEdge_LookupEitherDirection_FindsCanonicalRow",
-          "[projectdb][pose_graph]") {
-  TempPath tmp("test_pose_graph_lookup");
-  {
-    ProjectDB db(tmp.path);
-  }
-  exec_raw(tmp.path, "INSERT INTO pose_graph_edges (from_node_id, to_node_id, "
-                     "edge_type, source, status) VALUES (4, 8, 'loop_closure', "
-                     "'orb', 'confirmed');");
+  roll_back_to_v26(tmp.path);
   ProjectDB db(tmp.path, /*readOnly=*/true);
-  const auto a = db.pose_graph_edge(4, 8, "loop_closure");
-  const auto b = db.pose_graph_edge(8, 4, "loop_closure");
-  REQUIRE(a.has_value());
-  REQUIRE(b.has_value());
-  CHECK(a->id == b->id);
-  CHECK(a->status == "confirmed");
-  CHECK(a->source == "orb");
-  CHECK_FALSE(db.pose_graph_edge(4, 8, "odometry").has_value());
+  CHECK(db.schema_version() == 26);
+  const auto parts = db.survey_parts();
+  REQUIRE(parts.size() == 1);
+  CHECK_FALSE(parts[0].view);
 }

@@ -340,7 +340,7 @@ TEST_CASE("GraphDiscover_NonIdentityLocalTransforms_RoundTrip",
 
 TEST_CASE("GraphDiscover_ActiveRowWithoutMeasurement_IsFilled",
           "[slam][graph_discover]") {
-  // Final review I2: a legacy (pre-v27) or GUI-added loop row has no
+  // Final review I2: a legacy (pre-v28) or GUI-added loop row has no
   // transform. A candidate on its key fills the measurement and the row
   // keeps its status; a tombstone still blocks.
   TempPath tmp("test_discover_fill");

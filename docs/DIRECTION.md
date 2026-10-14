@@ -75,20 +75,30 @@ enough to act on** and **cheap enough to produce** for a real building.
    pairwise point-to-plane cannot express global consistency — hence the owned
    plane-landmark back-end in #225. This is priority one because no amount of
    work on the stages above it can recover geometry the poses have destroyed.
-2. **GUI application** — anchor #265. The pipeline is currently reachable only by
+2. **Solid model / scan-to-BIM** — anchor: beads `reusex-z1v`
+   ([design](superpowers/specs/2026-10-13-solid-model-floor-plan-design.md)).
+   The mission's output is a typed building model, and today's product is one
+   unlabelled envelope mesh from a MIP fed infinite wall lines and
+   semantically blind planes. Floor-plan-first reconstruction (storeys, walls
+   with measured thickness, spaces, openings) with evidence and re-run-safe
+   edits, exported as IFC4/DXF/Rhino/Speckle and feeding the survey with
+   measured quantities. Sits second because wall measurement inherits pose
+   error, and ahead of the GUI because Kortlægning needs real walls and rooms
+   to show. Decided 2026-10-13 (D1).
+3. **GUI application** — anchor #265. The pipeline is currently reachable only by
    a developer at a terminal plus a keyboard-driven PCL window. Without a
    discoverable interface the project cannot be used or evaluated by the
    architects it is for, which caps both adoption and the quality of feedback.
-3. **Gaussian splatting** — anchor #240. Native C++/CUDA 3DGS seeded from the
+4. **Gaussian splatting** — anchor #240. Native C++/CUDA 3DGS seeded from the
    point cloud and trained on the posed frames and aligned panoramas. Two
    payoffs: a genuinely presentable visual record of a scanned building, and a
    photometric consistency signal that is complementary to the geometric one.
-4. **Infrastructure and test health** — anchors #268, #262, plus CI (#202).
+5. **Infrastructure and test health** — anchors #268, #262, plus CI (#202).
    Slow coverage runs and parallel-ctest flakiness tax every other workstream and
-   directly degrade the agent development loop. This sits fourth by *ordering*,
+   directly degrade the agent development loop. This sits fifth by *ordering*,
    not by importance — it is the cost of everything above it.
 
-Last reviewed: 2026-09-08
+Last reviewed: 2026-10-13
 
 ## Active workstreams
 
@@ -103,6 +113,7 @@ a `workstream: *` label so alignment can be queried with
 | Gaussian splatting | `workstream: gsplat` | #240 | Native C++/CUDA 3DGS trained from `ProjectDB` — point-cloud-seeded Gaussians, sensor frames and sliced 360 panoramas as views, Apache-licensed gsplat kernels under a GPL trainer |
 | 360 integration | `workstream: 360-integration` | #236 | Turn panoramas into wide-baseline pose-graph constraints; a panorama that sees many temporally-distant frames supplies exactly the loop closures the plane-landmark back-end cannot. Mechanism landed and tested (`rux graph discover --use-panoramas`); **blocked on matcher quality** — cross-camera ORB resections are too weak to help, see [`research/panorama-loop-closure.md`](research/panorama-loop-closure.md) |
 | Agent-driven modeling | `workstream: agent-modeling` | #267 | Evaluate an agent + MCP gateway + Blender path to a simplified, tagged building model as a complement to the geometric pipeline; requires headless rendering so the agent has eyes |
+| Solid model / scan-to-BIM | `workstream: solid-model` | beads `reusex-z1v` | Replace the one-envelope MIP mesh with a typed building model — storeys, walls with measured thickness, spaces with polygons, openings — stored in `ProjectDB` with evidence, deterministic GUIDs and re-run-safe manual edits; exported as IFC4, DXF, Rhino, Speckle; feeding the survey with measured quantities. Design: [`superpowers/specs/2026-10-13-solid-model-floor-plan-design.md`](superpowers/specs/2026-10-13-solid-model-floor-plan-design.md); research: [`research/solid-model-scan-to-bim.md`](research/solid-model-scan-to-bim.md). The MIP stays as an optional refinement |
 | Infrastructure & test health | `workstream: infra` | #268 | Keep the build, test and coverage loop fast and trustworthy so agents can iterate — includes #262 (parallel-ctest flakiness) and hosted CI (#202) |
 
 Work that fits none of these rows is either a bugfix, a standing maintenance
@@ -206,7 +217,8 @@ changelog — that history is the point of keeping it in the repo.
 
 - **2026-10-13** — **Pose graph: the stored graph is the source of truth;
   `rux optimize` is repeatable** ([spec](superpowers/specs/2026-10-13-pose-graph-editor-design.md)).
-  `pose_graph_edges` (schema v27) stores each edge's measurement, information,
+  `pose_graph_edges` (schema v28; v27 on the branch, renumbered when main's
+  resource view record took v27) stores each edge's measurement, information,
   source (`rtabmap | odometry_init | orb | panorama | file | icp | manual |
   legacy`) and status (`auto | confirmed | rejected`; a rejection is a
   tombstone), and `sensor_frames.initial_transform` snapshots the poses
@@ -221,6 +233,37 @@ changelog — that history is the point of keeping it in the repo.
   `rux optimize` now needs `rux graph init --force` in between (optimize
   warns when it sees that order).
 
+- **2026-10-13** — **New workstream: solid model / scan-to-BIM, priority 2**
+  (maintainer decision D1, beads `reusex-z1v.1.1`; GUI, 3DGS and infra each
+  move down one place). The research
+  [`research/solid-model-scan-to-bim.md`](research/solid-model-scan-to-bim.md)
+  compared our planes → CellComplex → MIP path with Florent Poux's
+  floor-plan-first pipeline and a colleague's Rhino script and found the gap
+  structural, not a tuning problem: the MIP is fed infinite wall lines,
+  furniture-level section planes and semantically blind planes, and its
+  output drops room and wall labels. Three verified defects were confirmed on
+  the tree (the label-0 collision that makes the first SAM3 prompt class
+  unlabeled; dead `create mesh -a/-l` flags; docs calling the envelope mesh
+  room-partitioned). The design
+  [`superpowers/specs/2026-10-13-solid-model-floor-plan-design.md`](superpowers/specs/2026-10-13-solid-model-floor-plan-design.md)
+  keeps the research's phases, differs on four points (native IFC writer
+  with ifcopenshell test-only; entity tables with GUIDs instead of a
+  `plane_classes` cloud; planes kept as the axis-family source; own scans as
+  ground truth before S3DIS) and adds what the research could not see: a
+  stored level frame, deterministic GUIDs, `source`/`locked` rows so manual
+  edits survive re-runs, survey parts with measured quantities, new
+  `visualize::Layer`s for both front ends, DXF/SVG plans, a JSON model for
+  the agent-modelling workstream, and the scene graph (#138) folded in as
+  the relation store. Issue tracking moved to beads with this change (GitHub
+  issues are disabled on the `ReUse-X` org): the workstream is 10 epics and
+  65 beads under `reusex-z1v`; the eight maintainer decisions under
+  `reusex-z1v.1` are closed. Of note: there is **no trusted ground truth**
+  for the solid model yet (NewOffice's components were generated by this
+  library), so WP0 builds a reference-authoring loop before any algorithm
+  work (D5); S3DIS may be used locally for benchmarking but is never
+  committed; the MIP stays as an alternative path, possibly a per-room
+  refinement, pending measurement (D2); IFC is a native writer with
+  ifcopenshell test-only (D3); the scene graph (#138) is folded in (D4).
 - **2026-10-12** — **Deployment: Supabase auth, Docker/GHCR fleet, CPU only.**
   `ruxd`'s own username/password accounts (argon2id, `ruxd admin create-user`
   / `set-password` / `disable-user`, `POST /auth/login`) are gone. Accounts

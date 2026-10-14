@@ -201,7 +201,7 @@ PlaneGraphResult optimize_sensor_poses(ProjectDB &db,
     edges.push_back(std::move(e));
   }
   if (no_measurement_odometry + no_measurement_loop > 0)
-    core::warn("PlaneGraph: {} stored edges carry no measurement (pre-v27 "
+    core::warn("PlaneGraph: {} stored edges carry no measurement (pre-v28 "
                "'legacy' or GUI-added rows) and were skipped: {} odometry "
                "('rux graph init' fills them) and {} loop/panorama ('rux "
                "graph discover' fills the pairs its front-ends re-find); "

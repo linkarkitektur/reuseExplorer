@@ -6,6 +6,7 @@
 
 #include "core/ProjectDB.hpp"
 #include "core/SensorIntrinsics.hpp"
+#include "core/frame_projection.hpp"
 #include "core/guid.hpp"
 #include "core/label_semantics.hpp"
 #include "core/logging.hpp"
@@ -198,6 +199,31 @@ std::vector<std::size_t> project_frame_mask(const ProjectDB &db, int frame_id,
   return selected;
 }
 
+std::optional<ViewRegion> mask_region(const cv::Mat &mask) {
+  if (mask.empty())
+    return std::nullopt;
+  if (mask.channels() != 1 || (mask.depth() != CV_8U && mask.depth() != CV_32S))
+    throw std::invalid_argument(
+        "mask_region: mask must be single-channel CV_8U or CV_32S");
+  int x0 = mask.cols, y0 = mask.rows, x1 = -1, y1 = -1;
+  for (int y = 0; y < mask.rows; ++y)
+    for (int x = 0; x < mask.cols; ++x) {
+      const bool on = mask.depth() == CV_8U ? mask.at<std::uint8_t>(y, x) != 0
+                                            : mask.at<std::int32_t>(y, x) != 0;
+      if (!on)
+        continue;
+      x0 = std::min(x0, x);
+      y0 = std::min(y0, y);
+      x1 = std::max(x1, x);
+      y1 = std::max(y1, y);
+    }
+  if (x1 < 0)
+    return std::nullopt;
+  const double w = mask.cols;
+  const double h = mask.rows;
+  return ViewRegion{x0 / w, y0 / h, (x1 - x0 + 1) / w, (y1 - y0 + 1) / h};
+}
+
 MaskSelectionResult
 apply_mask_selection(ProjectDB &db, const std::vector<std::size_t> &indices,
                      const std::string &class_name,
@@ -209,6 +235,8 @@ apply_mask_selection(ProjectDB &db, const std::vector<std::size_t> &indices,
   if (indices.empty())
     throw MaskSelectionError("the selection contains no points (the mask did "
                              "not cover any visible point of the cloud)");
+  if (opts.view_region)
+    validate_view_shape({ViewKind::frame, 0, opts.view_region});
 
   // Every read below happens under BEGIN IMMEDIATE: with_write serialises
   // writers inside the server only, and a CLI process (`rux create
@@ -422,6 +450,35 @@ apply_mask_selection(ProjectDB &db, const std::vector<std::size_t> &indices,
   part.room_name = room_name;
   db.add_survey_part(part);
   out.resource_code = part.code;
+
+  if (opts.frame_id >= 0) {
+    if (!db.has_sensor_frame(opts.frame_id)) {
+      reusex::warn("apply_mask_selection: frame {} does not exist; part {} "
+                   "gets no resource image",
+                   opts.frame_id, part.code);
+    } else {
+      std::optional<ViewRegion> region;
+      if (opts.view_region) {
+        region = pad_region(*opts.view_region);
+      } else {
+        const auto base = db.point_cloud_xyzrgb(opts.base_cloud);
+        if (!base) {
+          reusex::warn("apply_mask_selection: '{}' did not load; part {} "
+                       "gets no fallback region in frame {}",
+                       opts.base_cloud, part.code, opts.frame_id);
+        } else {
+          std::vector<Eigen::Vector3f> pts;
+          pts.reserve(sel.size());
+          for (const auto i : sel)
+            pts.emplace_back(base->points[i].x, base->points[i].y,
+                             base->points[i].z);
+          region = project_instance_bbox(db, opts.frame_id, pts);
+        }
+      }
+      out.view = ResourceView{ViewKind::frame, opts.frame_id, region};
+      db.set_survey_part_view(part.code, out.view);
+    }
+  }
 
   db.log_pipeline_end(log_id, true);
   tx.commit();

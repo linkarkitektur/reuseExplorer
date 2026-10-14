@@ -72,3 +72,25 @@ SPDX-License-Identifier = "OFL-1.1"
 path = "apps/rux/qt/resources/fonts/JetBrainsMono-*.ttf"
 SPDX-FileCopyrightText = "2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)"
 SPDX-License-Identifier = "OFL-1.1"
+
+# Issue tracking (beads): config, hooks and agent integration files written by
+# `bd init` / `bd setup`. The issues themselves live in refs/dolt/data.
+[[annotations]]
+path = [
+  ".beads/**",
+  ".agents/skills/beads/**",
+  ".claude/settings.json",
+  ".codex/**",
+  ".cursor/**",
+]
+SPDX-FileCopyrightText = "2026 Povl Filip Sonne-Frederiksen"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+# Synthetic sample data for the PDF report template
+# (apps/rux/resources/report.typ): data.json is invented, the JPEGs are
+# labelled gradients made by scripts/report-sample-images.sh. JSON cannot
+# carry an SPDX header.
+[[annotations]]
+path = "apps/rux/resources/report-sample/**"
+SPDX-FileCopyrightText = "2026 Povl Filip Sonne-Frederiksen"
+SPDX-License-Identifier = "GPL-3.0-or-later"

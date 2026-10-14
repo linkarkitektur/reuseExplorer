@@ -185,6 +185,7 @@ std::vector<ResourceKey> builtin_keys() {
       k("mass_t", "Tons", KeyScope::type, "number"),
       k("note", "Note", KeyScope::part, "text"),
       k("starred", "Vigtig", KeyScope::part, "boolean"),
+      k("view", "Ressourcebillede", KeyScope::part, "view"),
   };
   for (auto t :
        {Treatment::bevaring, Treatment::genbrug, Treatment::genanvendelse,
@@ -356,6 +357,14 @@ normalise_value(const ResourceKey &key,
   }
   if (key.data_type == "multiselect")
     return normalise_multiselect(key, v);
+  if (key.data_type == "view") {
+    try {
+      return view_to_json(parse_view(v));
+    } catch (const std::invalid_argument &e) {
+      throw KeyValueError(key.id,
+                          "'" + key.id + "' " + e.what() + ", got '" + v + "'");
+    }
+  }
   if (key.data_type == "date") {
     if (is_iso_date(v))
       return v;

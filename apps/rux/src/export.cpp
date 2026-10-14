@@ -7,6 +7,7 @@
 #include "export/csv.hpp"
 #include "export/e57.hpp"
 #include "export/materialepas.hpp"
+#include "export/pdf.hpp"
 #include "export/ply.hpp"
 #include "export/rhino.hpp"
 #include "export/semantic_images.hpp"
@@ -28,6 +29,7 @@ SUBCOMMANDS:
   rhino            Export labeled point cloud to Rhino 3DM format
   speckle          Export point cloud or mesh to Speckle platform
   materialepas     Export material passports to JSON file
+  pdf              Export the Ressourcekortlægning PDF report (or its data)
   csv              Export all elements (components + passports) to CSV
   semantic-images  Export segmentation images as Glasbey-colored PNGs
   colmap           Export sensor frames as a COLMAP sparse model (MVS/3DGS)
@@ -39,6 +41,7 @@ EXAMPLES:
   rux export rhino -o model.3dm             # Export to Rhino CAD
   rux export speckle -p PROJECT_ID          # Upload to Speckle
   rux export materialepas -o data.json      # Export passports
+  rux export pdf -o report.pdf              # Ressourcekortlægning PDF
   rux export csv -o elements.csv            # Export all elements to CSV
   rux export semantic-images -o ./labels    # Export colored label images
 
@@ -51,6 +54,7 @@ NOTES:
   setup_subcommand_export_ply(*sub, global_opt);
   setup_subcommand_export_e57(*sub, global_opt);
   setup_subcommand_export_materialepas(*sub, global_opt);
+  setup_subcommand_export_pdf(*sub, global_opt);
   setup_subcommand_export_csv(*sub, global_opt);
   setup_subcommand_export_rhino(*sub, global_opt);
   setup_subcommand_export_semantic_images(*sub, global_opt);

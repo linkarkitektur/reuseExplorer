@@ -61,6 +61,9 @@ struct SurveySyncOptions {
       std::string(kDefaultInstanceCloud); // mirrors `rux create materials`
   std::string semantic_cloud = "labels";
   std::string rooms_cloud = "rooms";
+  /// Positions of the instance cloud's points (index-aligned), for placing
+  /// instances in sensor frames when attaching views.
+  std::string positions_cloud = "cloud";
 };
 /// Counts of what `sync_survey` changed.
 struct SurveySyncReport {
@@ -90,6 +93,14 @@ struct SurveySyncReport {
   /// instance_materials row — `rux create instances` re-runs cascade-delete
   /// them. A link to a different passport is never overwritten (warned).
   std::size_t links_restored = 0;
+  /// Instance-backed parts without a view that got one: the best-ranked
+  /// frame (core::instance_evidence), region = the instance's padded bbox
+  /// in it (spec 2026-10-13-resource-view-record §2). Never overwrites.
+  std::size_t views_attached = 0;
+  /// Instance-backed parts of instances_cloud still without a view: no
+  /// frame sees the instance, or the project has no sensor frames, no
+  /// positions cloud, or misaligned clouds.
+  std::size_t views_unavailable = 0;
 };
 /// Fill survey_types / survey_parts from the instances table: one type per
 /// semantic class, one bygningsdel (survey part) per instance, placed in the
@@ -102,7 +113,9 @@ struct SurveySyncReport {
 /// "SM{class}-{id}" definitions (see instances_backfilled). Lost instance
 /// links of parts that own a passport are restored (see links_restored). Throws
 /// std::runtime_error naming `rux create instances` if the instances cloud does
-/// not exist.
+/// not exist. Then every instance-backed part without a view (new or
+/// pre-existing: the backfill for old projects) gets the best-ranked frame as
+/// its view; see views_attached / views_unavailable.
 SurveySyncReport sync_survey(ProjectDB &db, const SurveySyncOptions &opts = {});
 
 } // namespace reusex::core

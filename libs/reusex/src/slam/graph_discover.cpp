@@ -183,7 +183,7 @@ GraphDiscoverResult discover_loop_edges(ProjectDB &db,
   }
   if (stored_no_measurement > 0)
     core::warn("GraphDiscover: {} active stored loop edges carry no "
-               "measurement (pre-v27 'legacy' or GUI-added rows) and are left "
+               "measurement (pre-v28 'legacy' or GUI-added rows) and are left "
                "out of the consistency check; this run fills the ones its "
                "front-ends re-find (see 'measurements filled'). Reject the "
                "rest in Rediger / 'rux graph prune --pair', or re-import an "
@@ -256,7 +256,7 @@ GraphDiscoverResult discover_loop_edges(ProjectDB &db,
         ++res.stored_inconsistent;
       }
     }
-    // Same line shape the pre-v27 optimize logged; scripts/bench-loop-edges.sh
+    // Same line shape the pre-v28 optimize logged; scripts/bench-loop-edges.sh
     // parses it.
     for (const auto &[source, counts] : per_source)
       if (source != "orb")

@@ -5,7 +5,7 @@
 #pragma once
 
 // Vocabulary and SE(3) helpers for the stored pose graph (`pose_graph_edges`,
-// schema v27). Header-only and Eigen-only so core (ProjectDB), io (the RTABMap
+// schema v28). Header-only and Eigen-only so core (ProjectDB), io (the RTABMap
 // importer) and slam share ONE definition of the conventions (STANDARDS §1:
 // core may not reach slam or geometry_common).
 //

@@ -53,9 +53,9 @@ TEST_CASE("InitialPose_InvalidInput_Throws", "[projectdb][initial_pose]") {
                   std::invalid_argument);
 }
 
-TEST_CASE("InitialPose_ReadOnlyV26_ReadsAsAbsent",
+TEST_CASE("InitialPose_ReadOnlyV27_ReadsAsAbsent",
           "[projectdb][initial_pose]") {
-  TempPath tmp("test_initial_pose_v26");
+  TempPath tmp("test_initial_pose_v27");
   {
     ProjectDB db(tmp.path);
     seed(db, 3, identity16());
@@ -65,7 +65,7 @@ TEST_CASE("InitialPose_ReadOnlyV26_ReadsAsAbsent",
   REQUIRE(sqlite3_exec(raw,
                        "ALTER TABLE sensor_frames DROP COLUMN "
                        "initial_transform; DROP TABLE project_settings; "
-                       "DELETE FROM schema_version WHERE version >= 27;",
+                       "DELETE FROM schema_version WHERE version >= 28;",
                        nullptr, nullptr, nullptr) == SQLITE_OK);
   sqlite3_close(raw);
   ProjectDB ro(tmp.path, /*readOnly=*/true);
