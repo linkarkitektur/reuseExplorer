@@ -10,6 +10,7 @@
 //  - the Posegraf's hit testing in scene units;
 //  - a process-wide log tap the Pipeline workspace tails a running job with.
 
+#include <array>
 #include <cstddef>
 #include <functional>
 #include <optional>
@@ -127,5 +128,23 @@ void publish_log(int level, std::string_view message);
 /// stage such as segment_instances logs its cancellation warning from
 /// whichever OMP thread happens to be the fan-out's master.
 bool log_tail_accepts(int level, bool on_job_thread);
+
+// ------------------------------------------------- Rediger right column --
+
+/// Smallest usable heights, in logical px, of Rediger's two worked-in
+/// canvases at 1440x900: the match canvas (click a keypoint, draw a region)
+/// and the 3D overlay (move B by hand). The gallery fails a shot under them
+/// (MATCH CANVAS TOO SMALL / OVERLAY TOO SMALL), and EditWorkspace splits
+/// the right column from them.
+inline constexpr int kMatchCanvasFloorPx = 200;
+inline constexpr int kOverlayCanvasFloorPx = 250;
+
+/// Heights for the images pane and the overlay pane sharing @p total px of
+/// splitter space: each pane gets its own chrome (header, toolbar: the pane
+/// minus its canvas) plus its canvas floor, and what is left over (or
+/// missing) is shared evenly, so both canvases stand the same distance over
+/// (or under) their floors. Never below 0.
+std::array<int, 2> balanced_canvas_split(int total, int images_chrome,
+                                         int overlay_chrome);
 
 } // namespace rux::qt

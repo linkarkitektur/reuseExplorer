@@ -334,8 +334,8 @@ QWidget *make_3d_labels(const PageContext &ctx) {
 }
 
 /// The graph with A and B marked and a few staged loop closures.
-AppShell *make_pg(const PageContext &ctx) {
-  auto *shell = sized(make_shell(ctx, Open::project));
+AppShell *make_pg(const PageContext &ctx, Open open = Open::project) {
+  auto *shell = sized(make_shell(ctx, open));
   FrameBrowser *f = shell->database()->frames();
   if (!f->pair().empty()) {
     const auto &ids = f->pair().ids();
@@ -461,8 +461,8 @@ void match_page_failed(const char *why) {
 /// The pair the match pages use: RUX_MATCHES_A / RUX_MATCHES_B on a real
 /// copy (e.g. NewOffice 2240 / 2241), else two neighbouring frames of the
 /// fixture (consecutive views overlap; make_pg's pair is 0.30 / 0.81).
-AppShell *matches_shell(const PageContext &ctx) {
-  auto *shell = make_pg(ctx);
+AppShell *matches_shell(const PageContext &ctx, Open open = Open::project) {
+  auto *shell = make_pg(ctx, open);
   bool ok_a = false, ok_b = false;
   const int a = qEnvironmentVariableIntValue("RUX_MATCHES_A", &ok_a);
   const int b = qEnvironmentVariableIntValue("RUX_MATCHES_B", &ok_b);
@@ -608,6 +608,31 @@ QWidget *make_rediger_matches(const PageContext &ctx) {
                  "rediger-matches: after ICP x=%.4f y=%.4f z=%.4f yaw=%.3f\n",
                  p.x, p.y, p.z, p.yaw_deg);
   }
+  return shell;
+}
+
+/// The tightest Rediger layout of normal use, on a read-only project: the
+/// staged edits' banner (with its refused save), the match editor after
+/// Find match and Placér B fra match, an ICP-forfin result and the
+/// read-only note all on screen. The canvas guards must hold here.
+QWidget *make_rediger_matches_readonly(const PageContext &ctx) {
+  auto *shell = matches_shell(ctx, Open::read_only);
+  PairImages *im = shell->edit()->images();
+  im->find_matches();
+  settle();
+  im->align_from_matches();
+  settle();
+  log_matches("rediger-matches-readonly aligned", im);
+  click_strip_button(shell, {"ICP-forfin"});
+  settle();
+  for (auto *l : shell->edit()->strip()->findChildren<QLabel *>("icpLine"))
+    std::fprintf(stderr, "rediger-matches-readonly: ICP \"%s\"\n",
+                 qPrintable(l->text()));
+  for (auto *l : shell->edit()->strip()->findChildren<QLabel *>("pairNote"))
+    std::fprintf(stderr, "rediger-matches-readonly: note \"%s\"\n",
+                 qPrintable(l->text()));
+  shell->edit()->save_edits(); // refused: the banner says why
+  settle();
   return shell;
 }
 
@@ -1715,6 +1740,10 @@ void register_shell_pages() {
                  "Rediger: Find match og Placér B fra match — inliers og "
                  "outliers, B flyttet",
                  make_rediger_matches});
+  register_page({"rediger-matches-readonly",
+                 "Rediger: skrivebeskyttet projekt med ventende kanter, "
+                 "match, Placér B og ICP-forfin — den trangeste højre kolonne",
+                 make_rediger_matches_readonly});
   register_page({"rediger-matches-edit",
                  "Rediger: match udeladt, et manuelt match og et område i A",
                  make_rediger_matches_edit});

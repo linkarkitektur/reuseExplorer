@@ -18,7 +18,7 @@ PendingBanner::PendingBanner(EdgeEditor &editor, QWidget *parent)
   const Theme &t = theme();
   setObjectName("pendingBanner");
   auto *bl = new QHBoxLayout(this);
-  // Thin: Rediger's right column needs the height (match canvas + overlay).
+  // Thin: it takes its height from Rediger's graph and edge list.
   bl->setContentsMargins(t.px("--space-4"), t.px("--space-1"),
                          t.px("--space-4"), t.px("--space-1"));
   bl->setSpacing(t.px("--space-3"));
@@ -29,6 +29,7 @@ PendingBanner::PendingBanner(EdgeEditor &editor, QWidget *parent)
   texts->setSpacing(0);
   text_ = new QLabel;
   text_->setObjectName("bannerText");
+  text_->setWordWrap(true); // it sits over Rediger's left column only
   texts->addWidget(text_);
   error_ = new QLabel;
   error_->setObjectName("bannerError");

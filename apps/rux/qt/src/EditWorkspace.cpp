@@ -5,16 +5,19 @@
 #include <rux_qt/EdgeListPanel.hpp>
 #include <rux_qt/EditWorkspace.hpp>
 #include <rux_qt/GraphPanel.hpp>
+#include <rux_qt/MatchCanvas.hpp>
 #include <rux_qt/PairImages.hpp>
 #include <rux_qt/PairOverlay.hpp>
 #include <rux_qt/PairStrip.hpp>
 #include <rux_qt/PendingBanner.hpp>
 #include <rux_qt/ProjectSession.hpp>
+#include <rux_qt/SceneView.hpp>
 #include <rux_qt/Theme.hpp>
 #include <rux_qt/widgets.hpp>
 #include <rux_qt/workspace_logic.hpp>
 
 #include <QAction>
+#include <QEvent>
 #include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -57,8 +60,10 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   v->setContentsMargins(0, 0, 0, 0);
   v->setSpacing(0);
   v->addWidget(make_toolbar());
+  // Over the left column only: the right column's match canvas and 3D
+  // overlay are the height-critical panes (their floors), while the graph
+  // and the edge list give up height freely.
   banner_ = new PendingBanner(editor_);
-  v->addWidget(banner_);
 
   graph_ = new GraphPanel(session_, editor_, view_settings, persist_);
   panes_[0] = new PaneFrame("Graf");
@@ -106,6 +111,13 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   left_->addWidget(panes_[1]);
   left_->setStretchFactor(0, 3);
   left_->setStretchFactor(1, 2);
+  left_column_ = new QWidget;
+  auto *lc = new QVBoxLayout(left_column_);
+  lc->setContentsMargins(0, 0, 0, 0);
+  lc->setSpacing(0);
+  lc->addWidget(banner_);
+  lc->addWidget(left_, 1);
+  lc->addStretch(0); // the banner stays on top with both left panes hidden
   right_ = new QSplitter(Qt::Vertical);
   right_->addWidget(panes_[2]);
   right_->addWidget(panes_[3]);
@@ -124,7 +136,7 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   // of 0 gets none while right_ is shown with 1).
   rc->addStretch(0);
   main_ = new QSplitter(Qt::Horizontal);
-  main_->addWidget(left_);
+  main_->addWidget(left_column_);
   main_->addWidget(right_column_);
   main_->setStretchFactor(0, 3);
   main_->setStretchFactor(1, 2);
@@ -141,20 +153,21 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   main_->setSizes({3 * kUnit, 2 * kUnit});
   // The edge list gets room for a screenful of suspicious rows.
   left_->setSizes({3 * kUnit, 2 * kUnit});
-  // The match editor over the overlay, ~1:1 of the panes' height. At
-  // 1440x900 the tightest default (rediger-staged: the pending banner and
-  // an ICP result in the pair strip) leaves the two canvases ~453 px, and
-  // the gallery guards want >= 200 (MATCH CANVAS TOO SMALL) and >= 250
-  // (OVERLAY TOO SMALL). The images pane carries ~44 px more chrome (its
-  // toolbar row) than the overlay's, so 494:506 gives ~201 / ~252 there
-  // (hand-tuned, not derived: see the guards in gallery/main.cpp).
-  right_->setSizes({494, 506});
+  // The match editor over the overlay: split from the canvases' floors
+  // (balance_right_split) once the column has its height, and again
+  // whenever it changes — the pending banner, an ICP line or the read-only
+  // note take height from the column — until the user drags the handle or
+  // a stored layout is restored.
+  right_->setSizes({kUnit, kUnit});
+  right_->installEventFilter(this);
 
   for (int i = 0; i < kEditPaneCount; ++i)
     connect(panes_[i], &PaneFrame::hide_requested, this,
             [this, i] { set_pane_visible(static_cast<EditPane>(i), false); });
   for (QSplitter *s : {main_, left_, right_})
     connect(s, &QSplitter::splitterMoved, this, [this] { save_layout(); });
+  connect(right_, &QSplitter::splitterMoved, this,
+          [this] { right_split_chosen_ = true; });
   connect(graph_, &GraphPanel::selection_changed, this,
           [this](const Selection &s) {
             selection_ = s;
@@ -175,6 +188,11 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   // which drops its row; the graph keeps the highlighted edge across a
   // reload of the same project, so the row follows it back. Queued: after
   // the list's own rebuild for the same change.
+  // The banner shows and hides itself (after these, connected first): the
+  // left column follows it while both left panes are hidden.
+  connect(&editor_, &EdgeEditor::changed, this, &EditWorkspace::sync_panes);
+  connect(&editor_, &EdgeEditor::save_finished, this,
+          &EditWorkspace::sync_panes);
   connect(&editor_, &EdgeEditor::changed, this, [this] {
     QTimer::singleShot(0, this, [this] {
       if (const auto &h = graph_->highlight();
@@ -501,12 +519,49 @@ void EditWorkspace::sync_panes() {
   }
   // A splitter with nothing visible would leave an empty strip.
   left_->setVisible(wanted_[0] || wanted_[1]);
+  left_column_->setVisible(!left_->isHidden() || !banner_->isHidden());
   const bool right_shown = !panes_[2]->isHidden() || !panes_[3]->isHidden();
   right_->setVisible(right_shown);
   // The right column also holds the pair strip, outside the splitter and
   // not hideable: it stays while the strip shows, so hiding both panes
   // leaves the pair's edges on screen.
   right_column_->setVisible(right_shown || (strip_ && !strip_->isHidden()));
+  schedule_right_split();
+}
+
+bool EditWorkspace::eventFilter(QObject *watched, QEvent *event) {
+  if (watched == right_ && event->type() == QEvent::Resize)
+    schedule_right_split();
+  return QWidget::eventFilter(watched, event);
+}
+
+void EditWorkspace::schedule_right_split() {
+  if (right_split_chosen_ || right_split_queued_)
+    return;
+  // After the panes have laid out at the new height: their chrome is
+  // measured from it.
+  right_split_queued_ = true;
+  QTimer::singleShot(0, this, [this] {
+    right_split_queued_ = false;
+    balance_right_split();
+  });
+}
+
+void EditWorkspace::balance_right_split() {
+  if (right_split_chosen_ || !right_->isVisible() || panes_[2]->isHidden() ||
+      panes_[3]->isHidden())
+    return;
+  const QWidget *match = images_->canvas();
+  const QWidget *view = overlay_->view();
+  if (match->height() <= 0 || view->height() <= 0)
+    return; // not laid out yet
+  const QList<int> now = right_->sizes();
+  const int total = now.value(0) + now.value(1);
+  const auto want =
+      balanced_canvas_split(total, panes_[2]->height() - match->height(),
+                            panes_[3]->height() - view->height());
+  if (now.value(0) != want[0] || now.value(1) != want[1])
+    right_->setSizes({want[0], want[1]});
 }
 
 void EditWorkspace::restore_layout() {
@@ -515,7 +570,8 @@ void EditWorkspace::restore_layout() {
   QSettings s;
   main_->restoreState(s.value("rediger/split/main").toByteArray());
   left_->restoreState(s.value("rediger/split/left").toByteArray());
-  right_->restoreState(s.value("rediger/split/right").toByteArray());
+  if (right_->restoreState(s.value("rediger/split/right").toByteArray()))
+    right_split_chosen_ = true;
   for (int i = 0; i < kEditPaneCount; ++i) {
     wanted_[i] =
         s.value("rediger/visible/" + key_of(static_cast<EditPane>(i)), true)

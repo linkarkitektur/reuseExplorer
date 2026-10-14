@@ -193,13 +193,11 @@ PairStrip::PairStrip(ProjectSession &session, EdgeEditor &editor,
   rows_scroll_->setWidget(rows_);
   v->addWidget(rows_scroll_);
 
-  icp_line_ = new QLabel;
+  icp_line_ = new ElidedLabel(QString(), Qt::ElideRight);
   icp_line_->setObjectName("icpLine");
-  icp_line_->setWordWrap(true);
   v->addWidget(icp_line_);
-  note_ = new QLabel;
+  note_ = new ElidedLabel(QString(), Qt::ElideRight);
   note_->setObjectName("pairNote");
-  note_->setWordWrap(true);
   v->addWidget(note_);
 
   connect(icp_, &QPushButton::clicked, this, &PairStrip::run_icp);
@@ -387,10 +385,11 @@ void PairStrip::rebuild() {
   type_->setEnabled(editable);
   refresh_add_label();
   const QString ro = editor_.read_only_reason();
-  note_->setText(ro.isEmpty() ? QString()
-                              : QString("Skrivebeskyttet: kanter kan "
-                                        "tilføjes og afvises her, men ikke "
-                                        "gemmes."));
+  note_->set_full_text(ro.isEmpty()
+                           ? QString()
+                           : QString("Skrivebeskyttet: kanter kan "
+                                     "tilføjes og afvises her, men ikke "
+                                     "gemmes."));
   note_->setVisible(!ro.isEmpty());
 }
 
@@ -474,7 +473,7 @@ void PairStrip::refresh_icp() {
       break;
     }
   }
-  icp_line_->setText(text);
+  icp_line_->set_full_text(text);
   icp_line_->setToolTip(detail.isEmpty() ? text : text + "\n" + detail);
   icp_line_->setProperty("tone", tone.isEmpty() ? QVariant() : QVariant(tone));
   icp_line_->setVisible(!text.isEmpty());
@@ -493,13 +492,14 @@ void PairStrip::add_edge() {
     }
   } catch (const std::exception &e) {
     // A read error is not a missing pose: say what the project said.
-    note_->setText(QString("Poserne kunne ikke læses: %1")
-                       .arg(QString::fromUtf8(e.what())));
+    note_->set_full_text(QString("Poserne kunne ikke læses: %1")
+                             .arg(QString::fromUtf8(e.what())));
     note_->setVisible(true);
     return;
   }
   if (!pose_a || !pose_b) {
-    note_->setText("Begge billeder skal have en pose, før en kant kan måles.");
+    note_->set_full_text(
+        "Begge billeder skal have en pose, før en kant kan måles.");
     note_->setVisible(true);
     return;
   }
@@ -533,7 +533,7 @@ void PairStrip::add_edge() {
   }
   // add() emitted changed(): rebuild() has reset the note already.
   if (!msg.isEmpty()) {
-    note_->setText(msg);
+    note_->set_full_text(msg);
     note_->setVisible(true);
   }
 }

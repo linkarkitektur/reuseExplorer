@@ -212,7 +212,7 @@ int main(int argc, char **argv) {
   // Rediger's 3D overlay is where B is moved by hand: with A and B loaded
   // its canvas must stay usable at the default 1440x900 (pending banner and
   // edge rows included).
-  constexpr int kMinOverlayCanvas = 250;
+  constexpr int kMinOverlayCanvas = rux::qt::kOverlayCanvasFloorPx;
   bool too_small = false;
   for (auto *o : host.findChildren<rux::qt::PairOverlay *>()) {
     const QWidget *canvas = o->findChild<QWidget *>("viewport");
@@ -231,13 +231,12 @@ int main(int argc, char **argv) {
   }
   // Rediger's match canvas: with A and B both shown, the images must be
   // big enough to click a keypoint and draw a region in (reusex-xlg.2.5).
-  // This guard and OVERLAY TOO SMALL are what EditWorkspace's hand-tuned
-  // images/overlay split (right_->setSizes({494, 506})) is tuned against:
-  // it is not derived from the panes' minimum heights, because pinning the
-  // canvases' minimums to 200 / 250 would raise the whole window's minimum
-  // height on smaller screens. A pane-chrome change means re-checking it
-  // on rediger-staged (the tightest default).
-  constexpr int kMinMatchCanvas = 200;
+  // EditWorkspace splits the images and the overlay from these same floors
+  // (balanced_canvas_split), so the two canvases stand equally far over
+  // them; the canvases' own minimums stay small so the window's minimum
+  // height does not grow on smaller screens. rediger-matches-readonly is
+  // the tightest default (read-only note, ICP line and banner all shown).
+  constexpr int kMinMatchCanvas = rux::qt::kMatchCanvasFloorPx;
   for (auto *c : host.findChildren<rux::qt::MatchCanvas *>()) {
     if (!c->isVisible() || c->image_size(rux::qt::MatchSide::a).isEmpty() ||
         c->image_size(rux::qt::MatchSide::b).isEmpty())

@@ -27,6 +27,7 @@ class QVBoxLayout;
 namespace rux::qt {
 
 class EdgeEditor;
+class ElidedLabel;
 class ProjectSession;
 
 /// The A<->B link: the stored and pending edges between the two frames, how
@@ -94,8 +95,10 @@ class PairStrip : public QFrame {
   QPushButton *icp_ = nullptr;
   QComboBox *type_ = nullptr;
   QPushButton *add_ = nullptr;
-  QLabel *icp_line_ = nullptr;
-  QLabel *note_ = nullptr;
+  // One line each, elided (the full text is the tooltip): a wrapped line
+  // would take its height from the match canvas and the overlay above.
+  ElidedLabel *icp_line_ = nullptr;
+  ElidedLabel *note_ = nullptr;
   std::map<std::pair<int, int>, IcpOutcome> icp_results_;
   std::pair<int, int> icp_running_{-1, -1};
   std::function<std::optional<Mat4>()> delta_source_;
