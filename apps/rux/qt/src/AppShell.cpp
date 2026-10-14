@@ -188,7 +188,8 @@ AppShell::AppShell(ProjectSession &session, RecentProjects &recent,
   connect(database_, &DatabaseWorkspace::browse_requested, this,
           &AppShell::browse);
   stack_->addWidget(database_);
-  viewer_ = new Viewer3DWorkspace(session_, options.interactive_3d);
+  viewer_ =
+      new Viewer3DWorkspace(session_, *view_settings_, options.interactive_3d);
   stack_->addWidget(viewer_);
   edit_ = new EditWorkspace(session_, *edges_, *view_settings_,
                             options.persist_layout);

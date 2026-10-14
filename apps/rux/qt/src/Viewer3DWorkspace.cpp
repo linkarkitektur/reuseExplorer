@@ -4,6 +4,7 @@
 #include <rux_qt/ProjectSession.hpp>
 #include <rux_qt/SceneView.hpp>
 #include <rux_qt/Theme.hpp>
+#include <rux_qt/ViewSettings.hpp>
 #include <rux_qt/Viewer3DWorkspace.hpp>
 #include <rux_qt/background.hpp>
 #include <rux_qt/widgets.hpp>
@@ -150,9 +151,11 @@ struct Viewer3DWorkspace::BuildResult {
   QString error;
 };
 
-Viewer3DWorkspace::Viewer3DWorkspace(ProjectSession &session, bool interactive,
-                                     QWidget *parent)
-    : QWidget(parent), session_(session), interactive_(interactive) {
+Viewer3DWorkspace::Viewer3DWorkspace(ProjectSession &session,
+                                     ViewSettings &view_settings,
+                                     bool interactive, QWidget *parent)
+    : QWidget(parent), session_(session), view_settings_(view_settings),
+      interactive_(interactive) {
   setObjectName("viewerWorkspace");
   const Theme &t = theme();
   auto *body = new QHBoxLayout(this);
@@ -260,6 +263,11 @@ Viewer3DWorkspace::Viewer3DWorkspace(ProjectSession &session, bool interactive,
   });
   connect(&session_, &ProjectSession::state_changed, this,
           &Viewer3DWorkspace::reset);
+  // A yaw change turns the default camera, not one the user has moved.
+  connect(&view_settings_, &ViewSettings::yaw_changed, this, [this] {
+    if (camera_placed_ && !camera_moved_)
+      frame_camera();
+  });
   // Colours read from tokens at build time follow a theme switch.
   connect(&theme(), &Theme::changed, this, [this] {
     auto paint = [](vtkActor *a, const QColor &c) {
@@ -685,6 +693,7 @@ void Viewer3DWorkspace::frame_camera() {
   f.orbit_elevation_deg = 35.0;
   f.margin = preset_ == vis::ViewPreset::orbit ? 0.95 : 1.04;
   f.aspect = view_->aspect();
+  f.yaw_deg = view_settings_.yaw_deg();
   vis::place_preset_camera(view_->renderer(), f, framed);
   camera_placed_ = true;
   camera_moved_ = false;

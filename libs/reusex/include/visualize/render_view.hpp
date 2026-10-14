@@ -163,6 +163,11 @@ struct RenderOptions {
   /// Height of the orbit ring above the scene centre, in degrees.
   double orbit_elevation_deg = 25.0;
 
+  /// View yaw in degrees, counter-clockwise seen from above; std::nullopt =
+  /// the project's `view.yaw_deg` setting (0 when unset). Ignored by
+  /// ViewPreset::explicit_camera.
+  std::optional<double> yaw_deg;
+
   /// Camera used when view == ViewPreset::explicit_camera.
   std::optional<CameraSpec> camera;
 

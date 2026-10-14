@@ -197,6 +197,10 @@ struct CameraFraming {
   double orbit_elevation_deg = 25.0;
   double margin = 1.08;
   double aspect = 4.0 / 3.0; ///< viewport width / height
+  /// Display rotation about world z, degrees, counter-clockwise seen from
+  /// above (project_settings `view.yaw_deg`). Display only: the scene's
+  /// coordinates are never changed.
+  double yaw_deg = 0.0;
 };
 
 /// Place @p renderer's active camera for a preset view of @p bounds.

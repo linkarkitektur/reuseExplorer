@@ -251,10 +251,22 @@ QWidget *make_3d_pick(const PageContext &ctx) {
 }
 
 /// A floor plan coloured by plane, with camera frustums and panoramas.
-QWidget *make_3d_plan(const PageContext &ctx) {
+AppShell *make_3d_plan_shell(const PageContext &ctx) {
   auto *shell = make_3d(ctx, "planes");
   shell->viewer()->set_layer_visible(reusex::visualize::Layer::frustums, true);
   shell->viewer()->set_view(reusex::visualize::ViewPreset::plan);
+  return shell;
+}
+
+QWidget *make_3d_plan(const PageContext &ctx) {
+  return make_3d_plan_shell(ctx);
+}
+
+/// The same plan with the project's view yaw at 30°: the default camera
+/// turns with it. WRITES view.yaw_deg to the project copy.
+QWidget *make_3d_yaw(const PageContext &ctx) {
+  auto *shell = make_3d_plan_shell(ctx);
+  shell->view_settings().set_yaw_deg(30.0);
   return shell;
 }
 
@@ -872,6 +884,10 @@ void register_shell_pages() {
   register_page({"3d-plan",
                  "3D: plantegning farvet efter plan, med kamerafrustummer",
                  make_3d_plan});
+  register_page({"3d-yaw",
+                 "3D: plantegningen drejet 30° med projektets visning "
+                 "(skriver til projektkopien)",
+                 make_3d_yaw});
   register_page(
       {"3d-labels", "3D: semantiske mærkater ovenfra", make_3d_labels});
   register_page({"rediger", "Rediger: posegraf, A/B og ventende løkkelukninger",

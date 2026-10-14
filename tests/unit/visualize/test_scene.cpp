@@ -8,6 +8,7 @@
 // Nothing here renders: populate_scene() only fills a vtkRenderer, so the
 // tests inspect the actors' poly-data directly and need no GL context.
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
@@ -20,6 +21,7 @@
 #include "../../support/temp_path.hpp"
 
 #include <vtkActor.h>
+#include <vtkCamera.h>
 #include <vtkMapper.h>
 #include <vtkNew.h>
 #include <vtkPointData.h>
@@ -27,6 +29,7 @@
 #include <vtkRenderer.h>
 #include <vtkUnsignedCharArray.h>
 
+#include <array>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -338,4 +341,42 @@ TEST_CASE("PopulateScene_MissingLayerData_NamesTheStageToRun",
   o.layers = {viz::Layer::rooms};
   CHECK_THROWS_WITH(viz::populate_scene(renderer, db, o),
                     ContainsSubstring("rux create rooms"));
+}
+
+TEST_CASE("PlacePresetCamera_Yaw_TurnsTheViewAboutZ",
+          "[visualize][scene][camera]") {
+  using namespace reusex::visualize;
+  SceneBounds b;
+  b.add(0, 0, 0);
+  b.add(10, 2, 3); // long in x
+  auto up_for = [&](ViewPreset view, double yaw) {
+    vtkNew<vtkRenderer> r;
+    CameraFraming f;
+    f.view = view;
+    f.yaw_deg = yaw;
+    place_preset_camera(r, f, b);
+    double up[3];
+    r->GetActiveCamera()->GetViewUp(up);
+    return std::array<double, 3>{up[0], up[1], up[2]};
+  };
+  const auto up0 = up_for(ViewPreset::top, 0.0);
+  CHECK(up0[1] == Catch::Approx(1.0));
+  // +90°: the model turns counter-clockwise, so world +x points up the page.
+  const auto up90 = up_for(ViewPreset::top, 90.0);
+  CHECK(up90[0] == Catch::Approx(1.0));
+  CHECK(up90[1] == Catch::Approx(0.0).margin(1e-9));
+
+  vtkNew<vtkRenderer> r;
+  CameraFraming f;
+  f.view = ViewPreset::top;
+  f.aspect = 1.0;
+  const double s0 = [&] {
+    place_preset_camera(r, f, b);
+    return r->GetActiveCamera()->GetParallelScale();
+  }();
+  f.yaw_deg = 90.0;
+  place_preset_camera(r, f, b);
+  // The 10 m side now runs up the page: a square viewport frames the same
+  // extent, so the scale is unchanged; with a wide aspect it would grow.
+  CHECK(r->GetActiveCamera()->GetParallelScale() == Catch::Approx(s0));
 }

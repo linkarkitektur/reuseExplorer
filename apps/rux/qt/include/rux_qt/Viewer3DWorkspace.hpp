@@ -39,6 +39,7 @@ namespace rux::qt {
 
 class ProjectSession;
 class SceneView;
+class ViewSettings;
 
 /// The swatch token of point label @p label on a scale of @p nslots:
 /// `--label-N` by the web's slot rule, `--label-unlabeled` for 0 and
@@ -48,8 +49,8 @@ QString label_swatch_token(std::uint32_t label, int nslots);
 class Viewer3DWorkspace : public QWidget {
   Q_OBJECT
     public:
-  Viewer3DWorkspace(ProjectSession &session, bool interactive,
-                    QWidget *parent = nullptr);
+  Viewer3DWorkspace(ProjectSession &session, ViewSettings &view_settings,
+                    bool interactive, QWidget *parent = nullptr);
   ~Viewer3DWorkspace() override;
 
   /// The page is on screen: load what is not loaded yet.
@@ -86,6 +87,8 @@ class Viewer3DWorkspace : public QWidget {
   QString colour_cloud() const;
 
   ProjectSession &session_;
+  /// The project's view yaw, applied by every preset camera.
+  ViewSettings &view_settings_;
   bool interactive_ = false;
   bool active_ = false;
   unsigned generation_ = 0;
