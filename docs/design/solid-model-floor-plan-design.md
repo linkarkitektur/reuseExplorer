@@ -146,7 +146,7 @@ Every arrow is a pipeline stage that reads and writes only `ProjectDB`
 (DIRECTION: "every stage independently re-runnable"). Every entity row
 carries evidence columns (STANDARDS §5: no silent degeneracy) and a `source`.
 
-### 3.2 Data model (ProjectDB, schema v27+)
+### 3.2 Data model (ProjectDB, schema v29+)
 
 One schema bump per work package, additive only. All tables below are
 scoped to one `.rux`; multi-scan assembly is out of scope (see §6).
@@ -380,7 +380,7 @@ design beads, **sonnet** for migrations, CLI wrappers, docs and scripts.
 
 - **W0.1 Label-0 fix (opus).** `api_to_point_label` becomes `api + 1`,
   `point_label_to_api` the inverse; STANDARDS §3.1 wording confirmed as
-  `points 1..N+1`. Schema v27 migration rewrites every stored `labels`-like
+  `points 1..N+1`. Schema v29 migration rewrites every stored `labels`-like
   cloud whose `parameters` JSON lacks `"label_encoding":"api_plus_one"` by
   +1 (chunked blobs, in a transaction) and rewrites its `label_definitions`
   keys; new writes carry the key. Audit every reader of semantic labels
@@ -433,7 +433,7 @@ design beads, **sonnet** for migrations, CLI wrappers, docs and scripts.
   Z-histogram storeys (`find_peaks`-equivalent: prominence + min distance
   in the options struct). Unit tests on synthetic two-storey clouds, tilted
   by 1°.
-- **W1.2 `storeys` table + records + ProjectDB API + v28 migration (sonnet).**
+- **W1.2 `storeys` table + records + ProjectDB API + v30 migration (sonnet).**
 - **W1.3 Stage, CLI `rux create storeys`, JobStage, contract row, CONTRACTS
   entry, `rux get storeys` (sonnet).**
 - **W1.4 Quick win for the MIP (opus):** `CellComplexConstructor` slices only
@@ -679,7 +679,7 @@ the close reasons there are authoritative, this table summarises them.
 | D5 | Ground truth | **Decided: no trusted GT exists.** Build the reference-authoring loop (W0.6) and author references on our own scans (NewOffice, then every new capture); S3DIS locally for benchmarking, never committed (W0.7); MuSHRoom/ARKitScenes where licences allow |
 | D6 | Manhattan | **Decided:** buildings are mostly orthogonal but never grid-aligned, so the dominant-pair rotation (4θ mean) is mandatory and 2 families is the default; extra families only on strong evidence; tune on our own captures as they accumulate |
 | D7 | Data contract | **Decided: as recommended.** New tables (§3.2) + `building_components` bridge until WP6 |
-| D8 | Label-0 migration | **Decided: as recommended.** Rewrite stored clouds by +1 in a v27 migration (one-off O(points)), flagged by `label_encoding` in parameters |
+| D8 | Label-0 migration | **Decided: as recommended.** Rewrite stored clouds by +1 in a v29 migration (one-off O(points)), flagged by `label_encoding` in parameters |
 
 ---
 

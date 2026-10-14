@@ -201,7 +201,7 @@ changelog — that history is the point of keeping it in the repo.
 
 ## Direction changelog
 
-- **2026-10-13** — **Qt client: Posegraf becomes Rediger** ([spec](superpowers/specs/2026-10-13-pose-graph-editor-design.md), P4).
+- **2026-10-13** — **Qt client: Posegraf becomes Rediger** ([spec](design/2026-10-13-pose-graph-editor-design.md), P4).
   The rail is Start · Oversigt · 3D · Rediger · Pipeline · Log. Oversigt
   (formerly Database) is read-only; every pose-graph edit happens in Rediger:
   graph in XY/XZ/YZ with a project-wide view yaw (`project_settings`
@@ -216,7 +216,7 @@ changelog — that history is the point of keeping it in the repo.
   equirect, pan/zoom).
 
 - **2026-10-13** — **Pose graph: the stored graph is the source of truth;
-  `rux optimize` is repeatable** ([spec](superpowers/specs/2026-10-13-pose-graph-editor-design.md)).
+  `rux optimize` is repeatable** ([spec](design/2026-10-13-pose-graph-editor-design.md)).
   `pose_graph_edges` (schema v28; v27 on the branch, renumbered when main's
   resource view record took v27) stores each edge's measurement, information,
   source (`rtabmap | odometry_init | orb | panorama | file | icp | manual |

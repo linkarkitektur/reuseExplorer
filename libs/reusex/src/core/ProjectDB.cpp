@@ -2642,8 +2642,8 @@ class ProjectDB::Impl {
 
   void migrateToV27() {
     reusex::info("Migrating database to schema version 27");
-    // Resource view record (docs/superpowers/specs/
-    // 2026-10-13-resource-view-record-design.md §2): the chosen image of a
+    // Resource view record (resource-view-record design doc §2, removed
+    // 2026-10-14, see git history): the chosen image of a
     // survey part. ADD COLUMN cannot add a table constraint, so the
     // cross-column invariant is a column CHECK on view_h, the last column
     // added, when every column it names exists. Each step is guarded so a

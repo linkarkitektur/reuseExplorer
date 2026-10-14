@@ -4,8 +4,8 @@
 
 #pragma once
 
-/// The view record of a resource (docs/superpowers/specs/
-/// 2026-10-13-resource-view-record-design.md §2): the one chosen image a
+/// The view record of a resource (resource-view-record design doc §2,
+/// removed 2026-10-14, see git history): the one chosen image a
 /// survey part is shown by — a sensor frame or a 360° panorama — plus the
 /// region of it that shows the part. Pure value type: no ProjectDB, so
 /// ProjectDB.hpp, resource keys and ruxd can all share the validation.

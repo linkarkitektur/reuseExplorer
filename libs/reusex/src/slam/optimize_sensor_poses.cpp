@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
 // Database glue for the plane-landmark pose-graph back-end: solve the STORED
-// pose graph (docs/superpowers/specs/2026-10-13-pose-graph-editor-design.md
+// pose graph (docs/design/2026-10-13-pose-graph-editor-design.md
 // §4.3). Seeds come from sensor_frames.initial_transform, so re-running gives
 // the same answer; every active stored edge (auto + confirmed, with a
 // measurement) becomes one BetweenFactor; poses are written to `transform`
