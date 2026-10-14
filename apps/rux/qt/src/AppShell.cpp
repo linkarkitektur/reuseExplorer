@@ -192,7 +192,7 @@ AppShell::AppShell(ProjectSession &session, RecentProjects &recent,
       new Viewer3DWorkspace(session_, *view_settings_, options.interactive_3d);
   stack_->addWidget(viewer_);
   edit_ = new EditWorkspace(session_, *edges_, *view_settings_,
-                            options.persist_layout);
+                            options.persist_layout, options.interactive_3d);
   stack_->addWidget(edit_);
   pipeline_ = new PipelineWorkspace(session_, options.stage_executor);
   stack_->addWidget(pipeline_);

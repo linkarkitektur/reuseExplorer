@@ -33,6 +33,7 @@ namespace rux::qt {
 class EdgeEditor;
 class EdgeListPanel;
 class PairImages;
+class PairOverlay;
 class PairStrip;
 class PaneFrame;
 class PendingBanner;
@@ -45,7 +46,7 @@ class EditWorkspace : public QWidget {
     public:
   EditWorkspace(ProjectSession &session, EdgeEditor &editor,
                 ViewSettings &view_settings, bool persist_layout,
-                QWidget *parent = nullptr);
+                bool interactive_3d, QWidget *parent = nullptr);
   ~EditWorkspace() override;
 
   /// The page is on screen: load what is not loaded yet.
@@ -67,6 +68,7 @@ class EditWorkspace : public QWidget {
   Slot next_slot() const { return slots_.next(); }
   PairStrip *strip() const { return strip_; }
   PairImages *images() const { return images_; }
+  PairOverlay *overlay() const { return overlay_; }
   /// Pending pose-graph edits not yet saved.
   int pending_edits() const;
   /// Start saving them (off the GUI thread); false when it cannot start.
@@ -131,6 +133,7 @@ class EditWorkspace : public QWidget {
   PendingBanner *banner_ = nullptr;
   PairStrip *strip_ = nullptr;
   PairImages *images_ = nullptr;
+  PairOverlay *overlay_ = nullptr;
   QLabel *pair_a_ = nullptr;
   QLabel *pair_b_ = nullptr;
   QLabel *next_hint_ = nullptr;

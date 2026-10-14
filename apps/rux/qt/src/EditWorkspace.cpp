@@ -6,6 +6,7 @@
 #include <rux_qt/EditWorkspace.hpp>
 #include <rux_qt/GraphPanel.hpp>
 #include <rux_qt/PairImages.hpp>
+#include <rux_qt/PairOverlay.hpp>
 #include <rux_qt/PairStrip.hpp>
 #include <rux_qt/PendingBanner.hpp>
 #include <rux_qt/ProjectSession.hpp>
@@ -34,14 +35,6 @@ QString run_button_name(reusex::pipeline::JobStage stage) {
                                                        : QString("Find kanter");
 }
 
-QLabel *empty_state(const QString &text) {
-  auto *l = new QLabel(text);
-  l->setObjectName("emptyText");
-  l->setAlignment(Qt::AlignCenter);
-  l->setWordWrap(true);
-  return l;
-}
-
 QString key_of(EditPane p) {
   const std::string_view k = edit_pane_key(p);
   return QString::fromLatin1(k.data(), static_cast<qsizetype>(k.size()));
@@ -51,7 +44,7 @@ QString key_of(EditPane p) {
 
 EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
                              ViewSettings &view_settings, bool persist_layout,
-                             QWidget *parent)
+                             bool interactive_3d, QWidget *parent)
     : QWidget(parent), session_(session), editor_(editor),
       persist_(persist_layout) {
   setObjectName("editWorkspace");
@@ -73,7 +66,14 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   // Each side says which click fills it while its slot is empty.
   panes_[2]->set_content(images_ = new PairImages(session_));
   panes_[3] = new PaneFrame("3D-overlay");
-  panes_[3]->set_content(empty_state("Vælg A og B for at se deres skyer."));
+  panes_[3]->set_content(overlay_ = new PairOverlay(session_, interactive_3d));
+  auto *reset = new QPushButton(NavItem::escape_mnemonic("Nulstil"));
+  reset->setProperty("kind", "ghost");
+  reset->setCursor(Qt::PointingHandCursor);
+  reset->setToolTip("Sæt B tilbage på sin gemte pose");
+  reset->setMinimumHeight(reset->sizeHint().height());
+  connect(reset, &QPushButton::clicked, overlay_, &PairOverlay::reset_offset);
+  panes_[3]->add_header_widget(reset);
 
   left_ = new QSplitter(Qt::Vertical);
   left_->addWidget(panes_[0]);
@@ -83,9 +83,10 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   right_ = new QSplitter(Qt::Vertical);
   right_->addWidget(panes_[2]);
   right_->addWidget(panes_[3]);
-  // The images are what a pair is judged by: they get the larger share.
-  right_->setStretchFactor(0, 3);
-  right_->setStretchFactor(1, 2);
+  // The images and the overlay (its canvas over six offset fields) share
+  // the column evenly.
+  right_->setStretchFactor(0, 1);
+  right_->setStretchFactor(1, 1);
   right_column_ = new QWidget;
   auto *rc = new QVBoxLayout(right_column_);
   rc->setContentsMargins(0, 0, 0, 0);
@@ -137,8 +138,9 @@ EditWorkspace::EditWorkspace(ProjectSession &session, EdgeEditor &editor,
   main_->setSizes({3 * kUnit, 2 * kUnit});
   // The edge list gets room for a screenful of suspicious rows.
   left_->setSizes({3 * kUnit, 2 * kUnit});
-  // The images over the overlay: portrait frames need the height.
-  right_->setSizes({3 * kUnit, 2 * kUnit});
+  // The images over the overlay, half each: the overlay's fields take a
+  // fixed share of its half, so a 3:2 split left the canvas a sliver.
+  right_->setSizes({kUnit, kUnit});
 
   for (int i = 0; i < kEditPaneCount; ++i)
     connect(panes_[i], &PaneFrame::hide_requested, this,
@@ -382,6 +384,7 @@ void EditWorkspace::apply_pair() {
   graph_->set_pair(slots_.a(), slots_.b());
   strip_->set_pair(slots_.a(), slots_.b());
   images_->set_pair(slots_.a(), slots_.b(), slots_.next());
+  overlay_->set_pair(slots_.a(), slots_.b());
   pair_complete_ = slots_.complete();
   sync_pair_header();
   sync_panes();

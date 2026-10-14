@@ -127,4 +127,30 @@ Mat4 edge_measurement(const Mat4 &pose_from, const Mat4 &pose_to,
                   pose_to);
 }
 
+CloudPoints thin_points(const CloudPoints &points, std::size_t max_count) {
+  if (max_count == 0)
+    return {};
+  if (points.size() <= max_count)
+    return points;
+  const std::size_t stride = (points.size() + max_count - 1) / max_count;
+  CloudPoints out;
+  out.reserve(points.size() / stride + 1);
+  for (std::size_t i = 0; i < points.size(); i += stride)
+    out.push_back(points[i]);
+  return out;
+}
+
+Vec3 centroid(const CloudPoints &points) {
+  if (points.empty())
+    return {0.0, 0.0, 0.0};
+  double sx = 0.0, sy = 0.0, sz = 0.0;
+  for (const auto &p : points) {
+    sx += p[0];
+    sy += p[1];
+    sz += p[2];
+  }
+  const double n = static_cast<double>(points.size());
+  return {sx / n, sy / n, sz / n};
+}
+
 } // namespace rux::qt

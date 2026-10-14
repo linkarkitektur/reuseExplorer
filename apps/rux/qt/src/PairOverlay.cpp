@@ -1,0 +1,436 @@
+// SPDX-FileCopyrightText: 2026 Povl Filip Sonne-Frederiksen
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include <rux_qt/PairOverlay.hpp>
+#include <rux_qt/ProjectSession.hpp>
+#include <rux_qt/SceneView.hpp>
+#include <rux_qt/Theme.hpp>
+#include <rux_qt/background.hpp>
+#include <rux_qt/database_logic.hpp>
+#include <rux_qt/widgets.hpp>
+
+#include <reusex/core/ProjectDB.hpp>
+#include <reusex/slam/frame_pair_icp.hpp>
+#include <reusex/visualize/scene.hpp>
+
+#include <QApplication>
+#include <QDoubleSpinBox>
+#include <QFrame>
+#include <QGridLayout>
+#include <QKeyEvent>
+#include <QLabel>
+#include <QLocale>
+#include <QPointer>
+#include <QSignalBlocker>
+#include <QVBoxLayout>
+
+#include <vtkActor.h>
+#include <vtkBoxRepresentation.h>
+#include <vtkBoxWidget2.h>
+#include <vtkCallbackCommand.h>
+#include <vtkCellArray.h>
+#include <vtkCommand.h>
+#include <vtkMatrix4x4.h>
+#include <vtkNew.h>
+#include <vtkPoints.h>
+#include <vtkPolyData.h>
+#include <vtkPolyDataMapper.h>
+#include <vtkProperty.h>
+#include <vtkRenderWindowInteractor.h>
+#include <vtkRenderer.h>
+#include <vtkSmartPointer.h>
+#include <vtkTransform.h>
+
+#include <cmath>
+#include <thread>
+
+namespace rux::qt {
+namespace {
+
+constexpr double kPointPx = 2.0;
+
+vtkSmartPointer<vtkActor> points_actor(const CloudPoints &pts,
+                                       const QColor &c) {
+  vtkNew<vtkPoints> p;
+  p->SetNumberOfPoints(static_cast<vtkIdType>(pts.size()));
+  vtkNew<vtkCellArray> verts;
+  for (vtkIdType i = 0; i < static_cast<vtkIdType>(pts.size()); ++i) {
+    const auto &q = pts[static_cast<std::size_t>(i)];
+    p->SetPoint(i, q[0], q[1], q[2]);
+    verts->InsertNextCell(1, &i);
+  }
+  vtkNew<vtkPolyData> poly;
+  poly->SetPoints(p);
+  poly->SetVerts(verts);
+  vtkNew<vtkPolyDataMapper> mapper;
+  mapper->SetInputData(poly);
+  auto actor = vtkSmartPointer<vtkActor>::New();
+  actor->SetMapper(mapper);
+  actor->GetProperty()->SetColor(c.redF(), c.greenF(), c.blueF());
+  actor->GetProperty()->SetPointSize(kPointPx);
+  return actor;
+}
+
+void to_vtk(const Mat4 &m, vtkMatrix4x4 *out) {
+  for (int i = 0; i < 4; ++i)
+    for (int j = 0; j < 4; ++j)
+      out->SetElement(i, j, m[static_cast<std::size_t>(i * 4 + j)]);
+}
+
+/// A box representation without its six face handles: with face moves
+/// disabled they would only invite a drag that does nothing (a rigid ΔT
+/// never scales). The centre handle (translate) and the faces themselves
+/// (rotate) stay.
+class RigidBoxRepresentation : public vtkBoxRepresentation {
+    public:
+  static RigidBoxRepresentation *New() {
+    auto *r = new RigidBoxRepresentation;
+    r->InitializeObjectBase();
+    return r;
+  }
+  vtkTypeMacro(RigidBoxRepresentation, vtkBoxRepresentation);
+  void HandlesOn() override {
+    Superclass::HandlesOn();
+    hide_face_handles();
+  }
+  void hide_face_handles() {
+    for (int i = 0; i < 6; ++i) { // 0..5 faces, 6 the centre
+      this->Handle[i]->VisibilityOff();
+      this->Handle[i]->PickableOff();
+    }
+  }
+
+    protected:
+  RigidBoxRepresentation() = default;
+};
+
+void on_box(vtkObject *caller, unsigned long, void *client, void *) {
+  auto *w = vtkBoxWidget2::SafeDownCast(caller);
+  auto *rep = vtkBoxRepresentation::SafeDownCast(w->GetRepresentation());
+  vtkNew<vtkTransform> t;
+  rep->GetTransform(t);
+  Mat4 m{};
+  for (int i = 0; i < 4; ++i)
+    for (int j = 0; j < 4; ++j)
+      m[static_cast<std::size_t>(i * 4 + j)] = t->GetMatrix()->GetElement(i, j);
+  static_cast<PairOverlay *>(client)->widget_moved(m);
+}
+
+} // namespace
+
+struct PairOverlay::Clouds {
+  unsigned generation = 0;
+  CloudPoints a, b;
+  Vec3 pivot{};
+  QString error;
+};
+
+struct PairOverlay::Vtk {
+  vtkSmartPointer<vtkActor> a, b;
+  vtkSmartPointer<vtkBoxWidget2> box;
+  vtkSmartPointer<vtkCallbackCommand> observer;
+  reusex::visualize::SceneBounds bounds; ///< both clouds, unmoved
+};
+
+PairOverlay::PairOverlay(ProjectSession &session, bool interactive,
+                         QWidget *parent)
+    : QWidget(parent), session_(session), vtk_(std::make_unique<Vtk>()) {
+  setObjectName("pairOverlay");
+  const Theme &t = theme();
+  auto *v = new QVBoxLayout(this);
+  v->setContentsMargins(0, 0, 0, 0);
+  v->setSpacing(0);
+  view_ = new SceneView(interactive);
+  v->addWidget(view_, 1);
+
+  auto *fields = new QFrame;
+  fields->setObjectName("offsetFields");
+  auto *g = new QGridLayout(fields);
+  g->setContentsMargins(t.px("--space-3"), t.px("--space-2"), t.px("--space-3"),
+                        t.px("--space-2"));
+  g->setHorizontalSpacing(t.px("--space-2"));
+  g->setVerticalSpacing(t.px("--space-1"));
+  // Two rows of three — shift over turn — with the unit in the field, so
+  // the pane never widens the window: each label sits left of its field.
+  const char *labels[6] = {"X", "Y", "Z", "Drej", "Hæld", "Rul"};
+  const char *tips[6] = {"Flyt B langs verdens x-akse",
+                         "Flyt B langs verdens y-akse",
+                         "Flyt B langs verdens z-akse",
+                         "Drej B om lodret (z) gennem dens midtpunkt",
+                         "Hæld B om y-aksen gennem dens midtpunkt",
+                         "Rul B om x-aksen gennem dens midtpunkt"};
+  for (int i = 0; i < 6; ++i) {
+    auto *s = new QDoubleSpinBox;
+    s->setObjectName("offsetField");
+    s->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    s->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    s->setLocale(QLocale(QLocale::Danish, QLocale::Denmark));
+    if (i < 3) {
+      s->setRange(-50.0, 50.0);
+      s->setDecimals(3);
+      s->setSuffix(" m");
+      s->setSingleStep(kNudgeM);
+    } else {
+      s->setRange(-180.0, 180.0);
+      s->setDecimals(2);
+      s->setSuffix(" °");
+      s->setSingleStep(kNudgeDeg);
+    }
+    s->setToolTip(tips[i]);
+    s->setMinimumWidth(t.px("--space-7") + t.px("--space-2"));
+    s->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    const int row = i / 3, col = (i % 3) * 2;
+    auto *label = new CapsLabel(labels[i], "fieldLabel");
+    label->setMinimumWidth(label->sizeHint().width()); // never elided
+    label->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+    label->setToolTip(tips[i]);
+    g->addWidget(label, row, col);
+    g->addWidget(s, row, col + 1);
+    g->setColumnStretch(col + 1, 1);
+    fields_[static_cast<std::size_t>(i)] = s;
+    connect(s, &QDoubleSpinBox::valueChanged, this, [this, i](double val) {
+      double *slot[6] = {&offset_.x,         &offset_.y,
+                         &offset_.z,         &offset_.yaw_deg,
+                         &offset_.pitch_deg, &offset_.roll_deg};
+      *slot[i] = val;
+      apply_offset(false);
+    });
+  }
+  status_ = new QLabel;
+  status_->setObjectName("statusText");
+  status_->setWordWrap(true);
+  g->addWidget(status_, 2, 0, 1, 6);
+  v->addWidget(fields);
+
+  setFocusPolicy(Qt::StrongFocus);
+  installEventFilter(this);
+  view_->installEventFilter(this);
+  for (QWidget *w : view_->findChildren<QWidget *>())
+    w->installEventFilter(this);
+  // Re-frame to the canvas' new shape (the pane is laid out after the
+  // clouds may already have arrived).
+  connect(view_, &SceneView::resized, this, [this] {
+    if (ready_)
+      frame_camera();
+  });
+  connect(&session_, &ProjectSession::state_changed, this, [this] {
+    a_ = b_ = -1;
+    offset_ = {};
+    load();
+  });
+  load();
+}
+
+PairOverlay::~PairOverlay() {
+  if (vtk_->box)
+    vtk_->box->Off();
+}
+
+void PairOverlay::set_pair(int a, int b) {
+  if (a == a_ && b == b_)
+    return;
+  a_ = a;
+  b_ = b;
+  offset_ = {}; // a new pair starts unmoved
+  load();
+}
+
+void PairOverlay::load() {
+  ++generation_;
+  ready_ = false;
+  if (vtk_->box)
+    vtk_->box->Off();
+  vtk_->box = nullptr;
+  vtk_->a = vtk_->b = nullptr;
+  view_->clear_scene();
+  apply_offset(false);
+  if (!session_.is_open() || a_ < 0 || b_ < 0 || a_ == b_) {
+    view_->set_message("Vælg A og B i grafen for at se deres skyer.");
+    return;
+  }
+  view_->set_message("Indlæser skyerne …");
+  const std::string path = session_.path().toStdString();
+  const int a = a_, b = b_;
+  const unsigned gen = generation_;
+  auto work = std::make_shared<BackgroundWork>();
+  QPointer<PairOverlay> guard(this);
+  std::thread([path, a, b, gen, guard, work]() mutable {
+    auto c = std::make_shared<Clouds>();
+    c->generation = gen;
+    try {
+      reusex::ProjectDB db(path, /*readOnly=*/true);
+      c->a = thin_points(reusex::slam::frame_world_points(db, a),
+                         kOverlayMaxPoints);
+      c->b = thin_points(reusex::slam::frame_world_points(db, b),
+                         kOverlayMaxPoints);
+      c->pivot = centroid(c->b);
+    } catch (const std::exception &e) {
+      c->error = QString::fromUtf8(e.what());
+    }
+    QMetaObject::invokeMethod(
+        qApp,
+        [guard, c] {
+          if (guard)
+            guard->loaded(c);
+        },
+        Qt::QueuedConnection);
+    work.reset();
+  }).detach();
+}
+
+void PairOverlay::loaded(std::shared_ptr<Clouds> c) {
+  if (c->generation != generation_)
+    return; // the pair changed while this one loaded
+  if (!c->error.isEmpty()) {
+    view_->set_message(QString("Skyerne kunne ikke læses — 3D-overlayet "
+                               "kræver dybde og pose i begge billeder.\n%1")
+                           .arg(c->error));
+    return;
+  }
+  const Theme &t = theme();
+  pivot_ = c->pivot;
+  vtk_->a = points_actor(c->a, t.color("--color-accent"));
+  vtk_->b = points_actor(c->b, t.color("--color-on-chrome"));
+  vtkRenderer *r = view_->renderer();
+  r->AddActor(vtk_->a);
+  r->AddActor(vtk_->b);
+  vtk_->bounds = {};
+  for (const CloudPoints *pts : {&c->a, &c->b})
+    for (const auto &p : *pts)
+      vtk_->bounds.add(p[0], p[1], p[2]);
+  frame_camera();
+  if (vtkRenderWindowInteractor *iren = view_->interactor()) {
+    vtk_->box = vtkSmartPointer<vtkBoxWidget2>::New();
+    vtk_->box->SetInteractor(iren);
+    vtk_->box->SetScalingEnabled(false);
+    vtk_->box->SetMoveFacesEnabled(false);
+    vtk_->box->SetRotationEnabled(true);
+    vtk_->box->SetTranslationEnabled(true);
+    vtkNew<RigidBoxRepresentation> rep;
+    rep->SetPlaceFactor(1.0);
+    rep->OutlineCursorWiresOff();
+    rep->PlaceWidget(vtk_->b->GetBounds()); // untransformed B
+    rep->hide_face_handles();
+    vtk_->box->SetRepresentation(rep);
+    vtk_->observer = vtkSmartPointer<vtkCallbackCommand>::New();
+    vtk_->observer->SetCallback(on_box);
+    vtk_->observer->SetClientData(this);
+    vtk_->box->AddObserver(vtkCommand::InteractionEvent, vtk_->observer);
+    vtk_->box->On();
+  }
+  view_->set_message({});
+  ready_ = true;
+  apply_offset(false);
+}
+
+void PairOverlay::frame_camera() {
+  reusex::visualize::CameraFraming f;
+  f.view = reusex::visualize::ViewPreset::orbit;
+  f.orbit_index = 1;
+  f.orbit_elevation_deg = 35.0;
+  f.aspect = view_->aspect();
+  reusex::visualize::place_preset_camera(view_->renderer(), f, vtk_->bounds);
+  view_->request_render();
+}
+
+void PairOverlay::set_offset(const ManualOffset &o) {
+  offset_ = o;
+  apply_offset(false);
+}
+
+void PairOverlay::widget_moved(const Mat4 &m) {
+  offset_ = offset_from_matrix(m, pivot_);
+  apply_offset(true);
+}
+
+void PairOverlay::apply_offset(bool from_widget) {
+  sync_fields();
+  if (vtk_->b) {
+    vtkNew<vtkMatrix4x4> m;
+    to_vtk(delta(), m);
+    vtk_->b->SetUserMatrix(m);
+    if (vtk_->box && !from_widget) {
+      vtkNew<vtkTransform> tr;
+      tr->SetMatrix(m);
+      vtkBoxRepresentation::SafeDownCast(vtk_->box->GetRepresentation())
+          ->SetTransform(tr);
+    }
+    view_->request_render();
+  }
+  const double shift = std::sqrt(offset_.x * offset_.x + offset_.y * offset_.y +
+                                 offset_.z * offset_.z);
+  status_->setText(
+      !ready_ ? QString() // the canvas says why
+      : offset_.is_zero()
+          ? QString("B står på sin gemte pose. ←/→ x · ↑/↓ y · PgUp/PgDn z · "
+                    "[ / ] drej · Shift: ×10")
+          : QString("B er flyttet %1 cm og drejet %2° i forhold til den "
+                    "gemte pose.")
+                .arg(
+                    QString::fromStdString(format_decimal_da(shift * 100.0, 1)),
+                    QString::fromStdString(
+                        format_decimal_da(std::abs(offset_.yaw_deg) +
+                                              std::abs(offset_.pitch_deg) +
+                                              std::abs(offset_.roll_deg),
+                                          1))));
+  emit offset_changed();
+}
+
+void PairOverlay::sync_fields() {
+  const double values[6] = {offset_.x,         offset_.y,
+                            offset_.z,         offset_.yaw_deg,
+                            offset_.pitch_deg, offset_.roll_deg};
+  for (int i = 0; i < 6; ++i) {
+    QDoubleSpinBox *s = fields_[static_cast<std::size_t>(i)];
+    const QSignalBlocker b(s);
+    s->setValue(values[i]);
+    s->setEnabled(ready_);
+  }
+}
+
+bool PairOverlay::handle_key(int key, bool shift) {
+  NudgeKey k;
+  switch (key) {
+  case Qt::Key_Left:
+    k = NudgeKey::x_minus;
+    break;
+  case Qt::Key_Right:
+    k = NudgeKey::x_plus;
+    break;
+  case Qt::Key_Up:
+    k = NudgeKey::y_plus;
+    break;
+  case Qt::Key_Down:
+    k = NudgeKey::y_minus;
+    break;
+  case Qt::Key_PageUp:
+    k = NudgeKey::z_plus;
+    break;
+  case Qt::Key_PageDown:
+    k = NudgeKey::z_minus;
+    break;
+  case Qt::Key_BracketLeft:
+    k = NudgeKey::yaw_plus;
+    break;
+  case Qt::Key_BracketRight:
+    k = NudgeKey::yaw_minus;
+    break;
+  default:
+    return false;
+  }
+  if (!ready_)
+    return true;
+  set_offset(nudge(offset_, k, shift));
+  return true;
+}
+
+bool PairOverlay::eventFilter(QObject *watched, QEvent *event) {
+  if (event->type() == QEvent::KeyPress) {
+    auto *k = static_cast<QKeyEvent *>(event);
+    if (handle_key(k->key(), k->modifiers().testFlag(Qt::ShiftModifier)))
+      return true;
+  }
+  return QWidget::eventFilter(watched, event);
+}
+
+} // namespace rux::qt

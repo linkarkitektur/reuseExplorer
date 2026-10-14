@@ -14,6 +14,8 @@
 // canonicalised by the library's upsert — neither lives here.
 
 #include <array>
+#include <cstddef>
+#include <vector>
 
 namespace rux::qt {
 
@@ -55,5 +57,16 @@ ManualOffset nudge(ManualOffset o, NudgeKey key, bool coarse);
 /// T_from^-1 · @p world_delta_on_to · T_to.
 Mat4 edge_measurement(const Mat4 &pose_from, const Mat4 &pose_to,
                       const Mat4 &world_delta_on_to);
+
+/// A back-projected depth cloud (slam::frame_world_points' element type).
+using CloudPoints = std::vector<std::array<float, 3>>;
+/// The overlay draws at most this many points per frame, so dragging the
+/// box widget stays smooth on a dense depth sensor.
+inline constexpr std::size_t kOverlayMaxPoints = 50000;
+/// Every k-th point (k = ceil(n / max_count)), spread over the whole cloud;
+/// @p points unchanged when it already fits.
+CloudPoints thin_points(const CloudPoints &points, std::size_t max_count);
+/// Mean of @p points; the origin for none.
+Vec3 centroid(const CloudPoints &points);
 
 } // namespace rux::qt

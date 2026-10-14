@@ -176,6 +176,9 @@ SceneView::~SceneView() {
 }
 
 vtkRenderer *SceneView::renderer() const { return impl_->renderer; }
+vtkRenderWindowInteractor *SceneView::interactor() const {
+  return impl_->gl ? impl_->gl->interactor() : nullptr;
+}
 bool SceneView::interactive() const { return impl_->interactive; }
 QString SceneView::unavailable_reason() const { return impl_->unavailable; }
 qint64 SceneView::last_render_ms() const { return impl_->render_ms; }

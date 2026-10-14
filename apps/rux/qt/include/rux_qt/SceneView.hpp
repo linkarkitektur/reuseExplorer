@@ -28,6 +28,7 @@
 
 class vtkActor;
 class vtkRenderer;
+class vtkRenderWindowInteractor;
 
 namespace rux::qt {
 
@@ -38,6 +39,8 @@ class SceneView : public QWidget {
   ~SceneView() override;
 
   vtkRenderer *renderer() const;
+  /// The interactive widget's interactor, or nullptr in snapshot mode.
+  vtkRenderWindowInteractor *interactor() const;
   bool interactive() const;
   /// Why nothing can be drawn here (no OpenGL); empty when it can.
   QString unavailable_reason() const;

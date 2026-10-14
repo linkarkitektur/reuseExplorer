@@ -15,6 +15,7 @@
 #include <rux_qt/FrameBrowser.hpp>
 #include <rux_qt/GraphPanel.hpp>
 #include <rux_qt/PairImages.hpp>
+#include <rux_qt/PairOverlay.hpp>
 #include <rux_qt/PairStrip.hpp>
 #include <rux_qt/PipelineWorkspace.hpp>
 #include <rux_qt/ProjectSession.hpp>
@@ -313,6 +314,15 @@ QWidget *make_rediger_pair_depth(const PageContext &ctx) {
 QWidget *make_rediger_pair_half(const PageContext &ctx) {
   auto *shell = make_pg(ctx);
   shell->edit()->set_pair(shell->edit()->a(), -1);
+  return shell;
+}
+
+/// B moved by hand: 20 cm in x, 5° yaw. The interactive box widget needs
+/// --gl (xvfb); the offscreen shot shows the fields and the moved cloud.
+QWidget *make_rediger_offset(const PageContext &ctx) {
+  auto *shell = make_pg(ctx);
+  settle(); // clouds loaded
+  shell->edit()->overlay()->set_offset({0.20, 0.0, 0.0, 5.0, 0.0, 0.0});
   return shell;
 }
 
@@ -916,6 +926,9 @@ void register_shell_pages() {
   register_page({"rediger-pair-half",
                  "Rediger: kun A valgt; B's side siger, hvad der mangler",
                  make_rediger_pair_half});
+  register_page({"rediger-offset",
+                 "Rediger: B flyttet 20 cm i x og drejet 5° i 3D-overlayet",
+                 make_rediger_offset});
   register_page(
       {"rediger-xz", "Rediger: grafen i opstalt, set fra −y", make_rediger_xz});
   register_page(

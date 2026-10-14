@@ -90,3 +90,32 @@ TEST_CASE("EdgeMeasurement_WithDeltaBridgingRotatedPoses_IsIdentity",
   const Mat4 delta = mat4_mul(ta, rigid_inverse(tb));
   check_mat(edge_measurement(ta, tb, delta), mat4_identity());
 }
+
+TEST_CASE("ThinPoints_KeepsAtMostTheCapEvenlySpread", "[rux_qt][pair]") {
+  CloudPoints pts;
+  for (int i = 0; i < 1000; ++i)
+    pts.push_back({static_cast<float>(i), 0.0f, 0.0f});
+  const CloudPoints few = thin_points(pts, 300);
+  REQUIRE(few.size() <= 300);
+  CHECK(few.size() >= 250); // a stride, not a truncation to a handful
+  CHECK(few.front()[0] == 0.0f);
+  // Spread over the whole cloud, not its first 300 points.
+  CHECK(few.back()[0] >= 900.0f);
+  // Under the cap: untouched.
+  CHECK(thin_points(pts, 1000).size() == 1000);
+  CHECK(thin_points(pts, 5000).size() == 1000);
+  CHECK(thin_points({}, 10).empty());
+  CHECK(thin_points(pts, 0).empty());
+}
+
+TEST_CASE("Centroid_OfPoints_AndOfNone", "[rux_qt][pair]") {
+  const CloudPoints pts{{0, 0, 0}, {2, 4, 6}, {4, 2, 0}};
+  const Vec3 c = centroid(pts);
+  CHECK(c[0] == Approx(2.0));
+  CHECK(c[1] == Approx(2.0));
+  CHECK(c[2] == Approx(2.0));
+  const Vec3 none = centroid({});
+  CHECK(none[0] == 0.0);
+  CHECK(none[1] == 0.0);
+  CHECK(none[2] == 0.0);
+}
