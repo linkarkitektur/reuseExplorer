@@ -217,6 +217,7 @@ PendingEdgeEdits::stage_status(const EdgeKey &k, const std::string &status,
   op.kind = Op::Kind::set_status;
   op.edge.key = k;
   op.edge.status = status;
+  op.from_status = s->status;
   pending_.push_back(op);
   return on_change;
 }
@@ -257,6 +258,28 @@ PendingEdgeEdits::Result PendingEdgeEdits::unreject(const EdgeKey &k) {
     return Result::unchanged;
   }
   return stage_status(k, "auto", Result::unrejected);
+}
+
+PendingEdgeEdits::Result PendingEdgeEdits::unconfirm(const EdgeKey &k) {
+  const EdgeRecord *s = stored(k);
+  const int i = pending_index(k);
+  if (!s)
+    return i >= 0 ? Result::unchanged : Result::not_found;
+  if (i >= 0) {
+    const Op &p = pending_[static_cast<std::size_t>(i)];
+    // A staged measurement is confirmed by definition: revert it instead.
+    if (p.kind == Op::Kind::upsert && p.edge.transform)
+      return Result::unchanged;
+    if (p.edge.status == "confirmed") { // a staged confirmation: dropped
+      pending_.erase(pending_.begin() + i);
+      return Result::unstaged;
+    }
+    if (p.edge.status == "auto")
+      return Result::unchanged; // un-confirmed or un-rejected already
+  }
+  if (s->status != "confirmed")
+    return Result::unchanged;
+  return stage_status(k, "auto", Result::unconfirmed);
 }
 
 PendingEdgeEdits::Result PendingEdgeEdits::revert(const EdgeKey &k) {
@@ -390,7 +413,8 @@ void PendingEdgeEdits::commit_saved(const std::vector<Op> &saved) {
 }
 
 std::string pending_summary_da(const std::vector<PendingEdgeEdits::Op> &ops) {
-  int measured = 0, rejected = 0, confirmed = 0, unrejected = 0;
+  int measured = 0, rejected = 0, confirmed = 0, unrejected = 0,
+      unconfirmed = 0;
   for (const auto &o : ops) {
     if (o.kind == PendingEdgeEdits::Op::Kind::upsert)
       ++measured;
@@ -398,6 +422,8 @@ std::string pending_summary_da(const std::vector<PendingEdgeEdits::Op> &ops) {
       ++rejected;
     else if (o.edge.status == "confirmed")
       ++confirmed;
+    else if (o.from_status == "confirmed")
+      ++unconfirmed;
     else
       ++unrejected;
   }
@@ -412,10 +438,20 @@ std::string pending_summary_da(const std::vector<PendingEdgeEdits::Op> &ops) {
     parts.push_back(std::to_string(confirmed) + " bekræftet");
   if (unrejected)
     parts.push_back(std::to_string(unrejected) + " genoplivet");
+  if (unconfirmed)
+    parts.push_back(std::to_string(unconfirmed) + " sat til auto");
   std::string out;
   for (std::size_t i = 0; i < parts.size(); ++i)
     out += (i ? ", " : "") + parts[i];
   return out;
+}
+
+bool pair_add_replaces(const std::vector<EdgeView> &views,
+                       std::string_view type) {
+  for (const EdgeView &v : views)
+    if (v.edge.key.type == type && v.edge.status != "rejected")
+      return true;
+  return false;
 }
 
 // --------------------------------------------------------------- paging --

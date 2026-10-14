@@ -546,3 +546,54 @@ TEST_CASE("PendingEdits_Add_ClearsTheResidual", "[rux_qt][database][pending]") {
   CHECK(std::isnan(e.ops()[0].edge.residual));
   CHECK(e.ops()[0].edge.weight == 4.0);
 }
+
+TEST_CASE("PendingEdits_Unconfirm_IsAStatusChangeToAuto",
+          "[rux_qt][database][pending]") {
+  // Un-confirming must change the status only: a measurement-less upsert
+  // with status "auto" onto a confirmed row is a no-op in the store.
+  PendingEdgeEdits e;
+  e.set_base({edge(1, 2, "odometry"), edge(4, 5, "loop_closure", "rejected"),
+              edge(6, 7, "loop_closure", "confirmed")});
+  CHECK(e.unconfirm({6, 7, "loop_closure"}) == R::unconfirmed);
+  REQUIRE(e.count() == 1);
+  CHECK(e.ops()[0].kind == K::set_status);
+  CHECK(e.ops()[0].edge.status == "auto");
+  CHECK(e.effective()[2].edge.status == "auto");
+  CHECK(pending_summary_da(e.ops()) == "1 sat til auto");
+  // Confirming it again goes back to the file state.
+  CHECK(e.confirm({7, 6, "loop_closure"}) == R::unstaged);
+  CHECK(e.empty());
+  // Nothing to un-confirm on an auto or a rejected edge, or an unknown one.
+  CHECK(e.unconfirm({1, 2, "odometry"}) == R::unchanged);
+  CHECK(e.unconfirm({4, 5, "loop_closure"}) == R::unchanged);
+  CHECK(e.unconfirm({8, 9, "loop_closure"}) == R::not_found);
+  CHECK(e.empty());
+  // A staged confirmation is simply dropped.
+  REQUIRE(e.confirm({1, 2, "odometry"}) == R::confirmed);
+  CHECK(e.unconfirm({2, 1, "odometry"}) == R::unstaged);
+  CHECK(e.empty());
+  // A staged measurement is confirmed by definition: revert it instead.
+  REQUIRE(e.add(edge(10, 11)) == R::added);
+  CHECK(e.unconfirm({10, 11, "loop_closure"}) == R::unchanged);
+  CHECK(e.count() == 1);
+  // An un-reject still reads as a revival in the banner.
+  e.discard();
+  REQUIRE(e.unreject({4, 5, "loop_closure"}) == R::unrejected);
+  CHECK(pending_summary_da(e.ops()) == "1 genoplivet");
+}
+
+TEST_CASE("PairAddReplaces_OnlyAnActiveEdgeOfThatType",
+          "[rux_qt][database][pending]") {
+  PendingEdgeEdits e;
+  e.set_base({edge(1, 2, "odometry"), edge(2, 1, "loop_closure", "rejected")});
+  const auto views = e.between(2, 1);
+  CHECK(pair_add_replaces(views, "odometry"));
+  CHECK_FALSE(pair_add_replaces(views, "loop_closure")); // a tombstone
+  CHECK_FALSE(pair_add_replaces(views, "panorama"));
+  // A staged rejection counts as rejected, a staged new edge as active.
+  e.reject({1, 2, "odometry"});
+  REQUIRE(e.add(edge(2, 1, "panorama")) == R::added);
+  const auto staged = e.between(1, 2);
+  CHECK_FALSE(pair_add_replaces(staged, "odometry"));
+  CHECK(pair_add_replaces(staged, "panorama"));
+}

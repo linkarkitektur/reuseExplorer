@@ -53,6 +53,7 @@ class EdgeEditor : public QObject {
   PendingEdgeEdits::Result confirm(const EdgeKey &key);
   PendingEdgeEdits::Result reject(const EdgeKey &key);
   PendingEdgeEdits::Result unreject(const EdgeKey &key);
+  PendingEdgeEdits::Result unconfirm(const EdgeKey &key);
   PendingEdgeEdits::Result revert(const EdgeKey &key);
   void discard();
 

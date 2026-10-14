@@ -82,7 +82,8 @@ TEST_CASE("EdgeSave_ReadOnlyProject_FailsAsReadOnly",
   std::string what;
   try {
     apply_edge_ops(
-        db, {{PendingEdgeEdits::Op::Kind::upsert, record(1, 2, 1.0), false}});
+        db,
+        {{PendingEdgeEdits::Op::Kind::upsert, record(1, 2, 1.0), false, {}}});
   } catch (const std::exception &e) {
     what = e.what();
   }

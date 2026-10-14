@@ -202,4 +202,27 @@ bool icp_fit_usable(IcpFitState state) {
   return state == IcpFitState::aligned || state == IcpFitState::not_placed;
 }
 
+EdgeRecord pair_edge_to_add(int a, int b, const std::string &type,
+                            const Mat4 &pose_a, const Mat4 &pose_b,
+                            const std::optional<Mat4> &delta,
+                            const std::optional<IcpEdgeMeasurement> &icp) {
+  EdgeRecord e;
+  e.status = "confirmed";
+  if (icp) {
+    e.key = {b, a, type}; // ICP ran B onto A
+    e.transform = icp->edge_transform;
+    e.information = icp->information;
+    e.source = "icp";
+    // What the store writes: the mean translational precision.
+    const auto &m = icp->information;
+    e.weight = (m[21] + m[28] + m[35]) / 3.0;
+  } else {
+    e.key = {a, b, type};
+    e.transform =
+        edge_measurement(pose_a, pose_b, delta.value_or(mat4_identity()));
+    e.source = "manual"; // the optimizer's per-type default information
+  }
+  return e;
+}
+
 } // namespace rux::qt

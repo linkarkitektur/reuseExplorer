@@ -51,11 +51,13 @@
 #include <QThread>
 #include <QTimer>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include <optional>
 #include <string>
 #include <utility>
@@ -323,6 +325,16 @@ QWidget *make_rediger_pair_half(const PageContext &ctx) {
   return shell;
 }
 
+/// Click the pair strip's first button labelled one of @p texts.
+void click_strip_button(AppShell *shell, std::initializer_list<QString> texts) {
+  for (auto *b : shell->edit()->strip()->findChildren<QPushButton *>())
+    for (const QString &t : texts)
+      if (b->text() == t) {
+        b->click();
+        return;
+      }
+}
+
 /// B moved by hand: 20 cm in x, 5° yaw. The interactive box widget needs
 /// --gl (xvfb); the offscreen shot shows the fields and the moved cloud.
 QWidget *make_rediger_offset(const PageContext &ctx) {
@@ -521,16 +533,47 @@ QWidget *make_rediger_readonly(const PageContext &ctx) {
   return shell;
 }
 
-/// A saved edit: stage a loop closure on the pair, then "Gem ændringer" —
-/// the stored edge comes back from the file marked "Gemt". WRITES to the
-/// project copy.
+/// A saved edit: ICP-forfin on the pair, "Tilføj kant" (ICP's measurement,
+/// or the stored relative pose when ICP fails), a stored loop closure off
+/// the pair rejected, then "Gem ændringer" — the edges come back from the
+/// file. Prints what the file holds for both. WRITES to the project copy.
 QWidget *make_rediger_saved(const PageContext &ctx) {
   auto *shell = rediger_shell(ctx);
   if (shell->edit()->a() < 0)
     return shell;
-  shell->edges().add(
-      loop_closure(shell->edit()->a(), shell->edit()->b(), 250.0));
+  settle(); // clouds loaded
+  click_strip_button(shell, {"ICP-forfin"});
+  settle(); // ICP landed
+  click_strip_button(shell, {"Tilføj kant", "Erstat måling"});
+  // And a stored loop closure off the pair rejected: saved as a tombstone.
+  std::optional<EdgeKey> rejected;
+  for (const auto &e : shell->edges().edits().base())
+    if (e.key.type == "loop_closure" && e.status != "rejected" &&
+        std::minmax(e.key.from, e.key.to) !=
+            std::minmax(shell->edit()->a(), shell->edit()->b())) {
+      shell->edges().reject(e.key);
+      rejected = e.key;
+      break;
+    }
   shell->edit()->save_edits();
+  settle(); // written
+  if (!ctx.project_path.isEmpty()) {
+    reusex::ProjectDB db(ctx.project_path.toStdString(), /*readOnly=*/true);
+    const int a = shell->edit()->a(), b = shell->edit()->b();
+    for (const auto &e : db.list_pose_graph_edges())
+      if (std::minmax(e.from_node_id, e.to_node_id) == std::minmax(a, b) ||
+          (rejected &&
+           std::minmax(e.from_node_id, e.to_node_id) ==
+               std::minmax(rejected->from, rejected->to) &&
+           e.edge_type == rejected->type))
+        std::fprintf(stderr,
+                     "rediger-saved: %d -> %d %s source=%s status=%s "
+                     "transform=%s information=%s weight=%g\n",
+                     e.from_node_id, e.to_node_id, e.edge_type.c_str(),
+                     e.source.c_str(), e.status.c_str(),
+                     e.transform ? "yes" : "no", e.information ? "yes" : "no",
+                     e.weight);
+  }
   return shell;
 }
 
@@ -717,6 +760,31 @@ void seed_graph(const QString &path, std::size_t loops) {
                  e.from_node_id, e.to_node_id, e.residual);
   }
   tx.commit();
+}
+
+/// The staged states: a confirmation, a rejection and a new ICP-measured
+/// edge on the rejected edge's pair, with the banner counting them.
+QWidget *make_rediger_staged(const PageContext &ctx) {
+  seed_graph(ctx.project_path, 40);
+  auto *shell = rediger_shell(ctx);
+  settle();
+  EdgeEditor &ed = shell->edges();
+  for (const auto &v : ed.edits().effective())
+    if (v.edge.status == "auto" && v.edge.key.type == "loop_closure") {
+      ed.confirm(v.edge.key);
+      break;
+    }
+  for (const auto &v : ed.edits().effective())
+    if (v.edge.status == "auto" && v.edge.key.type == "odometry") {
+      ed.reject(v.edge.key);
+      shell->edit()->set_pair(v.edge.key.from, v.edge.key.to);
+      break;
+    }
+  settle(); // the pair's clouds loaded
+  click_strip_button(shell, {"ICP-forfin"});
+  settle(); // ICP landed, B placed
+  click_strip_button(shell, {"Tilføj kant", "Erstat måling"});
+  return shell;
 }
 
 QWidget *make_rediger_colour(const PageContext &ctx, EdgeColourMode mode,
@@ -1075,6 +1143,10 @@ void register_shell_pages() {
   register_page({"rediger-readonly",
                  "Rediger: gem afvist på et skrivebeskyttet projekt",
                  make_rediger_readonly});
+  register_page({"rediger-staged",
+                 "Rediger: en bekræftet, en afvist og en ny ICP-målt kant "
+                 "(skriver grafen til projektkopien)",
+                 make_rediger_staged});
   register_page({"rediger-saved",
                  "Rediger: en gemt kant (skriver til projektkopien)",
                  make_rediger_saved});

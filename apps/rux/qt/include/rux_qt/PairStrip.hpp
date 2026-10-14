@@ -4,8 +4,8 @@
 #pragma once
 
 // The A<->B pair strip of Rediger: the pose-graph edges between the two
-// frames (stored and pending), how far apart they are, ICP refine, add and
-// delete.
+// frames (stored and pending), how far apart they are, ICP refine, adding a
+// measured edge, and confirming, rejecting or reverting one.
 
 #include <rux_qt/database_logic.hpp>
 #include <rux_qt/pair_alignment.hpp>
@@ -29,7 +29,8 @@ class EdgeEditor;
 class ProjectSession;
 
 /// The A<->B link: the stored and pending edges between the two frames, how
-/// far apart they are, ICP refine, add and delete.
+/// far apart they are, ICP refine, add a measured edge (ICP's while its fit
+/// is current, else B's manual placement), confirm, reject and revert.
 class PairStrip : public QFrame {
   Q_OBJECT
     public:
@@ -52,6 +53,8 @@ class PairStrip : public QFrame {
   /// ICP of B onto A converged for the current pair from the current ΔT:
   /// @p world_delta is B's new world-space offset (the seed included).
   void icp_aligned(int a, int b, const rux::qt::Mat4 &world_delta);
+  /// "Nulstil": put B back on its stored pose (clear the manual offset).
+  void reset_requested();
 
     private:
   struct IcpOutcome {
@@ -79,6 +82,7 @@ class PairStrip : public QFrame {
   void icp_finished(int a, int b, const std::optional<Mat4> &guess,
                     IcpOutcome outcome);
   void add_edge();
+  void refresh_add_label();
   ProjectSession &session_;
   EdgeEditor &editor_;
   int a_ = -1, b_ = -1;
@@ -86,6 +90,7 @@ class PairStrip : public QFrame {
   QWidget *rows_ = nullptr;
   QVBoxLayout *rows_layout_ = nullptr;
   QPushButton *icp_ = nullptr;
+  QPushButton *reset_ = nullptr;
   QComboBox *type_ = nullptr;
   QPushButton *add_ = nullptr;
   QLabel *icp_line_ = nullptr;

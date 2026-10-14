@@ -13,6 +13,8 @@
 // ICP information is slam::icp_edge_information's, and edge direction is
 // canonicalised by the library's upsert — neither lives here.
 
+#include <rux_qt/database_logic.hpp>
+
 #include <array>
 #include <cstddef>
 #include <optional>
@@ -93,6 +95,24 @@ IcpFitState icp_fit_state(bool ok, bool stale, bool converged,
                           const std::optional<Mat4> &now);
 /// Whether a new edge may use the fit's measurement and information.
 bool icp_fit_usable(IcpFitState state);
+
+/// What a usable ICP fit of the pair measured, B -> A.
+struct IcpEdgeMeasurement {
+  /// FramePairIcpResult::edge_transform: the edge B -> A.
+  Mat4 edge_transform{};
+  /// slam::icp_edge_information of the fit.
+  std::array<double, 36> information{};
+};
+/// The edge "Tilføj kant" stages between A and B, status "confirmed": ICP's
+/// B -> A measurement and information while its fit is usable (@p icp;
+/// source "icp"), else T_A^-1 · ΔT · T_B as A -> B with the optimizer's
+/// per-type default information (source "manual", weight NaN). @p delta is
+/// B's manual offset (nullopt = none: the stored relative pose). Direction
+/// is canonicalised by the store.
+EdgeRecord pair_edge_to_add(int a, int b, const std::string &type,
+                            const Mat4 &pose_a, const Mat4 &pose_b,
+                            const std::optional<Mat4> &delta,
+                            const std::optional<IcpEdgeMeasurement> &icp);
 
 /// A back-projected depth cloud (slam::frame_world_points' element type).
 using CloudPoints = std::vector<std::array<float, 3>>;

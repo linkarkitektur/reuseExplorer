@@ -1086,7 +1086,8 @@ QFrame#edgeRow:hover {
 QFrame#edgeRow[state="add"] {
   border-color: var(--color-accent);
 }
-QFrame#edgeRow[state="delete"] QLabel#edgeMono {
+QFrame#edgeRow[state="rejected"] QLabel#edgeMono,
+QFrame#edgeRow[state="rejected"] QLabel#edgeMeta {
   color: var(--color-text-faint);
 }
 QFrame#edgeRow QLabel {

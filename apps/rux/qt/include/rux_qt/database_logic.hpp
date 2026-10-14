@@ -132,17 +132,18 @@ struct EdgeView {
 class PendingEdgeEdits {
     public:
   enum class Result {
-    added,      ///< a new edge is staged
-    replaced,   ///< a new measurement for an existing / staged key
-    revived,    ///< a new measurement over a rejected edge (overwrites it)
-    confirmed,  ///< a status change to confirmed is staged (also: an add
-                ///< without a transform over a stored edge)
-    rejected,   ///< a status change to rejected is staged
-    unrejected, ///< a rejected edge goes back to auto
-    unstaged,   ///< it cancelled a pending op: the file state shows again
-    unchanged,  ///< already in that state
-    not_found,  ///< no such edge
-    invalid,    ///< from == to, an unknown type, or a weight <= 0
+    added,       ///< a new edge is staged
+    replaced,    ///< a new measurement for an existing / staged key
+    revived,     ///< a new measurement over a rejected edge (overwrites it)
+    confirmed,   ///< a status change to confirmed is staged (also: an add
+                 ///< without a transform over a stored edge)
+    rejected,    ///< a status change to rejected is staged
+    unrejected,  ///< a rejected edge goes back to auto
+    unconfirmed, ///< a confirmed edge goes back to auto
+    unstaged,    ///< it cancelled a pending op: the file state shows again
+    unchanged,   ///< already in that state
+    not_found,   ///< no such edge
+    invalid,     ///< from == to, an unknown type, or a weight <= 0
   };
 
   struct Op {
@@ -150,6 +151,9 @@ class PendingEdgeEdits {
     Kind kind = Kind::upsert;
     EdgeRecord edge; ///< upsert: the record; set_status: key + status
     bool overwrite_rejected = false;
+    /// set_status: the stored status it changes (the banner tells an
+    /// un-confirm from an un-reject).
+    std::string from_status;
   };
 
   void set_base(std::vector<EdgeRecord> edges); ///< clears pending
@@ -163,6 +167,9 @@ class PendingEdgeEdits {
   Result confirm(const EdgeKey &key);
   Result reject(const EdgeKey &key);
   Result unreject(const EdgeKey &key);
+  /// A stored confirmed edge back to auto: a status change, never a
+  /// measurement-less upsert (the store ignores "auto" over "confirmed").
+  Result unconfirm(const EdgeKey &key);
   /// Drop whatever is pending on @p key.
   Result revert(const EdgeKey &key);
   void discard() { pending_.clear(); }
@@ -195,6 +202,12 @@ class PendingEdgeEdits {
 
 /// The banner's line: "2 nye eller målte kanter, 1 afvist, 1 bekræftet".
 std::string pending_summary_da(const std::vector<PendingEdgeEdits::Op> &ops);
+
+/// Whether "Tilføj kant" of @p type between a pair replaces a measurement:
+/// @p views (PendingEdgeEdits::between) holds a non-rejected edge of that
+/// type, in either direction. The button then reads "Erstat måling".
+bool pair_add_replaces(const std::vector<EdgeView> &views,
+                       std::string_view type);
 
 /// True for the three stored edge types.
 bool is_edge_type(std::string_view type);

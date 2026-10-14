@@ -64,6 +64,13 @@ PendingEdgeEdits::Result EdgeEditor::unreject(const EdgeKey &key) {
   return r;
 }
 
+PendingEdgeEdits::Result EdgeEditor::unconfirm(const EdgeKey &key) {
+  const auto r = edits_.unconfirm(key);
+  error_.clear();
+  emit changed();
+  return r;
+}
+
 PendingEdgeEdits::Result EdgeEditor::revert(const EdgeKey &key) {
   const auto r = edits_.revert(key);
   error_.clear();

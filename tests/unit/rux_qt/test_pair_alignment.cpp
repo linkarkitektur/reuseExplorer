@@ -11,6 +11,7 @@
 
 #include <rux_qt/pair_alignment.hpp>
 
+#include <cmath>
 #include <cstddef>
 #include <optional>
 
@@ -198,4 +199,53 @@ TEST_CASE("IcpFitState_FollowsBsPlacementAfterIcp", "[rux_qt][pair]") {
   CHECK(icp_fit_usable(S::not_placed));
   for (S s : {S::failed, S::dropped, S::not_converged, S::moved_since})
     CHECK_FALSE(icp_fit_usable(s));
+}
+
+TEST_CASE("PairEdgeToAdd_WithAUsableIcpFit_StagesIcpsBToAEdge",
+          "[rux_qt][pair]") {
+  IcpEdgeMeasurement icp;
+  icp.edge_transform = translate(0.4, -0.1, 0.02);
+  icp.information.fill(0.0);
+  for (std::size_t i = 0; i < 3; ++i)
+    icp.information[i * 7] = 400.0;
+  icp.information[21] = 1000.0;
+  icp.information[28] = 2000.0;
+  icp.information[35] = 3000.0;
+  const EdgeRecord e = pair_edge_to_add(
+      3, 9, "loop_closure", translate(1, 0, 0), translate(2, 0, 0),
+      offset_matrix({0.05, 0, 0, 0, 0, 0}, {0, 0, 0}), icp);
+  // ICP ran B onto A: the edge is B -> A; the store canonicalises it.
+  CHECK(e.key.from == 9);
+  CHECK(e.key.to == 3);
+  CHECK(e.key.type == "loop_closure");
+  REQUIRE(e.transform.has_value());
+  check_mat(*e.transform, icp.edge_transform);
+  REQUIRE(e.information.has_value());
+  CHECK(*e.information == icp.information);
+  CHECK(e.source == "icp");
+  CHECK(e.status == "confirmed");
+  // The store's weight: the mean translational precision.
+  CHECK(e.weight == Approx(2000.0));
+}
+
+TEST_CASE("PairEdgeToAdd_WithoutIcp_MeasuresTheManualPlacement",
+          "[rux_qt][pair]") {
+  const Mat4 pa = translate(1, 0, 0), pb = translate(2, 1, 0);
+  const Mat4 delta = offset_matrix({0.1, 0, 0, 10, 0, 0}, {2, 1, 0});
+  const EdgeRecord e =
+      pair_edge_to_add(3, 9, "odometry", pa, pb, delta, std::nullopt);
+  CHECK(e.key.from == 3);
+  CHECK(e.key.to == 9);
+  CHECK(e.key.type == "odometry");
+  REQUIRE(e.transform.has_value());
+  check_mat(*e.transform, edge_measurement(pa, pb, delta));
+  CHECK_FALSE(e.information.has_value()); // the optimizer's default
+  CHECK(std::isnan(e.weight));
+  CHECK(e.source == "manual");
+  CHECK(e.status == "confirmed");
+  // No offset: the stored relative pose.
+  const EdgeRecord stored =
+      pair_edge_to_add(3, 9, "odometry", pa, pb, std::nullopt, std::nullopt);
+  REQUIRE(stored.transform.has_value());
+  check_mat(*stored.transform, translate(1, 1, 0));
 }
