@@ -116,7 +116,8 @@ struct RigidFit {
   std::array<double, 16> world_delta{1, 0, 0, 0, 0, 1, 0, 0,
                                      0, 0, 1, 0, 0, 0, 0, 1};
   /// Indices into the `pairs` argument, ascending: the pairs within
-  /// inlier_dist_m under the returned world_delta.
+  /// inlier_dist_m under the returned world_delta. On no_consensus, the
+  /// best hypothesis' partial consensus (0-2 pairs).
   std::vector<int> inliers;
   double rms_m = 0;   ///< RMS 3D residual over the inliers, under world_delta
   std::string reason; ///< when !ok, e.g. "3 matches with depth needed, 2 given"

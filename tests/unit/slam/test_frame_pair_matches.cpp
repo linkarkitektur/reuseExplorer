@@ -10,6 +10,7 @@
 
 #include <reusex/core/ProjectDB.hpp>
 #include <reusex/core/SensorIntrinsics.hpp>
+#include <reusex/core/logging.hpp>
 #include <reusex/slam/frame_pair_icp.hpp>
 #include <reusex/slam/frame_pair_matches.hpp>
 
@@ -181,6 +182,21 @@ TEST_CASE("RigidFromMatches_NoConsensus_IsRefused", "[slam][matches]") {
   CHECK(fit.failure == RigidFitFailure::no_consensus);
 }
 
+TEST_CASE("RigidFromMatches_PartialConsensus_IsReported", "[slam][matches]") {
+  // Three pairs, the third stretched 0.1 m: the one hypothesis' Umeyama fit
+  // leaves residuals 0.042, 0.019 and 0.061 m, so 2 of 3 agree within
+  // 0.05 m. The refusal reports those 2, not 0.
+  const auto I = pose(0, 0, 0, 0);
+  const std::vector<PointPair> pairs = {{{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}},
+                                        {{2.0, 0.0, 0.0}, {2.0, 0.0, 0.0}},
+                                        {{0.0, 2.1, 0.0}, {0.0, 2.0, 0.0}}};
+  const auto fit = rigid_from_matches(I, I, pairs);
+  CHECK_FALSE(fit.ok);
+  CHECK(fit.failure == RigidFitFailure::no_consensus);
+  CHECK(fit.inliers == std::vector<int>{0, 1});
+  CHECK(fit.reason.find("2 of 3") != std::string::npos);
+}
+
 TEST_CASE("RigidFromMatches_FixedSeed_IsDeterministic", "[slam][matches]") {
   auto pairs = synthetic_pairs(kPoseA, kPoseB, true_delta(), 25, 11);
   pairs.push_back({{0, 0, 1}, {3, 3, 3}});
@@ -327,16 +343,21 @@ void write_fixture(const std::string &path) {
 /// No public API stores a frame with depth but no pose
 /// (tests/unit/io/test_update_sensor_frame_pose.cpp says why), so NULL the
 /// transform with raw SQL — after the ProjectDB above has closed (WAL).
-void clear_pose(const std::string &path, int node_id) {
+void clear_column(const std::string &path, int node_id,
+                  const std::string &column) {
   sqlite3 *raw = nullptr;
   REQUIRE(sqlite3_open(path.c_str(), &raw) == SQLITE_OK);
-  const std::string sql = "UPDATE sensor_frames SET transform = NULL WHERE "
-                          "node_id = " +
-                          std::to_string(node_id) + ";";
+  const std::string sql = "UPDATE sensor_frames SET " + column +
+                          " = NULL WHERE node_id = " + std::to_string(node_id) +
+                          ";";
   REQUIRE(sqlite3_exec(raw, sql.c_str(), nullptr, nullptr, nullptr) ==
           SQLITE_OK);
   REQUIRE(sqlite3_changes(raw) == 1);
   sqlite3_close(raw);
+}
+
+void clear_pose(const std::string &path, int node_id) {
+  clear_column(path, node_id, "transform");
 }
 
 /// The fixture as every database test opens it.
@@ -442,6 +463,58 @@ TEST_CASE("FramePairMatches_FrameWithoutDepthOrPose_ThrowsNamingIt",
   CHECK(message(1, 4).find("frame 4") != std::string::npos);
   CHECK(message(5, 1).find("frame 5") != std::string::npos);
   CHECK_THROWS_AS(match_frame_pair(db, 2, 2), std::invalid_argument);
+}
+
+TEST_CASE("FramePairMatches_FrameWithoutColour_ThrowsNamingIt",
+          "[slam][matches]") {
+  const TempPath project("frame_pair_matches_no_colour");
+  make_fixture(project.path.string());
+  clear_column(project.path.string(), 2, "color"); // depth and pose kept
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  const auto message = [](auto &&f) -> std::string {
+    try {
+      f();
+    } catch (const std::runtime_error &e) {
+      return e.what();
+    }
+    return {};
+  };
+  CHECK(message([&] { match_frame_pair(db, 1, 2); }) ==
+        "frame 2 has no stored colour image");
+  CHECK(message([&] { lift_pixel(db, 2, 100.0f, 100.0f); }) ==
+        "frame 2 has no stored colour image");
+}
+
+TEST_CASE("FramePairMatches_RatioTestKeepsNone_WarnsWithCountsAndRatio",
+          "[slam][matches]") {
+  const TempPath project("frame_pair_matches_ratio_none");
+  make_fixture(project.path.string());
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  // Disjoint halves and a near-zero ratio: keypoints on both sides, every
+  // match refused.
+  FrameMatchOptions o;
+  o.region_a = reusex::slam::PixelRect{0, 0, kW / 2, kH};
+  o.region_b = reusex::slam::PixelRect{kW / 2, 0, kW / 2, kH};
+  o.ratio_test = 0.01;
+  std::vector<std::string> warnings;
+  const auto saved = reusex::core::get_log_level();
+  reusex::core::set_log_handler(
+      [&](reusex::core::LogLevel l, std::string_view m) {
+        if (l == reusex::core::LogLevel::warn)
+          warnings.emplace_back(m);
+      });
+  reusex::core::set_log_level(reusex::core::LogLevel::warn);
+  const auto m = match_frame_pair(db, 1, 2, o);
+  reusex::core::reset_log_handler();
+  reusex::core::set_log_level(saved);
+  REQUIRE_FALSE(m.keypoints_a.empty());
+  REQUIRE_FALSE(m.keypoints_b.empty());
+  CHECK(m.matches.empty());
+  REQUIRE(warnings.size() == 1);
+  const std::string &w = warnings.front();
+  CHECK(w.find(std::to_string(m.keypoints_a.size())) != std::string::npos);
+  CHECK(w.find(std::to_string(m.keypoints_b.size())) != std::string::npos);
+  CHECK(w.find("0.01") != std::string::npos);
 }
 
 TEST_CASE("LiftPixel_SnapsToNearestDepth_AndRefusesFarFromAny",

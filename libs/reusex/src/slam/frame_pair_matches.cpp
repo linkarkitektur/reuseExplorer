@@ -165,7 +165,12 @@ RigidFit rigid_from_matches(const std::array<double, 16> &pose_a,
   // inliers and RMS of the transform actually returned.
   std::vector<int> inliers;
   double sq = 0.0;
-  if (consensus.size() >= 3) {
+  if (consensus.size() < 3) {
+    // No hypothesis reached 3: report the best one's partial consensus
+    // (ascending, as ransac_rigid builds it), so the reason says how close
+    // the fit came rather than "0 of n".
+    inliers = consensus;
+  } else {
     const double thr2 = inlier_dist_m * inlier_dist_m;
     for (int k = 0; k < n; ++k) {
       const double e2 =
@@ -251,6 +256,12 @@ FramePairMatches match_frame_pair(const ProjectDB &db, int a_id, int b_id,
       continue;
     out.matches.push_back({m[0].trainIdx, m[0].queryIdx, m[0].distance});
   }
+  if (out.matches.empty())
+    reusex::warn("match_frame_pair: the ratio test ({}) kept no match between "
+                 "frames {} ({} keypoints, {}) and {} ({} keypoints, {})",
+                 opts.ratio_test, a_id, fa.keypoints.size(),
+                 describe(opts.region_a), b_id, fb.keypoints.size(),
+                 describe(opts.region_b));
   reusex::debug("match_frame_pair: {} matches between frames {} ({} "
                 "keypoints) and {} ({} keypoints)",
                 out.matches.size(), a_id, fa.keypoints.size(), b_id,
