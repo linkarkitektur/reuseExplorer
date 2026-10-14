@@ -408,6 +408,9 @@ PoseGraphView::PoseGraphView(QWidget *parent) : QGraphicsView(parent) {
   setRenderHint(QPainter::Antialiasing);
   setDragMode(QGraphicsView::ScrollHandDrag);
   setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
+  // A user's view keeps its centre when the canvas changes height (the
+  // meta line under it re-wraps during a reload).
+  setResizeAnchor(QGraphicsView::AnchorViewCenter);
   setViewportUpdateMode(QGraphicsView::FullViewportUpdate);
   setFrameShape(QFrame::NoFrame);
   setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -446,6 +449,12 @@ void PoseGraphView::fit() {
   setTransform(QTransform::fromScale(f.scale, f.scale));
   centerOn(f.cx, f.cy);
   user_view_ = false;
+}
+
+void PoseGraphView::restore_view(const QTransform &t, const QPointF &centre) {
+  setTransform(t);
+  centerOn(centre);
+  user_view_ = true;
 }
 
 void PoseGraphView::set_corner_reserve(QSize px) {
@@ -740,6 +749,19 @@ GraphPanel::GraphPanel(ProjectSession &session, EdgeEditor &editor,
 GraphPanel::~GraphPanel() = default;
 
 void GraphPanel::reset() {
+  if (session_.path() != shown_path_) {
+    // Another project (or none): its edges are not this one's.
+    highlight_.reset();
+    kept_view_.reset();
+  } else if (!data_.empty()) {
+    // A reload of the project on screen: keep the user's zoom on it.
+    if (view_->user_view())
+      kept_view_ =
+          KeptView{view_->transform(),
+                   view_->mapToScene(view_->viewport()->rect().center())};
+    else
+      kept_view_.reset();
+  }
   ++generation_;
   loading_ = false;
   data_.clear();
@@ -813,7 +835,13 @@ void GraphPanel::loaded(std::shared_ptr<Loaded> d) {
   if (!d->error.isEmpty())
     empty_->setText(QString("Poserne kunne ikke læses.\n%1").arg(d->error));
   update_meta();
-  view_->fit();
+  const QString path = session_.path();
+  if (kept_view_ && path == shown_path_)
+    view_->restore_view(kept_view_->transform, kept_view_->centre);
+  else
+    view_->fit();
+  kept_view_.reset();
+  shown_path_ = path;
 }
 
 void GraphPanel::project() {

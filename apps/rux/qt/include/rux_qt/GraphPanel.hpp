@@ -66,6 +66,9 @@ class PoseGraphView : public QGraphicsView {
   void zoom_on(const QPointF &scene_pos, double factor);
   /// Zoomed or panned by the user since the last fit.
   bool user_view() const { return user_view_; }
+  /// Put back a view the user had (a same-project reload): @p t's zoom,
+  /// centred on @p centre, still counted as the user's.
+  void restore_view(const QTransform &t, const QPointF &centre);
   /// Scene units per screen pixel at the current zoom.
   double units_per_pixel() const;
 
@@ -122,6 +125,7 @@ class GraphPanel : public QWidget {
   void set_show_rejected(bool on);
   /// Paint @p key over the rest (the clicked / listed edge); nullopt: none.
   void set_highlight(std::optional<EdgeKey> key);
+  const std::optional<EdgeKey> &highlight() const { return highlight_; }
 
     signals:
   /// A node was clicked (@p as_b: Shift held); Rediger picks the slot.
@@ -182,6 +186,15 @@ class GraphPanel : public QWidget {
   EdgeColourMode mode_ = EdgeColourMode::type;
   bool show_rejected_ = false;
   std::optional<EdgeKey> highlight_;
+  /// The project the canvas last showed, and the user's zoom and centre on
+  /// it: a reload of the same project (Optimer, F5) keeps both, as well as
+  /// the highlighted edge; another project starts fitted and unhighlighted.
+  QString shown_path_;
+  struct KeptView {
+    QTransform transform;
+    QPointF centre;
+  };
+  std::optional<KeptView> kept_view_;
   std::vector<EdgeView> drawn_; ///< the edges on the canvas, effective
   QComboBox *colour_ = nullptr;
   QCheckBox *rejected_ = nullptr;

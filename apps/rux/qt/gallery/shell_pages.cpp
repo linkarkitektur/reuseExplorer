@@ -992,6 +992,54 @@ QWidget *make_rediger_yaw_zoomed(const PageContext &ctx) {
   return shell;
 }
 
+/// A reload of the same project (what Optimer and F5 do) right after the
+/// user zoomed in, clicked an edge and turned the yaw: the zoom, the centre,
+/// the highlighted edge, A/B and the yaw all survive it (WRITES the yaw to
+/// the copy). stderr: before/after.
+QWidget *make_rediger_reload(const PageContext &ctx) {
+  seed_graph(ctx.project_path, 40);
+  auto *shell = make_pg(ctx);
+  settle();
+  shell->show();
+  QApplication::processEvents();
+  GraphPanel *g = shell->edit()->graph();
+  PoseGraphView *v = g->view();
+  auto *session = shell->findChild<ProjectSession *>();
+  if (g->node_count() == 0 || !session)
+    return shell;
+  shell->edit()->discard_edits(); // no unsaved-edits prompt on reload
+  for (const auto &e : shell->edges().edits().base())
+    if (e.key.type == "loop_closure" && e.status != "rejected") {
+      g->click_edge(e.key);
+      break;
+    }
+  const int k = g->node_count() / 2;
+  v->zoom_on(g->node_scene_pos(k), 6.0);
+  shell->view_settings().set_yaw_deg(20.0);
+  const auto centre = [v] {
+    return v->mapToScene(v->viewport()->rect().center());
+  };
+  const QPointF c0 = centre();
+  const double upp0 = v->units_per_pixel();
+  const auto h0 = g->highlight();
+  const int a0 = shell->edit()->a(), b0 = shell->edit()->b();
+  session->reload(); // inside the yaw's 500 ms debounce
+  settle();
+  QApplication::processEvents();
+  const QPointF d = (centre() - c0) / v->units_per_pixel();
+  const auto h1 = g->highlight();
+  std::fprintf(stderr,
+               "rediger-reload: upp %.4g -> %.4g, centre moved %.2f px, "
+               "user view %s; highlight %s; A/B %d/%d -> %d/%d; yaw %.1f "
+               "(graph %.1f)\n",
+               upp0, v->units_per_pixel(), std::hypot(d.x(), d.y()),
+               v->user_view() ? "kept" : "LOST",
+               h0 && h1 && same_edge_key(*h0, *h1) ? "kept" : "LOST", a0, b0,
+               shell->edit()->a(), shell->edit()->b(),
+               shell->view_settings().yaw_deg(), g->projection().yaw_deg);
+  return shell;
+}
+
 /// A yaw set and the project closed at once, inside the 500 ms debounce:
 /// the close writes it rather than dropping it (WRITES to the copy).
 QWidget *make_rediger_yaw_close(const PageContext &ctx) {
@@ -1232,6 +1280,10 @@ void register_shell_pages() {
                  "Rediger: kantlisten sorteret efter residual med første "
                  "række valgt, seedet graf (skriver til projektkopien)",
                  make_rediger_list});
+  register_page({"rediger-reload",
+                 "Rediger: zoom, valgt kant, A/B og drejning overlever en "
+                 "genindlæsning af projektet (skriver til projektkopien)",
+                 make_rediger_reload});
   register_page({"rediger-zoom",
                  "Rediger: zoomer ind på én node og tæller dens pixels "
                  "(reproduktion af forsvindende noder)",
