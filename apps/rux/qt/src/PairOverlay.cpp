@@ -109,25 +109,30 @@ class RigidBoxRepresentation : public vtkBoxRepresentation {
     return this->HandleGeometry[6]->GetRadius();
   }
   const double *centre() const { return this->Points->GetPoint(14); }
-  /// Handle radius in DISPLAY pixels (logical px x the canvas' dpr); 0
-  /// keeps VTK's own sizing.
-  void set_handle_display_px(double px) { handle_px_ = px; }
+  /// Handle radius in LOGICAL pixels of @p canvas, converted to display
+  /// pixels with its device pixel ratio each time the handles are sized
+  /// (the window may move to another screen); 0 keeps VTK's own sizing.
+  void set_handle_logical_px(double px, QWidget *canvas) {
+    handle_px_ = px;
+    canvas_ = canvas;
+  }
 
     protected:
   RigidBoxRepresentation() = default;
   void SizeHandles() override {
     Superclass::SizeHandles();
     vtkRenderer *r = this->Renderer;
-    if (handle_px_ <= 0.0 || !r || !r->GetActiveCamera())
+    if (handle_px_ <= 0.0 || !canvas_ || !r || !r->GetActiveCamera())
       return;
-    // The world length of handle_px_ display pixels at the box centre.
+    const double display_px = handle_px_ * canvas_->devicePixelRatioF();
+    // The world length of display_px display pixels at the box centre.
     double c[3];
     this->Points->GetPoint(14, c);
     r->SetWorldPoint(c[0], c[1], c[2], 1.0);
     r->WorldToDisplay();
     double d[3];
     r->GetDisplayPoint(d);
-    r->SetDisplayPoint(d[0] + handle_px_, d[1], d[2]);
+    r->SetDisplayPoint(d[0] + display_px, d[1], d[2]);
     r->DisplayToWorld();
     double w[4];
     r->GetWorldPoint(w);
@@ -141,6 +146,7 @@ class RigidBoxRepresentation : public vtkBoxRepresentation {
       this->HandleGeometry[i]->SetRadius(radius);
   }
   double handle_px_ = 0.0;
+  QPointer<QWidget> canvas_;
 };
 
 void on_box(vtkObject *caller, unsigned long, void *client, void *) {
@@ -168,6 +174,8 @@ struct PairOverlay::Vtk {
   vtkSmartPointer<vtkActor> a, b;
   vtkSmartPointer<vtkBoxWidget2> box;
   vtkSmartPointer<vtkCallbackCommand> observer;
+  /// Layer 1 above the clouds, sharing their camera: the box widget.
+  vtkSmartPointer<vtkRenderer> top;
   reusex::visualize::SceneBounds bounds; ///< both clouds, unmoved
 };
 
@@ -283,6 +291,11 @@ void PairOverlay::load() {
   if (vtk_->box)
     vtk_->box->Off();
   vtk_->box = nullptr;
+  if (vtk_->top) {
+    if (vtkRenderWindow *rw = vtk_->top->GetRenderWindow())
+      rw->RemoveRenderer(vtk_->top);
+    vtk_->top = nullptr;
+  }
   vtk_->a = vtk_->b = nullptr;
   delete legend_;
   legend_ = nullptr;
@@ -362,12 +375,24 @@ void PairOverlay::loaded(std::shared_ptr<Clouds> c) {
     // The centre sphere is the only translate grip: --space-2 logical px
     // radius on any screen, so a HiDPI display does not shrink it to a
     // speck while the faces (rotate) stay easy to hit.
-    rep->set_handle_display_px(t.px("--space-2") * view_->devicePixelRatioF());
+    rep->set_handle_logical_px(t.px("--space-2"), view_);
     vtk_->box->SetRepresentation(rep);
     vtk_->observer = vtkSmartPointer<vtkCallbackCommand>::New();
     vtk_->observer->SetCallback(on_box);
     vtk_->observer->SetClientData(this);
     vtk_->box->AddObserver(vtkCommand::InteractionEvent, vtk_->observer);
+    // The box and its handles in a layer above the clouds, sharing the
+    // camera, so B's points never hide the grip (the centre sphere sits
+    // inside B's cloud, behind whatever surface faces the camera).
+    vtkRenderWindow *rw = r->GetRenderWindow();
+    vtk_->top = vtkSmartPointer<vtkRenderer>::New();
+    vtk_->top->SetLayer(1);
+    vtk_->top->InteractiveOff();
+    vtk_->top->SetActiveCamera(r->GetActiveCamera());
+    if (rw->GetNumberOfLayers() < 2)
+      rw->SetNumberOfLayers(2);
+    rw->AddRenderer(vtk_->top);
+    vtk_->box->SetCurrentRenderer(vtk_->top);
     vtk_->box->On();
   }
   view_->set_message({});

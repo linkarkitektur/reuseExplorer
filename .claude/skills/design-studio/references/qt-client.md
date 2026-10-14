@@ -196,7 +196,10 @@ Rediger's 3D overlay canvas with A and B loaded is under 250 px tall
 pair strip is clipped (`STRIP CLIPPED`: an edge row's action button runs past
 the rows' right edge, the edge list shows less than its first row, or the
 strip ends below the window; every shot logs `pair strip bottom Y of H`).
-`qt_shot.sh` fails on all three.
+A page can also fail its own check: `rediger-drag-qt` (needs `--gl`) drags
+B's box centre handle with Qt mouse events and logs `DRAG NOT TRANSLATED`
+when B does not move, the handle is too small, or the page cannot run.
+`qt_shot.sh` fails on all four.
 `RUX_QT_DUMP_QSS=<file>` writes the resolved stylesheet for debugging.
 
 ## 3. Token mapping

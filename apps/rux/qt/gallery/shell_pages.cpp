@@ -36,6 +36,7 @@
 
 #include <vtkActor.h>
 #include <vtkActorCollection.h>
+#include <vtkCamera.h>
 #include <vtkCommand.h>
 #include <vtkRenderWindow.h>
 #include <vtkRenderWindowInteractor.h>
@@ -523,34 +524,52 @@ const char *box_state_name(int s) {
 } // namespace
 
 /// Drag B's centre handle with Qt mouse events (needs --gl), once exactly
-/// on the handle and once 6 logical px beside it (a realistic aim). Logs
-/// dpr, sizes, the handle radius, the state at the press and the ΔT; fails
-/// the shot (DRAG NOT TRANSLATED) when either drag does not move B by
-/// >= 1 cm without turning it. Shoot with --gl --scale 1 and --scale 2.
+/// on the handle and once 0.7 handle radii beside it (a realistic aim).
+/// Logs dpr, sizes, the handle radius, the state at the press and the ΔT.
+/// Fails the shot (DRAG NOT TRANSLATED) when the page cannot run (no GL
+/// widget, a cloud missing, no box), when the handle is smaller than
+/// 0.8 x --space-2 logical px or changes size by more than 0.5 px when the
+/// camera dollies 2x, or when either drag does not move B by >= 1 cm
+/// without turning it. Shoot with --gl --scale 1 and --scale 2.
 QWidget *make_rediger_drag_qt(const PageContext &ctx) {
   auto *shell = make_pg(ctx);
   shell->show();
   settle();
+  const auto fail = [](const char *why) {
+    std::fprintf(stderr, "rux-qt-gallery: ERROR DRAG NOT TRANSLATED: %s\n",
+                 why);
+    report_page_failure();
+  };
   PairOverlay *ov = shell->edit()->overlay();
   auto *gl = ov->view()->findChild<QVTKOpenGLNativeWidget *>();
   const auto centre = ov->box_centre_px();
   if (!gl || !ov->ready() || !centre) {
-    std::fprintf(stderr, "rediger-drag-qt: needs --gl and both clouds\n");
+    fail(!gl            ? "rediger-drag-qt needs --gl (no GL widget)"
+         : !ov->ready() ? "rediger-drag-qt: A's and B's clouds did not load"
+                        : "rediger-drag-qt: the overlay has no box widget");
     return shell;
   }
   const int *win = gl->renderWindow()->GetSize();
+  const double handle = ov->handle_radius_px();
   std::fprintf(stderr,
                "rediger-drag-qt: dpr view=%.2f gl=%.2f gl-size=%dx%d "
                "window=%dx%d handle=%.1f px centre=(%.1f,%.1f)\n",
                ov->view()->devicePixelRatioF(), gl->effectiveDevicePixelRatio(),
-               gl->width(), gl->height(), win[0], win[1],
-               ov->handle_radius_px(), centre->x(), centre->y());
+               gl->width(), gl->height(), win[0], win[1], handle, centre->x(),
+               centre->y());
+  // A grip that a hand can hit: VTK's own sizing gave 2.2 px at dpr 2.
+  const double min_handle = 0.8 * theme().px("--space-2");
+  if (handle < min_handle) {
+    std::fprintf(stderr, "rediger-drag-qt: handle %.1f px < %.1f px\n", handle,
+                 min_handle);
+    fail("the centre handle is too small to hit");
+  }
   // box_centre_px() is in the render window's logical coordinates, i.e.
   // the GL widget's (it fills the canvas).
   const QPointF origin = *centre;
   const double step = 2.0 * theme().px("--space-7");
-  bool failed = false;
-  for (const double aim : {0.0, 6.0}) {
+  bool missed = false;
+  for (const double aim : {0.0, 0.7 * handle}) {
     ov->reset_offset();
     QApplication::processEvents();
     const QPointF from = origin + QPointF(aim, 0.0);
@@ -561,19 +580,29 @@ QWidget *make_rediger_drag_qt(const PageContext &ctx) {
     const double moved = std::sqrt(o.x * o.x + o.y * o.y + o.z * o.z);
     const double turned = rotation_angle_deg(ov->delta());
     std::fprintf(stderr,
-                 "rediger-drag-qt: aim +%.0f px state=%s -> moved %.4f m "
+                 "rediger-drag-qt: aim +%.1f px state=%s -> moved %.4f m "
                  "turned %.3f deg (x=%.4f y=%.4f z=%.4f)\n",
                  aim, box_state_name(state), moved, turned, o.x, o.y, o.z);
-    // Both aims must grab the translate grip: +6 px is inside a handle
-    // sized in logical px, and missed a VTK-sized one at dpr 2.
+    // Both aims must grab the translate grip.
     if (moved < 0.01 || turned > 0.5)
-      failed = true;
+      missed = true;
   }
-  if (failed) {
-    std::fprintf(stderr, "rux-qt-gallery: ERROR DRAG NOT TRANSLATED: a drag "
-                         "on the centre handle did not move B\n");
-    report_page_failure();
-  }
+  if (missed)
+    fail("a drag on the centre handle did not move B");
+  // The grip keeps its screen size when the camera moves in.
+  ov->reset_offset();
+  vtkRenderer *r = ov->view()->renderer();
+  r->GetActiveCamera()->Dolly(2.0);
+  r->ResetCameraClippingRange();
+  gl->renderWindow()->Render();
+  const double dollied = ov->handle_radius_px();
+  std::fprintf(stderr,
+               "rediger-drag-qt: dolly 2x -> handle %.1f px (was %.1f)\n",
+               dollied, handle);
+  if (std::abs(dollied - handle) > 0.5)
+    fail("the centre handle changed size when the camera dollied");
+  r->GetActiveCamera()->Dolly(0.5);
+  r->ResetCameraClippingRange();
   ov->view()->request_render();
   return shell;
 }

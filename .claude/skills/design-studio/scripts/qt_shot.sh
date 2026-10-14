@@ -201,7 +201,7 @@ for page in "${PAGES[@]}"; do
       status=1
     elif grep -qE "TOO WIDE|OVERLAY TOO SMALL|STRIP CLIPPED|DRAG NOT TRANSLATED" "$log"; then
       grep -E "TOO WIDE|OVERLAY TOO SMALL|STRIP CLIPPED|DRAG NOT TRANSLATED" "$log" >&2
-      echo "qt_shot.sh: FAIL $png — wider than the window, Rediger's 3D overlay squeezed, or its pair strip clipped" >&2
+      echo "qt_shot.sh: FAIL $png — wider than the window, Rediger's 3D overlay squeezed, its pair strip clipped, or B's box handle not translating" >&2
       status=6
     else
       grep -E "ERROR" "$log" >&2 || true
