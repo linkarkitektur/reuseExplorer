@@ -5,7 +5,7 @@ description: Write or review structured TODO/FIXME/BUG/HACK comments in ReUseX C
 
 # TODO Comment Conventions
 
-This project uses structured TODO comments compatible with the [tdg (TODO Generator)](https://gitlab.com/ribtoks/tdg) tool. A GitHub Action (`.github/workflows/todo-action.yml`) parses these comments on push, generates `TODO.json`, and can create/update/close GitHub issues based on them. Because of that sync, the format below is mandatory — a malformed metadata line breaks parsing.
+This project uses structured TODO comments compatible with the [tdg (TODO Generator)](https://gitlab.com/ribtoks/tdg) tool. `.github/workflows/todo-action.yml` still runs the tdg GitHub Action on every push, but GitHub issues are disabled on ReUse-X/ReUseX (2026-10-14), so its issue create/update/close calls now fail — beads is the tracker (`bead=reusex-xxx`, see Optional Metadata). The structured format is still mandatory for readability and consistency, even though the sync it was built for no longer runs; the workflow itself should probably be removed or repointed, separately from this convention.
 
 ## Format Specification
 
@@ -46,7 +46,8 @@ Every comment **must** include:
 
 ## Optional Metadata
 
-- **`issue=N`** — GitHub issue number. Auto-assigned by the tdg Action; don't add manually unless linking an existing issue. Example: `issue=123`
+- **`bead=reusex-xxx`** — the beads issue tracking this comment's removal, when one exists (2026-10-14: GitHub issues are disabled on ReUse-X/ReUseX, so `.github/workflows/todo-action.yml`'s tdg sync no longer has anywhere to create/update an issue — beads is the tracker now). Example: `bead=reusex-hbi`
+- **`issue=N`** — a GitHub issue number from before the switch to beads (pfmephisto/ReUseX or an older point in this repo's history). Do not add new ones; `bead=` replaces it going forward.
 - **`author=alias`** — Creator's alias, for handoffs (git blame is preferred otherwise). Example: `author=pfils`
 
 ## Categories

@@ -1354,15 +1354,6 @@ texture_mesh(pcl::PolygonMesh::Ptr mesh,
   std::filesystem::path base_path = prepare_texture_dir(texture_dir);
 
   reusex::core::trace("Retrive all cameras and textures from the database");
-  // TODO: Implement camera/texture retrieval from ProjectDB
-  // category=Geometry estimate=1d
-  // Need to extract camera poses and images from ProjectDB for texturing:
-  // 1. Query ProjectDB::sensor_frame_ids() for all camera frames
-  // 2. Use ProjectDB::sensor_frame_image(nodeId) to retrieve images
-  // 3. Extract camera intrinsics and poses from SLAM graph
-  // 4. Build camera frustum for visibility testing during texture projection
-  // 5. Select best camera view for each mesh polygon based on viewing angle
-  // This enables photo-realistic texture mapping from scan images
   pcl::texture_mapping::CameraVector cameras{};
   cameras.resize(poses.size());
   {

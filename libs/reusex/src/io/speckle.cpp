@@ -893,7 +893,7 @@ auto export_to_speckle(const ExportScene &scene, const ExportConfig &cfg)
 
     // HACK: Wrap material InstanceProxies in a "Cameras" sub-collection and
     // rename each one "Camera N" to match the legacy Grasshopper layout.
-    // category=I/O estimate=2h issue=270
+    // category=I/O estimate=2h bead=reusex-hbi
     // The reuse-x webapp's loadImages composable hardcodes
     //     speckleRoot.elements.find(c => c.name === 'Cameras')
     //         .elements.filter(e => e.name.startsWith('Camera'))
@@ -991,7 +991,7 @@ auto export_to_speckle(const ExportScene &scene, const ExportConfig &cfg)
       }
 
       // HACK: seed the fields the reuse-x webapp's ImageClassificationDialog
-      // category=I/O estimate=2h issue=271
+      // category=I/O estimate=2h bead=reusex-hbi
       // (apps/reuse-x/src/components/dialogs/ImageClassificationDialog.vue)
       // reads with safe defaults so it doesn't crash on undefined property
       // access. The dialog does e.g.
