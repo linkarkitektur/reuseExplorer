@@ -215,8 +215,9 @@ const std::vector<ParameterDescriptor> &instances_parameters() {
                 "Largest accepted instance, in points.", d.max_cluster_size,
                 10.0, 10000000.0),
         optional_of(ParameterType::integer_list, "labels", "Semantic labels",
-                    "Restrict clustering to these semantic labels. Empty "
-                    "means every label above 0."),
+                    "Restrict clustering to these semantic point labels "
+                    "(point label = API class + 1, so the first annotate "
+                    "class is 1). Empty means every label above 0."),
     };
   }();
   return table;

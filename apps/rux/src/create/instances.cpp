@@ -44,7 +44,9 @@ NOTES:
   - Requires 'cloud' and semantic label cloud (default: 'labels')
   - Tolerance: Euclidean distance threshold for clustering (meters)
   - Min/max size filters noise and oversized clusters
-  - Use --labels to process specific semantic classes only
+  - Use --labels to process specific semantic classes only. Values are point
+    labels (API class + 1: the first annotate prompt class is 1), the keys
+    of the semantic cloud's label definitions
   - Output includes per-instance metadata and statistics
   - Saved as new label cloud with instance IDs
 )");
@@ -74,7 +76,8 @@ NOTES:
 
   sub->add_option(
          "-l,--labels", opt->labels_to_process,
-         "Comma-separated list of semantic labels to process (empty = all)")
+         "Comma-separated semantic point labels to process (point label = "
+         "API class + 1; empty = all)")
       ->delimiter(',');
 
   sub->callback([opt, global_opt]() {

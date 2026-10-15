@@ -207,15 +207,39 @@ writes labels MUST follow it; any deviation is a bug.
   `c + 1` for `c >= 0` (background `-1` → `0`) and `point_label_to_api()` is
   its inverse, so API class 0 — the first prompt class — is point label 1,
   never unlabeled (decision D8, schema v29). A semantic label cloud's
-  `label_definitions` are keyed by point label, and every writer of one stamps
-  `"label_encoding": "api_plus_one"` (`kLabelEncodingKey` /
-  `kLabelEncodingApiPlusOne`) into the cloud's `parameters`. The
-  `annotate_class_map` pipeline-log entry and `segmentation_images` stay
-  API-keyed. Structural label clouds (planes, rooms, instances) number their
-  own ids from 1 and carry no encoding key. The v29 migration shifted every
-  stored semantic cloud lacking the key by +1 (0 stays 0), re-keyed its
-  definitions, and re-based `instances.semantic_class`, the `SM<cls>-`
-  instance definitions and `survey_types.semantic_class` with it.
+  `label_definitions` are keyed by point label. The `annotate_class_map`
+  pipeline-log entry and `segmentation_images` stay API-keyed. Class numbers
+  stored elsewhere (`instances.semantic_class`, the `SM<cls>-` instance
+  definitions, `survey_types.semantic_class`, `rux create instances -l`,
+  `rux create windows -l`, the `instances` stage's `labels` parameter) are
+  point labels too.
+- **Semantic cloud and its stamp.** A label cloud is semantic when a semantic
+  stage wrote it (`reconstruct`, `project_labels`) or it has the default name
+  `labels`, unless a structural stage (`segment_planes`, `segment_rooms`,
+  `segment_instances`) wrote it (`core::is_semantic_label_cloud()`,
+  `core/label_encoding.hpp`). Every writer of a semantic cloud stamps
+  `"label_encoding": "api_plus_one"` (`core::stamp_label_encoding()`) into the
+  cloud's `parameters`: `reconstruct`, `rux create project`, mask → resource
+  when it creates the cloud, `sync_downsample` (carries it over) and
+  `rux set clouds.labels`. **Exempt:** `import ply`'s `<name>_labels` cloud
+  and `rux set` of any other label cloud — their ids are the source's, in an
+  encoding this project cannot know, so they are not stamped (and not
+  semantic by the rule above). Structural label clouds number their own ids
+  from 1 and carry no stamp.
+- **An unstamped semantic cloud at schema ≥ 29 is loud, not silent:** it was
+  written by a pre-v29 binary (an old `rux` or `ruxd`) after the migration
+  ran, so its class ids are probably one too low. Readers of the semantic
+  cloud log a warning (`core::warn_if_unstamped_semantic_cloud()`) and
+  `rux validate` reports `semantic_cloud_unstamped`.
+- **v29 migration.** Every stored semantic cloud lacking the stamp is shifted
+  by +1 (0 stays 0; values ≥ `0x7FFFFFFF` are left and reported), its
+  definitions re-keyed and the stamp added. The stored class numbers above
+  move by +1 unconditionally (they were always API-numbered), and names
+  generated from them ("Klasse N" survey types, "class N" passport
+  designations) are renamed; user-edited names are left. Points of API
+  class 0 were stored as unlabeled before v29 and stay so until `rux create
+  clouds` / `rux create project` is re-run; the migration warns with the
+  counts.
 - Never index a vector with `label - 1` without first checking `label >= 1`.
 - Conversions between the layers above happen ONLY through the helpers in
   `core/label_semantics.hpp` (`api_to_point_label`, `point_label_to_api`,
