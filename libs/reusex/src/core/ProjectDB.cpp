@@ -39,6 +39,7 @@
 #include <mutex>
 #include <optional>
 #include <random>
+#include <regex>
 #include <set>
 #include <span>
 #include <sstream>
@@ -3251,6 +3252,14 @@ class ProjectDB::Impl {
           "project_guid: project schema predates v30; open it read-write "
           "once to migrate: " +
           dbPath.string());
+    static const std::regex kUuid(
+        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+        "[0-9a-fA-F]{12}$");
+    if (!std::regex_match(*g, kUuid))
+      throw std::runtime_error("project_guid: the stored value '" + *g +
+                               "' is not a UUID (project_settings key "
+                               "'project_guid' was edited by hand?): " +
+                               dbPath.string());
     return *g;
   }
 
@@ -3314,10 +3323,14 @@ class ProjectDB::Impl {
           db, "SELECT guid, idx FROM storeys WHERE locked = 1;",
           "save_storeys");
       StmtGuard guard(s);
-      while (sqlite3_step(s) == SQLITE_ROW) {
+      int rc;
+      while ((rc = sqlite3_step(s)) == SQLITE_ROW) {
         lockedGuids.insert(column_text(s, 0));
         lockedIdx.insert(sqlite3_column_int(s, 1));
       }
+      if (rc != SQLITE_DONE)
+        throw std::runtime_error("save_storeys: reading locked rows: " +
+                                 std::string(sqlite3_errmsg(db)));
     }
     execOrThrow("DELETE FROM storeys WHERE locked = 0;");
 
@@ -3970,6 +3983,12 @@ class ProjectDB::Impl {
   }
 
   void putSetting(std::string_view key, std::string_view value) {
+    // Write-once: every deterministic row GUID is derived from it, so a
+    // change would orphan the identity of every stored solid-model row.
+    if (key == "project_guid")
+      throw std::invalid_argument(
+          "set_setting: 'project_guid' is write-once (minted by the v30 "
+          "migration)");
     checkWritable();
     if (!hasSettingsTable)
       throw std::runtime_error("set_setting: project schema predates v28");

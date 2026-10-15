@@ -67,7 +67,7 @@ TEST_CASE("MigrationV30_FreshProject_HasStoreysAndProjectGuid",
   {
     ProjectDB db(tmp.path);
     CHECK(db.schema_version() == ProjectDB::latest_schema_version());
-    CHECK(ProjectDB::latest_schema_version() == 30);
+    CHECK(ProjectDB::latest_schema_version() >= 30);
     CHECK(db.project_guid().size() == 36);
     CHECK_FALSE(db.has_storeys());
   }
@@ -96,7 +96,7 @@ TEST_CASE("MigrationV30_FromV29_AddsTableAndMintsGuid",
   std::string guid;
   {
     ProjectDB db(tmp.path);
-    CHECK(db.schema_version() == 30);
+    CHECK(db.schema_version() == ProjectDB::latest_schema_version());
     guid = db.project_guid();
     CHECK(guid.size() == 36);
     CHECK(db.setting("other") == std::optional<std::string>("kept"));

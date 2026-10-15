@@ -733,14 +733,20 @@ class ProjectDB {
 
   /// nullopt for an unknown key or a pre-v28 project.
   std::optional<std::string> setting(std::string_view key) const;
-  /// Insert or replace. @throws std::runtime_error on a read-only project.
+  /// Insert or replace. @throws std::runtime_error on a read-only project;
+  /// std::invalid_argument for "project_guid", which is write-once.
   void set_setting(std::string_view key, std::string_view value);
 
   /// This project's own GUID: the namespace of every deterministic row GUID
-  /// (`core::deterministic_guid(project_guid(), "storeys/<idx>")`, ...).
+  /// (`core::deterministic_guid(project_guid(), "storeys/z<cm>")`, ...).
   /// Minted once by the v30 migration and kept in project_settings under
-  /// "project_guid"; a copy of the file is the same project and keeps it.
-  /// @throws std::runtime_error on a pre-v30 project opened read-only.
+  /// "project_guid"; write-once (set_setting refuses the key).
+  ///
+  /// A file copy is the SAME project: it keeps this GUID, so its rows keep
+  /// the same GUIDs as the original's. Duplicating a case into an
+  /// independent project needs a remint (not provided yet).
+  /// @throws std::runtime_error on a pre-v30 project opened read-only, or
+  ///         when the stored value is not a UUID.
   std::string project_guid() const;
 
   // --- Storeys (schema v30, solid-model WP1) ---

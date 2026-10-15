@@ -8,6 +8,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <reusex/core/ProjectDB.hpp>
 #include <reusex/core/guid.hpp>
@@ -16,6 +17,9 @@
 
 #include "../../support/temp_path.hpp"
 
+#include <sqlite3.h>
+
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -205,4 +209,32 @@ TEST_CASE("LoadSolidModel_ReadsStoredStoreys", "[projectdb][storeys][io]") {
   CHECK(m.storeys[0].idx == 0);
   CHECK(m.storeys[1].name == "Etage 1");
   CHECK_FALSE(m.has_walls());
+}
+
+TEST_CASE("ProjectGuid_IsWriteOnce", "[projectdb][storeys]") {
+  TempPath tmp("test_storeys_guid_write_once");
+  ProjectDB db(tmp.path);
+  const auto guid = db.project_guid();
+  CHECK_THROWS_AS(
+      db.set_setting("project_guid", "11111111-2222-3333-4444-555555555555"),
+      std::invalid_argument);
+  CHECK(db.project_guid() == guid);
+  db.set_setting("other", "fine");
+}
+
+TEST_CASE("ProjectGuid_Malformed_ThrowsAClearError", "[projectdb][storeys]") {
+  TempPath tmp("test_storeys_guid_malformed");
+  {
+    ProjectDB db(tmp.path);
+  }
+  sqlite3 *raw = nullptr;
+  REQUIRE(sqlite3_open(tmp.path.string().c_str(), &raw) == SQLITE_OK);
+  REQUIRE(sqlite3_exec(raw,
+                       "UPDATE project_settings SET value = 'not-a-guid' "
+                       "WHERE key = 'project_guid';",
+                       nullptr, nullptr, nullptr) == SQLITE_OK);
+  sqlite3_close(raw);
+  ProjectDB db(tmp.path);
+  CHECK_THROWS_WITH(db.project_guid(),
+                    Catch::Matchers::ContainsSubstring("not a UUID"));
 }
