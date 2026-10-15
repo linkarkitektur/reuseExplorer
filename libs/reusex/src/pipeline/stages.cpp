@@ -643,6 +643,8 @@ MeshStageOptions mesh_options_from_parameters(std::string_view parameters) {
     throw std::invalid_argument(
         fmt::format("invalid solver '{}': {}", solver_str, e.what()));
   }
+  options.cuopt_max_variables =
+      param_or(params, "cuopt_max_variables", options.cuopt_max_variables);
   return out;
 }
 

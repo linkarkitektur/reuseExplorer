@@ -122,6 +122,16 @@ NOTES:
       ->check(CLI::IsMember({"auto", "cuopt", "highs"}));
 
   sub->add_option(
+         "--cuopt-max-variables", opt->cuopt_max_variables,
+         "With --solver auto, run a (sub)problem over this many MIP "
+         "variables on HiGHS instead of cuOpt, pre-emptively (reusex-81y: "
+         "cuOpt SIGSEGVs on sections around ~3.3M variables). Ignored for "
+         "--solver highs; an explicit --solver cuopt past this size is "
+         "still honored (just logged loudly).")
+      ->default_val(opt->cuopt_max_variables)
+      ->check(CLI::Range(size_t{1000}, size_t{10000000}));
+
+  sub->add_option(
          "-f, --filter", opt->filter_expr,
          "Filter expression to limit processing to specific labeled points.\n"
          "Syntax: <cloud_name> <op> <value(s)>\n"
@@ -155,6 +165,7 @@ std::string mesh_stage_parameters(SubcommandMeshOptions const &opt) {
       .set("max_cells", opt.max_cells)
       .set("sectioned", opt.sectioned)
       .set("sectioned_threshold", opt.sectioned_threshold)
+      .set("cuopt_max_variables", opt.cuopt_max_variables)
       .set_if(!opt.filter_expr.empty(), "filter", opt.filter_expr)
       .dump();
 }

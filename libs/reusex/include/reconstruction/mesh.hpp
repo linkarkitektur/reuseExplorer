@@ -46,6 +46,11 @@ struct MeshOptions {
   /// MIP backend + fallback policy: auto (primary with HiGHS fallback), cuopt,
   /// or highs (issue #226).
   SolverChoice solver = SolverChoice::automatic;
+
+  /// Size guard for `solver == automatic`: a (sub)problem over this many MIP
+  /// variables runs on HiGHS instead of cuOpt, pre-emptively (reusex-81y:
+  /// cuOpt SIGSEGVs on sections around ~3.3M variables).
+  size_t cuopt_max_variables = 2'000'000;
 };
 
 /**
