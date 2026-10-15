@@ -52,6 +52,7 @@
   cli11,
   curl,
   nlohmann_json,
+  yaml-cpp,
   openssl,
   # Prebuilt libtorch (pkgs/libtorch: 2.9.0+cu128, CUDA 12.x), replacing the
   # from-source build whose pinned pytorch submodules became unfetchable.
@@ -201,6 +202,7 @@ in
 
         curl
         nlohmann_json
+        yaml-cpp
         openssl
         exiv2
 

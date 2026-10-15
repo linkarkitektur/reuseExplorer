@@ -260,8 +260,9 @@ NOTES:
   - --cut-height applies the same cut to any view (e.g. a cut axonometric).
   - Layers draw back to front in the order given.
   - A missing layer is an error naming the stage that produces it.
-  - --plan draws a solid-model plan JSON (docs/design/solid-model-json.md)
-    over the layers: walls as footprints with their axis, spaces as outlines,
+  - --plan draws a solid-model plan, JSON or YAML (by extension: .yaml/.yml
+    is YAML, anything else JSON; docs/design/solid-model-json.md) over the
+    layers: walls as footprints with their axis, spaces as outlines,
     openings as bars with end ticks; labelled by space name and wall guid.
     In top/plan views it lies on top of everything and is not cut.
 )");
@@ -293,8 +294,8 @@ NOTES:
                               "(default with --view plan: {:g} m)",
                               viz::kDefaultCutHeightM));
   sub->add_option("--plan", opt->plan,
-                  "Solid-model plan JSON to draw over the layers (walls, "
-                  "spaces, openings)")
+                  "Solid-model plan (JSON or YAML) to draw over the layers "
+                  "(walls, spaces, openings)")
       ->check(CLI::ExistingFile);
   sub->add_flag("--no-plan-labels", opt->no_plan_labels,
                 "Do not label the --plan overlay's spaces and walls");

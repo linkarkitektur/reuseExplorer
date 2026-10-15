@@ -81,6 +81,33 @@ TEST_CASE("EditPlan_DryRunImportExport_IsTheImportedModel",
             again.path)) == reusex::io::solid_model_to_json(written));
 }
 
+TEST_CASE("EditPlan_YamlImportJsonExport_SameModelEitherExtension",
+          "[rux_app][edit_plan]") {
+  // reusex-yf4.1: --import and --export pick JSON or YAML by extension.
+  TempPath project("test_edit_plan_yaml");
+  TempPath yaml_out("test_edit_plan_yaml_out", ".yaml");
+  REQUIRE(rux_exit(project.path,
+                   {"--import", fixture("two_rooms.plan.json").string(),
+                    "--dry-run", "--export", yaml_out.path.string()}) == 0);
+  CHECK_FALSE(std::filesystem::exists(project.path)); // --dry-run
+
+  auto expected =
+      reusex::io::solid_model_from_file(fixture("two_rooms.plan.json"));
+  reusex::io::mark_imported(expected);
+  const auto written_yaml = reusex::io::solid_model_from_file(yaml_out.path);
+  CHECK(reusex::io::solid_model_to_json(written_yaml) ==
+        reusex::io::solid_model_to_json(expected));
+
+  // Import the YAML this just wrote and export it back out as JSON: the same
+  // model either way round, through the real CLI parsing both times.
+  TempPath json_out("test_edit_plan_yaml_roundtrip", ".json");
+  REQUIRE(
+      rux_exit(project.path, {"--import", yaml_out.path.string(), "--dry-run",
+                              "--export", json_out.path.string()}) == 0);
+  CHECK(reusex::io::solid_model_to_json(reusex::io::solid_model_from_file(
+            json_out.path)) == reusex::io::solid_model_to_json(written_yaml));
+}
+
 TEST_CASE("EditPlan_InvalidPlan_IsAnInvalidArgument", "[rux_app][edit_plan]") {
   TempPath project("test_edit_plan_invalid");
   TempPath bad("test_edit_plan_bad", ".json");

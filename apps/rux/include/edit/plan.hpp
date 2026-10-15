@@ -12,9 +12,10 @@
 
 /// Options for `rux edit plan` (reusex-z1v.2.6).
 struct SubcommandEditPlanOptions {
-  /// Solid-model plan JSON to import ("" = none).
+  /// Solid-model plan (JSON or YAML, by extension) to import ("" = none).
   std::filesystem::path import_path;
-  /// Where to write the solid-model JSON ("" = none).
+  /// Where to write the solid-model plan (JSON or YAML, by extension);
+  /// "" = none.
   std::filesystem::path export_path;
   /// Validate --import without opening the project; --export then writes
   /// the imported model instead of the project's.

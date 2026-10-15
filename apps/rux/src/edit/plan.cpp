@@ -31,15 +31,16 @@ void setup_subcommand_edit_plan(CLI::App &app,
   auto opt = std::make_shared<SubcommandEditPlanOptions>();
   auto *sub = app.add_subcommand(
       "plan", "Import or export the solid-model plan (walls, spaces, openings) "
-              "as JSON");
+              "as JSON or YAML");
 
   sub->footer(R"(
 DESCRIPTION:
-  Moves a solid-model plan between a JSON document
-  (docs/design/solid-model-json.md) and the project. --import reads a plan
-  strictly (an unknown key, a dangling reference or an invalid polygon is an
-  error naming the element), marks every element source "imported" and
-  locked, and stores it; --export writes the project's model.
+  Moves a solid-model plan between a document (docs/design/solid-model-json.md,
+  JSON or YAML -- picked by extension: .yaml/.yml is YAML, anything else
+  JSON) and the project. --import reads a plan strictly (an unknown key, a
+  dangling reference or an invalid polygon is an error naming the element),
+  marks every element source "imported" and locked, and stores it; --export
+  writes the project's model, in the format --export's own extension picks.
 
   The project's solid-model tables (storeys, walls, spaces, openings) do not
   exist yet, so an import into a project stores nothing and fails. Use
@@ -52,18 +53,19 @@ EXAMPLES:
   rux edit plan --import ref.plan.json --dry-run --export ref.plan.json
 
   # Import a reference into the project
-  rux -p scan.rux edit plan --import ref.plan.json
+  rux -p scan.rux edit plan --import ref.plan.yaml
 
   # Export the project's model
   rux -p scan.rux edit plan --export model.json
 )");
 
   sub->add_option("--import", opt->import_path,
-                  "Solid-model plan JSON to import")
+                  "Solid-model plan (JSON or YAML) to import")
       ->check(CLI::ExistingFile);
   sub->add_option("--export", opt->export_path,
-                  "Write the solid-model JSON here (the project's model, or "
-                  "the imported one with --dry-run)");
+                  "Write the solid-model plan here (JSON or YAML by "
+                  "extension; the project's model, or the imported one with "
+                  "--dry-run)");
   sub->add_flag("--dry-run", opt->dry_run,
                 "Validate --import without opening the project");
 
