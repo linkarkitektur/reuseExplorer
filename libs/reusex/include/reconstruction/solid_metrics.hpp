@@ -45,6 +45,10 @@ struct SolidMetricsOptions {
   /// A detected opening matches a reference opening when their rectangles in
   /// the reference wall's (s, z) face coordinates have at least this IoU.
   double opening_match_iou = 0.5;
+  /// When both models carry storey records, a detected storey is compared
+  /// with the reference storey whose floor is nearest in world z, if within
+  /// this distance [m] (see compare_solid_models()).
+  double storey_match_dist_m = 1.0;
   /// A scan point "fits" the solid when it is within this distance [m].
   double fit_within_m = 0.02;
 };
@@ -106,19 +110,31 @@ struct SolidModelReport {
 /// Score @p detected against @p reference.
 ///
 /// Walls, spaces and openings (through their host wall) are compared storey
-/// by storey, in the level frame both models are expressed in. Detected
-/// elements on a storey the reference does not cover (neither in its
-/// `storeys` nor on any of its walls or spaces) are left out and counted in
-/// SolidModelReport::detected_outside_reference; when the reference names no
-/// storey at all, nothing is left out. Matching is one-to-one and greedy in a
-/// fixed order (best score first, ties by index), so the report is
-/// deterministic.
+/// by storey, in world: each detected element is taken out of its storey's
+/// level frame (the inverse of StoreyRecord::level_transform) and into the
+/// level frame of the reference storey it is compared with, so two models
+/// whose level frames differ (a reference authored in world x/y with its
+/// floor at z = 0, a detection whose origin is a floor point of that run)
+/// still line up. A storey without a record has the identity frame.
+///
+/// Storey correspondence: when both models carry storey records, a detected
+/// storey corresponds to the reference storey whose floor (z_floor, taken to
+/// world) is nearest in world z, within
+/// SolidMetricsOptions::storey_match_dist_m, one-to-one, closest first;
+/// otherwise storeys correspond by idx. Detected elements on a storey with
+/// no corresponding reference storey, or on one the reference does not
+/// cover (neither in its `storeys` nor on any of its walls or spaces), are
+/// left out and counted in SolidModelReport::detected_outside_reference;
+/// when the reference names no storey at all, nothing is left out.
+/// Matching is one-to-one and greedy in a fixed order (best score first,
+/// ties by index), so the report is deterministic.
 ///
 /// @throws std::invalid_argument when a wall axis has zero length, a space
 ///         polygon is not a valid polygon with holes (non-simple or
 ///         zero-area ring), or an opening names a host wall its model does
-///         not contain. io::solid_model_from_json already rejects all of
-///         these; the checks guard models built in memory.
+///         not contain (io::solid_model_from_json already rejects all of
+///         these; the checks guard models built in memory), or a storey's
+///         level_transform is singular or not finite.
 SolidModelReport compare_solid_models(const core::SolidModel &detected,
                                       const core::SolidModel &reference,
                                       const SolidMetricsOptions &opt = {});

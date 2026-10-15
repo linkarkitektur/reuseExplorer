@@ -300,12 +300,99 @@ The library and CLI defaults are now one set, window 12 and 8 candidates
 stop are now rejected earlier, as noise. This supports the reading above
 that it was a coin flip on random poses.
 
+## Follow-up: the correspondence pool (reusex-bx2.5, 2026-10-15)
+
+The pool is now built from the panorama's keypoints **pooled over the whole
+sphere**. Each change has its own `PanoramaAlignmentOptions` field and
+`rux align 360` flag:
+
+- **Overlap dedupe** (`dedupe_overlap`, `--[no-]dedupe-overlap`). Each
+  direction of the sphere is owned by one slice: of the slices that see it,
+  the one whose axis is closest. A keypoint seen by two overlapping slices
+  enters the pool once.
+- **Nadir mask** (`nadir_mask_deg = 45`, `--nadir-mask`). Drops the
+  operator, the hand and the stick.
+- **Frame-driven matching** (`frame_to_sphere`, `--[no-]frame-to-sphere`).
+  Each frame keypoint takes its nearest panorama keypoint over the whole
+  sphere. It is Lowe-tested against the nearest keypoint at a *different*
+  place (`distinct_deg = 1`), so ORB's duplicate detection of the same
+  corner is not its own rival.
+- **One correspondence per panorama keypoint** (`one_per_keypoint`). The
+  lowest Hamming distance over all candidate frames is kept.
+- **USAC** (`usac`, `--[no-]usac`). The per-slice PnP and its noise-floor
+  null use OpenCV's USAC: MAGSAC++ scoring, local optimisation and 3-point
+  samples, seeded by `--seed`, with 500 iterations.
+
+With all of them off, the diagnostics are byte-identical to the bx2.4
+defaults. The pool shrinks from 129 611 to 16 489 depth-backed
+correspondences over the 18 panoramas.
+
+**Measurement.** Every configuration was run on all 18 panoramas at seeds
+42, 1, 2 and 3, each time with the research null (pairings shuffled). The
+table counts accepted panoramas per run, all four seeds pooled. It also
+counts how often the null accepted anything. Every accepted pose is within
+the 1.5 m prior by construction.
+
+| configuration | accepted / run | null accepts | notes |
+|---|---:|---:|---|
+| bx2.4 defaults (before) | 2.0 | 0 | `010`, `018` |
+| **all five (new defaults)** | **5.0** | **0** | `006` `010` `011` `019` 4/4, `013` 3/4, `009` 1/4 |
+| without the nadir mask | 3.2 | 0 | loses `011`, `013` |
+| without USAC | 2.0 | 0 | only `006`, `010` |
+| without frame-driven matching | 4.0 | 0 | loses `019` |
+| without one-per-keypoint | 6.8 | 0 | adds `007`, `008`, `015` at best/null ≈ 2; `008`'s centre moves 1.9 m between seeds |
+| without the overlap dedupe | 5.5 | 0 | loses `006`, adds `008` (1.05 m spread) and `012` |
+| nadir mask 30° / 55° | 4.0 / 2.0 | 0 | 45° is best |
+| USAC alone | 4.8 | 0 | `010` centre moves 0.9 m between seeds |
+| EPnP at 5000 iterations alone (seed 42) | 3 | – | 7× slower than 500 |
+| USAC at 2000 iterations | 4.2 | 0 | steadier across seeds, fewer accepts |
+| zenith mask 45° alone (seed 42) | 2 | – | no effect, dropped |
+| slices PnP every pooled match in view (not only owned ones) | 3.5 | 0 | dropped |
+
+**Margin.** At the default seed, the six accepted panoramas beat their noise
+floor by 2.8× to 10.8× (best-slice / null inliers). Before, the two accepted
+panoramas beat it by 2.7× (`010`) and 2.3× (`018`). The shuffled null now
+reaches at most 11 to 15 best-slice inliers, against 23 before. Runs are
+byte-identical when repeated.
+
+**Consistency.** The poses agree across seeds and across configurations,
+which is the closest thing to ground truth here:
+
+- `010` lands at 0.45 m from the seed in every run of every
+  frame-driven configuration, all within 0.02 m of each other. The old
+  0.58 m pose sits 0.8 m from that consensus.
+- The other accepted centres agree within 0.2 m to 0.8 m across seeds.
+
+**Regression: `018`.** It is no longer accepted. Its old acceptance rested on
+two overlapping slices (2 and 3) that each counted the same matched
+keypoints, plus 1905 of its 3044 keypoints in the nadir. Deduplicated, its
+best slice holds 17 inliers against a null of 11 (1.5×), at the floor. Its
+pooled support is 21, below `min_inliers = 40`. Lowering `min_inliers` to
+20–25 recovers `018` in 1 of 4 seeds. It also admits `008`, whose centre
+then moves 1.6 m between seeds. So `min_inliers` was kept at 40.
+
+**Still open.**
+
+- `007` and `012` clear the noise floor by 3.8× and 5.1× but fail
+  `min_inliers = 40` on the deduplicated pool (30 and 36 pooled inliers).
+  That threshold was set on the old, double-counted pool. A pooled gate
+  calibrated against the null, like the best-slice gate, would be the
+  principled replacement.
+- Most accepted poses draw their final inliers from **one** candidate frame,
+  so the translation is still poorly conditioned (failure mode 2). The
+  candidates that do carry matches are rarely the seed frame. That is
+  reusex-bx2.6's ground: frame selection by sharpness and view diversity.
+
 ## Reproduce
 
 ```bash
 cp ~/repos/NewOffice/project.rux /tmp/no.rux
 rux -vv -p /tmp/no.rux align 360 --dry-run --overwrite \
     --diagnostics diag.json --diagnostics-correspondences
+# the bx2.4 pool, for comparison
+rux -vv -p /tmp/no.rux align 360 --dry-run --overwrite --no-usac \
+    --no-dedupe-overlap --nadir-mask 0 --no-frame-to-sphere \
+    --no-one-per-keypoint --diagnostics before.json
 ```
 
 The null model, matcher, depth-range and RANSAC experiments came from an
