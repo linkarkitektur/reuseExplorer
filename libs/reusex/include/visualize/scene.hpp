@@ -18,6 +18,7 @@
 // Header hygiene (STANDARDS §2): VTK types are forward-declared, so a consumer
 // that only needs SceneOptions/SceneInfo compiles no VTK header.
 
+#include "reusex/core/solid_model.hpp"
 #include "reusex/visualize/render_view.hpp"
 
 #include <array>
@@ -104,6 +105,19 @@ std::vector<std::uint32_t> lod_indices(std::size_t total, std::size_t budget,
                                        std::string_view storage_order,
                                        LodMethod *method = nullptr);
 
+/// Where a plan overlay (SceneOptions::plan) is drawn vertically.
+enum class PlanPlacement {
+  /// On its storey's floor, in 3D: each element at its level-frame height
+  /// (a wall at `z_base`, a space at `z_floor`), mapped to world through the
+  /// inverse of its storey's `level_transform`. For perspective and
+  /// interactive views.
+  level,
+  /// Flattened onto a sheet just above everything else drawn, so a view from
+  /// above shows the whole plan over the cloud, and exempt from the cut plane
+  /// (apply_cut_plane) — what `rux render --view plan` uses.
+  above_scene,
+};
+
 /// What populate_scene() draws, and how.
 struct SceneOptions {
   /// Layers in draw order. Empty is an error.
@@ -133,7 +147,47 @@ struct SceneOptions {
   double frustum_depth = 0.25;
   std::array<std::uint8_t, 3> frustum_rgb{150, 160, 176};
   std::array<std::uint8_t, 3> panorama_rgb{255, 176, 64};
+
+  /// A solid-model plan (walls, spaces, openings) to draw over the layers —
+  /// the visual check of an authored reference (reusex-z1v.2.6,
+  /// docs/guides/solid-model-reference-authoring.md). Walls are drawn as
+  /// their footprint (axis +/- thickness / 2, a translucent fill and an
+  /// outline) plus the axis, spaces as a translucent fill and an outline,
+  /// openings as a bar along the host wall's axis with a tick across the wall
+  /// at each end. Coordinates are level-frame (core/solid_model.hpp); each
+  /// element is mapped to world through the inverse of its storey's
+  /// `level_transform` (identity when the plan has no such storey). An
+  /// in-memory model rather than a file path, so an interactive client can
+  /// draw a plan it is editing; `rux render --plan` reads the file.
+  std::optional<core::SolidModel> plan;
+  PlanPlacement plan_placement = PlanPlacement::level;
+  /// Label each space with its name (its guid when unnamed) and each wall
+  /// with its guid, so a render can be checked against the JSON.
+  bool plan_labels = true;
+  /// Plan colours: walls `--label-2`, spaces `--label-0`, doors `--label-5`,
+  /// windows `--label-1`, other openings `--label-3` (default_label_palette).
+  std::array<std::uint8_t, 3> plan_wall_rgb{0x00, 0x9e, 0x73};
+  std::array<std::uint8_t, 3> plan_space_rgb{0xe6, 0x9f, 0x00};
+  std::array<std::uint8_t, 3> plan_door_rgb{0xd5, 0x5e, 0x00};
+  std::array<std::uint8_t, 3> plan_window_rgb{0x56, 0xb4, 0xe9};
+  std::array<std::uint8_t, 3> plan_opening_rgb{0xf0, 0xe4, 0x42};
 };
+
+/// What a plan overlay added (SceneOptions::plan).
+struct PlanOverlayInfo {
+  /// Every overlay actor. Named kPlanOverlayActorName, which is how
+  /// apply_cut_plane() leaves them uncut.
+  std::vector<vtkActor *> actors;
+  /// Text labels (stroke-font geometry lying in the plan, also named
+  /// kPlanOverlayActorName), one per space and per wall.
+  std::vector<vtkActor *> labels;
+  std::size_t walls = 0;    ///< walls drawn
+  std::size_t spaces = 0;   ///< spaces drawn
+  std::size_t openings = 0; ///< openings drawn (an orphan is skipped)
+};
+
+/// vtkObject name of every plan-overlay actor.
+inline constexpr const char *kPlanOverlayActorName = "reusex.plan_overlay";
 
 /// The actors one layer added, so an interactive viewer can toggle it.
 struct SceneLayer {
@@ -160,6 +214,8 @@ struct SceneInfo {
   /// Storage index of each point a full point actor draws (its vtk point id
   /// -> cloud index); empty when every point is drawn (the identity).
   std::vector<std::uint32_t> indices;
+  /// The plan overlay, when SceneOptions::plan was set (empty otherwise).
+  PlanOverlayInfo plan;
 };
 
 /// Load @p opts' layers from @p db and add them to @p renderer.
@@ -185,7 +241,9 @@ struct CutPlane {
 CutPlane resolve_cut_plane(const ProjectDB &db, const SceneBounds &bounds,
                            std::optional<double> height);
 
-/// Clip every actor of @p renderer to the half-space below z = @p z.
+/// Clip every actor of @p renderer to the half-space below z = @p z, except
+/// the plan overlay's (kPlanOverlayActorName): a plan is a drawing laid over
+/// the section, not part of it.
 void apply_cut_plane(vtkRenderer *renderer, double z);
 
 /// Remove every clipping plane from @p renderer's actors.

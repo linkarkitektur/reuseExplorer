@@ -213,7 +213,9 @@ find_package(VTK REQUIRED COMPONENTS
     CommonDataModel
     CommonExecutionModel
     RenderingCore
-    RenderingOpenGL2)
+    RenderingOpenGL2
+    # vtkVectorText: stroke-font geometry for the plan overlay's labels.
+    RenderingFreeType)
 
 # -----------------------------------------------
 # Geometry & Optimization

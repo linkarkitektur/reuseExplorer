@@ -857,7 +857,7 @@ Anything not found there is not a dependency.
 - OpenNURBS - Rhino 3D (.3dm) files
 - OpenCV (`core`, `imgproc`, `highgui`) - image processing
 - VTK (`CommonCore`, `CommonDataModel`, `CommonExecutionModel`, `RenderingCore`,
-  `RenderingOpenGL2`) - the rendering backend behind `reusex_visualize`'s
+  `RenderingOpenGL2`, `RenderingFreeType` for the plan overlay's labels) - the rendering backend behind `reusex_visualize`'s
   headless `render_view()`. Arrives in the closure via PCL's visualization
   module, but is `find_package`d directly because the module uses the VTK API
   and needs `vtk_module_autoinit`. Headless rendering depends on this VTK being
