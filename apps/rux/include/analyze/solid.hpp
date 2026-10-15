@@ -20,8 +20,10 @@ struct SubcommandAnalyzeSolidOptions {
   std::string model_path;
   std::string cloud_name = "cloud"; ///< scan cloud for the fit metrics
   std::string mesh_name = "mesh";   ///< solid mesh for the fit metrics
-  bool json = false;                ///< print the JSON report to stdout
-  std::string output_path;          ///< also write the JSON report here
+  /// --cloud or --mesh was given explicitly: fit even when --model is used.
+  bool fit_requested = false;
+  bool json = false;       ///< print the JSON report to stdout
+  std::string output_path; ///< also write the JSON report here
   reusex::geometry::SolidMetricsOptions metrics; ///< matching tolerances
 };
 

@@ -50,6 +50,7 @@ void print_summary(const reusex::geometry::SolidModelReport &r) {
       "opening precision     {}  ({} detected openings)\n"
       "fit mean              {}  ({} points)\n"
       "fit within            {}\n"
+      "fit source            {}\n"
       "seen share (mean)     {}\n"
       "assumed share         {}\n",
       !r.room_count_error        ? std::string("n/a")
@@ -62,7 +63,9 @@ void print_summary(const reusex::geometry::SolidModelReport &r) {
       show(r.wall_thickness_err_p95_m, 1000.0, " mm"), show(r.opening_recall),
       r.matched_openings, r.reference_openings, show(r.opening_precision),
       r.detected_openings, show(r.fit_mean_m, 1000.0, " mm"), r.fit_points,
-      show(r.fit_within_share), show(r.seen_share_mean), show(r.assumed_share));
+      show(r.fit_within_share),
+      r.fit_source.empty() ? std::string("n/a") : r.fit_source,
+      show(r.seen_share_mean), show(r.assumed_share));
 }
 
 /// Say why a block of metrics is n/a (STANDARDS §5: no silent n/a).
@@ -117,8 +120,12 @@ EXAMPLES:
 NOTES:
   - Both models must be in the same level frame (metres, z up).
   - --model scores a model file (e.g. a baseline converted from another
-    tool) instead of the project's; the project is then only used for the
-    fit metrics, and only if it exists.
+    tool) instead of the project's. The fit metrics are then n/a unless
+    --cloud or --mesh is passed explicitly (they would measure the
+    project's mesh, not the model file). "fit_source" in the report always
+    names the project, cloud and mesh the fit came from.
+  - Detected elements on storeys the reference does not cover are not
+    scored (counts.detected_outside_reference).
 )");
 
   sub->add_option("--reference", opt->reference_path,
@@ -137,6 +144,11 @@ NOTES:
                   "Also write the JSON report to this file");
 
   auto &m = opt->metrics;
+  sub->add_option("--wall-overlap", m.wall_match_min_overlap,
+                  "Min overlap (1D IoU along the reference axis) of matched "
+                  "walls")
+      ->default_val(m.wall_match_min_overlap)
+      ->check(CLI::Range(0.0, 1.0));
   sub->add_option("--wall-angle", m.wall_match_angle_deg,
                   "Max angle between matched wall axes [deg]")
       ->default_val(m.wall_match_angle_deg)
@@ -154,8 +166,9 @@ NOTES:
       ->default_val(m.fit_within_m)
       ->check(CLI::PositiveNumber);
 
-  sub->callback([opt, global_opt]() {
+  sub->callback([opt, global_opt, sub]() {
     spdlog::trace("calling analyze solid subcommand");
+    opt->fit_requested = sub->count("--cloud") + sub->count("--mesh") > 0;
     rux::finish(run_subcommand_analyze_solid(*opt, *global_opt));
   });
 }
@@ -202,17 +215,29 @@ int run_subcommand_analyze_solid(SubcommandAnalyzeSolidOptions const &opt,
     auto report =
         geometry::compare_solid_models(detected, reference, opt.metrics);
 
-    if (db && db->has_point_cloud(opt.cloud_name) &&
-        db->has_mesh(opt.mesh_name)) {
-      const auto cloud = db->point_cloud_xyzrgb(opt.cloud_name);
-      const auto mesh = db->mesh(opt.mesh_name);
-      geometry::fit_report(*cloud, *mesh, opt.metrics, report);
-    } else {
+    if (from_file && !opt.fit_requested) {
+      spdlog::warn("fit metrics are n/a: --model scores a model file; pass "
+                   "--mesh/--cloud to fit the project's mesh as well");
+    } else if (!db || !db->has_point_cloud(opt.cloud_name) ||
+               !db->has_mesh(opt.mesh_name)) {
       spdlog::warn("fit metrics are n/a: {}",
                    !db ? std::string("no project to read a cloud and mesh from")
                        : fmt::format("the project lacks cloud '{}' or mesh "
                                      "'{}'",
                                      opt.cloud_name, opt.mesh_name));
+    } else {
+      const auto cloud = db->point_cloud_xyzrgb(opt.cloud_name);
+      const auto mesh = db->mesh(opt.mesh_name);
+      try {
+        geometry::fit_report(*cloud, *mesh, opt.metrics, report);
+        report.fit_source = fmt::format("project '{}': cloud '{}' vs mesh '{}'",
+                                        global_opt.project_db.string(),
+                                        opt.cloud_name, opt.mesh_name);
+      } catch (const std::invalid_argument &e) {
+        // The model metrics stand on their own (STANDARDS §5: say why).
+        spdlog::warn("fit metrics are n/a: {} (cloud '{}', mesh '{}')",
+                     e.what(), opt.cloud_name, opt.mesh_name);
+      }
     }
 
     const std::string json = report.to_json();
@@ -230,6 +255,9 @@ int run_subcommand_analyze_solid(SubcommandAnalyzeSolidOptions const &opt,
       spdlog::info("Report written to {}", opt.output_path);
     }
     return RuxError::SUCCESS;
+  } catch (const std::invalid_argument &e) {
+    spdlog::error("Solid-model analysis: invalid input: {}", e.what());
+    return RuxError::INVALID_ARGUMENT;
   } catch (const std::exception &e) {
     spdlog::error("Solid-model analysis failed: {}", e.what());
     return RuxError::GENERIC;
