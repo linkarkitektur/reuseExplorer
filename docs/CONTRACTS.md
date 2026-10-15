@@ -165,6 +165,13 @@ Back-project depth frames into a fused point cloud.
 | Options  | `ReconstructionParams` (`libs/reusex/include/segmentation/reconstruct.hpp`) |
 | Checks   | ≥1 stored sensor frame |
 
+Each `normals` entry is a unit normal oriented toward the sensor(s) that
+observed its point: the sign agrees with the per-frame normals inside its
+voxel, each of which faces its own camera's optical centre. The two faces of a
+wall therefore carry opposite normals. `planes` inherits this orientation
+for `plane_normals`, and `mesh`'s face pairing relies on it (reusex-0pi;
+before that fix every stored normal faced the world origin).
+
 ### `annotate` (`rux create annotate`)
 
 Run a semantic segmentation model over the stored frames.

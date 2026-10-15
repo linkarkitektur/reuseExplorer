@@ -33,6 +33,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -273,11 +274,10 @@ void reconstruct_point_clouds(ProjectDB &db,
     ne.setInputCloud(frame_cloud);
     ne.setRadiusSearch(0.1);
 
-    // Use world pose translation as viewpoint
-    float vx = static_cast<float>(pose[3]);
-    float vy = static_cast<float>(pose[7]);
-    float vz = static_cast<float>(pose[11]);
-    ne.setViewPoint(vx, vy, vz);
+    // Orient toward the camera's optical centre in world coordinates. These
+    // per-frame orientations are what the voxel normals inherit below.
+    const Eigen::Vector3f eye = (worldTf * localTf).translation();
+    ne.setViewPoint(eye.x(), eye.y(), eye.z());
 
     auto frame_normals = std::make_shared<CloudN>();
     ne.compute(*frame_normals);
@@ -343,6 +343,78 @@ void reconstruct_point_clouds(ProjectDB &db,
   ne_ds.setRadiusSearch(0.1);
   auto ds_normals = std::make_shared<CloudN>();
   ne_ds.compute(*ds_normals);
+
+  // Orient the re-estimated normals toward the sensors that saw them. With no
+  // viewpoint set, ne_ds flips every normal toward (0,0,0), so the two faces
+  // of an interior wall share a sign whenever the origin lies on one side of
+  // it, and downstream make_pairs / merge_planes cannot tell them apart
+  // (reusex-0pi). The per-frame normals were each oriented toward their own
+  // camera, so each voxel normal takes the sign the finite original normals
+  // inside its voxel agree on (sum of dot products), falling back to the
+  // kOrientFallbackK nearest originals when the voxel radius finds none.
+  // Each iteration reads the shared kd-tree and writes only its own normal,
+  // and the neighbour order is fixed by the tree, so the result does not
+  // depend on thread scheduling (STANDARDS §6).
+  {
+    constexpr int kOrientFallbackK = 16;
+    const float orient_radius = params.resolution / 2.0f;
+    const auto n_ds = static_cast<std::ptrdiff_t>(ds_cloud->size());
+    std::size_t flipped = 0;
+    std::size_t unresolved = 0;
+
+    // Sum of dot(nd, original normal) over the finite originals in `nn`;
+    // returns false when none of them is finite.
+    auto vote_over = [&](const Eigen::Vector3f &nd, const pcl::Indices &nn,
+                         double &vote) {
+      bool any = false;
+      for (const auto idx : nn) {
+        const auto &no = (*merged_normals)[idx];
+        if (!std::isfinite(no.normal_x) || !std::isfinite(no.normal_y) ||
+            !std::isfinite(no.normal_z))
+          continue;
+        vote += nd.dot(Eigen::Vector3f(no.normal_x, no.normal_y, no.normal_z));
+        any = true;
+      }
+      return any;
+    };
+
+#pragma omp parallel for schedule(dynamic, 1024)                               \
+    reduction(+ : flipped, unresolved)
+    for (std::ptrdiff_t i = 0; i < n_ds; ++i) {
+      auto &n = (*ds_normals)[i];
+      if (!std::isfinite(n.normal_x) || !std::isfinite(n.normal_y) ||
+          !std::isfinite(n.normal_z))
+        continue; // dropped by the NaN filter below
+      const Eigen::Vector3f nd(n.normal_x, n.normal_y, n.normal_z);
+
+      pcl::Indices nn;
+      std::vector<float> nn_d2;
+      double vote = 0.0;
+      kdtree.radiusSearch((*ds_cloud)[i], orient_radius, nn, nn_d2);
+      bool any = vote_over(nd, nn, vote);
+      if (!any && kdtree.nearestKSearch((*ds_cloud)[i], kOrientFallbackK, nn,
+                                        nn_d2) > 0)
+        any = vote_over(nd, nn, vote);
+      if (!any) {
+        ++unresolved;
+        continue;
+      }
+      if (vote < 0.0) {
+        n.normal_x = -n.normal_x;
+        n.normal_y = -n.normal_y;
+        n.normal_z = -n.normal_z;
+        ++flipped;
+      }
+    }
+    core::debug("Oriented voxel normals toward their sensors: {} of {} "
+                "flipped, {} without a usable per-frame normal",
+                flipped, ds_cloud->size(), unresolved);
+    if (unresolved > 0)
+      core::warn("{} of {} voxel normals had no finite per-frame normal "
+                 "among their {} nearest source points and keep PCL's "
+                 "toward-origin orientation",
+                 unresolved, ds_cloud->size(), kOrientFallbackK);
+  }
 
   // Remove NaN normals
   pcl::Indices nan_filter;
