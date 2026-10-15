@@ -466,6 +466,10 @@ TEST_CASE("ClassifyPlanes_MisleadingMajority_GeometryOverrules",
   CHECK(rec(r, ids[6]).role == "furniture");
   CHECK(r.role_source[ids[6]] == RoleSource::overruled);
   CHECK(r.overruled == 4);
+  // The record carries the same verdict as text (plane_classes.role_source).
+  for (size_t k = 0; k < r.planes.size(); ++k)
+    CHECK(r.planes[k].role_source == to_string(r.role_source[k]));
+  CHECK(rec(r, ids[0]).role_source == "overruled");
 }
 
 TEST_CASE("ClassifyPlanes_SparseOrSplitLabels_FallsBackToRules",

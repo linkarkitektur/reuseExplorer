@@ -55,6 +55,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace reusex::geometry {
@@ -107,6 +108,10 @@ enum class RoleSource {
   rules,     ///< the geometric rules (no usable class)
   overruled, ///< the class gave a role the geometry contradicts; rules won
 };
+
+/// "none" | "semantic" | "rules" | "overruled": the plane_classes.role_source
+/// text (core::PlaneClassRecord::role_source).
+std::string_view to_string(RoleSource source) noexcept;
 
 /// The semantic input: a label per point and the class names.
 struct SemanticLabels {

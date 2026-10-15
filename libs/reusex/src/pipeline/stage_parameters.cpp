@@ -7,6 +7,7 @@
 
 #include <reusex/core/storey_identity.hpp>
 #include <reusex/reconstruction/mesh.hpp>
+#include <reusex/segmentation/classify_planes.hpp>
 #include <reusex/segmentation/level.hpp>
 #include <reusex/segmentation/reconstruct.hpp>
 #include <reusex/segmentation/segment_instances.hpp>
@@ -435,6 +436,70 @@ const std::vector<ParameterDescriptor> &storeys_parameters() {
   return table;
 }
 
+const std::vector<ParameterDescriptor> &classify_parameters() {
+  // Keys are the ClassifyPlanesOptions field names plus role_map; bounds
+  // mirror the CLI's CLI::Range checks (apps/rux/src/create/classify.cpp).
+  // oriented_normals is not a parameter: the stage reads it from the clouds'
+  // provenance (reusex-0se).
+  static const std::vector<ParameterDescriptor> table = [] {
+    const geometry::ClassifyPlanesOptions d{};
+    return std::vector<ParameterDescriptor>{
+        dnum("horizontal_cos", "Horizontal cosine",
+             "A plane is horizontal when |n.up| exceeds this cosine.",
+             d.horizontal_cos, 0.5, 1.0),
+        dnum("vertical_cos", "Vertical cosine",
+             "A plane is vertical when |n.up| is below this cosine; between "
+             "the two it is slanted.",
+             d.vertical_cos, 0.0, 0.5),
+        dnum("min_large_area_m2", "Minimum floor/ceiling area [m^2]",
+             "A floor or ceiling candidate covers at least this much area.",
+             d.min_large_area_m2, 0.0, 1000.0),
+        dnum("band_m", "Floor/ceiling band [m]",
+             "Within this of the storey's floor / ceiling height.", d.band_m,
+             0.0, 2.0),
+        dnum("min_wall_height_m", "Minimum wall height [m]",
+             "A wall's robust vertical extent is at least this ...",
+             d.min_wall_height_m, 0.0, 20.0),
+        dnum("min_wall_height_share", "Minimum wall height share",
+             "... or this share of its storey's height, whichever is less.",
+             d.min_wall_height_share, 0.0, 1.0),
+        dnum("max_furniture_area_m2", "Maximum furniture area [m^2]",
+             "A horizontal plane larger than this is structure, never "
+             "furniture.",
+             d.max_furniture_area_m2, 0.0, 1000.0),
+        dnum("table_min_m", "Lowest table top [m]",
+             "Table-top heights above the floor start here.", d.table_min_m,
+             0.0, 3.0),
+        dnum("table_max_m", "Highest table top [m]",
+             "Table-top heights above the floor end here.", d.table_max_m, 0.0,
+             3.0),
+        dnum("min_storey_height_m", "Minimum storey height [m]",
+             "Without storeys: the ceiling is at least this far above the "
+             "floor.",
+             d.min_storey_height_m, 0.5, 20.0),
+        dnum("area_cell_m", "Area grid cell [m]",
+             "Side of the occupancy grid measuring a plane's area; at or "
+             "above the cloud's point spacing.",
+             d.area_cell_m, 0.005, 1.0),
+        dnum("extent_quantile", "Extent quantile",
+             "Robust height range = these quantiles of the inlier heights.",
+             d.extent_quantile, 0.0, 0.49),
+        dnum("min_labelled_share", "Minimum labelled share",
+             "The semantic class decides only if this share of the plane's "
+             "inliers carries a label ...",
+             d.min_labelled_share, 0.0, 1.0),
+        dnum("min_class_share", "Minimum class share",
+             "... and the majority class holds this share of those votes.",
+             d.min_class_share, 0.0, 1.0),
+        text("role_map", "Role map file",
+             "Class -> role map JSON file (core/class_role_map.hpp); empty = "
+             "the built-in map.",
+             ""),
+    };
+  }();
+  return table;
+}
+
 } // namespace
 
 std::string_view to_string(ParameterType type) {
@@ -475,6 +540,8 @@ const std::vector<ParameterDescriptor> &stage_parameters(JobStage stage) {
     return graph_discover_parameters();
   case JobStage::storeys:
     return storeys_parameters();
+  case JobStage::classify:
+    return classify_parameters();
   }
   throw std::logic_error("unhandled JobStage in stage_parameters()");
 }

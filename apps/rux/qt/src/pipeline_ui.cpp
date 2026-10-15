@@ -34,6 +34,8 @@ QString stage_name_da(pl::JobStage stage) {
     return "Find kanter";
   case pl::JobStage::storeys:
     return "Etager";
+  case pl::JobStage::classify:
+    return "Klassificér planer";
   }
   return {};
 }
@@ -58,6 +60,9 @@ QString stage_blurb_da(pl::JobStage stage) {
   case pl::JobStage::storeys:
     return "Find etagerne: gulv- og loftshøjder og den målte lodrette "
            "retning (niveauramme).";
+  case pl::JobStage::classify:
+    return "Giv hver plan en rolle — væg, gulv, loft, møbel — ud fra "
+           "semantik og geometri.";
   }
   return {};
 }
@@ -126,6 +131,21 @@ QString parameter_label_da(pl::JobStage stage,
           {{"storeys", "min_storey_height_m"}, "Mindste etagehøjde [m]"},
           {{"storeys", "default_height_m"}, "Etagehøjde uden loft [m]"},
           {{"storeys", "guid_match_m"}, "Samme etage inden for [m]"},
+          {{"classify", "horizontal_cos"}, "Vandret når |n·op| over"},
+          {{"classify", "vertical_cos"}, "Lodret når |n·op| under"},
+          {{"classify", "min_large_area_m2"}, "Mindste gulv/loft [m²]"},
+          {{"classify", "band_m"}, "Bånd om gulv og loft [m]"},
+          {{"classify", "min_wall_height_m"}, "Mindste væghøjde [m]"},
+          {{"classify", "min_wall_height_share"}, "… eller andel af etagen"},
+          {{"classify", "max_furniture_area_m2"}, "Største møbelflade [m²]"},
+          {{"classify", "table_min_m"}, "Laveste bordplade [m]"},
+          {{"classify", "table_max_m"}, "Højeste bordplade [m]"},
+          {{"classify", "min_storey_height_m"}, "Mindste etagehøjde [m]"},
+          {{"classify", "area_cell_m"}, "Arealgitter [m]"},
+          {{"classify", "extent_quantile"}, "Højdekvantil"},
+          {{"classify", "min_labelled_share"}, "Mindste mærkede andel"},
+          {{"classify", "min_class_share"}, "Mindste klasseandel"},
+          {{"classify", "role_map"}, "Klasse → rolle (JSON-fil)"},
   };
   if (auto it = labels.find({std::string(pl::to_string(stage)), d.key});
       it != labels.end())
@@ -163,6 +183,8 @@ reusex::core::PipelineStage contract_stage(pl::JobStage stage) {
     return P::graph_discover;
   case pl::JobStage::storeys:
     return P::storeys;
+  case pl::JobStage::classify:
+    return P::classify;
   }
   return P::clouds;
 }

@@ -23,6 +23,21 @@
 #include <vector>
 
 namespace reusex::geometry {
+
+std::string_view to_string(RoleSource source) noexcept {
+  switch (source) {
+  case RoleSource::none:
+    return "none";
+  case RoleSource::semantic:
+    return "semantic";
+  case RoleSource::rules:
+    return "rules";
+  case RoleSource::overruled:
+    return "overruled";
+  }
+  return "none";
+}
+
 namespace {
 
 using core::PlaneRole;
@@ -432,6 +447,7 @@ ClassifyPlanesResult classify_planes(
     if (inliers[k].empty()) {
       r.area = 0.0;
       r.role = std::string(core::to_string(PlaneRole::unknown));
+      r.role_source = std::string(to_string(RoleSource::none));
       result.planes.push_back(std::move(r));
       result.role_source.push_back(RoleSource::none);
       continue;
@@ -491,6 +507,7 @@ ClassifyPlanesResult classify_planes(
       }
     }
     r.role = std::string(core::to_string(role));
+    r.role_source = std::string(to_string(source));
     result.planes.push_back(std::move(r));
     result.role_source.push_back(source);
   }

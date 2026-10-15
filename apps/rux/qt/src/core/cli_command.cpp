@@ -107,6 +107,23 @@ const std::vector<StageSpec> &stage_specs() {
         {"min_storey_height_m", "--min-storey-height", {}, {}},
         {"default_height_m", "--default-height", {}, {}},
         {"guid_match_m", "--guid-match", {}, {}}}},
+      {"classify",
+       {"create", "classify"},
+       {{"horizontal_cos", "--horizontal-cos", {}, {}},
+        {"vertical_cos", "--vertical-cos", {}, {}},
+        {"min_large_area_m2", "--min-large-area", {}, {}},
+        {"band_m", "--band", {}, {}},
+        {"min_wall_height_m", "--min-wall-height", {}, {}},
+        {"min_wall_height_share", "--min-wall-height-share", {}, {}},
+        {"max_furniture_area_m2", "--max-furniture-area", {}, {}},
+        {"table_min_m", "--table-min", {}, {}},
+        {"table_max_m", "--table-max", {}, {}},
+        {"min_storey_height_m", "--min-storey-height", {}, {}},
+        {"area_cell_m", "--area-cell", {}, {}},
+        {"extent_quantile", "--extent-quantile", {}, {}},
+        {"min_labelled_share", "--min-labelled-share", {}, {}},
+        {"min_class_share", "--min-class-share", {}, {}},
+        {"role_map", "--role-map", {}, {}}}},
   };
   return specs;
 }
