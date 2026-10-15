@@ -169,9 +169,11 @@ TEST_CASE("ProjectDbMigrationV9ToV10_OrphanAndValidInstanceMaterialLinks_"
   // Instances were backfilled from label_definitions.
   auto instances = db.instances("instances");
   REQUIRE(instances.size() == 2);
-  // Semantic class parsed from "SM3-..." naming.
+  // Semantic class parsed from "SM3-..." naming by v10, then re-based to the
+  // point-label numbering (API class + 1) by v29, definitions included.
   for (const auto &r : instances)
-    REQUIRE(r.semantic_class == 3);
+    REQUIRE(r.semantic_class == 4);
+  REQUIRE(db.label_definitions("instances").at(1) == "SM4-1 (2p)");
 
   // The valid link survived; the orphan (missing passport) was dropped.
   auto links = db.instance_materials("instances");
