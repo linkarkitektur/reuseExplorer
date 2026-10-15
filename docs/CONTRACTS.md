@@ -178,6 +178,13 @@ wall therefore carry opposite normals. `planes` inherits this orientation
 for `plane_normals`, and `mesh`'s face pairing relies on it (reusex-0pi;
 before that fix every stored normal faced the world origin).
 
+The stage records this in the parameters of `cloud` and `normals` as
+`"normal_orientation": "sensor"` (`core/normal_orientation.hpp`), and
+`planes` copies the key onto `plane_normals` when `normals` carries it
+(reusex-0se). A cloud without the key — made before that, or imported (E57) —
+has normals whose sign means nothing a stage may rely on; `classify` then
+ignores which way a plane faces.
+
 ### `annotate` (`rux create annotate`)
 
 Run a semantic segmentation model over the stored frames.

@@ -13,6 +13,7 @@
 #include "reusex/core/guid.hpp"
 #include "reusex/core/label_semantics.hpp"
 #include "reusex/core/logging.hpp"
+#include "reusex/core/normal_orientation.hpp"
 #include "reusex/core/storey_identity.hpp"
 #include "reusex/core/validate.hpp"
 #include "reusex/io/reusex.hpp"
@@ -297,8 +298,18 @@ StageResult run_planes(ProjectDB &db, const StageContext &ctx,
   db.save_point_cloud("planes", *labels, "segment_planes", ctx.parameters);
   db.save_point_cloud("plane_centroids", *centroids, "segment_planes",
                       ctx.parameters);
+  // The plane normals take their sign from the point normals, so they face
+  // the sensor exactly when those do: carry the clouds stage's marker over
+  // (reusex-0se). Legacy normals have none, and neither do their planes.
+  std::string normals_params = ctx.parameters;
+  if (const auto orientation = core::normal_orientation_of(
+          db.point_cloud_provenance("normals").second)) {
+    json p = params;
+    p[core::kNormalOrientationKey] = *orientation;
+    normals_params = p.dump();
+  }
   db.save_point_cloud("plane_normals", *plane_normals, "segment_planes",
-                      ctx.parameters);
+                      normals_params);
 
   return StageResult::success(
       fmt::format("detected {} plane(s)", centroids->size()),
