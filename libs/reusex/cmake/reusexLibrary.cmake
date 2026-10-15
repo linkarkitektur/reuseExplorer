@@ -219,6 +219,22 @@ configure_file(
     @ONLY
 )
 
+# -----------------------------------------------
+# Embed the default class -> role map (plane classification, W2.1)
+# -----------------------------------------------
+# include/core/class_role_map.json is the only copy; users copy and edit it
+# for `rux create classify --role-map`. Embedded so the default needs no file.
+set(REUSEX_CLASS_ROLE_MAP_JSON
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/core/class_role_map.json)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    ${REUSEX_CLASS_ROLE_MAP_JSON})
+file(READ ${REUSEX_CLASS_ROLE_MAP_JSON} REUSEX_CLASS_ROLE_MAP_TEXT)
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/core/class_role_map_default.hpp.in
+    ${CMAKE_BINARY_DIR}/generated/reusex/core/class_role_map_default.hpp
+    @ONLY
+)
+
 # ===============================================
 # Shared usage requirements (include dirs, flags, external deps)
 # ===============================================
