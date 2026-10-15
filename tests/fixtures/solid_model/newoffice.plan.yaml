@@ -1,0 +1,741 @@
+# SPDX-FileCopyrightText: 2026 Povl Filip Sonne-Frederiksen
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# NewOffice reference plan (benchmark target, not ground truth -- decision D5).
+# Hand-authored YAML: edit this file by hand, never round-trip it through a
+# writer (`rux edit plan --export` drops every comment). Single source; the
+# old newoffice.plan.json is gone. Format: docs/design/solid-model-json.md.
+#
+# HOW TO REVIEW (maintainer)
+#   1. Work on a copy of the scan (opening a .rux can migrate it):
+#        cp ~/repos/NewOffice/project.rux /tmp/no-review.rux
+#   2. Open the plan over the cloud; it reloads on every save of this file:
+#        rux -p /tmp/no-review.rux view \
+#            --plan tests/fixtures/solid_model/newoffice.plan.yaml --watch
+#      Keys: ] / [ move the cut 10 cm (} / { 1 m), v toggles the cut,
+#      0 toggles the plan, 1-9 the layers. Look at cuts near 1.2 m, 2.0 m
+#      and 2.6 m: below ~1.8 m shelving, vanities and boxes stand in front
+#      of several walls.
+#   3. Headless, with the wall-support check printed on every save:
+#        rux -p /tmp/no-review.rux render \
+#            --plan tests/fixtures/solid_model/newoffice.plan.yaml \
+#            --watch --qa -o /tmp/no-review/qa.png
+#   4. Every wall/opening whose geometry is assumed or uncertain says so in
+#      a comment next to it ("PROVENANCE" / "DECISION" / "UNRESOLVED").
+#      grep UNRESOLVED for the questions only someone who knows the
+#      building can answer. When you accept the plan, remove the DRAFT
+#      marks (`name`, `description`, the storey's `status`) and update the
+#      fixture test SolidModelFixture_NewOffice_IsAValidDraftReference.
+#
+# Measurement conventions used throughout
+#   - x/y are the project's world coordinates; the level frame only shifts z
+#     (floor plane world z = -1.27 -> z = 0).
+#   - "offset" = signed distance from a wall's axis, + = left of the axis
+#     seen from its first point (the same sign `rux render --watch` prints).
+#   - Faces were read as the mode / a robust line fit of the cloud points
+#     whose normal is perpendicular to the wall, in height bands 0.3-0.9,
+#     0.9-1.6, 1.6-2.2, 2.2-2.65 and 2.65-2.85 m (clutter stops ~1.8 m; the
+#     higher bands decide), cross-checked against the sensor images.
+#   - External walls: only the inner face is scanned, so the axis lies on
+#     the inner (pier) face and thickness is -1 (unknown). Window niches sit
+#     behind that face; their glass/frames are not the wall.
+#   - The cloud is a 5 cm voxel SLAM fusion: a face is good to ~1-2 cm rms,
+#     and a few walls show a doubled sheet (two scan passes ~0.1 m apart);
+#     those are called out where they occur.
+model_version: 1
+units: m
+name: "NewOffice reference (DRAFT)"
+description: >-
+  DRAFT - needs maintainer review. Authored by an agent from the NewOffice
+  scan (project.rux cloud, 5 cm voxels) with the loop in
+  docs/guides/solid-model-reference-authoring.md: faces measured from plan
+  cuts of the cloud, checked with rux render --plan overlays. Not ground truth
+  (decision D5). The room layout follows the maintainer's description
+  (2026-10-15, bead reusex-z1v.2.6): one large open office with two meeting
+  rooms at its end; on the other side a closed office, next to it a bathroom
+  with 3 stalls, a printer and server room, a large kitchen / assembly space
+  and a meeting room / storage at the end; rooms identified in plan cuts and
+  sensor-frame images. x/y are the project's world coordinates; the level
+  frame only shifts z so the floor plane (world z = -1.27) is z = 0. External
+  walls carry the inner face as their axis with unknown thickness (the
+  exterior was not scanned). Window sills/heads are read off elevations of the
+  cloud and are approximate; door heads are assumed 2.05 m. 2026-10-15: walls
+  flagged by the rux render --watch wall-support check re-measured (reusex-227;
+  decisions in the YAML comments).
+
+storeys:
+  - guid: "storey-0"
+    idx: 0
+    name: "Ground"
+    z_floor: 0.0
+    z_ceiling: 2.88
+    level_transform: [1, 0, 0, 0,
+                      0, 1, 0, 0,
+                      0, 0, 1, 1.27,
+                      0, 0, 0, 1]
+    source: manual
+    locked: true
+    metadata:
+      status: "draft - needs maintainer review"
+      floor_world_z: -1.27
+      ceiling_world_z: 1.61
+      plan_rotation_deg: 50.864
+      room_layout: "follows the maintainer's description (2026-10-15, reusex-z1v.2.6); walls and openings remain agent-measured"
+
+walls:
+  # PROVENANCE: inner pier face between the 12 window niches (niche backs sit
+  # +0.3..+0.4 behind it). DECISION (reusex-227, flagged +45 mm, support
+  # 0.53): not a niche artefact -- a line fit to the pier points only
+  # (z 0.9-2.85, n=19817, rms 16 mm) runs from -4 mm at p0 to +68 mm at p1,
+  # and both halves agree (0..+28 mm, +30..+70 mm), so the wall was rotated
+  # 0.13 deg: p1 moved 68 mm outward (was [12.882, 24.199]), p0 kept, end
+  # = the corner with x-east. The single "+45 mm" was the mean of that
+  # slope. Window s-values change by < 0.1 mm.
+  - guid: "x-north"
+    storey: 0
+    axis: [[-5.475, 1.477], [12.86, 24.28]]
+    z_base: 0.0
+    height: 2.88
+    thickness: -1.0
+    is_external: true
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "external: only the inner face is scanned; axis on the inner (pier) face, thickness unknown"
+
+  # PROVENANCE: inner pier face; checked 2026-10-15: pier fit +22 mm at p0,
+  # -17 mm at p1 (rms 17 mm) -- inside the 3 cm tolerance, kept.
+  - guid: "x-south"
+    storey: 0
+    axis: [[1.959, -4.791], [16.308, 13.159]]
+    z_base: 0.0
+    height: 2.88
+    thickness: -1.0
+    is_external: true
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "external: only the inner face is scanned; axis on the inner (pier) face, thickness unknown"
+
+  # DECISION (reusex-227, flagged +145 mm, support 1.00): the draft axis
+  # followed only the first 1.15 m of this facade. The cloud shows two faces
+  # that step 0.105 m at s = 1.15 (old axis frame), each straight over the
+  # full height incl. the 2.65-2.85 m band above any furniture:
+  #   - x-west-n-pier: the lobby end and a 0.8 m pier / casing inside
+  #     Meeting room 1 (fit -17..+20 mm, rms 13 mm);
+  #   - x-west-n: Meeting room 1's end wall (fit +128..+205 mm on the old
+  #     axis, rms 12 mm), plain white wall behind the material-sample
+  #     shelves (frames 155, 200, 261) -- no window, so the +0.15 m sheet is
+  #     the wall itself, not a niche. Both faces are rotated 1.8 deg against
+  #     the draft axis (same 32 mm/m slope). The 0.105 m return at the step
+  #     is not drawn (too short for a wall). Old axis:
+  #     [[-2.583, -0.877], [-5.475, 1.477]].
+  - guid: "x-west-n-pier"
+    storey: 0
+    axis: [[-2.572, -0.864], [-3.487, -0.166]]
+    z_base: 0.0
+    height: 2.88
+    thickness: -1.0
+    is_external: true
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "external: inner face of the lobby end and a 0.8 m pier inside Meeting room 1, 0.105 m proud of the meeting room's end wall (x-west-n); thickness unknown"
+
+  - guid: "x-west-n"
+    storey: 0
+    axis: [[-3.554, -0.248], [-5.605, 1.315]]
+    z_base: 0.0
+    height: 2.88
+    thickness: -1.0
+    is_external: true
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "external: Meeting room 1's end wall, inner face (plain wall behind shelving), thickness unknown; ends at the corner with x-north"
+
+  # PROVENANCE: inner face of Meeting room 2's end wall. Fit +6 mm at p0,
+  # +64 mm at the entrance end (p1, rms 17 mm), but the last ~0.8 m there is
+  # the vestibule return and door frame (sheets at -0.2 / +0.33), which pull
+  # the fit; not flagged by the support check, kept.
+  - guid: "x-west-s"
+    storey: 0
+    axis: [[1.959, -4.791], [-0.821, -2.53]]
+    z_base: 0.0
+    height: 2.88
+    thickness: -1.0
+    is_external: true
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "external: only the inner face is scanned; axis on the inner (pier) face, thickness unknown"
+
+  # PROVENANCE: axis on the piers between the five window niches (z 0.3-1.6
+  # piers at ~0). Above the windows (z 2.2-2.85) the cloud has a DOUBLED
+  # sheet: +0.07 m and -0.05 -> -0.15 m toward p1 -- two scan passes that
+  # do not register (SLAM ghost), not two walls. Axis kept on the piers;
+  # treat this wall as +-0.1 m near p1.
+  - guid: "x-ewing-west"
+    storey: 0
+    axis: [[16.308, 13.159], [23.674, 7.166]]
+    z_base: 0.0
+    height: 2.88
+    thickness: -1.0
+    is_external: true
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "external: only the inner face is scanned; axis on the inner (pier) face, thickness unknown; piers between the window niches"
+
+  # DECISION (reusex-227, flagged +243 mm, support 0.74): the draft axis lay
+  # on the WINDOW FRAMES, not on the wall. The dense sheet 0.243-0.267 m
+  # inside it (fit rms 11 mm, z 0.8-2.65) is the inner face: it has two
+  # arched-window holes, the reveals (normals along the wall) span exactly
+  # 0..0.26 m between frame and face at s = 0.04 / 1.07 / 2.86, and frame
+  # 2165 shows two arched windows with deep white reveals in this wall. The
+  # corner it forms with x-ewing-south's face confirms it (that face starts
+  # exactly 0.25 m along). Moved inward 0.243-0.267 m; ends = corners with
+  # p-storage-glass and x-ewing-south. The new line runs on from
+  # x-ewing-west's end (6 cm apart, 0.6 deg): one facade, no jog. Old axis:
+  # [[23.898, 6.648], [26.237, 4.745]].
+  - guid: "x-ewing-west-s"
+    storey: 0
+    axis: [[23.735, 7.13], [26.4, 4.925]]
+    z_base: 0.0
+    height: 2.88
+    thickness: -1.0
+    is_external: true
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "external: inner face (0.25 m in front of the window frames), thickness unknown; two arched windows (o-ews-win-01/02)"
+
+  # PROVENANCE: inner face, fit -12 mm at s = 0.35 -> +38 mm at s = 6.6 on
+  # the draft axis (rms 14 mm): rotated to the fit; p0 = corner with the
+  # moved x-ewing-west-s, p1 = corner with x-east-storage. Old axis:
+  # [[26.237, 4.745], [30.419, 9.885]]. UNRESOLVED: a second sheet 0.25 m in
+  # front of it (s 0.3-5.0, z 0.8-2.65). The stacked moving boxes and the
+  # cabinet in frames 2159-2205 reach only ~1.8 m, so it is not (only) them;
+  # possibly a doubled scan pass as on x-ewing-west. The axis stays on the
+  # outer, floor-to-ceiling face because that face meets x-ewing-west-s's
+  # inner face in a clean corner. Maintainer: is there a lining or shelving
+  # wall along this side of the storage room?
+  - guid: "x-ewing-south"
+    storey: 0
+    axis: [[26.4, 4.925], [30.448, 9.982]]
+    z_base: 0.0
+    height: 2.88
+    thickness: -1.0
+    is_external: true
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "external: only the inner face is scanned; axis on the inner face, thickness unknown"
+
+  # PROVENANCE: the draft drew x-east as one 22.6 m line; its inner face
+  # steps per room (fits on the draft axis, z 0.9-2.65), so it is split
+  # where interior walls meet it (the steps hide inside their thickness):
+  #   x-east-storage  (Meeting room/storage) -92 -> -72 mm, rms 17 mm
+  #   x-east-kitchen  (Kitchen)              +15 -> -50 mm, rms 12 mm
+  #   x-east          (printer room, WC 3, closed office) on the draft axis:
+  #     the accessible WC's back wall (s 16.9-19.3) fits -12..+22 mm.
+  # UNRESOLVED (scan ambiguity): in the closed office (last 3 m) the face
+  # is doubled -- 0 above 2.2 m (n=314, rms 3 mm), -8..-9 cm below it
+  # (n=2239). Frames 2502/2956/744 show a plain wall with a skirting, no
+  # lining, so it is a registration ghost; axis kept on the upper sheet.
+  # Behind the printer room (s 12.7-14.9) the face is not scanned at all.
+  - guid: "x-east-storage"
+    storey: 0
+    axis: [[30.448, 9.982], [27.938, 12.011]]
+    z_base: 0.0
+    height: 2.88
+    thickness: -1.0
+    is_external: true
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "external: inner face of the meeting room/storage, thickness unknown"
+
+  - guid: "x-east-kitchen"
+    storey: 0
+    axis: [[27.883, 11.943], [20.626, 17.98]]
+    z_base: 0.0
+    height: 2.88
+    thickness: -1.0
+    is_external: true
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "external: inner face of the kitchen, thickness unknown"
+
+  - guid: "x-east"
+    storey: 0
+    axis: [[20.593, 17.94], [12.86, 24.28]]
+    z_base: 0.0
+    height: 2.88
+    thickness: -1.0
+    is_external: true
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "external: inner face behind the printer room (not scanned), WC 3 and the closed office (doubled sheet, see comment); thickness unknown"
+
+  # PROVENANCE: two faces 0.49 m apart; UNCERTAIN what fills them (glass
+  # partition plus a casing?). Thickness as measured, not assumed.
+  - guid: "p-mr1-office"
+    storey: 0
+    axis: [[-0.122, 2.781], [-2.744, 4.915]]
+    z_base: 0.0
+    height: 2.88
+    thickness: 0.49
+    is_external: false
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "Meeting room 1 / open office: faces at a=1.84 and 2.33 (the draft's p-alcove); the 0.49 m may be a glass partition plus a casing behind it"
+
+  # PROVENANCE: glass partition on mullions. Support check: weak (0.48,
+  # +36 mm) -- expected for glass. DECISION: kept; the full-height mullion
+  # posts sit on the axis (s 0 and s 1.70: -25..+25 mm); the +36 mm sheet is
+  # the plant and furniture behind the glass.
+  - guid: "p-mr1-glass"
+    storey: 0
+    axis: [[-2.851, -0.658], [-0.08, 2.747]]
+    z_base: 0.0
+    height: 2.88
+    thickness: -1.0
+    is_external: false
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "black-framed glass partition (frames seen in the sensor images): only mullions and the head scan, axis on the mullion line, thickness unknown; posts at a=-1.5 and -0.7..-0.5 at b=1.796 (mode of the 1.0-2.6 m points)"
+
+  # DECISION (support check -42 mm, support 1.00): kept. Both faces of this
+  # thin partition are seen (-0.06 and +0.02..+0.05 m at z 0.9-2.2); at 5 cm
+  # voxels they merge into one sheet near the axis, which the check reports
+  # as 42 mm inside the drawn faces. Thickness 0.1 stays assumed.
+  - guid: "p-mr2-east"
+    storey: 0
+    axis: [[3.423, -2.992], [0.644, -0.73]]
+    z_base: 0.0
+    height: 2.88
+    thickness: 0.1
+    is_external: false
+    assumed: true
+    locked: true
+    source: manual
+    metadata:
+      note: "Meeting room 2 / open office: faces at a=-0.21 and -0.11 merge at 5 cm resolution; thickness assumed"
+
+  # DECISION (support check -94 mm, support 0.50): kept. Black-framed glass
+  # (frames 63, 132, 2808). The glass line itself (s 1.4-1.9) lies at
+  # -0.03..+0.02 m; the -94 mm sheet is the open glass door leaf and the
+  # plant inside the room (frame 132); the posts at s 0.2 and 2.3 are the
+  # returns of x-west-s and p-mr2-east.
+  - guid: "p-mr2-lobby"
+    storey: 0
+    axis: [[-0.824, -2.527], [0.641, -0.727]]
+    z_base: 0.0
+    height: 2.88
+    thickness: -1.0
+    is_external: false
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "one face scanned: axis on that face, thickness unknown; glass with black frames toward the entrance lobby"
+
+  # PROVENANCE: both faces measured north of the bathroom; south of it only
+  # the room face is clear, so the thickness there is carried over.
+  - guid: "p-corridor-east"
+    storey: 0
+    axis: [[17.6, 14.261], [9.896, 20.53]]
+    z_base: 0.0
+    height: 2.88
+    thickness: 0.41
+    is_external: false
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "faces at a=21.96 and 22.37 (measured north of b=-0.5); south of it only the room face is clear"
+
+  - guid: "p-office-south"
+    storey: 0
+    axis: [[12.426, 18.471], [15.443, 22.178]]
+    z_base: 0.0
+    height: 2.88
+    thickness: 0.37
+    is_external: false
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "Closed office / bathroom: faces at b=1.83 and 2.205"
+
+  - guid: "p-wc-1-2"
+    storey: 0
+    axis: [[15.259, 17.913], [13.281, 19.522]]
+    z_base: 0.0
+    height: 2.88
+    thickness: 0.13
+    is_external: false
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "stall partition inside the bathroom: faces at a=23.46 and 23.59"
+
+  # DECISION (support check -45 mm, support 0.92): BOTH faces are scanned
+  # (the draft had one): +0..+4 mm and -115..-80 mm on the draft axis
+  # (rms 8 / 12 mm). Axis moved to their mean (-48 mm), thickness measured
+  # 0.10 m (no longer assumed). Old axis: [[16.026, 18.855], [14.048, 20.465]].
+  - guid: "p-wc-2-3"
+    storey: 0
+    axis: [[16.056, 18.892], [14.078, 20.502]]
+    z_base: 0.0
+    height: 2.88
+    thickness: 0.1
+    is_external: false
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "stall partition inside the bathroom: faces at +0.002 and -0.098 m from the draft axis (both scanned), thickness 0.10 measured"
+
+  # DECISION (support check -43 mm, support 0.84): the draft ran this wall
+  # 4.39 m to p-office-south with an assumed 0.1 m thickness. Past
+  # p-wc-south (s > 1.84) the face behind the third WC is 0.32-0.34 m
+  # further out, floor to ceiling (fit rms 9 mm), with the round-mirror hole
+  # and the vanity of the accessible WC (frames 2520/2521/2625) -- that face
+  # is x-east's inner face (on its axis within -12..+22 mm). So this wall
+  # now ends at p-wc-south and the WC is bounded by x-east; p-wc-south runs
+  # on to x-east. Old axis: [[18.627, 19.137], [15.222, 21.907]].
+  # Second pass (the check then said -126 mm, support 0.68): the wall face
+  # of the washbasin area is 0.126 m further out than the draft axis (fit
+  # s 0.7-1.75: -129..-123 mm, rms 4 mm; z 0.3-1.6 agrees, -121..-125 mm).
+  # The draft's face at 0 exists over s 0-0.6 only ABOVE 2.05 m: a header
+  # 0.12 m proud over a 0.6 m gap. Axis moved to the wall face, ends = the
+  # p-bath-printer and p-wc-south axes.
+  # UNRESOLVED: what the 0.6 m gap under that header is (a door to the
+  # service shaft between this wall and x-east?) -- not drawn as an opening.
+  - guid: "p-wc-east"
+    storey: 0
+    axis: [[18.744, 19.204], [17.279, 20.396]]
+    z_base: 0.0
+    height: 2.88
+    thickness: -1.0
+    is_external: false
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "washbasin area / service shaft: one face scanned, axis on that face, thickness unknown; ends at p-wc-south (behind the WC row the room reaches x-east)"
+
+  # PROVENANCE: stall fronts, both faces measured. Extended 0.33 m from the
+  # old p-wc-east axis to x-east (old p1 [17.2, 20.298]): the WC row reaches
+  # x-east (see p-wc-east); the cloud shows this wall's end at the x-east
+  # face (s 1.75-1.8 on p-wc-east, -0.35..+0.5 m).
+  - guid: "p-wc-south"
+    storey: 0
+    axis: [[14.404, 16.862], [17.407, 20.553]]
+    z_base: 0.0
+    height: 2.88
+    thickness: 0.13
+    is_external: false
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "stall fronts inside the bathroom (stall doors open onto the washbasin area): faces at b=-0.47 and -0.60"
+
+  # PROVENANCE: faces measured only in the 1.9-2.7 m cut (vanity and copier
+  # hide them below).
+  - guid: "p-bath-printer"
+    storey: 0
+    axis: [[15.868, 15.67], [18.664, 19.106]]
+    z_base: 0.0
+    height: 2.88
+    thickness: 0.085
+    is_external: false
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "Bathroom / printer-server room: faces at b=-2.376 and -2.459, measured in the 1.9-2.7 m cut (below it the vanity and the copier hide the faces)"
+
+  - guid: "p-printer-east"
+    storey: 0
+    axis: [[20.194, 17.449], [18.462, 18.858]]
+    z_base: 0.0
+    height: 2.88
+    thickness: -1.0
+    is_external: false
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "one face scanned: axis on that face, thickness unknown"
+
+  # UNCERTAIN: 0.66 m between the printer-room face and the kitchen
+  # backsplash; may include an installation cavity behind the cabinets.
+  - guid: "p-kitchen-north"
+    storey: 0
+    axis: [[17.6, 14.261], [20.593, 17.94]]
+    z_base: 0.0
+    height: 2.88
+    thickness: 0.66
+    is_external: false
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "Printer-server room / kitchen: faces at b=-4.32 (printer room) and -4.98 (kitchen backsplash, between the counter and the upper cabinets, z 1.0-1.5 m). The kitchen's base cabinets (front at b=-5.56) and upper cabinets run along it; the draft's p-hall-north at b=-5.57 was that cabinet front. 0.66 m may include an installation cavity"
+
+  - guid: "p-kitchen-storage"
+    storey: 0
+    axis: [[25.383, 8.869], [27.893, 11.955]]
+    z_base: 0.0
+    height: 2.88
+    thickness: 0.5
+    is_external: false
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "Kitchen / meeting room-storage: faces at b=-13.84 and -14.34; shelving on the kitchen side"
+
+  # DECISION (support check +184 mm, support 0.92): moved 0.18 m toward the
+  # kitchen. The draft had it on p-kitchen-storage's axis line; the
+  # full-height mullion posts (z 0.3-2.6, coverage > 0.85) all sit at
+  # +0.175 m (s 0.08-0.63, 1.58, 2.48-2.58; line fit +183..+180 mm, rms
+  # 14 mm), i.e. the glass runs 7.5 cm inside the kitchen-side face of the
+  # thick wall it continues. p0 = corner with the moved x-ewing-west-s.
+  # Old axis: [[23.868, 7.008], [25.383, 8.869]].
+  - guid: "p-storage-glass"
+    storey: 0
+    axis: [[23.735, 7.13], [25.243, 8.983]]
+    z_base: 0.0
+    height: 2.88
+    thickness: -1.0
+    is_external: false
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "black-framed glass partition (frames seen in the sensor images): only mullions and the head scan, axis on the mullion line, thickness unknown; continues p-kitchen-storage to the facade (frames 2085, 2260 show the glass and its door)"
+
+spaces:
+  # Space polygons are drawn a few cm inside the wall faces. 2026-10-15:
+  # vertices on walls moved by reusex-227 were moved with them (same
+  # offset at that point along the wall, corners to the new intersections).
+  - guid: "s-open-office"
+    storey: 0
+    name: "Open office"
+    kind: open_plan
+    polygon:
+      outer:
+        - [-0.755, -2.364]
+        - [-2.812, -0.69]
+        - [-0.193, 2.529]
+        - [-0.274, 2.595]
+        - [0.036, 2.975]
+        - [-2.567, 5.094]
+        - [9.736, 20.396]
+        - [17.726, 13.894]
+        - [16.802, 12.758]
+        - [16.308, 13.159]
+        - [3.439, -2.94]
+        - [0.633, -0.657]
+    z_floor: 0.0
+    z_ceiling: 2.88
+    source: manual
+    locked: true
+    metadata:
+      note: "the west wing with the entrance lobby (a=-2.3..-0.1, b=-0.9..1.75) and the corridor along the east rooms (a=20.5..21.96). Open boundaries: the entrance (vestibule a<-2.3 left out), and the corridor's south end at b=-4.98 (the kitchen wall face line), where it opens into the kitchen"
+
+  - guid: "s-meeting-1"
+    storey: 0
+    name: "Meeting room 1"
+    kind: room
+    polygon:
+      outer:
+        - [-2.89, -0.627]
+        - [-0.271, 2.592]
+        - [-2.875, 4.711]
+        - [-5.605, 1.315]
+    z_floor: 0.0
+    z_ceiling: 2.88
+    source: manual
+    locked: true
+    metadata:
+      note: "north end room of the open office: large table, wall screen (frames 174-283)"
+
+  - guid: "s-meeting-2"
+    storey: 0
+    name: "Meeting room 2"
+    kind: room
+    polygon:
+      outer:
+        - [1.959, -4.791]
+        - [3.376, -3.018]
+        - [0.648, -0.798]
+        - [-0.785, -2.559]
+    z_floor: 0.0
+    z_ceiling: 2.88
+    source: manual
+    locked: true
+    metadata:
+      note: "south end room of the open office: round table, wall screen (frames 12-102, 3338)"
+
+  - guid: "s-closed-office"
+    storey: 0
+    name: "Closed office"
+    kind: room
+    polygon:
+      outer:
+        - [12.412, 18.747]
+        - [15.293, 22.287]
+        - [12.86, 24.28]
+        - [9.981, 20.725]
+    z_floor: 0.0
+    z_ceiling: 2.88
+    source: manual
+    locked: true
+    metadata:
+      note: "desks and a glazed front to the corridor (frames 717-807)"
+
+  - guid: "s-bathroom"
+    storey: 0
+    name: "Bathroom"
+    kind: room
+    polygon:
+      outer:
+        - [15.965, 15.856]
+        - [18.68, 19.192]
+        - [17.28, 20.396]
+        - [17.407, 20.553]
+        - [15.579, 22.052]
+        - [12.699, 18.513]
+    z_floor: 0.0
+    z_ceiling: 2.88
+    source: manual
+    locked: true
+    metadata:
+      note: "polygon follows the re-measured walls 2026-10-15 (the WC row reaches x-east). One space: a shared washbasin area (b=-2.38..-0.6, double vanity, frames 2343, 2407) with three WC stalls along the closed office (b=-0.47..1.83), split by the thin walls p-wc-1-2, p-wc-2-3 and the stall fronts p-wc-south. The stall walls reach the ceiling, so a detector may split the stalls into rooms; this reference counts them as one room per the maintainer's description"
+
+  - guid: "s-printer-server"
+    storey: 0
+    name: "Printer/server room"
+    kind: room
+    polygon:
+      outer:
+        - [17.473, 14.629]
+        - [19.938, 17.658]
+        - [18.494, 18.832]
+        - [16.03, 15.803]
+    z_floor: 0.0
+    z_ceiling: 2.88
+    source: manual
+    locked: true
+    metadata:
+      note: "copier, plotter, network rack and electrical panel (frames 1549-1682, 3118)"
+
+  - guid: "s-kitchen"
+    storey: 0
+    name: "Kitchen/assembly"
+    kind: open_plan
+    polygon:
+      outer:
+        - [23.674, 7.166]
+        - [27.691, 12.102]
+        - [20.879, 17.769]
+        - [16.802, 12.758]
+    z_floor: 0.0
+    z_ceiling: 2.88
+    source: manual
+    locked: true
+    metadata:
+      note: "kitchen run along the north wall (frames 1758, 1772, 3878, 3936) and long tables; west facade with the courtyard door. Open to the corridor at b=-4.98, a=20.5..21.96"
+
+  - guid: "s-meeting-storage"
+    storey: 0
+    name: "Meeting room/storage"
+    kind: room
+    polygon:
+      outer:
+        - [26.4, 4.925]
+        - [30.448, 9.982]
+        - [28.133, 11.853]
+        - [24.067, 6.856]
+    z_floor: 0.0
+    z_ceiling: 2.88
+    source: manual
+    locked: true
+    metadata:
+      note: "behind a glass partition from the kitchen: a table with chairs and a screen plus stored moving boxes (frames 2111-2264)"
+
+openings:
+  # PROVENANCE: window s-ranges from the niche extents in elevations of the
+  # points just behind each facade; sills/heads (0.62 / 2.72 m on x-north
+  # and x-south, 0.15 / 2.15 m on x-ewing-west) read off the same
+  # elevations, approximate (+-5 cm). ASSUMED: every door/opening head
+  # (2.05 m); door s-ranges are gaps in the wall points below 1.9 m,
+  # approximate where a leaf stands open in them.
+  - {guid: "o-n-win-01", wall: "x-north", kind: window, s_start: 0.01, s_end: 1.81, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-n-win-02", wall: "x-north", kind: window, s_start: 2.31, s_end: 4.31, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-n-win-03", wall: "x-north", kind: window, s_start: 5.06, s_end: 6.91, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-n-win-04", wall: "x-north", kind: window, s_start: 7.51, s_end: 9.36, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-n-win-05", wall: "x-north", kind: window, s_start: 9.96, s_end: 11.76, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-n-win-06", wall: "x-north", kind: window, s_start: 12.36, s_end: 14.16, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-n-win-07", wall: "x-north", kind: window, s_start: 14.81, s_end: 16.61, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-n-win-08", wall: "x-north", kind: window, s_start: 17.21, s_end: 19.01, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-n-win-09", wall: "x-north", kind: window, s_start: 19.71, s_end: 21.51, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-n-win-10", wall: "x-north", kind: window, s_start: 22.06, s_end: 23.96, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-n-win-11", wall: "x-north", kind: window, s_start: 24.71, s_end: 26.46, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-n-win-12", wall: "x-north", kind: window, s_start: 27.11, s_end: 28.91, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-s-win-01", wall: "x-south", kind: window, s_start: 0.18, s_end: 2.03, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-s-win-02", wall: "x-south", kind: window, s_start: 2.83, s_end: 4.63, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true, metadata: {note: "partly occluded; extent inferred from the 2.43 m window rhythm"}}
+  - {guid: "o-s-win-03", wall: "x-south", kind: window, s_start: 5.3, s_end: 7.1, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-s-win-04", wall: "x-south", kind: window, s_start: 7.75, s_end: 9.6, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-s-win-05", wall: "x-south", kind: window, s_start: 10.15, s_end: 11.95, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-s-win-06", wall: "x-south", kind: window, s_start: 12.55, s_end: 14.401, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-s-win-07", wall: "x-south", kind: window, s_start: 14.901, s_end: 16.801, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-s-win-08", wall: "x-south", kind: window, s_start: 17.401, s_end: 19.201, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-s-win-09", wall: "x-south", kind: window, s_start: 19.801, s_end: 21.551, z_sill: 0.62, z_head: 2.72, is_external: true, source: manual, locked: true}
+  - {guid: "o-ew-win-01", wall: "x-ewing-west", kind: window, s_start: 8.156, s_end: 9.106, z_sill: 0.15, z_head: 2.15, is_external: true, source: manual, locked: true, metadata: {note: "rectangular, low sill (z 0.15-2.15 from the elevation)"}}
+  - {guid: "o-ew-win-02", wall: "x-ewing-west", kind: window, s_start: 6.506, s_end: 7.606, z_sill: 0.15, z_head: 2.15, is_external: true, source: manual, locked: true, metadata: {note: "rectangular, low sill (z 0.15-2.15 from the elevation)"}}
+  - {guid: "o-ew-win-03", wall: "x-ewing-west", kind: window, s_start: 4.706, s_end: 5.806, z_sill: 0.15, z_head: 2.15, is_external: true, source: manual, locked: true, metadata: {note: "rectangular, low sill (z 0.15-2.15 from the elevation)"}}
+  - {guid: "o-ew-win-04", wall: "x-ewing-west", kind: window, s_start: 2.806, s_end: 3.906, z_sill: 0.15, z_head: 2.15, is_external: true, source: manual, locked: true, metadata: {note: "rectangular, low sill (z 0.15-2.15 from the elevation)"}}
+  - {guid: "o-ew-win-05", wall: "x-ewing-west", kind: window, s_start: 1.006, s_end: 2.056, z_sill: 0.15, z_head: 2.15, is_external: true, source: manual, locked: true, metadata: {note: "rectangular, low sill (z 0.15-2.15 from the elevation)"}}
+  - {guid: "o-mr2-door", wall: "p-mr2-lobby", kind: door, s_start: 0.33, s_end: 1.23, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "Meeting room 2 door: gap in the wall points below 1.9 m; head height assumed"}}
+  - {guid: "o-mr1-door", wall: "p-mr1-glass", kind: door, s_start: 0.81, s_end: 1.71, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "Meeting room 1 glass door: between the mullion posts at a=-1.5 and -0.6; approximate, head height assumed"}}
+  - {guid: "o-office-opening", wall: "p-corridor-east", kind: opening, s_start: 7.3, s_end: 9.05, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "Closed office: no wall points between b=2.65 and 4.4 below 1.9 m; a glazed front with a door (frame 792); head height assumed"}}
+  - {guid: "o-bath-door", wall: "p-corridor-east", kind: door, s_start: 2.4, s_end: 3.2, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "Bathroom door: gaps on the wall axis at b=-2.2..-1.5, the open leaf lies against the room face (frames 870, 3178); approximate, head height assumed"}}
+  - {guid: "o-printer-door", wall: "p-corridor-east", kind: door, s_start: 1.2, s_end: 1.75, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "Printer-server room door (frames 873, 1615); head height assumed"}}
+  - {guid: "o-wc1-door", wall: "p-wc-south", kind: door, s_start: 0.43, s_end: 1.08, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "stall door, leaf open; head height assumed"}}
+  - {guid: "o-wc2-door", wall: "p-wc-south", kind: door, s_start: 1.73, s_end: 2.33, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "stall door, leaf open; head height assumed"}}
+  # s re-indexed to the moved p-storage-glass (same posts: old s 0.70-1.55).
+  - {guid: "o-storage-door", wall: "p-storage-glass", kind: door, s_start: 0.689, s_end: 1.539, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "glass door: the 1.0-1.9 m points are empty between a=21.2 and 22.05 apart from glass; approximate, head height assumed"}}
+  # NEW 2026-10-15 (reusex-227): the two arched windows of x-ewing-west-s
+  # (frame 2165). s from the reveals (old-frame jambs 0.04/1.07 and
+  # ~1.98/2.86, re-indexed to the moved wall). z_head = arch apex from the
+  # inner face (~2.07 m; the arch springs ~1.65-1.85 m). ASSUMED: z_sill --
+  # boxes hide the bottom of both windows; 0.40 m from the lowest reveal
+  # points (0.3-0.4 m). The left jamb of window 02 is read off the
+  # elevation only (no clean reveal), +-5 cm.
+  - {guid: "o-ews-win-01", wall: "x-ewing-west-s", kind: window, s_start: 0.471, s_end: 1.501, z_sill: 0.4, z_head: 2.07, is_external: true, source: manual, locked: true, metadata: {note: "arched; sill assumed (hidden by boxes), head = arch apex"}}
+  - {guid: "o-ews-win-02", wall: "x-ewing-west-s", kind: window, s_start: 2.411, s_end: 3.29, z_sill: 0.4, z_head: 2.07, is_external: true, source: manual, locked: true, metadata: {note: "arched; sill assumed (hidden by boxes), head = arch apex; left jamb +-5 cm"}}

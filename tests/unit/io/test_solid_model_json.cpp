@@ -412,10 +412,11 @@ TEST_CASE("StoreSolidModel_ProjectWithoutTables_StoresNothingAndSaysWhich",
 
 TEST_CASE("SolidModelFixture_NewOffice_IsAValidDraftReference",
           "[io][solid_model]") {
-  // Authored with docs/guides/solid-model-reference-authoring.md; a draft
+  // Authored with docs/guides/solid-model-reference-authoring.md as
+  // hand-written, commented YAML (the single source, reusex-yf4.3); a draft
   // until the maintainer has reviewed it (reusex-z1v.2.6).
   const SolidModel m =
-      reusex::io::solid_model_from_file(fixture("newoffice.plan.json"));
+      reusex::io::solid_model_from_file(fixture("newoffice.plan.yaml"));
   CHECK(m.storeys.size() == 1);
   CHECK(m.walls.size() >= 10);
   CHECK(m.spaces.size() >= 5);
@@ -432,7 +433,7 @@ TEST_CASE("SolidModelFixture_NewOffice_FollowsTheMaintainersRoomLayout",
   // bathroom with 3 stalls (one space, stall walls inside), a printer and
   // server room, a kitchen / assembly space and a meeting room / storage.
   const SolidModel m =
-      reusex::io::solid_model_from_file(fixture("newoffice.plan.json"));
+      reusex::io::solid_model_from_file(fixture("newoffice.plan.yaml"));
   std::vector<std::string> names;
   for (const auto &s : m.spaces)
     names.push_back(s.name);

@@ -33,7 +33,7 @@ and `scripts/bench-solid.sh` runs that over a manifest of fixtures.
 | Metrics | `libs/reusex/include/reconstruction/solid_metrics.hpp` (`compare_solid_models`, `fit_report`) |
 | CLI | `rux analyze solid` (`apps/rux/src/analyze/solid.cpp`), `rux render --plan`, `rux edit plan --import`/`--export` -- every one of these takes either extension |
 | Bench | `scripts/bench-solid.sh`, `scripts/bench-solid.manifest`, `scripts/bench-solid-compare.py` |
-| Fixtures | `tests/fixtures/solid_model/*.json`: hand-written synthetic plans, and references authored on our own scans (`newoffice.plan.json`, a DRAFT). JSON only -- the committed fixtures are not converted to YAML |
+| Fixtures | `tests/fixtures/solid_model/`: hand-written synthetic plans (`*.json`), and references authored on our own scans as hand-written, commented YAML (`newoffice.plan.yaml`, a DRAFT) -- never round-tripped through a writer, which would drop the comments |
 | Authoring | [`docs/guides/solid-model-reference-authoring.md`](../guides/solid-model-reference-authoring.md) (`rux edit plan`, `rux render --plan`) |
 
 ## No ground truth
@@ -45,7 +45,7 @@ checked visually against the scan; a converted third-party model is a
 **baseline row**, scored against the same reference, never a reference
 itself. S3DIS may be used locally for benchmarking, but no file derived from
 it is ever committed (`tests/fixtures/solid_model/` holds hand-written
-synthetic plans and references authored on our own scans, JSON only).
+synthetic plans and references authored on our own scans).
 
 ## Document
 
