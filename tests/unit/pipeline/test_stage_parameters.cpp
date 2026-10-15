@@ -230,6 +230,9 @@ TEST_CASE("StageParameters_Mesh_MirrorMeshOptionsDefaults",
         static_cast<long long>(d.max_cells));
   CHECK(integer_default(JobStage::mesh, "sectioned_threshold") ==
         static_cast<long long>(d.sectioned_threshold));
+  // cuOpt size guard (reusex-81y).
+  CHECK(integer_default(JobStage::mesh, "cuopt_max_variables") ==
+        static_cast<long long>(d.cuopt_max_variables));
   // Structural plane selection (reusex-8l3).
   CHECK(float_default(JobStage::mesh, "structural_min_wall_area") ==
         static_cast<float>(d.structural.min_wall_area_m2));

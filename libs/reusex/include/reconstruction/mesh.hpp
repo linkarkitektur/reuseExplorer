@@ -48,6 +48,11 @@ struct MeshOptions {
   /// or highs (issue #226).
   SolverChoice solver = SolverChoice::automatic;
 
+  /// Size guard for `solver == automatic`: a (sub)problem over this many MIP
+  /// variables runs on HiGHS instead of cuOpt, pre-emptively (reusex-81y:
+  /// cuOpt SIGSEGVs on sections around ~3.3M variables).
+  size_t cuopt_max_variables = 2'000'000;
+
   /// Which planes become arrangement lines and storey sections
   /// (reusex-8l3). See StructuralPlaneOptions.
   StructuralPlaneOptions structural{};

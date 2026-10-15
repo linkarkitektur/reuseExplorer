@@ -31,6 +31,8 @@ struct SubcommandMeshOptions {
   size_t sectioned_threshold =
       reusex::geometry::MeshOptions{}.sectioned_threshold;
   std::string solver = "auto"; ///< MIP backend: auto | cuopt | highs.
+  size_t cuopt_max_variables =
+      reusex::geometry::MeshOptions{}.cuopt_max_variables; ///< issue reusex-81y
 
   /// Structural plane selection (reusex-8l3). Defaults mirror
   /// MeshOptions::structural.

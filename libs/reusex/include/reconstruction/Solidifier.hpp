@@ -51,6 +51,42 @@ enum class SolverChoice { automatic, cuopt, highs };
 /// Throws std::runtime_error on an unrecognized value.
 SolverChoice parse_solver_choice(const std::string &s);
 
+/// Outcome of select_mip_backend(): which backend to run a (sub)problem on,
+/// and whether that was an automatic size-based downgrade.
+struct BackendDecision {
+  /// true => run the HiGHS (CPU) backend for this (sub)problem; false => run
+  /// the compiled-in primary backend (cuOpt when the build has it).
+  bool use_highs = true;
+  /// true => `solver == automatic` picked HiGHS pre-emptively because the
+  /// (sub)problem's estimated variable count exceeds the cuOpt size guard,
+  /// not because of a solver error. Always false for `highs`/`cuopt`.
+  bool size_guard_tripped = false;
+};
+
+/// Decide which MIP backend to run a (sub)problem on, given the requested
+/// --solver choice, whether this build's compiled-in primary backend is
+/// cuOpt, the (sub)problem's variable count, and the configured size guard.
+///
+/// cuOpt is known to SIGSEGV deep inside
+/// `branch_and_bound_t::set_final_solution` on sections around ~3.3M
+/// variables (reusex-81y); `automatic` pre-emptively downgrades a section
+/// over @p cuopt_max_variables to HiGHS instead of handing it to cuOpt.
+/// `cuopt` is an explicit user choice and is always respected (the caller
+/// should still warn loudly when the size guard would otherwise have
+/// tripped). Pure and backend-independent, so it is unit-testable without
+/// linking cuOpt or HiGHS.
+BackendDecision select_mip_backend(SolverChoice solver, bool primary_is_cuopt,
+                                   size_t estimated_variables,
+                                   size_t cuopt_max_variables);
+
+/// Human-readable description of the MIP solver `solve()` will actually use,
+/// for the "Using MIP solver: ..." log line. Reflects the --solver choice at
+/// run time (not just which backend is compiled in), and names the size
+/// guard for `automatic`. Pure (no CGAL/cuOpt dependency), so it is
+/// unit-testable on its own.
+std::string describe_mip_solver(SolverChoice solver, bool build_has_cuopt,
+                                size_t cuopt_max_variables);
+
 struct SolidifierOptions {
   /// Wall-clock time limit for the MIP solve, in seconds. Guards against the
   /// solver hanging indefinitely on complex buildings (issue #212). When
@@ -78,6 +114,15 @@ struct SolidifierOptions {
 
   /// Solver backend selection + fallback policy (issue #226).
   SolverChoice solver = SolverChoice::automatic;
+
+  /// Size guard for `solver == automatic` (reusex-81y): a (sub)problem whose
+  /// *exact* variable count (cells in the subset times n_rooms+1+n_walls)
+  /// exceeds this is solved with HiGHS instead of cuOpt, pre-emptively —
+  /// cuOpt SIGSEGVs inside `branch_and_bound_t::set_final_solution` on
+  /// sections around ~3.3M variables, well past the point where it would
+  /// have returned a clean error status. Ignored for `highs`; with an
+  /// explicit `cuopt` the choice is respected (just logged loudly).
+  size_t cuopt_max_variables = 2'000'000;
 };
 
 /// Per-section solve diagnostics (issue #226). One entry per section actually
@@ -90,6 +135,10 @@ struct SectionSolveStats {
   double seconds = 0.0;   ///< Wall-clock solve time.
   SolveStatus status = SolveStatus::not_solved; ///< Outcome.
   bool used_highs_fallback = false; ///< True if HiGHS retried after primary.
+  /// True if `solver == automatic` pre-emptively ran this section on HiGHS
+  /// because its size exceeded `cuopt_max_variables` (reusex-81y) — distinct
+  /// from `used_highs_fallback`, which means cuOpt was tried and errored.
+  bool size_guard_tripped = false;
 };
 
 /**
