@@ -46,6 +46,8 @@
 #include <reusex/visualize/render_view.hpp>
 
 #include <opencv2/core.hpp>
+#include <pcl/PolygonMesh.h>
+#include <pcl/conversions.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -53,6 +55,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
 
 namespace fs = std::filesystem;
 namespace viz = reusex::visualize;
@@ -542,4 +545,84 @@ TEST_CASE("RenderView_RealScanFixture_ProducesNonBlankImage",
   const double orbit_covered = foreground_fraction(orbit, opts.background);
   INFO("orbit foreground fraction: " << orbit_covered);
   CHECK(orbit_covered > 0.01);
+}
+
+// ── Mesh-vs-cloud QA views (reusex-8vx) ──────────────────────────────────────
+
+namespace {
+
+/// The coloured_room() box as a closed mesh, 2 triangles per face.
+pcl::PolygonMesh room_mesh(float height = 2.7F) {
+  pcl::PointCloud<pcl::PointXYZ> v;
+  for (const float z : {0.0F, height})
+    for (const auto &[x, y] : {std::pair{-2.0F, -2.0F}, std::pair{2.0F, -2.0F},
+                               std::pair{2.0F, 2.0F}, std::pair{-2.0F, 2.0F}})
+      v.push_back({x, y, z});
+  pcl::PolygonMesh mesh;
+  pcl::toPCLPointCloud2(v, mesh.cloud);
+  const std::uint32_t quads[6][4] = {{0, 3, 2, 1}, {4, 5, 6, 7}, {0, 1, 5, 4},
+                                     {1, 2, 6, 5}, {2, 3, 7, 6}, {3, 0, 4, 7}};
+  for (const auto &q : quads) {
+    pcl::Vertices a, b;
+    a.vertices = {q[0], q[1], q[2]};
+    b.vertices = {q[0], q[2], q[3]};
+    mesh.polygons.push_back(a);
+    mesh.polygons.push_back(b);
+  }
+  return mesh;
+}
+
+} // namespace
+
+TEST_CASE("RenderView_MeshQaViews_RenderNonBlankAndDeterministic",
+          "[integration][render][meshqa]") {
+  const reusex::test_support::TempDir work("reusex_render_meshqa");
+  reusex::ProjectDB db(work.path / "qa.rux");
+  db.save_point_cloud("cloud", *coloured_room());
+  db.save_mesh("mesh", room_mesh());
+
+  viz::RenderOptions opts;
+  opts.layers = {viz::Layer::cloud, viz::Layer::mesh};
+  opts.width = 400;
+  opts.height = 300;
+
+  for (const auto view : {viz::ViewPreset::front, viz::ViewPreset::back,
+                          viz::ViewPreset::left, viz::ViewPreset::right}) {
+    opts.view = view;
+    const cv::Mat image = render_or_skip(db, opts);
+    INFO("view " << viz::to_string(view));
+    CHECK(foreground_fraction(image, opts.background) > 0.01);
+  }
+
+  // A section through the middle of the room: walls in section, the mesh's
+  // section line drawn in its edge colour (vermillion, unlit).
+  opts.view = viz::ViewPreset::section;
+  opts.section = viz::parse_section("x=0");
+  const cv::Mat section = render_or_skip(db, opts);
+  CHECK(foreground_fraction(section, opts.background) > 0.005);
+  CHECK(count_color(section, 0xd5, 0x5e, 0x00) > 0);
+
+  // The deviation layer: the cloud lies on the mesh, so every point is
+  // within 5 cm, and two renders are identical (legend included).
+  viz::RenderOptions dev;
+  dev.layers = {viz::Layer::deviation};
+  dev.view = viz::ViewPreset::plan;
+  dev.width = 640;
+  dev.height = 480;
+  viz::RenderInfo info;
+  const cv::Mat a = [&] {
+    try {
+      return viz::render_view(db, dev, &info);
+    } catch (const viz::OffscreenGlUnavailable &e) {
+      SKIP("No offscreen OpenGL on this machine: " << e.what());
+    }
+    return cv::Mat{};
+  }();
+  REQUIRE(info.deviation.has_value());
+  CHECK(info.deviation->within_share == 1.0);
+  CHECK(info.deviation->uncovered_share == 0.0);
+  const cv::Mat b = render_or_skip(db, dev);
+  cv::Mat difference;
+  cv::absdiff(a, b, difference);
+  CHECK(cv::countNonZero(difference.reshape(1)) == 0);
 }

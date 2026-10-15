@@ -13,7 +13,9 @@
 #include "visualize/offscreen_gl.hpp"
 #include "visualize/scene.hpp"
 
+#include <fmt/format.h>
 #include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 
 #include <vtkImageData.h>
 #include <vtkNew.h>
@@ -21,6 +23,7 @@
 #include <vtkRenderer.h>
 #include <vtkWindowToImageFilter.h>
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -118,12 +121,95 @@ cv::Mat to_bgr_image(vtkImageData *image, int width, int height) {
   return out;
 }
 
+// ── Deviation legend ─────────────────────────────────────────────────────────
+
+/// "12.3 cm" / "1.20 m".
+std::string length_text(double m) {
+  return m < 1.0 ? fmt::format("{:.1f} cm", 100.0 * m)
+                 : fmt::format("{:.2f} m", m);
+}
+
+/// Draw the deviation colour ramp and its summary into the lower-left corner
+/// of @p image (BGR). Hershey text: ASCII only, deterministic.
+void draw_deviation_legend(cv::Mat &image, const DeviationStats &all,
+                           const std::optional<DeviationStats> &planar,
+                           const DeviationOptions &dv,
+                           const std::string &mesh_name) {
+  const double s = std::clamp(image.cols / 1600.0, 0.5, 2.0);
+  const int font = cv::FONT_HERSHEY_SIMPLEX;
+  const double fs = 0.55 * s;
+  const int th = std::max(1, static_cast<int>(std::lround(s)));
+  const int pad = static_cast<int>(10 * s);
+  const int line = static_cast<int>(22 * s);
+  const int bar_w = static_cast<int>(360 * s);
+  const int bar_h = static_cast<int>(14 * s);
+
+  std::vector<std::string> lines;
+  const auto row = [&](const char *what, const DeviationStats &d) {
+    return fmt::format("{}: n={}  mean {}  P95 {}  <={}: {:.0f}%  >{}: {:.0f}%",
+                       what, d.points, length_text(d.mean_m),
+                       length_text(d.p95_m), length_text(dv.within_m),
+                       100.0 * d.within_share, length_text(dv.uncovered_m),
+                       100.0 * d.uncovered_share);
+  };
+  lines.push_back("cloud -> mesh '" + mesh_name + "' distance");
+  lines.push_back(row("all points", all));
+  if (planar)
+    lines.push_back(row("planar pts", *planar));
+
+  int text_w = bar_w;
+  for (const auto &l : lines) {
+    int base = 0;
+    text_w = std::max(text_w, cv::getTextSize(l, font, fs, th, &base).width);
+  }
+  const int box_w = text_w + 2 * pad;
+  const int box_h =
+      pad + bar_h + line + static_cast<int>(lines.size()) * line + pad;
+  const int x0 = pad;
+  const int y0 = image.rows - box_h - pad;
+  if (y0 < 0 || box_w + x0 > image.cols)
+    return; // too small an image for a legend
+  cv::Mat roi = image(cv::Rect(x0, y0, box_w, box_h));
+  roi *= 0.25; // darken behind the text
+  const cv::Scalar white(240, 240, 240);
+
+  // The ramp: 0 .. uncovered over 85 % of the bar, "beyond" after.
+  const int bx = x0 + pad, by = y0 + pad;
+  const int ramp_w = static_cast<int>(0.85 * bar_w);
+  for (int i = 0; i < bar_w; ++i) {
+    const double d = i < ramp_w ? dv.uncovered_m * i / std::max(ramp_w - 1, 1)
+                                : 2.0 * dv.uncovered_m;
+    const auto c = deviation_color(d, dv);
+    cv::line(image, {bx + i, by}, {bx + i, by + bar_h},
+             cv::Scalar(c[2], c[1], c[0]), 1);
+  }
+  const auto tick = [&](double d, const std::string &label, int px) {
+    (void)d;
+    cv::line(image, {px, by + bar_h}, {px, by + bar_h + line / 4}, white, th);
+    cv::putText(image, label, {px - static_cast<int>(8 * s), by + bar_h + line},
+                font, fs * 0.9, white, th, cv::LINE_AA);
+  };
+  tick(0.0, "0", bx);
+  tick(dv.within_m, length_text(dv.within_m),
+       bx + static_cast<int>(ramp_w * dv.within_m / dv.uncovered_m));
+  tick(dv.uncovered_m, length_text(dv.uncovered_m), bx + ramp_w);
+  cv::putText(image, "uncovered",
+              {bx + ramp_w + static_cast<int>(6 * s),
+               by + bar_h - static_cast<int>(2 * s)},
+              font, fs * 0.8, white, th, cv::LINE_AA);
+  int y = by + bar_h + 2 * line;
+  for (const auto &l : lines) {
+    cv::putText(image, l, {bx, y}, font, fs, white, th, cv::LINE_AA);
+    y += line;
+  }
+}
+
 void validate(const RenderOptions &opts) {
   if (opts.layers.empty())
     throw std::runtime_error(
         "render: no layers selected — pass at least one of "
         "cloud, labels, planes, rooms, instances, mesh, "
-        "components, frustums, panoramas");
+        "components, frustums, panoramas, deviation");
   if (opts.width <= 0 || opts.height <= 0)
     throw std::runtime_error("render: image size must be positive (got " +
                              std::to_string(opts.width) + "x" +
@@ -137,6 +223,9 @@ void validate(const RenderOptions &opts) {
           "render: orbit index " + std::to_string(opts.orbit_index) +
           " is out of range for a ring of " + std::to_string(opts.orbit_count));
   }
+  if (opts.view == ViewPreset::section && !opts.section)
+    throw std::runtime_error(
+        "render: view is 'section' but no section was supplied");
   if (opts.view == ViewPreset::explicit_camera && !opts.camera)
     throw std::runtime_error(
         "render: view is 'explicit_camera' but no camera was supplied");
@@ -190,6 +279,8 @@ std::string_view to_string(Layer layer) {
     return "frustums";
   case Layer::panoramas:
     return "panoramas";
+  case Layer::deviation:
+    return "deviation";
   }
   return "unknown";
 }
@@ -202,6 +293,14 @@ std::string_view to_string(ViewPreset view) {
     return "plan";
   case ViewPreset::front:
     return "front";
+  case ViewPreset::back:
+    return "back";
+  case ViewPreset::left:
+    return "left";
+  case ViewPreset::right:
+    return "right";
+  case ViewPreset::section:
+    return "section";
   case ViewPreset::orbit:
     return "orbit";
   case ViewPreset::explicit_camera:
@@ -212,8 +311,9 @@ std::string_view to_string(ViewPreset view) {
 
 std::optional<ViewPreset> view_preset_from_string(std::string_view name) {
   for (const ViewPreset view :
-       {ViewPreset::top, ViewPreset::plan, ViewPreset::front, ViewPreset::orbit,
-        ViewPreset::explicit_camera}) {
+       {ViewPreset::top, ViewPreset::plan, ViewPreset::front, ViewPreset::back,
+        ViewPreset::left, ViewPreset::right, ViewPreset::section,
+        ViewPreset::orbit, ViewPreset::explicit_camera}) {
     if (to_string(view) == name)
       return view;
   }
@@ -222,13 +322,86 @@ std::optional<ViewPreset> view_preset_from_string(std::string_view name) {
 
 const std::vector<Layer> &all_layers() {
   static const std::vector<Layer> layers{
-      Layer::cloud,      Layer::labels,    Layer::planes,
-      Layer::rooms,      Layer::instances, Layer::mesh,
-      Layer::components, Layer::frustums,  Layer::panoramas};
+      Layer::cloud,     Layer::labels,   Layer::planes,     Layer::rooms,
+      Layer::instances, Layer::mesh,     Layer::components, Layer::frustums,
+      Layer::panoramas, Layer::deviation};
   return layers;
 }
 
-cv::Mat render_view(const ProjectDB &db, const RenderOptions &opts) {
+std::string_view to_string(MeshStyle style) {
+  switch (style) {
+  case MeshStyle::automatic:
+    return "auto";
+  case MeshStyle::solid:
+    return "solid";
+  case MeshStyle::overlay:
+    return "overlay";
+  case MeshStyle::edges:
+    return "edges";
+  }
+  return "unknown";
+}
+
+std::optional<MeshStyle> mesh_style_from_string(std::string_view name) {
+  for (const MeshStyle s : {MeshStyle::automatic, MeshStyle::solid,
+                            MeshStyle::overlay, MeshStyle::edges})
+    if (to_string(s) == name)
+      return s;
+  return std::nullopt;
+}
+
+SectionSpec parse_section(std::string_view text) {
+  const auto number = [&](std::string_view sv) {
+    std::size_t used = 0;
+    const auto v = utils::parse_number<double>(sv, &used);
+    if (!v || used != sv.size() || !std::isfinite(*v))
+      throw std::invalid_argument("section: '" + std::string(sv) +
+                                  "' is not a number in '" + std::string(text) +
+                                  "'");
+    return *v;
+  };
+  SectionSpec spec;
+  if (text.size() > 2 && (text[0] == 'x' || text[0] == 'y') && text[1] == '=') {
+    spec.kind = text[0] == 'x' ? SectionSpec::Kind::x : SectionSpec::Kind::y;
+    spec.at = number(text.substr(2));
+    return spec;
+  }
+  const auto colon = text.find(':');
+  const auto pair = [&](std::string_view sv) -> std::array<double, 2> {
+    const auto comma = sv.find(',');
+    if (comma == std::string_view::npos)
+      throw std::invalid_argument("section: expected <x>,<y> (got '" +
+                                  std::string(sv) + "')");
+    return {number(sv.substr(0, comma)), number(sv.substr(comma + 1))};
+  };
+  if (colon == std::string_view::npos)
+    throw std::invalid_argument(
+        "section: expected x=<m>, y=<m> or <x0>,<y0>:<x1>,<y1> (got '" +
+        std::string(text) + "')");
+  spec.kind = SectionSpec::Kind::segment;
+  spec.p0 = pair(text.substr(0, colon));
+  spec.p1 = pair(text.substr(colon + 1));
+  if (spec.p0 == spec.p1)
+    throw std::invalid_argument("section: the segment '" + std::string(text) +
+                                "' has zero length");
+  return spec;
+}
+
+std::string to_string(const SectionSpec &section) {
+  switch (section.kind) {
+  case SectionSpec::Kind::x:
+    return fmt::format("x={:g}", section.at);
+  case SectionSpec::Kind::y:
+    return fmt::format("y={:g}", section.at);
+  case SectionSpec::Kind::segment:
+    break;
+  }
+  return fmt::format("{:g},{:g}:{:g},{:g}", section.p0[0], section.p0[1],
+                     section.p1[0], section.p1[1]);
+}
+
+cv::Mat render_view(const ProjectDB &db, const RenderOptions &opts,
+                    RenderInfo *out_info) {
   validate(opts);
   if (!db.is_open())
     throw std::runtime_error("render: project database is not open");
@@ -240,20 +413,34 @@ cv::Mat render_view(const ProjectDB &db, const RenderOptions &opts) {
   renderer->SetBackground(opts.background[0], opts.background[1],
                           opts.background[2]);
 
+  double yaw = 0.0;
+  if (opts.yaw_deg) {
+    yaw = *opts.yaw_deg;
+  } else if (const auto text =
+                 db.setting(core::pose_graph::kSettingViewYawDeg)) {
+    yaw = utils::parse_number<double>(*text).value_or(0.0);
+  }
+
   SceneOptions scene;
   scene.layers = opts.layers;
+  if (opts.view != ViewPreset::explicit_camera)
+    scene.frame_yaw_deg = yaw;
   scene.cloud_name = opts.cloud_name;
   scene.mesh_name = opts.mesh_name;
   scene.point_size = opts.point_size;
   scene.highlight = opts.highlight;
   scene.plan = opts.plan;
   scene.plan_labels = opts.plan_labels;
+  scene.mesh_style = opts.mesh_style;
+  scene.deviation = opts.deviation;
+  scene.frame_quantile = opts.frame_quantile;
   scene.plan_placement =
       opts.view == ViewPreset::top || opts.view == ViewPreset::plan
           ? PlanPlacement::above_scene
           : PlanPlacement::level;
   const SceneInfo info = populate_scene(renderer, db, scene);
   const SceneBounds &bounds = info.bounds;
+  const SceneBounds &frame = info.frame_bounds;
 
   // A plan view is a top view plus the cut; an explicit `cut` cuts any view.
   if (opts.cut || opts.view == ViewPreset::plan) {
@@ -263,6 +450,33 @@ cv::Mat render_view(const ProjectDB &db, const RenderOptions &opts) {
                "at z={:.3f}",
                cut.z, cut.height, cut.from_planes ? "detected" : "bounding-box",
                cut.floor_z);
+    if (opts.mesh_section_line)
+      add_mesh_section_line(renderer, info, {0.0, 0.0, cut.z}, {0.0, 0.0, 1.0},
+                            {0.0, 0.0, 0.0}, scene.mesh_edge_rgb);
+  }
+
+  // A vertical section: clip to the slab, and draw the mesh's cut through
+  // the slab's centre plane in front of the slab's points.
+  std::optional<ResolvedSection> section;
+  if (opts.view == ViewPreset::section) {
+    try {
+      section = resolve_section(*opts.section, frame);
+    } catch (const std::invalid_argument &e) {
+      throw std::runtime_error(e.what());
+    }
+    apply_section(renderer, *section);
+    if (opts.mesh_section_line) {
+      const double toward = 0.5 * section->thickness + 0.01;
+      add_mesh_section_line(
+          renderer, info, {section->p0[0], section->p0[1], 0.0},
+          {section->view[0], section->view[1], 0.0},
+          {-section->view[0] * toward, -section->view[1] * toward, 0.0},
+          scene.mesh_edge_rgb);
+    }
+    core::info("render: section {} ({:.3f},{:.3f})->({:.3f},{:.3f}), slab "
+               "{:.2f} m",
+               to_string(*opts.section), section->p0[0], section->p0[1],
+               section->p1[0], section->p1[1], section->thickness);
   }
 
   vtkNew<vtkRenderWindow> window;
@@ -275,7 +489,7 @@ cv::Mat render_view(const ProjectDB &db, const RenderOptions &opts) {
 
   if (opts.view == ViewPreset::explicit_camera) {
     place_explicit_camera(renderer, *opts.camera, opts.width, opts.height,
-                          bounds);
+                          frame);
   } else {
     CameraFraming framing;
     framing.view = opts.view;
@@ -285,15 +499,11 @@ cv::Mat render_view(const ProjectDB &db, const RenderOptions &opts) {
     framing.margin = opts.margin;
     framing.aspect =
         static_cast<double>(opts.width) / static_cast<double>(opts.height);
-    double yaw = 0.0;
-    if (opts.yaw_deg) {
-      yaw = *opts.yaw_deg;
-    } else if (const auto text =
-                   db.setting(core::pose_graph::kSettingViewYawDeg)) {
-      yaw = utils::parse_number<double>(*text).value_or(0.0);
-    }
     framing.yaw_deg = yaw;
-    place_preset_camera(renderer, framing, bounds);
+    if (info.display_bounds && info.display_yaw_deg == yaw)
+      framing.display_bounds = info.display_bounds;
+    framing.section = section;
+    place_preset_camera(renderer, framing, frame);
   }
 
   // Everything above this line is checked without touching the GPU, so a
@@ -343,6 +553,23 @@ cv::Mat render_view(const ProjectDB &db, const RenderOptions &opts) {
                "faces in the scene — the camera may be pointed away from the "
                "geometry, or the GL context produced nothing",
                info.drawn_points, info.drawn_faces);
+  }
+
+  if (info.deviation && opts.legend)
+    draw_deviation_legend(image, *info.deviation, info.deviation_planar,
+                          opts.deviation, opts.mesh_name);
+  if (out_info != nullptr) {
+    out_info->drawn_points = info.drawn_points;
+    out_info->drawn_faces = info.drawn_faces;
+    out_info->bounds_min = frame.min;
+    out_info->bounds_max = frame.max;
+    out_info->yaw_deg = yaw;
+    out_info->display_min =
+        info.display_bounds ? info.display_bounds->min : frame.min;
+    out_info->display_max =
+        info.display_bounds ? info.display_bounds->max : frame.max;
+    out_info->deviation = info.deviation;
+    out_info->deviation_planar = info.deviation_planar;
   }
 
   core::info("render: {} points, {} faces -> {}x{} in {:.2f}s",

@@ -7,6 +7,7 @@
 
 #include <reusex/core/ProjectDB.hpp>
 #include <reusex/io/solid_model_json.hpp>
+#include <reusex/visualize/qa_sheet.hpp>
 #include <reusex/visualize/render_view.hpp>
 
 #include <fmt/format.h>
@@ -174,6 +175,10 @@ void setup_subcommand_render(CLI::App &app,
   opt->mesh_name = defaults.mesh_name;
   opt->point_size = defaults.point_size;
   opt->orbit_elevation_deg = defaults.orbit_elevation_deg;
+  opt->section_thickness = viz::SectionSpec{}.thickness;
+  opt->mesh_style = std::string(viz::to_string(defaults.mesh_style));
+  opt->deviation_within_m = defaults.deviation.within_m;
+  opt->deviation_uncovered_m = defaults.deviation.uncovered_m;
 
   auto *sub = app.add_subcommand(
       "render", "Render the project to an image file without a display");
@@ -203,6 +208,18 @@ EXAMPLES:
   # Check an authored solid-model plan against the cut cloud
   rux -p scan.rux render -o check.png --view plan:1.2 --plan ref.plan.json
 
+  # Mesh over the cloud, seen from the west
+  rux -p scan.rux render -o west.png --view left --layers cloud,mesh
+
+  # A 10 cm vertical slab at x = 4.5 m, with the mesh's section line
+  rux -p scan.rux render -o sx.png --section x=4.5 --layers cloud,mesh
+
+  # Cloud coloured by distance to the mesh, from above, cut
+  rux -p scan.rux render -o dev.png --view plan --layers deviation,mesh
+
+  # The whole mesh-QA contact sheet (plus one PNG per panel next to it)
+  rux -p scan.rux render --qa -o qa.png
+
 VIEWS:
   top          orthographic view looking down -Z (default). In a closed
                interior this shows the CEILING -- use `plan` for a floor plan.
@@ -211,10 +228,30 @@ VIEWS:
                section. Default h is 1.2 m above the floor plane detected by
                `rux create planes`, or 45 % of the scene height when the
                project has no planes yet.
-  front        orthographic elevation, looking along +Y
+  front        orthographic elevation from the south, looking along +Y
+  back         ... from the north, looking along -Y
+  left         ... from the west, looking along +X
+  right        ... from the east, looking along -X
+               (all four turned by --yaw / the project's view.yaw_deg, so
+               "front" is seen from the bottom edge of the plan view)
   orbit[:N]    N perspective views on a ring; writes N numbered files
                (out_000.png, out_001.png, ...)
   frame:<id>   the pose and intrinsics of stored sensor frame <id>
+  --section S  a vertical section: S is x=<m>, y=<m> or <x0>,<y0>:<x1>,<y1>;
+               a slab of --section-thickness around that vertical plane,
+               seen perpendicular to it with the line pointing right. More
+               than one --section writes numbered files.
+
+MESH QA (reusex-8vx):
+  - With cloud and mesh layers together the mesh is drawn translucent with
+    its feature edges (--mesh-style auto -> overlay), and plan cuts and
+    sections add the mesh's own section line in vermillion.
+  - The `deviation` layer colours each cloud point by its distance to the
+    mesh: green on it, yellow at --deviation-within, vermillion up to
+    --deviation-uncovered, reddish purple beyond (cloud the mesh does not
+    cover). A legend with mean, P95 and the two shares is drawn in.
+  - --qa writes a contact sheet: plan cut, four elevations, three sections
+    (or the given --section ones) and a deviation plan.
 
 NOTES:
   - Camera presets are derived from the geometry's bounding box, so the same
@@ -233,7 +270,8 @@ NOTES:
       ->default_val(opt->output.string());
   sub->add_option(
          "--view", opt->view,
-         "Camera: top, plan[:height], front, orbit[:N] or frame:<node_id>")
+         "Camera: top, plan[:height], front, back, left, right, orbit[:N] "
+         "or frame:<node_id>")
       ->default_val(opt->view);
   sub->add_option("--layers", opt->layers,
                   "Comma-separated layers (" + layer_vocabulary() + ")")
@@ -260,6 +298,37 @@ NOTES:
       ->check(CLI::ExistingFile);
   sub->add_flag("--no-plan-labels", opt->no_plan_labels,
                 "Do not label the --plan overlay's spaces and walls");
+  sub->add_option("--yaw", opt->yaw_deg,
+                  "View yaw in degrees, counter-clockwise seen from above "
+                  "(default: the project's view.yaw_deg setting)");
+  sub->add_option("--section", opt->sections,
+                  "Vertical section: x=<m>, y=<m> or <x0>,<y0>:<x1>,<y1> "
+                  "(repeatable)");
+  sub->add_option("--section-thickness", opt->section_thickness,
+                  "Section slab thickness in metres")
+      ->default_val(opt->section_thickness);
+  sub->add_option("--mesh-style", opt->mesh_style,
+                  "Mesh layer: auto, solid, overlay or edges")
+      ->default_val(opt->mesh_style);
+  sub->add_option("--deviation-within", opt->deviation_within_m,
+                  "Deviation layer: a point this close to the mesh fits it "
+                  "[m]")
+      ->default_val(opt->deviation_within_m);
+  sub->add_option("--deviation-uncovered", opt->deviation_uncovered_m,
+                  "Deviation layer: a point farther than this from the mesh "
+                  "is not covered by it [m]")
+      ->default_val(opt->deviation_uncovered_m);
+  sub->add_flag("--no-legend", opt->no_legend,
+                "Leave the deviation layer's legend out of the image");
+  sub->add_option("--frame-quantile", opt->frame_quantile,
+                  fmt::format("Frame on the [q, 1-q] per-axis quantiles of the "
+                              "cloud so stray points do not shrink the view "
+                              "(default {:g}; with --qa {:g})",
+                              defaults.frame_quantile,
+                              viz::QaSheetOptions{}.frame_quantile));
+  sub->add_flag("--qa", opt->qa,
+                "Write the mesh-QA contact sheet to --output (and each panel "
+                "next to it)");
 
   sub->callback([opt, global_opt]() {
     spdlog::trace("Running render subcommand");
@@ -278,6 +347,29 @@ int run_subcommand_render(SubcommandRenderOptions const &opt,
     render_opts.point_size = opt.point_size;
     render_opts.orbit_elevation_deg = opt.orbit_elevation_deg;
     render_opts.plan_labels = !opt.no_plan_labels;
+    render_opts.yaw_deg = opt.yaw_deg;
+    render_opts.legend = !opt.no_legend;
+    if (opt.frame_quantile >= 0.0)
+      render_opts.frame_quantile = opt.frame_quantile;
+    render_opts.deviation.within_m = opt.deviation_within_m;
+    render_opts.deviation.uncovered_m = opt.deviation_uncovered_m;
+    if (const auto style = viz::mesh_style_from_string(opt.mesh_style))
+      render_opts.mesh_style = *style;
+    else
+      throw std::runtime_error("unknown --mesh-style '" + opt.mesh_style +
+                               "'; expected auto, solid, overlay or edges");
+    std::vector<viz::SectionSpec> sections;
+    for (const auto &text : opt.sections) {
+      try {
+        viz::SectionSpec spec = viz::parse_section(text);
+        spec.thickness = opt.section_thickness;
+        sections.push_back(spec);
+      } catch (const std::invalid_argument &e) {
+        throw std::runtime_error(std::string("--section: ") + e.what());
+      }
+    }
+    if (!(opt.section_thickness > 0.0))
+      throw std::runtime_error("--section-thickness must be positive");
     if (!opt.plan.empty()) {
       try {
         render_opts.plan = reusex::io::solid_model_from_file(opt.plan);
@@ -303,8 +395,43 @@ int run_subcommand_render(SubcommandRenderOptions const &opt,
       render_opts.cut_height = opt.cut_height;
     }
 
+    // ── Mesh-QA contact sheet ─────────────────────────────────────────────
+    if (opt.qa) {
+      viz::QaSheetOptions qa;
+      qa.base = render_opts;
+      if (const auto height = parse_metre_suffix(opt.view, "plan"))
+        qa.base.cut_height = *height;
+      qa.sections = sections;
+      if (opt.frame_quantile >= 0.0)
+        qa.frame_quantile = opt.frame_quantile;
+      const viz::QaSheet sheet = viz::render_qa_sheet(db, qa);
+      write_image(sheet.sheet, opt.output);
+      for (const auto &p : sheet.panels) {
+        fs::path out = opt.output;
+        out.replace_filename(fmt::format("{}_{}{}", opt.output.stem().string(),
+                                         p.name,
+                                         opt.output.extension().string()));
+        write_image(p.image, out);
+      }
+      const auto report = [&](const char *what, const viz::DeviationStats &d) {
+        spdlog::info("Deviation ({}): {} points, mean {:.3f} m, median {:.3f} "
+                     "m, P95 {:.3f} m, {:.1f}% within {:.2f} m, {:.1f}% "
+                     "beyond {:.2f} m (uncovered)",
+                     what, d.points, d.mean_m, d.median_m, d.p95_m,
+                     100.0 * d.within_share, qa.base.deviation.within_m,
+                     100.0 * d.uncovered_share, qa.base.deviation.uncovered_m);
+      };
+      if (sheet.deviation)
+        report("all points", *sheet.deviation);
+      if (sheet.deviation_planar)
+        report("planar points", *sheet.deviation_planar);
+      return RuxError::SUCCESS;
+    }
+
     std::optional<int> frame_id;
-    if (opt.view == "top") {
+    if (!sections.empty()) {
+      render_opts.view = viz::ViewPreset::section;
+    } else if (opt.view == "top") {
       render_opts.view = viz::ViewPreset::top;
     } else if (opt.view == "plan") {
       render_opts.view = viz::ViewPreset::plan;
@@ -313,6 +440,12 @@ int run_subcommand_render(SubcommandRenderOptions const &opt,
       render_opts.cut_height = *height;
     } else if (opt.view == "front") {
       render_opts.view = viz::ViewPreset::front;
+    } else if (opt.view == "back") {
+      render_opts.view = viz::ViewPreset::back;
+    } else if (opt.view == "left") {
+      render_opts.view = viz::ViewPreset::left;
+    } else if (opt.view == "right") {
+      render_opts.view = viz::ViewPreset::right;
     } else if (opt.view == "orbit") {
       render_opts.view = viz::ViewPreset::orbit;
     } else if (const auto count = parse_suffix(opt.view, "orbit")) {
@@ -332,12 +465,20 @@ int run_subcommand_render(SubcommandRenderOptions const &opt,
     } else {
       throw std::runtime_error(
           "unknown --view '" + opt.view +
-          "'; expected top, plan[:height], front, orbit[:N] or "
-          "frame:<node_id>");
+          "'; expected top, plan[:height], front, back, left, right, "
+          "orbit[:N] or frame:<node_id>");
     }
 
     // ── Render ──────────────────────────────────────────────────────────
-    if (render_opts.view == viz::ViewPreset::orbit) {
+    if (render_opts.view == viz::ViewPreset::section) {
+      for (std::size_t i = 0; i < sections.size(); ++i) {
+        render_opts.section = sections[i];
+        write_image(viz::render_view(db, render_opts),
+                    sections.size() == 1
+                        ? opt.output
+                        : numbered_path(opt.output, static_cast<int>(i)));
+      }
+    } else if (render_opts.view == viz::ViewPreset::orbit) {
       for (int i = 0; i < render_opts.orbit_count; ++i) {
         render_opts.orbit_index = i;
         write_image(viz::render_view(db, render_opts),

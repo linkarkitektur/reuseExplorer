@@ -19,6 +19,7 @@
 #include "reusex/core/solid_model.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
@@ -44,7 +45,11 @@ namespace visualize {
 /// categorical `--label-*` scale (visualize/scene.hpp); `mesh` draws a stored
 /// mesh, `components` building-component outlines, `frustums` the camera
 /// frustum of each posed sensor frame and `panoramas` a marker where each 360
-/// panorama was taken.
+/// panorama was taken. `deviation` draws the geometry cloud coloured by each
+/// point's distance to the stored mesh (RenderOptions::mesh_name), the mesh-QA
+/// view of reusex-8vx: green on the mesh, yellow to vermillion as the distance
+/// grows to DeviationOptions::uncovered_m, reddish purple beyond it (a point
+/// the mesh does not cover).
 enum class Layer {
   cloud,      ///< `cloud` (PointXYZRGB), stored per-point colour
   labels,     ///< `labels` (Label) — semantic classes
@@ -55,6 +60,7 @@ enum class Layer {
   components, ///< building-component outlines (windows / doors / walls)
   frustums,   ///< camera frustums of the posed sensor frames (subsampled)
   panoramas,  ///< a marker at each placed 360 panorama
+  deviation,  ///< `cloud` coloured by distance to the mesh (mesh QA)
 };
 
 /// Parse a layer name as accepted by `rux render --layers`.
@@ -77,8 +83,18 @@ enum class ViewPreset {
   /// ceiling and everything else above RenderOptions::cut_height is clipped
   /// away, leaving the floor and the walls in section.
   plan,
-  /// Orthographic elevation looking along +Y.
+  /// Orthographic elevation from the south, looking along +Y.
   front,
+  /// Orthographic elevation from the north, looking along -Y.
+  back,
+  /// Orthographic elevation from the west, looking along +X.
+  left,
+  /// Orthographic elevation from the east, looking along -X.
+  right,
+  /// Orthographic view of a vertical section slab (RenderOptions::section),
+  /// looking perpendicular to the section line with the line's direction
+  /// pointing right. Everything outside the slab is clipped away.
+  section,
   /// Perspective view on a ring around the scene; see
   /// RenderOptions::orbit_index / orbit_count / orbit_elevation_deg.
   orbit,
@@ -109,6 +125,69 @@ struct CameraSpec {
   double fy = 0.0; ///< focal length in pixels (y)
   double cx = 0.0; ///< principal point in pixels (x)
   double cy = 0.0; ///< principal point in pixels (y)
+};
+
+/// A vertical section through the scene (`rux render --section`).
+///
+/// A section is a line in plan plus a slab around it: everything farther than
+/// half the thickness from the line's vertical plane, or beyond its ends, is
+/// clipped away. `x=<m>` and `y=<m>` run across the whole scene; a segment
+/// `<x0>,<y0>:<x1>,<y1>` only between its ends.
+struct SectionSpec {
+  enum class Kind {
+    x,       ///< the plane x = at, line pointing +Y
+    y,       ///< the plane y = at, line pointing +X
+    segment, ///< the vertical plane through p0 -> p1
+  };
+  Kind kind = Kind::y;
+  double at = 0.0;                ///< Kind::x / Kind::y position [m]
+  std::array<double, 2> p0{0, 0}; ///< Kind::segment start [m]
+  std::array<double, 2> p1{1, 0}; ///< Kind::segment end [m]
+  double thickness = 0.10;        ///< slab thickness [m]; must be > 0
+};
+
+/// Parse `x=<m>`, `y=<m>` or `<x0>,<y0>:<x1>,<y1>` (thickness defaulted).
+/// @throws std::invalid_argument on anything else, or a zero-length segment.
+SectionSpec parse_section(std::string_view text);
+
+/// The canonical text of @p section (the inverse of parse_section()).
+std::string to_string(const SectionSpec &section);
+
+/// How a `mesh` layer is drawn.
+enum class MeshStyle {
+  /// `overlay` when a point layer is drawn too, otherwise `solid`.
+  automatic,
+  /// An opaque shaded surface (the mesh alone).
+  solid,
+  /// A translucent surface plus its feature edges (boundary edges and
+  /// creases), so the cloud shows through and the mesh's corners stay crisp.
+  overlay,
+  /// Feature edges only.
+  edges,
+};
+
+std::string_view to_string(MeshStyle style);
+std::optional<MeshStyle> mesh_style_from_string(std::string_view name);
+
+/// Thresholds of the deviation layer (Layer::deviation) and its summary.
+struct DeviationOptions {
+  /// A point within this distance of the mesh fits it [m] (the summary's
+  /// "within" share, and the end of the green part of the colour ramp).
+  double within_m = 0.05;
+  /// A point farther than this from the mesh is not covered by it [m] (the
+  /// summary's "uncovered" share; the colour ramp saturates here).
+  double uncovered_m = 0.20;
+};
+
+/// Summary of the deviation layer's point-to-mesh distances.
+struct DeviationStats {
+  std::size_t points = 0; ///< finite points measured
+  double mean_m = 0.0;
+  double median_m = 0.0; ///< nearest rank
+  double p95_m = 0.0;    ///< nearest rank
+  double max_m = 0.0;
+  double within_share = 0.0;    ///< distance <= DeviationOptions::within_m
+  double uncovered_share = 0.0; ///< distance > DeviationOptions::uncovered_m
 };
 
 /// Default height of the plan cut above the detected floor, in metres.
@@ -213,6 +292,52 @@ struct RenderOptions {
   std::optional<core::SolidModel> plan;
   /// Label spaces by name and walls by guid (SceneOptions::plan_labels).
   bool plan_labels = true;
+
+  /// How the `mesh` layer is drawn.
+  MeshStyle mesh_style = MeshStyle::automatic;
+
+  /// The section view's slab (ViewPreset::section). Required by that view;
+  /// ignored by every other.
+  std::optional<SectionSpec> section;
+
+  /// Thresholds of the `deviation` layer.
+  DeviationOptions deviation;
+
+  /// Draw a colour-ramp legend and the summary numbers into the image when
+  /// the `deviation` layer is drawn.
+  bool legend = true;
+
+  /// Frame the camera on the [q, 1 - q] quantiles of the cloud (plus the
+  /// mesh) rather than on everything drawn; 0 = everything
+  /// (SceneOptions::frame_quantile).
+  double frame_quantile = 0.0;
+
+  /// Draw the mesh's intersection with the cut plane (plan views, `cut`) or
+  /// with the section plane (ViewPreset::section) as a heavy line, when a
+  /// mesh layer is drawn — the mesh outline to compare with the cut cloud.
+  bool mesh_section_line = true;
+};
+
+/// What render_view() measured on the way, for a caller that reports it.
+struct RenderInfo {
+  std::size_t drawn_points = 0;
+  std::size_t drawn_faces = 0;
+  /// Axis-aligned bounds the camera framed (RenderOptions::frame_quantile).
+  std::array<double, 3> bounds_min{0, 0, 0};
+  std::array<double, 3> bounds_max{0, 0, 0};
+  /// The view yaw used [deg], and the framed box in that display frame
+  /// (u, v, z) = world turned counter-clockwise by the yaw (equal to the
+  /// bounds above at yaw 0 without frame_quantile).
+  double yaw_deg = 0.0;
+  std::array<double, 3> display_min{0, 0, 0};
+  std::array<double, 3> display_max{0, 0, 0};
+  /// The `deviation` layer's summary, when it was drawn: every measured
+  /// point, and the points that belong to a segmented plane (label != 0 in
+  /// an index-aligned `planes` cloud) when the project has one — the clutter
+  /// (furniture, people) a structural mesh is not meant to cover is left out
+  /// of the second.
+  std::optional<DeviationStats> deviation;
+  std::optional<DeviationStats> deviation_planar;
 };
 
 /// This machine cannot create an offscreen OpenGL context (#313).
@@ -241,6 +366,7 @@ class OffscreenGlUnavailable : public std::runtime_error {
 ///
 /// @param db    An open project. Only read.
 /// @param opts  What and how to draw.
+/// @param info  When given, filled with what was drawn and measured.
 /// @return An 8-bit 3-channel BGR image of size opts.width x opts.height,
 ///         ready for `cv::imwrite`.
 /// @throws OffscreenGlUnavailable if the machine has no usable offscreen
@@ -250,7 +376,8 @@ class OffscreenGlUnavailable : public std::runtime_error {
 ///         invalid, a requested layer's data is missing (the message names the
 ///         stage to run first), or the framebuffer comes back at the wrong
 ///         size.
-cv::Mat render_view(const ProjectDB &db, const RenderOptions &opts);
+cv::Mat render_view(const ProjectDB &db, const RenderOptions &opts,
+                    RenderInfo *info = nullptr);
 
 /// Build the camera that reproduces a stored sensor frame's viewpoint.
 ///

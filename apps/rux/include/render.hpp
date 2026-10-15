@@ -7,7 +7,9 @@
 
 #include <CLI/CLI.hpp>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -35,6 +37,22 @@ struct SubcommandRenderOptions {
   fs::path plan;
   /// Leave the plan overlay's space-name and wall-guid labels out.
   bool no_plan_labels = false;
+  /// View yaw in degrees; unset = the project's `view.yaw_deg` setting.
+  std::optional<double> yaw_deg;
+  /// `--section` specs (`x=<m>`, `y=<m>`, `<x0>,<y0>:<x1>,<y1>`); each one a
+  /// section view, or the sections of `--qa`.
+  std::vector<std::string> sections;
+  double section_thickness = 0.0;
+  /// `auto`, `solid`, `overlay` or `edges`.
+  std::string mesh_style;
+  double deviation_within_m = 0.0;
+  double deviation_uncovered_m = 0.0;
+  bool no_legend = false;
+  /// Frame on the [q, 1-q] quantiles of the cloud; < 0 = the default (0 for
+  /// a single view, QaSheetOptions::frame_quantile for --qa).
+  double frame_quantile = -1.0;
+  /// Render the mesh-QA contact sheet instead of one view.
+  bool qa = false;
 };
 
 // Function declarations
