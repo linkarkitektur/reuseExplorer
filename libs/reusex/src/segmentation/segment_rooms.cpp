@@ -163,6 +163,7 @@ auto segment_rooms_impl(CloudConstPtr cloud, CloudNConstPtr normals,
 
   cc.setGridSize(options.grid_size);
   cc.setMinClusterSize(min_room_samples(options));
+  cc.setMinMergeAffinity(options.merge_affinity);
   cc.setInputCloud(cloud);
   cc.setInputNormals(normals);
   cc.setIndices(indices);

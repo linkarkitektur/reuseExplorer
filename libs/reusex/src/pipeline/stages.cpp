@@ -336,6 +336,8 @@ StageResult run_rooms(ProjectDB &db, const StageContext &ctx,
       param_or(params, "propagate_max_radius", options.propagate_max_radius);
   options.min_room_area =
       param_or(params, "min_room_area", options.min_room_area);
+  options.merge_affinity =
+      param_or(params, "merge_affinity", options.merge_affinity);
   options.cancel_token = ctx.cancel_token;
 
   auto cloud = db.point_cloud_xyzrgb("cloud");

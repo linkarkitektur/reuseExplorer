@@ -11,9 +11,13 @@
 #include <reusex/segmentation/segment_rooms.hpp>
 #include <reusex/types.hpp>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <map>
+#include <random>
 #include <set>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -333,6 +337,7 @@ TEST_CASE("LibraryOptionDefaults_AllPipelineStages_MatchDocumentedValues",
     CHECK(o.propagate_k == 5);
     CHECK(o.propagate_max_radius == 0.5F);
     CHECK(o.min_room_area == 5.0F);
+    CHECK(o.merge_affinity == 0.08F);
   }
 
   SECTION("SegmentPlanesOptions") {
@@ -366,4 +371,267 @@ TEST_CASE("LibraryOptionDefaults_AllPipelineStages_MatchDocumentedValues",
     CHECK(o.min_cluster_size == 50);
     CHECK(o.max_cluster_size == 1000000);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// One room per real space (reusex-5l7).
+//
+// NewOffice's open office came out as six rooms: modularity splits a long or
+// L-shaped space whose far ends do not see each other, and desk screens cut
+// the lower sight lines. The mesh stage then put a full-height wall between
+// every pair of room labels. Rooms that see each other about as well as they
+// see themselves are merged; rooms joined by a door are not.
+// ─────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+/// Two groups of @p n vertices, each a clique; every vertex i of group 0 sees
+/// vertex i + j of group 1 for j < @p cross_per_vertex.
+void two_cliques(int n, int cross_per_vertex,
+                 std::vector<std::pair<int, int>> &edges,
+                 std::vector<int> &membership) {
+  edges.clear();
+  membership.assign(static_cast<std::size_t>(2 * n), 0);
+  for (int g = 0; g < 2; ++g)
+    for (int i = 0; i < n; ++i) {
+      membership[static_cast<std::size_t>(g * n + i)] = g;
+      for (int j = i + 1; j < n; ++j)
+        edges.emplace_back(g * n + i, g * n + j);
+    }
+  for (int i = 0; i < n; ++i)
+    for (int j = 0; j < cross_per_vertex; ++j)
+      edges.emplace_back(i, n + (i + j) % n);
+}
+
+} // namespace
+
+TEST_CASE("MergeCommunitiesByVisibility_DenselyCrossVisible_Merge",
+          "[geometry][segment_rooms][merge]") {
+  // Each half sees half of the other: cross density 0.5 vs internal 1.0.
+  std::vector<std::pair<int, int>> edges;
+  std::vector<int> membership;
+  two_cliques(10, 5, edges, membership);
+  const std::vector<double> weights(edges.size(), 1.0);
+
+  std::vector<pcl::CommunityMerge> log;
+  const auto out = pcl::mergeCommunitiesByVisibility(
+      membership.size(), edges, weights, membership, 0.3, &log);
+  CHECK(out == std::vector<int>(20, 0));
+  REQUIRE_FALSE(log.empty());
+  CHECK(log.back().merged);
+  CHECK(log.back().affinity == Catch::Approx(0.5));
+}
+
+TEST_CASE("MergeCommunitiesByVisibility_SeenOnlyThroughADoor_StaySeparate",
+          "[geometry][segment_rooms][merge]") {
+  // One sight line per vertex: cross density 0.1 vs internal 1.0.
+  std::vector<std::pair<int, int>> edges;
+  std::vector<int> membership;
+  two_cliques(10, 1, edges, membership);
+  const std::vector<double> weights(edges.size(), 1.0);
+
+  const auto out = pcl::mergeCommunitiesByVisibility(membership.size(), edges,
+                                                     weights, membership, 0.3);
+  CHECK(out == membership);
+}
+
+TEST_CASE("MergeCommunitiesByVisibility_Disabled_ReturnsInput",
+          "[geometry][segment_rooms][merge]") {
+  std::vector<std::pair<int, int>> edges;
+  std::vector<int> membership;
+  two_cliques(6, 6, edges, membership);
+  const std::vector<double> weights(edges.size(), 1.0);
+
+  CHECK(pcl::mergeCommunitiesByVisibility(membership.size(), edges, weights,
+                                          membership, 0.0) == membership);
+}
+
+TEST_CASE("MergeCommunitiesByVisibility_ChainOfMerges_RenumbersAndKeepsNone",
+          "[geometry][segment_rooms][merge]") {
+  // Communities 0 and 2 see each other densely, 1 is apart, vertex 9 has no
+  // community. Result: {0, 2} -> 0, 1 -> 1, the unassigned vertex untouched.
+  const std::vector<int> membership{0, 0, 0, 1, 1,
+                                    1, 2, 2, 2, pcl::kNoCommunity};
+  std::vector<std::pair<int, int>> edges{
+      {0, 1}, {0, 2}, {1, 2}, {3, 4}, {3, 5}, {4, 5}, {6, 7}, {6, 8},
+      {7, 8}, {0, 6}, {1, 7}, {2, 8}, {0, 7}, {1, 8}, {5, 9}};
+  const std::vector<double> weights(edges.size(), 1.0);
+
+  const auto out = pcl::mergeCommunitiesByVisibility(membership.size(), edges,
+                                                     weights, membership, 0.3);
+  CHECK(out == std::vector<int>{0, 0, 0, 1, 1, 1, 0, 0, 0, pcl::kNoCommunity});
+}
+
+namespace {
+
+/// Builds an axis-aligned interior: every surface a separate plane label.
+struct InteriorBuilder {
+  test_support::SyntheticScene scene{std::make_shared<Cloud>(),
+                                     std::make_shared<CloudN>(),
+                                     std::make_shared<CloudL>()};
+  std::mt19937 gen{11};
+  uint32_t next_label = 1;
+  float spacing = 0.1F;
+
+  /// Rectangle origin + u + v facing @p normal (into the room).
+  void patch(const Eigen::Vector3f &origin, const Eigen::Vector3f &u,
+             const Eigen::Vector3f &v, const Eigen::Vector3f &normal) {
+    test_support::add_patch(scene, origin, u, v, normal, spacing, 0.005F,
+                            next_label++, gen);
+  }
+  /// Floor and ceiling of the box [x0, x1] x [y0, y1], height h.
+  void slab(float x0, float y0, float x1, float y1, float h) {
+    patch({x0, y0, 0.0F}, {x1 - x0, 0, 0}, {0, y1 - y0, 0}, {0, 0, 1});
+    patch({x0, y0, h}, {x1 - x0, 0, 0}, {0, y1 - y0, 0}, {0, 0, -1});
+  }
+  /// Wall face x = const over y in [y0, y1], z in [z0, z1].
+  void wall_x(float x, float y0, float y1, float z0, float z1, float nx) {
+    patch({x, y0, z0}, {0, y1 - y0, 0}, {0, 0, z1 - z0}, {nx, 0, 0});
+  }
+  /// Wall face y = const over x in [x0, x1], z in [z0, z1].
+  void wall_y(float y, float x0, float x1, float z0, float z1, float ny) {
+    patch({x0, y, z0}, {x1 - x0, 0, 0}, {0, 0, z1 - z0}, {0, ny, 0});
+  }
+  /// A desk: a 0.75 m top over [x0, x1] x [y0, y1] and a 1.3 m screen along
+  /// its long middle line, both faces scanned.
+  void desk(float x0, float y0, float x1, float y1) {
+    patch({x0, y0, 0.75F}, {x1 - x0, 0, 0}, {0, y1 - y0, 0}, {0, 0, 1});
+    if (x1 - x0 < y1 - y0) {
+      const float xm = 0.5F * (x0 + x1);
+      wall_x(xm - 0.02F, y0, y1, 0.75F, 1.3F, -1.0F);
+      wall_x(xm + 0.02F, y0, y1, 0.75F, 1.3F, 1.0F);
+    } else {
+      const float ym = 0.5F * (y0 + y1);
+      wall_y(ym - 0.02F, x0, x1, 0.75F, 1.3F, -1.0F);
+      wall_y(ym + 0.02F, x0, x1, 0.75F, 1.3F, 1.0F);
+    }
+  }
+  test_support::SyntheticScene finish() {
+    scene.cloud->width = static_cast<uint32_t>(scene.cloud->size());
+    scene.cloud->height = 1;
+    scene.normals->width = static_cast<uint32_t>(scene.normals->size());
+    scene.normals->height = 1;
+    scene.labels->width = static_cast<uint32_t>(scene.labels->size());
+    scene.labels->height = 1;
+    return scene;
+  }
+};
+
+/// Room labels of the floor points (z < 0.05, normal up) inside the box
+/// [x0, x1] x [y0, y1]: label -> count, unlabeled excluded.
+std::map<uint32_t, std::size_t>
+floor_rooms(const test_support::SyntheticScene &scene, const CloudL &rooms,
+            float x0, float y0, float x1, float y1) {
+  std::map<uint32_t, std::size_t> out;
+  for (std::size_t i = 0; i < rooms.size(); ++i) {
+    const auto &p = scene.cloud->points[i];
+    if (p.z > 0.05F || scene.normals->points[i].normal_z < 0.9F)
+      continue;
+    if (p.x < x0 || p.x > x1 || p.y < y0 || p.y > y1)
+      continue;
+    if (rooms.points[i].label != core::kUnlabeled)
+      ++out[rooms.points[i].label];
+  }
+  return out;
+}
+
+/// The most frequent label and its share of the counted points.
+std::pair<uint32_t, double>
+majority(const std::map<uint32_t, std::size_t> &votes) {
+  std::size_t total = 0;
+  std::size_t best = 0;
+  uint32_t label = core::kUnlabeled;
+  for (const auto &[l, c] : votes) {
+    total += c;
+    if (c > best) {
+      best = c;
+      label = l;
+    }
+  }
+  return {label, total == 0 ? 0.0 : static_cast<double>(best) / total};
+}
+
+/// An open L-shaped office, 12 m along each arm, 4 m wide, 2.7 m high, with
+/// rows of desks and screens across both arms.
+test_support::SyntheticScene open_l_office() {
+  InteriorBuilder b;
+  const float h = 2.7F;
+  b.slab(0, 0, 12, 4, h); // arm along x
+  b.slab(0, 4, 4, 12, h); // arm along y
+  b.wall_y(0, 0, 12, 0, h, 1);
+  b.wall_x(12, 0, 4, 0, h, -1);
+  b.wall_y(4, 4, 12, 0, h, -1);
+  b.wall_x(4, 4, 12, 0, h, -1);
+  b.wall_y(12, 0, 4, 0, h, -1);
+  b.wall_x(0, 0, 12, 0, h, 1);
+  // Desk rows across the x arm (screens across the arm's axis) ...
+  for (const float x : {5.0F, 7.5F, 10.0F}) {
+    b.desk(x - 0.8F, 0.3F, x + 0.8F, 1.7F);
+    b.desk(x - 0.8F, 2.3F, x + 0.8F, 3.7F);
+  }
+  // ... and across the y arm.
+  for (const float y : {6.0F, 8.5F, 11.0F}) {
+    b.desk(0.3F, y - 0.8F, 1.7F, y + 0.8F);
+    b.desk(2.3F, y - 0.8F, 3.7F, y + 0.8F);
+  }
+  return b.finish();
+}
+
+/// Two 5 x 4 m rooms side by side, a 0.2 m wall between them with a
+/// 0.9 x 2.1 m door.
+test_support::SyntheticScene two_rooms_with_door() {
+  InteriorBuilder b;
+  const float h = 2.7F;
+  const float xa = 5.0F; // room A: x in [0, 5]
+  const float xb = 5.2F; // room B: x in [5.2, 10.2]
+  const float xe = 10.2F;
+  b.slab(0, 0, xa, 4, h);
+  b.slab(xb, 0, xe, 4, h);
+  b.wall_x(0, 0, 4, 0, h, 1);
+  b.wall_x(xe, 0, 4, 0, h, -1);
+  for (const auto &[x0, x1] : {std::pair{0.0F, xa}, std::pair{xb, xe}}) {
+    b.wall_y(0, x0, x1, 0, h, 1);
+    b.wall_y(4, x0, x1, 0, h, -1);
+  }
+  for (const auto &[x, nx] : {std::pair{xa, -1.0F}, std::pair{xb, 1.0F}}) {
+    b.wall_x(x, 0, 1.5F, 0, h, nx);
+    b.wall_x(x, 2.4F, 4, 0, h, nx);
+    b.wall_x(x, 1.5F, 2.4F, 2.1F, h, nx); // lintel
+  }
+  return b.finish();
+}
+
+} // namespace
+
+TEST_CASE("SegmentRooms_OpenLShapedOfficeWithDeskRows_StaysOneRoom",
+          "[geometry][segment_rooms][merge]") {
+  const auto scene = open_l_office();
+  const auto rooms = segment_rooms(scene.cloud, scene.normals, scene.labels);
+
+  // Every part of the office's floor belongs to the same room.
+  const auto [label, share] =
+      majority(floor_rooms(scene, *rooms, 0, 0, 12, 12));
+  INFO("floor majority room " << label << " share " << share);
+  CHECK(share >= 0.95);
+  for (const auto &[x0, y0, x1, y1] :
+       {std::tuple{0.0F, 0.0F, 4.0F, 4.0F}, std::tuple{8.0F, 0.0F, 12.0F, 4.0F},
+        std::tuple{0.0F, 8.0F, 4.0F, 12.0F}}) {
+    const auto [part_label, part_share] =
+        majority(floor_rooms(scene, *rooms, x0, y0, x1, y1));
+    INFO("part " << x0 << "," << y0 << " room " << part_label);
+    CHECK(part_label == label);
+  }
+}
+
+TEST_CASE("SegmentRooms_TwoRoomsJoinedByADoor_AreTwoRooms",
+          "[geometry][segment_rooms][merge]") {
+  const auto scene = two_rooms_with_door();
+  const auto rooms = segment_rooms(scene.cloud, scene.normals, scene.labels);
+
+  const auto [a, share_a] = majority(floor_rooms(scene, *rooms, 0, 0, 5, 4));
+  const auto [b, share_b] =
+      majority(floor_rooms(scene, *rooms, 5.2F, 0, 10.2F, 4));
+  CHECK(a != b);
+  CHECK(share_a >= 0.9);
+  CHECK(share_b >= 0.9);
 }
