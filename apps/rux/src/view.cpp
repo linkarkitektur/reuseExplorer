@@ -48,6 +48,37 @@ void setup_subcommand_view(CLI::App &app,
          "  -f 'planes >= 10 && planes <= 20'   # Range filter")
       ->default_val("");
 
+  auto *plan = sub->add_option("--plan", opt->plan,
+                               "Ground-truth workbench: draw this solid-model "
+                               "plan (JSON or YAML) over the scene")
+                   ->check(CLI::ExistingFile);
+  sub->add_flag("--watch", opt->watch,
+                "With --plan: reload the plan whenever the file is saved")
+      ->needs(plan);
+  sub->add_option("--layers", opt->layers,
+                  "With --plan: comma-separated scene layers (as in "
+                  "`rux render`)")
+      ->default_val(opt->layers)
+      ->needs(plan);
+  sub->add_option("--cloud", opt->cloud_name,
+                  "With --plan: named geometry cloud")
+      ->default_val(opt->cloud_name)
+      ->needs(plan);
+  sub->add_option("--cut-height", opt->cut_height,
+                  "With --plan: initial plan cut above the floor in metres "
+                  "(default: as `rux render --view plan`)")
+      ->needs(plan);
+  sub->add_option("--watch-interval", opt->watch_interval_ms,
+                  "With --watch: poll interval in milliseconds")
+      ->default_val(opt->watch_interval_ms)
+      ->check(CLI::Range(10, 60000))
+      ->needs(plan);
+  sub->add_option("--max-points", opt->max_points,
+                  "With --plan: draw at most this many points per point layer "
+                  "(0 = all)")
+      ->default_val(opt->max_points)
+      ->needs(plan);
+
   sub->footer(R"(
 DESCRIPTION:
   Interactive 3D visualization of point clouds, meshes, and segmentation
@@ -76,6 +107,24 @@ KEYBOARD CONTROLS:
   ,/.         Decrease/increase turntable speed
   h           Show help message
   q           Quit viewer
+
+GROUND-TRUTH WORKBENCH (--plan, reusex-yf4.2):
+  rux -p scan.rux view --plan gt.yaml --watch
+  rux -p scan.rux view --plan gt.yaml --watch --layers cloud,planes
+
+  Shows the scene `rux render` draws (visualize::populate_scene: --layers,
+  default the cloud) cut at a plan height, with the plan on top, and with
+  --watch reloads the plan every time the file is saved. A save that does not
+  parse keeps the last good plan and shows the reader's error (it names the
+  element) on the status line at the bottom. Keys in this mode:
+    n / b     next / previous storey (all, then each storey of the plan)
+    ] / [     raise / lower the plan cut by 10 cm
+    } / {     raise / lower the plan cut by 1 m
+    v         plan cut on / off
+    1-9       toggle scene layer 1-9 (--layers order)
+    0         toggle the plan overlay
+    h         print these keys to the terminal
+  The headless twin for agents is `rux render --plan gt.yaml --watch`.
 
 WORKFLOW:
   1. rux import rtabmap scan.db        # Import sensor data
@@ -108,6 +157,8 @@ NOTES:
 
 int run_subcommand_view([[maybe_unused]] SubcommandViewOptions const &opt,
                         [[maybe_unused]] const RuxOptions &global_opt) {
+  if (!opt.plan.empty())
+    return run_view_plan(opt, global_opt);
   spdlog::trace("Visualization thread started");
 
   // Start the viewer thread
