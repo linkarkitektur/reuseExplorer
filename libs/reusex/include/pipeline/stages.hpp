@@ -141,6 +141,25 @@ struct StageContext {
 /// (STANDARDS §5 — no silent failure).
 StageResult run_stage(ProjectDB &db, const StageContext &ctx);
 
+/// Run `body` wrapped in the same `pipeline_log` open/close protocol
+/// run_stage() uses for the stages it dispatches directly: opens a row under
+/// `log_name` (`ctx.job_id` folded into the recorded parameters exactly as
+/// run_stage() does), evaluates `body`, and closes the row according to the
+/// StageResult it returns — or, if `body` throws, the same way run_stage()'s
+/// catch clause does (distinguishing a cancel from a failure via
+/// `ctx.is_cancelled()`). `name` is the stage name used in log/error messages
+/// (`to_string(stage)`); `log_name` is the value written to
+/// `pipeline_log.stage` (`pipeline_log_name(stage)`).
+///
+/// Exists for a stage whose algorithm needs a module reusex_pipeline must not
+/// link (optimize/graph_discover need reusex_slam, #464): their header-only
+/// executor (pipeline/optimize_stage.hpp) calls this instead of
+/// re-implementing the open/close bookkeeping, so the CLI and in-process
+/// paths cannot drift on what a pipeline_log row looks like.
+StageResult run_logged_stage(ProjectDB &db, const StageContext &ctx,
+                             std::string_view name, std::string_view log_name,
+                             const std::function<StageResult()> &body);
+
 /// Open `ctx.project` read-write and run the stage against it.
 StageResult run_stage(const StageContext &ctx);
 

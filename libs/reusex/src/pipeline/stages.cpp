@@ -702,8 +702,9 @@ bool stage_supports_cancellation(JobStage stage) {
 
 // --- Execution ------------------------------------------------------------
 
-StageResult run_stage(ProjectDB &db, const StageContext &ctx) {
-  const auto &desc = descriptor(ctx.stage);
+StageResult run_logged_stage(ProjectDB &db, const StageContext &ctx,
+                             std::string_view name, std::string_view log_name,
+                             const std::function<StageResult()> &body) {
   int log_id = -1;
 
   // Parameters are parsed before anything is recorded: a blob that is not even
@@ -713,51 +714,44 @@ StageResult run_stage(ProjectDB &db, const StageContext &ctx) {
   try {
     params = parse_parameters(ctx.parameters);
   } catch (const std::exception &e) {
-    error("stage '{}' refused: invalid parameters: {}", desc.name, e.what());
+    error("stage '{}' refused: invalid parameters: {}", name, e.what());
     return StageResult::invalid(
         fmt::format("invalid parameters: {}", e.what()));
   }
 
   try {
-    // Open the log row BEFORE validating inputs, so a run that is refused for
-    // an unsatisfied contract still leaves a durable record of the attempt and
-    // its reason. `pipeline_log` is what the GUI's history view reads
-    // (`ruxd`'s docs/gui/openapi.yaml, in its own repo), and a rejection that
-    // vanishes without trace is exactly the silent failure STANDARDS §5
-    // forbids.
+    // Open the log row BEFORE running `body`, so a run that is refused (for
+    // an unsatisfied contract, bad parameters the stage itself rejects, or
+    // anything else `body` decides) still leaves a durable record of the
+    // attempt and its reason. `pipeline_log` is what the GUI's history view
+    // reads (`ruxd`'s docs/gui/openapi.yaml, in its own repo), and a
+    // rejection that vanishes without trace is exactly the silent failure
+    // STANDARDS §5 forbids.
     //
     // The job id is folded into the logged parameters (rather than needing a
     // schema migration) so the durable history can be joined back to the job
     // that caused it — the recovery path the contract documents for a client
     // that reconnects after a restart.
-    log_id = db.log_pipeline_start(desc.log_name,
-                                   logged_parameters(params, ctx.job_id));
-
-    if (auto problem = check_inputs(db, desc.contract,
-                                    contract_overrides(ctx.stage, params))) {
-      error("stage '{}' refused: {}", desc.name, *problem);
-      db.log_pipeline_end(log_id, false, *problem);
-      return StageResult::invalid(*problem);
-    }
+    log_id =
+        db.log_pipeline_start(log_name, logged_parameters(params, ctx.job_id));
 
     core::stopwatch watch;
-    StageResult result = dispatch(db, ctx, params);
+    StageResult result = body();
     const double elapsed = watch.elapsed();
 
     if (result.cancelled) {
-      warn("stage '{}' cancelled after {:.2f}s: {}", desc.name, elapsed,
+      warn("stage '{}' cancelled after {:.2f}s: {}", name, elapsed,
            result.message);
       db.log_pipeline_end(log_id, ProjectDB::PipelineOutcome::cancelled,
                           result.message);
     } else if (result.ok) {
-      info("stage '{}' finished in {:.2f}s: {}", desc.name, elapsed,
-           result.message);
+      info("stage '{}' finished in {:.2f}s: {}", name, elapsed, result.message);
       db.log_pipeline_end(log_id, true);
     } else if (result.invalid_input) {
-      error("stage '{}' refused: {}", desc.name, result.message);
+      error("stage '{}' refused: {}", name, result.message);
       db.log_pipeline_end(log_id, false, result.message);
     } else {
-      error("stage '{}' failed after {:.2f}s: {}", desc.name, elapsed,
+      error("stage '{}' failed after {:.2f}s: {}", name, elapsed,
             result.message);
       db.log_pipeline_end(log_id, false, result.message);
     }
@@ -771,9 +765,9 @@ StageResult run_stage(ProjectDB &db, const StageContext &ctx) {
     const std::string message =
         cancelled ? fmt::format("cancelled ({})", e.what()) : e.what();
     if (cancelled)
-      warn("stage '{}' cancelled: {}", desc.name, e.what());
+      warn("stage '{}' cancelled: {}", name, e.what());
     else
-      error("stage '{}' failed: {}", desc.name, e.what());
+      error("stage '{}' failed: {}", name, e.what());
 
     if (log_id >= 0) {
       try {
@@ -788,6 +782,24 @@ StageResult run_stage(ProjectDB &db, const StageContext &ctx) {
     return cancelled ? StageResult::cancel(message)
                      : StageResult::failure(message);
   }
+}
+
+StageResult run_stage(ProjectDB &db, const StageContext &ctx) {
+  const auto &desc = descriptor(ctx.stage);
+  return run_logged_stage(
+      db, ctx, desc.name, desc.log_name, [&]() -> StageResult {
+        // body() only runs once run_logged_stage has already parsed
+        // ctx.parameters successfully (that parse is what gated opening the log
+        // row), so this cannot throw; it is a second parse, not re-validation,
+        // done here rather than threading nlohmann::json through
+        // run_logged_stage's public signature (STANDARDS §2:
+        // pipeline/stages.hpp stays free of the nlohmann dependency).
+        const json params = parse_parameters(ctx.parameters);
+        if (auto problem = check_inputs(db, desc.contract,
+                                        contract_overrides(ctx.stage, params)))
+          return StageResult::invalid(*problem);
+        return dispatch(db, ctx, params);
+      });
 }
 
 StageResult run_stage(const StageContext &ctx) {

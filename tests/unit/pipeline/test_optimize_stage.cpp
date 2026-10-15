@@ -124,6 +124,7 @@ TEST_CASE("GraphDiscoverStage_NoGraph_ReportsTheOdometryItInitialised",
   ctx.parameters = nlohmann::json{{"loop_closure", false},
                                   {"loop_edges_file", edges.path.string()}}
                        .dump();
+  ctx.job_id = "job-discover-7";
   const StageResult r = stage_executor_with_optimize()(ctx);
   INFO(r.message);
   REQUIRE(r.ok);
@@ -131,4 +132,53 @@ TEST_CASE("GraphDiscoverStage_NoGraph_ReportsTheOdometryItInitialised",
   REQUIRE(r.outputs.size() == 1);
   CHECK(r.outputs[0].name == "pose_graph_edges");
   CHECK(r.outputs[0].count == 8); // 7 odometry + 1 loop edge
+
+  // #464 follow-up (reusex-xlg.5): stage_executor_with_optimize() used to
+  // bypass run_stage() entirely for optimize/graph_discover, so a Qt
+  // Pipeline/Rediger or ruxd run of either stage left no trace in
+  // pipeline_log (the GUI's history view). This must write the same kind of
+  // row run_stage() writes for every other stage, job id folded in.
+  reusex::ProjectDB readback(project.path, /*readOnly=*/true);
+  const auto log = readback.pipeline_log();
+  REQUIRE(log.size() == 1);
+  CHECK(log.front().stage == "graph_discover");
+  CHECK(log.front().status == "success");
+  CHECK_FALSE(log.front().finished_at.empty());
+  const auto params = nlohmann::json::parse(log.front().parameters);
+  CHECK(params.at("job_id") == "job-discover-7");
+  CHECK(params.at("loop_closure") == false);
+}
+
+TEST_CASE("OptimizeStage_InvalidInput_RecordsPipelineLogEntry",
+          "[pipeline][optimize_stage]") {
+  TempPath project("test_optimize_stage_log_invalid");
+  {
+    reusex::ProjectDB db(project.path);
+  }
+
+  StageContext ctx;
+  ctx.project = project.path;
+  ctx.stage = JobStage::optimize;
+  // Well-formed JSON object, but a type the optimize-parameters reader
+  // rejects: reaches run_optimize_stage() (so a log row IS opened), which
+  // returns StageResult::invalid() before touching any scan data.
+  ctx.parameters = R"({"min_observations":"seven"})";
+  ctx.job_id = "job-optimize-9";
+
+  const StageResult r = stage_executor_with_optimize()(ctx);
+  CHECK_FALSE(r.ok);
+  CHECK(r.invalid_input);
+  CHECK_FALSE(r.message.empty());
+
+  reusex::ProjectDB readback(project.path, /*readOnly=*/true);
+  const auto log = readback.pipeline_log();
+  REQUIRE(log.size() == 1);
+  // The CLI-compatible name (rux optimize has always written this), so the
+  // GUI and CLI paths do not fill pipeline_log with two names for the same
+  // operation.
+  CHECK(log.front().stage == "pose_optimization_plane_graph");
+  CHECK(log.front().status == "failed");
+  CHECK_FALSE(log.front().error_msg.empty());
+  const auto params = nlohmann::json::parse(log.front().parameters);
+  CHECK(params.at("job_id") == "job-optimize-9");
 }
