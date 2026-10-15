@@ -62,6 +62,9 @@ set(REUSEX_GEOMETRY_COMMON_SOURCES
     ${SRC}/geometry/cgal_utils.cpp
     ${SRC}/geometry/CoplanarPolygon.cpp
     ${SRC}/geometry/BuildingComponent.cpp
+    # Point-to-mesh distances (CGAL AABB tree): the solid benchmark's fit
+    # metrics (reconstruction) and the render deviation layer (visualize).
+    ${SRC}/geometry/point_mesh_distance.cpp
     # Equirectangular<->perspective reprojection: a low-level OpenCV/Eigen
     # primitive shared by slam (panorama alignment) and vision (SAM3-on-360),
     # so it lives in the common geometry layer both reach via core.

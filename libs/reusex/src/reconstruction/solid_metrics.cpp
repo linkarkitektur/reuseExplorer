@@ -5,10 +5,8 @@
 #include "reusex/reconstruction/solid_metrics.hpp"
 #include "reusex/core/logging.hpp"
 #include "reusex/geometry/level_frame.hpp"
+#include "reusex/geometry/point_mesh_distance.hpp"
 
-#include <CGAL/AABB_traits_3.h>
-#include <CGAL/AABB_tree.h>
-#include <CGAL/AABB_triangle_primitive_3.h>
 #include <CGAL/Boolean_set_operations_2.h>
 #include <CGAL/Exact_predicates_exact_constructions_kernel.h>
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
@@ -680,53 +678,17 @@ SolidModelReport compare_solid_models(const core::SolidModel &detected_in,
 
 void fit_report(const Cloud &cloud, const pcl::PolygonMesh &mesh,
                 const SolidMetricsOptions &opt, SolidModelReport &report) {
-  using K = CGAL::Exact_predicates_inexact_constructions_kernel;
-  using Triangle = K::Triangle_3;
-  using Iterator = std::vector<Triangle>::const_iterator;
-  using Primitive = CGAL::AABB_triangle_primitive_3<K, Iterator>;
-  using Tree = CGAL::AABB_tree<CGAL::AABB_traits_3<K, Primitive>>;
-
-  pcl::PointCloud<pcl::PointXYZ> verts;
-  if (!mesh.cloud.data.empty())
-    pcl::fromPCLPointCloud2(mesh.cloud, verts);
-
-  std::vector<Triangle> tris;
-  for (const auto &poly : mesh.polygons) {
-    const auto &v = poly.vertices;
-    if (v.size() < 3)
-      continue;
-    auto pt = [&](std::uint32_t idx) {
-      if (idx >= verts.size())
-        throw std::invalid_argument(
-            fmt::format("fit_report: mesh face references vertex {} of {}", idx,
-                        verts.size()));
-      const auto &p = verts[idx];
-      return K::Point_3(p.x, p.y, p.z);
-    };
-    for (std::size_t k = 1; k + 1 < v.size(); ++k) {
-      Triangle t(pt(v[0]), pt(v[k]), pt(v[k + 1]));
-      if (!t.is_degenerate())
-        tris.push_back(t);
-    }
-  }
-  if (tris.empty())
-    throw std::invalid_argument(fmt::format(
-        "fit_report: mesh has no usable triangle ({} faces, {} vertices)",
-        mesh.polygons.size(), verts.size()));
-
-  Tree tree(tris.cbegin(), tris.cend());
-  tree.accelerate_distance_queries();
-
+  // One definition of "distance from a scan point to the mesh", shared with
+  // the render deviation layer (geometry/point_mesh_distance.hpp).
+  const std::vector<double> d = point_to_mesh_distances(cloud, mesh);
   double sum = 0.0;
   std::size_t n = 0, within = 0;
-  for (const auto &p : cloud.points) {
-    if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z))
+  for (const double v : d) {
+    if (!std::isfinite(v))
       continue;
-    const double d = std::sqrt(
-        CGAL::to_double(tree.squared_distance(K::Point_3(p.x, p.y, p.z))));
-    sum += d;
+    sum += v;
     ++n;
-    within += d <= opt.fit_within_m ? 1 : 0;
+    within += v <= opt.fit_within_m ? 1 : 0;
   }
   if (n == 0)
     throw std::invalid_argument(fmt::format(
@@ -736,9 +698,9 @@ void fit_report(const Cloud &cloud, const pcl::PolygonMesh &mesh,
   report.fit_mean_m = sum / static_cast<double>(n);
   report.fit_within_share =
       static_cast<double>(within) / static_cast<double>(n);
-  reusex::debug("fit_report: {} points against {} triangles, mean {:.4f} m, "
+  reusex::debug("fit_report: {} points against {} faces, mean {:.4f} m, "
                 "{:.1f}% within {:.3f} m",
-                n, tris.size(), *report.fit_mean_m,
+                n, mesh.polygons.size(), *report.fit_mean_m,
                 100.0 * *report.fit_within_share, opt.fit_within_m);
 }
 
