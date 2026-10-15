@@ -21,7 +21,7 @@ namespace reusex::core {
 
 /// A type's miljøstatus folds every sample that bears on it: linked to the
 /// type directly, or linked to a survey part currently filed under it
-/// (schema v31) — see ProjectDB::samples_for_type.
+/// (schema v32) — see ProjectDB::samples_for_type.
 std::map<int64_t, EnvironmentStatus>
 environment_statuses(const ProjectDB &db); // every type
 EnvironmentStatus environment_status_of(const ProjectDB &db, int64_t type_id);

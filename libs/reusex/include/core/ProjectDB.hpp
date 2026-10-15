@@ -771,6 +771,36 @@ class ProjectDB {
   /// Delete every storey, locked ones included (an explicit user action).
   void delete_storeys();
 
+  // --- Plane classes (schema v31, solid-model WP2) ---
+
+  /// Store the classification of the planes of the label cloud @p cloud
+  /// (normally "planes"): one row per plane label. Replaces every row of
+  /// that cloud whose `locked` is 0 by @p classes. A locked row is never
+  /// touched: a record for a plane_label or guid a locked row holds is
+  /// skipped (the locked row wins); a locked row with no match is kept. One
+  /// SAVEPOINT. The rows belong to the cloud's row and go with it
+  /// (`rux del clouds.planes`); a planes re-run keeps them (same cloud row),
+  /// so the classify stage replaces them. @p run_id is the pipeline_log row
+  /// that produced them (-1 = none).
+  /// @returns the number of rows written.
+  /// @throws std::invalid_argument for an empty guid, a plane_label < 1, a
+  ///         source other than detected | manual | imported, an orientation,
+  ///         role or role_source outside its vocabulary
+  ///         (core::PlaneClassRecord), or two records sharing a plane_label
+  ///         or guid; std::runtime_error when @p cloud is not a stored cloud,
+  ///         or on a read-only or pre-v31 project.
+  size_t save_plane_classes(std::string_view cloud,
+                            const std::vector<core::PlaneClassRecord> &classes,
+                            int run_id = -1);
+  /// The plane classes of @p cloud, plane_label ascending. Empty for a
+  /// pre-v31 project or a cloud that has none (or does not exist).
+  std::vector<core::PlaneClassRecord>
+  plane_classes(std::string_view cloud = "planes") const;
+  bool has_plane_classes(std::string_view cloud = "planes") const;
+  /// Delete the plane classes of @p cloud, locked ones included (an explicit
+  /// user action).
+  void delete_plane_classes(std::string_view cloud = "planes");
+
   // --- Scans (multi-session import, #129) ---
 
   /// One row of the `scans` table.  Each `rux import` creates one record;
@@ -1425,10 +1455,10 @@ class ProjectDB {
     std::vector<int64_t> type_ids; // linked survey types, ascending
     std::string created_at;
     std::string updated_at;
-    /// Linked survey parts (schema v31, sample_part_links), ascending. A
+    /// Linked survey parts (schema v32, sample_part_links), ascending. A
     /// part link bears on the type the part is filed under *now*
     /// (samples_for_type), so it follows a re-filed part; deleting the part
-    /// drops it. Empty on a read-only open of a pre-v31 project. Kept LAST so
+    /// drops it. Empty on a read-only open of a pre-v32 project. Kept LAST so
     /// positional aggregate initializers still compile.
     std::vector<std::string> part_codes{};
   };
@@ -1463,7 +1493,7 @@ class ProjectDB {
   void set_sample_links(
       int64_t id, const std::vector<int64_t> &type_ids,
       const std::optional<std::vector<std::string>> &part_codes = std::nullopt);
-  /// Replaces only the sample's part links (schema v31). Throws as
+  /// Replaces only the sample's part links (schema v32). Throws as
   /// set_sample_links does.
   void set_sample_part_links(int64_t id,
                              const std::vector<std::string> &part_codes);

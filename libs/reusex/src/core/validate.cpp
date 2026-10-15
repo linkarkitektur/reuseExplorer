@@ -238,6 +238,7 @@ struct ProjectState {
   int building_components = 0;
   int material_passports = 0;
   int storeys = 0;
+  int plane_classes = 0;
 };
 
 ProjectState read_state(const ProjectDB &db) {
@@ -252,6 +253,7 @@ ProjectState read_state(const ProjectDB &db) {
   state.building_components = summary.components.total_count;
   state.material_passports = static_cast<int>(summary.materials.size());
   state.storeys = static_cast<int>(db.storeys().size());
+  state.plane_classes = static_cast<int>(db.plane_classes("planes").size());
   return state;
 }
 
@@ -275,6 +277,8 @@ int table_rows(const ProjectState &state, std::string_view name) {
     return state.material_passports;
   if (name == "storeys")
     return state.storeys;
+  if (name == "plane_classes")
+    return state.plane_classes;
   return 0;
 }
 

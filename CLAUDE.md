@@ -463,6 +463,13 @@ and deleted the shims. `include/geometry/` now holds only the real
   vertical (bisector of their normals) and storeys from a height histogram,
   as `core::StoreyRecord`s sharing one level frame
   (`geometry/level_frame.hpp`, header-only like `component_persistence.hpp`)
+- `classify_planes.hpp`: `classify_planes()` — per plane: orientation,
+  majority semantic class + vote share, role (wall/floor/ceiling/furniture/
+  clutter/...) via the class -> role map `core/class_role_map.json`
+  (`core/class_role_map.hpp`, embedded at build time) or geometric rules when
+  the class is missing or contradicted, storey, area, z-range
+  (`core::PlaneClassRecord`); stored by the `classify` stage in the
+  `plane_classes` table
 
 **reconstruction** (`include/reconstruction/`):
 - `CellComplex.hpp`: Boost.Graph-based 3D spatial representation
@@ -596,10 +603,15 @@ tree — if a doc mentions `RTABMapDatabase`, that doc is stale.
   `project_guid()` (project_settings key `project_guid`), the namespace of
   the solid-model rows' GUIDs (`core::deterministic_guid`; a re-detected
   storey keeps its stored GUID, `core/storey_identity.hpp`). It is
-  write-once, so a file copy is the same project. Schema v31 adds
-  `sample_part_links` (sample ↔ survey part, FK-cascading on both sides;
-  `SampleRecord::part_codes`, `set_sample_part_links`): a part-linked
-  sample bears on the type the part is filed under now, so
+  write-once, so a file copy is the same project. Schema v31 adds the
+  `plane_classes` table (`core::PlaneClassRecord`, `save_plane_classes` /
+  `plane_classes()`, keyed by cloud + plane label, rows go with the cloud;
+  written by `rux create classify`, `JobStage::classify`), which
+  reads `oriented_normals` from the clouds'
+  `normal_orientation` marker (`core/normal_orientation.hpp`, reusex-0se).
+  Schema v32 adds `sample_part_links` (sample ↔ survey part, FK-cascading
+  on both sides; `SampleRecord::part_codes`, `set_sample_part_links`): a
+  part-linked sample bears on the type the part is filed under now, so
   `samples_for_type` / `core::environment_statuses` roll it up there
 - Migrating schema; `LATEST_SCHEMA_VERSION` is defined in
   `src/core/ProjectDB.cpp` — read it there rather than trusting a doc (it moves
@@ -666,7 +678,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | Command | Sub-commands | Source |
 |---|---|---|
 | `import` | `rtabmap`, `mushroom`, `arkitscenes`, `e57`, `ply`, `gsplat`, `materialepas`, `csv`, `360`, `photos` | `src/import/` |
-| `create` | `clouds`, `dense`, `annotate`, `annotate-360`, `material`, `project`, `planes`, `rooms`, `instances`, `storeys`, `materials`, `survey`, `mesh`, `texture`, `windows` | `src/create/` |
+| `create` | `clouds`, `dense`, `annotate`, `annotate-360`, `material`, `project`, `planes`, `rooms`, `instances`, `storeys`, `classify`, `materials`, `survey`, `mesh`, `texture`, `windows` | `src/create/` |
 | `export` | `ply`, `e57`, `materialepas`, `csv`, `rhino`, `semantic-images`, `speckle`, `colmap`, `pdf` | `src/export/` |
 | `align` | `360` (content-based panorama pose refinement) | `src/align/` |
 | `edit` | `downsample`, `perturb-poses` (drift synthesis, #338) | `src/edit/` |

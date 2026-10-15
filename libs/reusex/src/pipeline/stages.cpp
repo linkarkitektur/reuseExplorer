@@ -9,14 +9,17 @@
 #include "reusex/pipeline/tile_index.hpp"
 
 #include "reusex/core/ProjectDB.hpp"
+#include "reusex/core/class_role_map.hpp"
 #include "reusex/core/filter_expression.hpp"
 #include "reusex/core/guid.hpp"
 #include "reusex/core/label_semantics.hpp"
 #include "reusex/core/logging.hpp"
+#include "reusex/core/normal_orientation.hpp"
 #include "reusex/core/storey_identity.hpp"
 #include "reusex/core/validate.hpp"
 #include "reusex/io/reusex.hpp"
 #include "reusex/reconstruction/mesh.hpp"
+#include "reusex/segmentation/classify_planes.hpp"
 #include "reusex/segmentation/level.hpp"
 #include "reusex/segmentation/reconcile_instances.hpp"
 #include "reusex/segmentation/reconstruct.hpp"
@@ -57,7 +60,7 @@ struct StageName {
 // used in `ruxd`'s HTTP contract (docs/gui/openapi.yaml, in its own repo) and
 // `contract` selects the input check run before the stage executes
 // (docs/CONTRACTS.md).
-constexpr std::array<StageName, 9> kStages{{
+constexpr std::array<StageName, 10> kStages{{
     {JobStage::clouds, "clouds", "cloud_reconstruction",
      core::PipelineStage::clouds, false},
     {JobStage::planes, "planes", "segment_planes", core::PipelineStage::planes,
@@ -96,6 +99,9 @@ constexpr std::array<StageName, 9> kStages{{
     // Not cancellable: one histogram and a few bounded least-squares fits
     // over the horizontal planes, seconds even on a large scan.
     {JobStage::storeys, "storeys", "storeys", core::PipelineStage::storeys,
+     false},
+    // Not cancellable: one pass over the plane inliers and a sort per plane.
+    {JobStage::classify, "classify", "classify", core::PipelineStage::classify,
      false},
 }};
 
@@ -297,8 +303,18 @@ StageResult run_planes(ProjectDB &db, const StageContext &ctx,
   db.save_point_cloud("planes", *labels, "segment_planes", ctx.parameters);
   db.save_point_cloud("plane_centroids", *centroids, "segment_planes",
                       ctx.parameters);
+  // The plane normals take their sign from the point normals, so they face
+  // the sensor exactly when those do: carry the clouds stage's marker over
+  // (reusex-0se). Legacy normals have none, and neither do their planes.
+  std::string normals_params = ctx.parameters;
+  if (const auto orientation = core::normal_orientation_of(
+          db.point_cloud_provenance("normals").second)) {
+    json p = params;
+    p[core::kNormalOrientationKey] = *orientation;
+    normals_params = p.dump();
+  }
   db.save_point_cloud("plane_normals", *plane_normals, "segment_planes",
-                      ctx.parameters);
+                      normals_params);
 
   return StageResult::success(
       fmt::format("detected {} plane(s)", centroids->size()),
@@ -580,6 +596,8 @@ StageResult run_mesh(ProjectDB &db, const StageContext & /*ctx*/,
 StageResult run_storeys(ProjectDB &db, const json &params, int log_id) {
   geometry::LevelOptions o;
   o.horizontal_cos = param_or(params, "horizontal_cos", o.horizontal_cos);
+  o.surface_max_tilt_deg =
+      param_or(params, "surface_max_tilt_deg", o.surface_max_tilt_deg);
   o.inlier_m = param_or(params, "inlier_m", o.inlier_m);
   o.max_fit_iterations =
       param_or(params, "max_fit_iterations", o.max_fit_iterations);
@@ -589,6 +607,10 @@ StageResult run_storeys(ProjectDB &db, const json &params, int log_id) {
   o.min_storey_height_m =
       param_or(params, "min_storey_height_m", o.min_storey_height_m);
   o.default_height_m = param_or(params, "default_height_m", o.default_height_m);
+  o.use_normal_sign = param_or(params, "use_normal_sign", o.use_normal_sign);
+  o.per_storey_frame = param_or(params, "per_storey_frame", o.per_storey_frame);
+  o.storey_frame_tol_deg =
+      param_or(params, "storey_frame_tol_deg", o.storey_frame_tol_deg);
   core::StoreyIdentityOptions identity;
   identity.match_m = param_or(params, "guid_match_m", identity.match_m);
 
@@ -647,11 +669,166 @@ StageResult run_storeys(ProjectDB &db, const json &params, int log_id) {
       std::acos(std::clamp(r.vertical[2], -1.0, 1.0)) * 180.0 / M_PI;
   return StageResult::success(
       fmt::format("{} storey(s) from {} level(s) of {} horizontal plane(s); "
-                  "vertical {:.3f} deg off world z; {} row(s) written, {} "
-                  "locked row(s) kept",
+                  "vertical {:.3f} deg off world z; storey verticals up to "
+                  "{:.3f} deg off it, {} storey(s) in their own "
+                  "frame; floor/ceiling by {}; {} row(s) written, {} locked "
+                  "row(s) kept",
                   r.storeys.size(), r.levels, r.horizontal_planes, tilt_deg,
-                  written, locked_kept),
+                  r.max_storey_tilt_deg, r.own_frames,
+                  r.normal_sign_used ? "normal sign" : "height", written,
+                  locked_kept),
       {{"table", "storeys", static_cast<int64_t>(written)}});
+}
+
+StageResult run_classify(ProjectDB &db, const json &params, int log_id) {
+  geometry::ClassifyPlanesOptions o;
+  o.horizontal_cos = param_or(params, "horizontal_cos", o.horizontal_cos);
+  o.vertical_cos = param_or(params, "vertical_cos", o.vertical_cos);
+  o.min_large_area_m2 =
+      param_or(params, "min_large_area_m2", o.min_large_area_m2);
+  o.band_m = param_or(params, "band_m", o.band_m);
+  o.min_wall_height_m =
+      param_or(params, "min_wall_height_m", o.min_wall_height_m);
+  o.min_wall_height_share =
+      param_or(params, "min_wall_height_share", o.min_wall_height_share);
+  o.max_furniture_area_m2 =
+      param_or(params, "max_furniture_area_m2", o.max_furniture_area_m2);
+  o.table_min_m = param_or(params, "table_min_m", o.table_min_m);
+  o.table_max_m = param_or(params, "table_max_m", o.table_max_m);
+  o.min_storey_height_m =
+      param_or(params, "min_storey_height_m", o.min_storey_height_m);
+  o.area_cell_m = param_or(params, "area_cell_m", o.area_cell_m);
+  o.extent_quantile = param_or(params, "extent_quantile", o.extent_quantile);
+  o.min_labelled_share =
+      param_or(params, "min_labelled_share", o.min_labelled_share);
+  o.min_class_share = param_or(params, "min_class_share", o.min_class_share);
+
+  // The class -> role map: a file path (rux create classify --role-map), an
+  // inline role-map object (a job built by hand), or the built-in map.
+  core::ClassRoleMap role_map = core::default_class_role_map();
+  std::string role_map_source = "built-in";
+  if (const auto it = params.find("role_map"); it != params.end()) {
+    try {
+      if (it->is_string() && !it->get<std::string>().empty()) {
+        role_map_source = it->get<std::string>();
+        role_map = core::load_class_role_map(role_map_source);
+      } else if (it->is_object()) {
+        role_map_source = "inline";
+        role_map = core::parse_class_role_map(it->dump());
+      } else if (!it->is_string() && !it->is_null()) {
+        return StageResult::invalid(
+            "role_map must be a role-map file path or a role-map object");
+      }
+    } catch (const std::exception &e) {
+      return StageResult::invalid(fmt::format("role_map: {}", e.what()));
+    }
+  }
+
+  // Which way the plane normals face (reusex-0se): sensor-facing normals let
+  // the rules tell a floor (seen from above) from a ceiling (seen from
+  // below); legacy ones faced the world origin and their sign means nothing.
+  auto orientation = core::normal_orientation_of(
+      db.point_cloud_provenance("plane_normals").second);
+  if (!orientation && db.has_point_cloud("normals"))
+    orientation = core::normal_orientation_of(
+        db.point_cloud_provenance("normals").second);
+  o.oriented_normals =
+      orientation && *orientation == core::kNormalOrientationSensor;
+  if (o.oriented_normals)
+    info("classify: plane normals face their sensor; floors and ceilings "
+         "are told apart by the normal's sign");
+  else
+    warn("classify: the clouds carry no normal_orientation marker (made "
+         "before reusex-0se, or imported), so which way a plane faces is "
+         "ignored; re-run `rux create clouds` and `rux create planes` to use "
+         "it");
+
+  const auto cloud = db.point_cloud_xyzrgb("cloud");
+  const auto planes = db.point_cloud_label("planes");
+  const auto normals = db.point_cloud_normal("plane_normals");
+  const auto storeys = db.storeys();
+
+  // The semantic vote is optional: a project that was never annotated is
+  // classified by the rules alone.
+  geometry::SemanticLabels semantic;
+  CloudLPtr labels;
+  if (db.has_point_cloud(kDefaultSemanticCloud)) {
+    labels = db.point_cloud_label(kDefaultSemanticCloud);
+    if (labels && labels->size() == cloud->size()) {
+      semantic.labels = labels.get();
+      for (const auto &[label, name] :
+           db.label_definitions(kDefaultSemanticCloud))
+        if (label >= 0)
+          semantic.class_names[static_cast<uint32_t>(label)] = name;
+    } else {
+      warn("classify: the '{}' cloud has {} points but 'cloud' has {}; "
+           "classifying without semantic labels",
+           kDefaultSemanticCloud, labels ? labels->size() : 0, cloud->size());
+    }
+  }
+
+  geometry::ClassifyPlanesResult r;
+  try {
+    r = geometry::classify_planes(*cloud, *planes, *normals, storeys, semantic,
+                                  role_map, o);
+  } catch (const std::invalid_argument &e) {
+    return StageResult::invalid(e.what());
+  }
+  if (r.planes.empty())
+    warn("classify: 'plane_normals' holds no plane, so there is nothing to "
+         "classify; run `rux create planes` first");
+
+  const auto project_guid = db.project_guid();
+  const std::string metadata =
+      json{{"oriented_normals", o.oriented_normals}}.dump();
+  int outside = 0;
+  for (auto &p : r.planes) {
+    p.guid = core::deterministic_guid(
+        project_guid, fmt::format("plane_classes/planes/{}", p.plane_label));
+    p.metadata = metadata;
+    if (p.storey < 0 && p.point_count > 0)
+      ++outside;
+  }
+  if (outside > 0)
+    info("classify: {} plane(s) lie outside every storey (storey -1, e.g. a "
+         "roof above the top storey's ceiling)",
+         outside);
+
+  // A locked row survives the re-run as it was. If the plane segmentation
+  // changed under it, the label may now mean another plane: say so.
+  for (const auto &stored : db.plane_classes("planes")) {
+    if (!stored.locked)
+      continue;
+    const auto it =
+        std::find_if(r.planes.begin(), r.planes.end(), [&](const auto &p) {
+          return p.plane_label == stored.plane_label;
+        });
+    if (it == r.planes.end())
+      warn("classify: locked plane {} no longer exists in 'planes' (kept)",
+           stored.plane_label);
+    else if (it->point_count != stored.point_count)
+      warn("classify: locked plane {} had {} points, the planes cloud now "
+           "has {} (re-segmented since it was locked?)",
+           stored.plane_label, stored.point_count, it->point_count);
+  }
+
+  const size_t written = db.save_plane_classes("planes", r.planes, log_id);
+  const auto rows = db.plane_classes("planes");
+  const auto locked_kept = static_cast<size_t>(std::count_if(
+      rows.begin(), rows.end(), [](const auto &p) { return p.locked; }));
+
+  std::vector<std::string> counts;
+  for (const auto &[role, n] : r.role_counts)
+    counts.push_back(fmt::format("{} {}", n, role));
+  return StageResult::success(
+      fmt::format("{} plane(s): {}; {} from the class map ({}), {} overruled "
+                  "by geometry; normals {}; {} row(s) written, {} locked "
+                  "row(s) kept",
+                  r.planes.size(), fmt::join(counts, ", "), r.from_semantic,
+                  role_map_source, r.overruled,
+                  o.oriented_normals ? "sensor-facing" : "unoriented (legacy)",
+                  written, locked_kept),
+      {{"table", "plane_classes", static_cast<int64_t>(written)}});
 }
 
 StageResult dispatch(ProjectDB &db, const StageContext &ctx, const json &params,
@@ -691,6 +868,8 @@ StageResult dispatch(ProjectDB &db, const StageContext &ctx, const json &params,
         "(pipeline::stage_executor_with_optimize, see #464)");
   case JobStage::storeys:
     return run_storeys(db, params, log_id);
+  case JobStage::classify:
+    return run_classify(db, params, log_id);
   }
   return StageResult::failure("unknown stage");
 }
@@ -722,6 +901,16 @@ MeshStageOptions mesh_options_from_parameters(std::string_view parameters) {
   options.sectioned = param_or(params, "sectioned", options.sectioned);
   options.sectioned_threshold =
       param_or(params, "sectioned_threshold", options.sectioned_threshold);
+  auto &st = options.structural;
+  st.enabled = param_or(params, "structural_filter", st.enabled);
+  st.min_wall_area_m2 =
+      param_or(params, "structural_min_wall_area", st.min_wall_area_m2);
+  st.collinear_offset_m =
+      param_or(params, "structural_collinear_offset", st.collinear_offset_m);
+  st.min_storey_clearance_m = param_or(params, "structural_storey_clearance",
+                                       st.min_storey_clearance_m);
+  st.min_footprint_overlap = param_or(params, "structural_footprint_overlap",
+                                      st.min_footprint_overlap);
   const auto solver_str = param_or<std::string>(params, "solver", "auto");
   try {
     options.solver = geometry::parse_solver_choice(solver_str);

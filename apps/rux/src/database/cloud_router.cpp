@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "database/cloud_router.hpp"
+#include "database/plane_class_router.hpp"
 
 #include <reusex/core/label_encoding.hpp>
 
@@ -155,10 +156,13 @@ DataPayload CloudRouter::get(const std::vector<PathComponent> &components) {
   } else if (prop == "point_count") {
     auto meta = get_metadata(item_name);
     return std::to_string(meta["point_count"].get<size_t>());
+  } else if (prop == "classes") {
+    // The plane_classes rows of a plane-label cloud (`rux create classify`).
+    return plane_classes_json(*db_, item_name);
   } else {
     throw std::runtime_error(
         "Unknown property: " + prop +
-        "\nAvailable properties: metadata, type, point_count");
+        "\nAvailable properties: metadata, type, point_count, classes");
   }
 }
 

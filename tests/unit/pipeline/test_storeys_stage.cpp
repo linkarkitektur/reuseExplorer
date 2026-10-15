@@ -154,8 +154,10 @@ TEST_CASE("StoreysStage_Parameters_AreLevelOptionsDefaults",
     FAIL("no parameter " << key);
     return {};
   };
-  CHECK(params.size() == 9);
+  CHECK(params.size() == 13);
   CHECK(std::get<double>(value("horizontal_cos")) == d.horizontal_cos);
+  CHECK(std::get<double>(value("surface_max_tilt_deg")) ==
+        d.surface_max_tilt_deg);
   CHECK(std::get<double>(value("inlier_m")) == d.inlier_m);
   CHECK(std::get<long long>(value("max_fit_iterations")) ==
         d.max_fit_iterations);
@@ -165,6 +167,10 @@ TEST_CASE("StoreysStage_Parameters_AreLevelOptionsDefaults",
   CHECK(std::get<double>(value("min_storey_height_m")) ==
         d.min_storey_height_m);
   CHECK(std::get<double>(value("default_height_m")) == d.default_height_m);
+  CHECK(std::get<bool>(value("use_normal_sign")) == d.use_normal_sign);
+  CHECK(std::get<bool>(value("per_storey_frame")) == d.per_storey_frame);
+  CHECK(std::get<double>(value("storey_frame_tol_deg")) ==
+        d.storey_frame_tol_deg);
   CHECK(std::get<double>(value("guid_match_m")) ==
         core::StoreyIdentityOptions{}.match_m);
 }

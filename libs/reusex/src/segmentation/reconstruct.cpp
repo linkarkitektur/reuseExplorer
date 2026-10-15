@@ -8,6 +8,7 @@
 #include "core/annotate_class_map.hpp"
 #include "core/label_semantics.hpp"
 #include "core/logging.hpp"
+#include "core/normal_orientation.hpp"
 #include "core/processing_observer.hpp"
 #include "geometry/morton.hpp"
 #include "geometry/transform_utils.hpp"
@@ -576,9 +577,10 @@ void reconstruct_point_clouds(ProjectDB &db,
   // ── Save to ProjectDB ────────────────────────────────────────────
   core::info("Saving point clouds to database");
   std::string paramsJson = fmt::format(
-      R"({{"resolution":{},"min_distance":{},"max_distance":{},"sampling_factor":{},"confidence_threshold":{},"storage_order":"morton_10bit_bitrev"}})",
+      R"({{"resolution":{},"min_distance":{},"max_distance":{},"sampling_factor":{},"confidence_threshold":{},"storage_order":"morton_10bit_bitrev","{}":"{}"}})",
       params.resolution, params.min_distance, params.max_distance,
-      params.sampling_factor, params.confidence_threshold);
+      params.sampling_factor, params.confidence_threshold,
+      core::kNormalOrientationKey, core::kNormalOrientationSensor);
 
   if (!out_cloud->empty())
     db.save_point_cloud("cloud", *out_cloud, "reconstruct", paramsJson);
@@ -590,6 +592,7 @@ void reconstruct_point_clouds(ProjectDB &db,
     // The semantic cloud records its encoding (point label = API class + 1,
     // STANDARDS §3.1) so the schema v29 migration never shifts it twice.
     auto labelParams = nlohmann::json::parse(paramsJson);
+    labelParams.erase(core::kNormalOrientationKey); // no normals in it
     labelParams[core::kLabelEncodingKey] = core::kLabelEncodingApiPlusOne;
     db.save_point_cloud("labels", *out_labels, "reconstruct",
                         labelParams.dump());

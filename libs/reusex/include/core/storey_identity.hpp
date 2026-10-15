@@ -54,16 +54,19 @@ StoreyIdentityResult assign_storey_guids(
 struct LockedStoreyConflict {
   std::string guid;
   int idx = 0;
-  bool frame_differs = false;   ///< its level_transform != the new run's
+  /// its level_transform != that of the new row it stands for (the one
+  /// with its GUID, else the one whose floor is nearest)
+  bool frame_differs = false;
   double frame_angle_deg = 0.0; ///< rotation between the two frames
   double frame_shift_m = 0.0;   ///< translation between the two frames
   /// idx of new storeys whose [floor, ceiling] overlaps the locked storey's
-  /// range (in the new frame); the new storey it is matched to (same GUID)
-  /// is not counted.
+  /// range (in that new storey's frame); the new storey it is matched to
+  /// (same GUID) is not counted.
   std::vector<int> overlapping_idx;
 };
 
-/// Locked rows of @p stored whose frame differs from the new run's (beyond
+/// Locked rows of @p stored whose frame differs from that of the new row
+/// they stand for (beyond
 /// @p angle_tol_deg / @p shift_tol_m) or whose height range overlaps a row
 /// of @p fresh. Empty when @p fresh is empty.
 std::vector<LockedStoreyConflict>
