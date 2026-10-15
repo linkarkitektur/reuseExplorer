@@ -776,11 +776,10 @@ RTABMap is now confined to `libs/reusex/src/io/rtabmap.cpp` (import only).
 ## TODO Comment Conventions
 
 This project uses structured TODO/FIXME/BUG/HACK comments compatible with the
-[tdg](https://gitlab.com/ribtoks/tdg) tool; a GitHub Action
-(`.github/workflows/todo-action.yml`) parses them and syncs them to issues, so
-the format is mandatory. The full spec — markers, the required
-`category=`/`estimate=` metadata line, categories, time-estimate bands, and
-worked examples — lives in the **`todo-comments` skill**
+[tdg](https://gitlab.com/ribtoks/tdg) tool; the format is kept (tdg-compatible, greppable),
+and TODO comments are tracked in beads (`bead=reusex-xxx`), with no automatic issue sync.
+The full spec — markers, the required `category=`/`estimate=` metadata line, categories,
+time-estimate bands, and worked examples — lives in the **`todo-comments` skill**
 (`.claude/skills/todo-comments/SKILL.md`), which auto-triggers when you write or
 review one. The short version:
 
