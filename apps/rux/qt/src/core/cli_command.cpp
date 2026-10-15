@@ -95,6 +95,16 @@ const std::vector<StageSpec> &stage_specs() {
         {"loop_min_inliers", "--loop-min-inliers", {}, {}},
         {"pcm", {}, {}, "--loop-no-pcm"},
         {"dry_run", {}, "--dry-run", {}}}},
+      {"storeys",
+       {"create", "storeys"},
+       {{"horizontal_cos", "--horizontal-cos", {}, {}},
+        {"inlier_m", "--inlier", {}, {}},
+        {"max_fit_iterations", "--max-fit-iterations", {}, {}},
+        {"hist_bin_m", "--hist-bin", {}, {}},
+        {"peak_min_share", "--peak-min-share", {}, {}},
+        {"slab_merge_m", "--slab-merge", {}, {}},
+        {"min_storey_height_m", "--min-storey-height", {}, {}},
+        {"default_height_m", "--default-height", {}, {}}}},
   };
   return specs;
 }

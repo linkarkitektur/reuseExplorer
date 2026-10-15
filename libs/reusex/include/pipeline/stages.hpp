@@ -49,6 +49,7 @@ enum class JobStage {
   optimize,  ///< refine per-frame sensor poses via plane-landmark pose graph
   annotate,  ///< ML semantic labelling of the stored sensor frames
   graph_discover, ///< find loop edges and store them in the pose graph
+  storeys,        ///< detect storeys and the level frame -> "storeys" table
 };
 
 /// Canonical lower-case stage name (the token used on the wire and the CLI).

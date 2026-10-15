@@ -32,6 +32,8 @@ QString stage_name_da(pl::JobStage stage) {
     return "Optimér poser";
   case pl::JobStage::graph_discover:
     return "Find kanter";
+  case pl::JobStage::storeys:
+    return "Etager";
   }
   return {};
 }
@@ -53,6 +55,9 @@ QString stage_blurb_da(pl::JobStage stage) {
   case pl::JobStage::graph_discover:
     return "Find nye løkkekanter (ORB, 360°-panoramaer, kantfil) og gem dem i "
            "posegrafen.";
+  case pl::JobStage::storeys:
+    return "Find etagerne: gulv- og loftshøjder og den målte lodrette "
+           "retning (niveauramme).";
   }
   return {};
 }
@@ -109,6 +114,14 @@ QString parameter_label_da(pl::JobStage stage,
       {{7, "loop_min_inliers"}, "Mindste inliers"},
       {{7, "pcm"}, "Konsistensfilter (PCM)"},
       {{7, "dry_run"}, "Prøvekørsel — skriv ikke kanterne"},
+      {{8, "horizontal_cos"}, "Vandret når |n·z| over"},
+      {{8, "inlier_m"}, "Inlierbånd ved tilpasning [m]"},
+      {{8, "max_fit_iterations"}, "Højst gentilpasninger"},
+      {{8, "hist_bin_m"}, "Histograminterval [m]"},
+      {{8, "peak_min_share"}, "Mindste andel for et niveau"},
+      {{8, "slab_merge_m"}, "Dæk: slå niveauer sammen under [m]"},
+      {{8, "min_storey_height_m"}, "Mindste etagehøjde [m]"},
+      {{8, "default_height_m"}, "Etagehøjde uden loft [m]"},
   };
   if (auto it = labels.find({static_cast<int>(stage), d.key});
       it != labels.end())
@@ -144,6 +157,8 @@ reusex::core::PipelineStage contract_stage(pl::JobStage stage) {
     return P::optimize;
   case pl::JobStage::graph_discover:
     return P::graph_discover;
+  case pl::JobStage::storeys:
+    return P::storeys;
   }
   return P::clouds;
 }

@@ -44,7 +44,10 @@ subcommand makes, so a stage that validates cannot then be refused when run.
   can declare a per-plane cloud index-aligned with a per-point one.
 - **Tables** are relational rows keyed by cloud name and id — `sensor_frames`,
   `segmentation_images`, `instances`, `instance_materials`,
-  `building_components`, `meshes`.
+  `building_components`, `meshes` — or, for the solid-model tables
+  (`storeys`, ...), by a deterministic GUID (`core::deterministic_guid` over
+  the project GUID) with `source` / `locked` columns: a re-run replaces the
+  unlocked rows and keeps the locked ones.
 - **Options struct** is the single library-side parameter object for the stage;
   CLI flags mirror its defaults (STANDARDS §4).
 - Several commands can be pointed at a differently-named cloud (`rux create
@@ -223,6 +226,29 @@ Separate semantic labels into spatial instances (connected-component clustering)
 `--semantic-cloud <name>` overrides `labels`. An explicit override is an
 instruction, not a preference: the fallback is dropped and the named cloud must
 exist.
+
+### `storeys` (`rux create storeys`)
+
+Fit each storey's floor and ceiling to the horizontal planes (iterated least
+squares), measure the vertical as the bisector of their normals, and find the
+storeys as peaks of a height histogram (`segmentation/level.hpp`,
+`detect_storeys`). The scan is never rewritten: each row stores the
+world → level transform (storey-0 floor at z = 0) next to its floor and
+ceiling height in that frame.
+
+| | |
+|---|---|
+| Consumes | `cloud`, `planes`, `plane_centroids`, `plane_normals` |
+| Produces | `storeys` (`storeys` table, schema v30: one row per storey, GUID `uuid5(project_guid, "storeys/<idx>")`) |
+| Options  | `LevelOptions` (`libs/reusex/include/segmentation/level.hpp`); parameter keys are its field names |
+| Checks   | `cloud`/`planes` present + aligned; `plane_centroids`/`plane_normals` present + aligned |
+
+Never zero rows: a scan with one level, no ceiling or no horizontal plane is
+one storey whose `metadata` records the reason (logged at `warn`). Rows with
+`locked = 1` survive a re-run; `rux del storeys` removes them all. Every row of
+one run carries the same `level_transform` today; the column is per storey so
+a drifted multi-storey scan can get one frame per storey (reusex-z1v.3.5).
+`rux get storeys` prints the table.
 
 ### `mesh` (`rux create mesh`)
 
@@ -436,6 +462,7 @@ rasterizer.
 
 ```
 import → [graph_init] → [graph_discover] → (optimize|register) → clouds → planes → rooms → mesh → texture
+                                                                                   ↘ storeys
                                                     ↘ annotate → project → instances → windows
                                                     ↘ gsplat (leaf: produces `splat`)
 ```

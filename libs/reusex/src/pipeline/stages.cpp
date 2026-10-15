@@ -16,6 +16,7 @@
 #include "reusex/core/validate.hpp"
 #include "reusex/io/reusex.hpp"
 #include "reusex/reconstruction/mesh.hpp"
+#include "reusex/segmentation/level.hpp"
 #include "reusex/segmentation/reconcile_instances.hpp"
 #include "reusex/segmentation/reconstruct.hpp"
 #include "reusex/segmentation/segment_instances.hpp"
@@ -29,6 +30,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <exception>
 #include <map>
 #include <set>
@@ -54,7 +56,7 @@ struct StageName {
 // used in `ruxd`'s HTTP contract (docs/gui/openapi.yaml, in its own repo) and
 // `contract` selects the input check run before the stage executes
 // (docs/CONTRACTS.md).
-constexpr std::array<StageName, 8> kStages{{
+constexpr std::array<StageName, 9> kStages{{
     {JobStage::clouds, "clouds", "cloud_reconstruction",
      core::PipelineStage::clouds, false},
     {JobStage::planes, "planes", "segment_planes", core::PipelineStage::planes,
@@ -90,6 +92,10 @@ constexpr std::array<StageName, 8> kStages{{
     // header-only pipeline/optimize_stage.hpp executor runs it (#464).
     {JobStage::graph_discover, "graph_discover", "graph_discover",
      core::PipelineStage::graph_discover, false},
+    // Not cancellable: one histogram and a few bounded least-squares fits
+    // over the horizontal planes, seconds even on a large scan.
+    {JobStage::storeys, "storeys", "storeys", core::PipelineStage::storeys,
+     false},
 }};
 
 const StageName &descriptor(JobStage stage) {
@@ -568,6 +574,71 @@ StageResult run_mesh(ProjectDB &db, const StageContext & /*ctx*/,
       {{"mesh", output_name, vertex_count}});
 }
 
+/// The pipeline_log row run_logged_stage() opened for this run: the newest
+/// row, still running, under this stage's log name. -1 when it cannot be
+/// identified (another writer interleaved), so the rows go unattributed
+/// rather than attributed to the wrong run.
+int current_run_id(const ProjectDB &db, JobStage stage) {
+  const auto log = db.pipeline_log(1);
+  if (log.size() == 1 && log[0].stage == pipeline_log_name(stage) &&
+      log[0].status == "running")
+    return log[0].id;
+  return -1;
+}
+
+StageResult run_storeys(ProjectDB &db, const StageContext &ctx,
+                        const json &params) {
+  geometry::LevelOptions o;
+  o.horizontal_cos = param_or(params, "horizontal_cos", o.horizontal_cos);
+  o.inlier_m = param_or(params, "inlier_m", o.inlier_m);
+  o.max_fit_iterations =
+      param_or(params, "max_fit_iterations", o.max_fit_iterations);
+  o.hist_bin_m = param_or(params, "hist_bin_m", o.hist_bin_m);
+  o.peak_min_share = param_or(params, "peak_min_share", o.peak_min_share);
+  o.slab_merge_m = param_or(params, "slab_merge_m", o.slab_merge_m);
+  o.min_storey_height_m =
+      param_or(params, "min_storey_height_m", o.min_storey_height_m);
+  o.default_height_m = param_or(params, "default_height_m", o.default_height_m);
+
+  const auto cloud = db.point_cloud_xyzrgb("cloud");
+  const auto planes = db.point_cloud_label("planes");
+  const auto centroids = db.point_cloud_xyz("plane_centroids");
+  const auto normals = db.point_cloud_normal("plane_normals");
+
+  geometry::StoreysResult r;
+  try {
+    r = geometry::detect_storeys(*cloud, *planes, *centroids, *normals, o);
+  } catch (const std::invalid_argument &e) {
+    // Mismatched cloud/planes sizes or a scan with no plane: the input, not
+    // the stage, is at fault.
+    return StageResult::invalid(e.what());
+  }
+
+  // Deterministic identity (reusex-z1v, STANDARDS §6): the same project and
+  // storey index give the same GUID on every run, so a re-run keeps the
+  // references walls/spaces hold and a locked (hand-edited) row matches.
+  const std::string ns = db.project_guid();
+  for (auto &s : r.storeys) {
+    s.guid = core::deterministic_guid(ns, fmt::format("storeys/{}", s.idx));
+    if (s.name.empty())
+      s.name = fmt::format("Etage {}", s.idx);
+  }
+  const size_t written =
+      db.save_storeys(r.storeys, current_run_id(db, ctx.stage));
+  if (written < r.storeys.size())
+    warn("storeys: {} of {} detected storey(s) kept a locked row instead",
+         r.storeys.size() - written, r.storeys.size());
+
+  const double tilt_deg =
+      std::acos(std::clamp(r.vertical[2], -1.0, 1.0)) * 180.0 / M_PI;
+  return StageResult::success(
+      fmt::format("{} storey(s) from {} level(s) of {} horizontal plane(s); "
+                  "vertical {:.3f} deg off world z; {} row(s) written",
+                  r.storeys.size(), r.levels, r.horizontal_planes, tilt_deg,
+                  written),
+      {{"table", "storeys", static_cast<int64_t>(written)}});
+}
+
 StageResult dispatch(ProjectDB &db, const StageContext &ctx,
                      const json &params) {
   switch (ctx.stage) {
@@ -603,6 +674,8 @@ StageResult dispatch(ProjectDB &db, const StageContext &ctx,
     return StageResult::failure(
         "the graph_discover stage requires the slam executor "
         "(pipeline::stage_executor_with_optimize, see #464)");
+  case JobStage::storeys:
+    return run_storeys(db, ctx, params);
   }
   return StageResult::failure("unknown stage");
 }

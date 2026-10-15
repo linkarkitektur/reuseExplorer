@@ -14,8 +14,8 @@ namespace rux::database {
 namespace {
 // Valid collection names (only implemented routers)
 const std::vector<std::string> kValidCollections = {
-    "clouds",    "components", "frames",    "labels",  "log",
-    "materials", "meshes",     "panoramas", "projects"};
+    "clouds",    "components", "frames",    "labels",   "log",
+    "materials", "meshes",     "panoramas", "projects", "storeys"};
 
 /**
  * @brief Split a string by a delimiter
