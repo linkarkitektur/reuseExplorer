@@ -408,3 +408,18 @@ TEST_CASE("StoreSolidModel_ProjectWithoutTables_StoresNothingAndSaysWhich",
   const auto r2 = reusex::io::store_solid_model(db, walls_only);
   CHECK(r2.not_stored == std::vector<std::string>{"walls"});
 }
+
+TEST_CASE("SolidModelFixture_NewOffice_IsAValidDraftReference",
+          "[io][solid_model]") {
+  // Authored with docs/guides/solid-model-reference-authoring.md; a draft
+  // until the maintainer has reviewed it (reusex-z1v.2.6).
+  const SolidModel m =
+      reusex::io::solid_model_from_file(fixture("newoffice.plan.json"));
+  CHECK(m.storeys.size() == 1);
+  CHECK(m.walls.size() >= 10);
+  CHECK(m.spaces.size() >= 5);
+  CHECK(m.openings.size() >= 10);
+  CHECK_THAT(m.description, ContainsSubstring("DRAFT"));
+  CHECK_THAT(m.storeys[0].metadata,
+             ContainsSubstring("draft - needs maintainer review"));
+}

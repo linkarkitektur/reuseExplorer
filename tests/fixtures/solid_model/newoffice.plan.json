@@ -1,0 +1,1372 @@
+{
+  "$schema": "../../../docs/design/solid-model-reference.schema.json",
+  "model_version": 1,
+  "units": "m",
+  "name": "NewOffice reference (DRAFT)",
+  "description": "DRAFT - needs maintainer review. Authored by an agent from the NewOffice scan (project.rux cloud, 5 cm voxels) with the loop in docs/guides/solid-model-reference-authoring.md: faces measured from plan cuts of the cloud, checked with rux render --plan overlays. Not ground truth (decision D5). x/y are the project's world coordinates; the level frame only shifts z so the floor plane (world z = -1.27) is z = 0. External walls carry the inner face as their axis with unknown thickness (the exterior was not scanned). Window sills/heads are read off elevations of the cloud and are approximate; door heads are assumed 2.05 m.",
+  "storeys": [
+    {
+      "guid": "storey-0",
+      "idx": 0,
+      "name": "Ground",
+      "z_floor": 0.0,
+      "z_ceiling": 2.88,
+      "level_transform": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1.27,
+        0,
+        0,
+        0,
+        1
+      ],
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "status": "draft - needs maintainer review",
+        "floor_world_z": -1.27,
+        "ceiling_world_z": 1.61,
+        "plan_rotation_deg": 50.864
+      }
+    }
+  ],
+  "walls": [
+    {
+      "guid": "x-north",
+      "storey": 0,
+      "axis": [
+        [
+          -5.475,
+          1.477
+        ],
+        [
+          12.882,
+          24.199
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": -1.0,
+      "is_external": true,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "external: only the inner face is scanned; axis on the inner (pier) face, thickness unknown"
+      }
+    },
+    {
+      "guid": "x-south",
+      "storey": 0,
+      "axis": [
+        [
+          1.959,
+          -4.791
+        ],
+        [
+          16.308,
+          13.159
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": -1.0,
+      "is_external": true,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "external: only the inner face is scanned; axis on the inner (pier) face, thickness unknown"
+      }
+    },
+    {
+      "guid": "x-west-n",
+      "storey": 0,
+      "axis": [
+        [
+          -2.583,
+          -0.877
+        ],
+        [
+          -5.475,
+          1.477
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": -1.0,
+      "is_external": true,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "external: only the inner face is scanned; axis on the inner (pier) face, thickness unknown"
+      }
+    },
+    {
+      "guid": "x-west-s",
+      "storey": 0,
+      "axis": [
+        [
+          1.959,
+          -4.791
+        ],
+        [
+          -0.821,
+          -2.53
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": -1.0,
+      "is_external": true,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "external: only the inner face is scanned; axis on the inner (pier) face, thickness unknown"
+      }
+    },
+    {
+      "guid": "x-ewing-west",
+      "storey": 0,
+      "axis": [
+        [
+          16.308,
+          13.159
+        ],
+        [
+          23.674,
+          7.166
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": -1.0,
+      "is_external": true,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "external: only the inner face is scanned; axis on the inner (pier) face, thickness unknown; piers between the window niches"
+      }
+    },
+    {
+      "guid": "x-ewing-west-s",
+      "storey": 0,
+      "axis": [
+        [
+          23.898,
+          6.648
+        ],
+        [
+          26.237,
+          4.745
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": -1.0,
+      "is_external": true,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "external: only the inner face is scanned; axis on the inner (pier) face, thickness unknown; south of the hall, weakly scanned"
+      }
+    },
+    {
+      "guid": "x-ewing-south",
+      "storey": 0,
+      "axis": [
+        [
+          26.237,
+          4.745
+        ],
+        [
+          30.419,
+          9.885
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": -1.0,
+      "is_external": true,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "external: only the inner face is scanned; axis on the inner (pier) face, thickness unknown"
+      }
+    },
+    {
+      "guid": "x-east",
+      "storey": 0,
+      "axis": [
+        [
+          30.419,
+          9.885
+        ],
+        [
+          12.913,
+          24.237
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": -1.0,
+      "is_external": true,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "external: only the inner face is scanned; axis on the inner (pier) face, thickness unknown"
+      }
+    },
+    {
+      "guid": "p-alcove",
+      "storey": 0,
+      "axis": [
+        [
+          -0.122,
+          2.781
+        ],
+        [
+          -2.744,
+          4.915
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": 0.49,
+      "is_external": false,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "faces at a=1.84 and 2.33; may be a duct casing rather than a wall"
+      }
+    },
+    {
+      "guid": "p-sw-east",
+      "storey": 0,
+      "axis": [
+        [
+          3.423,
+          -2.992
+        ],
+        [
+          0.644,
+          -0.73
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": 0.1,
+      "is_external": false,
+      "assumed": true,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "faces at a=-0.21 and -0.11 merge at 5 cm resolution; thickness assumed"
+      }
+    },
+    {
+      "guid": "p-sw-north",
+      "storey": 0,
+      "axis": [
+        [
+          -0.824,
+          -2.527
+        ],
+        [
+          0.641,
+          -0.727
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": -1.0,
+      "is_external": false,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "one face scanned: axis on that face, thickness unknown"
+      }
+    },
+    {
+      "guid": "p-corridor-east",
+      "storey": 0,
+      "axis": [
+        [
+          18.313,
+          13.681
+        ],
+        [
+          9.896,
+          20.53
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": 0.41,
+      "is_external": false,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "faces at a=21.96 and 22.37 (measured north of b=-0.5); south of it only the room face is clear"
+      }
+    },
+    {
+      "guid": "p-ne-south",
+      "storey": 0,
+      "axis": [
+        [
+          12.426,
+          18.471
+        ],
+        [
+          15.443,
+          22.178
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": 0.37,
+      "is_external": false,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "faces at b=1.83 and 2.205"
+      }
+    },
+    {
+      "guid": "p-wc-1-2",
+      "storey": 0,
+      "axis": [
+        [
+          15.259,
+          17.913
+        ],
+        [
+          13.281,
+          19.522
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": 0.13,
+      "is_external": false,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "faces at a=23.46 and 23.59"
+      }
+    },
+    {
+      "guid": "p-wc-2-3",
+      "storey": 0,
+      "axis": [
+        [
+          16.026,
+          18.855
+        ],
+        [
+          14.048,
+          20.465
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": 0.1,
+      "is_external": false,
+      "assumed": true,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "one face scanned: axis on that face, thickness unknown; thickness assumed 0.1"
+      }
+    },
+    {
+      "guid": "p-wc-east",
+      "storey": 0,
+      "axis": [
+        [
+          18.627,
+          19.137
+        ],
+        [
+          15.222,
+          21.907
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": 0.1,
+      "is_external": false,
+      "assumed": true,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "one face scanned: axis on that face, thickness unknown; thickness assumed 0.1"
+      }
+    },
+    {
+      "guid": "p-wc-south",
+      "storey": 0,
+      "axis": [
+        [
+          14.404,
+          16.862
+        ],
+        [
+          17.2,
+          20.298
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": 0.13,
+      "is_external": false,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "faces at b=-0.47 and -0.60"
+      }
+    },
+    {
+      "guid": "p-e2-south",
+      "storey": 0,
+      "axis": [
+        [
+          15.831,
+          15.7
+        ],
+        [
+          18.627,
+          19.137
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": -1.0,
+      "is_external": false,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "one face scanned: axis on that face, thickness unknown"
+      }
+    },
+    {
+      "guid": "p-e3-east",
+      "storey": 0,
+      "axis": [
+        [
+          19.938,
+          17.658
+        ],
+        [
+          18.425,
+          18.888
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": -1.0,
+      "is_external": false,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "one face scanned: axis on that face, thickness unknown"
+      }
+    },
+    {
+      "guid": "p-e3-south",
+      "storey": 0,
+      "axis": [
+        [
+          17.344,
+          14.47
+        ],
+        [
+          19.938,
+          17.658
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": -1.0,
+      "is_external": false,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "one face scanned: axis on that face, thickness unknown"
+      }
+    },
+    {
+      "guid": "p-hall-north",
+      "storey": 0,
+      "axis": [
+        [
+          18.313,
+          13.681
+        ],
+        [
+          21.305,
+          17.357
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": -1.0,
+      "is_external": false,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "one face scanned: axis on that face, thickness unknown"
+      }
+    },
+    {
+      "guid": "p-hall-south",
+      "storey": 0,
+      "axis": [
+        [
+          25.383,
+          8.869
+        ],
+        [
+          27.893,
+          11.955
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": 0.5,
+      "is_external": false,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "faces at b=-13.84 and -14.34"
+      }
+    }
+  ],
+  "spaces": [
+    {
+      "guid": "s-open-office",
+      "storey": 0,
+      "name": "Open office",
+      "kind": "open_plan",
+      "polygon": {
+        "outer": [
+          [
+            -5.475,
+            1.477
+          ],
+          [
+            -2.867,
+            4.705
+          ],
+          [
+            -0.274,
+            2.595
+          ],
+          [
+            0.036,
+            2.975
+          ],
+          [
+            -2.559,
+            5.087
+          ],
+          [
+            8.859,
+            19.22
+          ],
+          [
+            16.308,
+            13.159
+          ],
+          [
+            3.439,
+            -2.94
+          ],
+          [
+            0.633,
+            -0.657
+          ],
+          [
+            -0.755,
+            -2.364
+          ],
+          [
+            -2.583,
+            -0.877
+          ]
+        ]
+      },
+      "z_floor": 0.0,
+      "z_ceiling": 2.88,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "the west wing; its east edge at the east-wing facade line is open to the corridor"
+      }
+    },
+    {
+      "guid": "s-sw-room",
+      "storey": 0,
+      "name": "SW room",
+      "kind": "room",
+      "polygon": {
+        "outer": [
+          [
+            1.959,
+            -4.791
+          ],
+          [
+            3.376,
+            -3.018
+          ],
+          [
+            0.648,
+            -0.798
+          ],
+          [
+            -0.785,
+            -2.559
+          ]
+        ]
+      },
+      "z_floor": 0.0,
+      "z_ceiling": 2.88,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "s-corridor",
+      "storey": 0,
+      "name": "Corridor",
+      "kind": "corridor",
+      "polygon": {
+        "outer": [
+          [
+            17.259,
+            12.385
+          ],
+          [
+            16.308,
+            13.159
+          ],
+          [
+            8.859,
+            19.22
+          ],
+          [
+            9.767,
+            20.371
+          ],
+          [
+            18.184,
+            13.522
+          ]
+        ]
+      },
+      "z_floor": 0.0,
+      "z_ceiling": 2.88,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "open to the open office (west) and the hall (south)"
+      }
+    },
+    {
+      "guid": "s-hall",
+      "storey": 0,
+      "name": "Hall",
+      "kind": "open_plan",
+      "polygon": {
+        "outer": [
+          [
+            23.674,
+            7.166
+          ],
+          [
+            27.7,
+            12.114
+          ],
+          [
+            21.305,
+            17.357
+          ],
+          [
+            17.259,
+            12.385
+          ]
+        ]
+      },
+      "z_floor": 0.0,
+      "z_ceiling": 2.88,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "s-ne-room",
+      "storey": 0,
+      "name": "NE room",
+      "kind": "room",
+      "polygon": {
+        "outer": [
+          [
+            12.412,
+            18.747
+          ],
+          [
+            15.293,
+            22.287
+          ],
+          [
+            12.913,
+            24.237
+          ],
+          [
+            10.026,
+            20.689
+          ]
+        ]
+      },
+      "z_floor": 0.0,
+      "z_ceiling": 2.88,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "s-wc-1",
+      "storey": 0,
+      "name": "WC 1",
+      "kind": "room",
+      "polygon": {
+        "outer": [
+          [
+            14.483,
+            17.062
+          ],
+          [
+            15.168,
+            17.903
+          ],
+          [
+            13.384,
+            19.355
+          ],
+          [
+            12.699,
+            18.513
+          ]
+        ]
+      },
+      "z_floor": 0.0,
+      "z_ceiling": 2.88,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "s-wc-2",
+      "storey": 0,
+      "name": "WC 2",
+      "kind": "room",
+      "polygon": {
+        "outer": [
+          [
+            15.25,
+            18.004
+          ],
+          [
+            15.944,
+            18.857
+          ],
+          [
+            14.16,
+            20.309
+          ],
+          [
+            13.466,
+            19.456
+          ]
+        ]
+      },
+      "z_floor": 0.0,
+      "z_ceiling": 2.88,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "s-wc-3",
+      "storey": 0,
+      "name": "WC 3",
+      "kind": "room",
+      "polygon": {
+        "outer": [
+          [
+            16.007,
+            18.935
+          ],
+          [
+            17.118,
+            20.3
+          ],
+          [
+            15.334,
+            21.752
+          ],
+          [
+            14.223,
+            20.387
+          ]
+        ]
+      },
+      "z_floor": 0.0,
+      "z_ceiling": 2.88,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "s-e2",
+      "storey": 0,
+      "name": "Room E2",
+      "kind": "room",
+      "polygon": {
+        "outer": [
+          [
+            15.961,
+            15.859
+          ],
+          [
+            18.596,
+            19.098
+          ],
+          [
+            17.219,
+            20.218
+          ],
+          [
+            14.584,
+            16.98
+          ]
+        ]
+      },
+      "z_floor": 0.0,
+      "z_ceiling": 2.88,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "s-e3",
+      "storey": 0,
+      "name": "Room E3",
+      "kind": "room",
+      "polygon": {
+        "outer": [
+          [
+            17.473,
+            14.629
+          ],
+          [
+            19.938,
+            17.658
+          ],
+          [
+            18.425,
+            18.888
+          ],
+          [
+            15.961,
+            15.859
+          ]
+        ]
+      },
+      "z_floor": 0.0,
+      "z_ceiling": 2.88,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "s-south",
+      "storey": 0,
+      "name": "South rooms (unresolved)",
+      "kind": "unknown",
+      "polygon": {
+        "outer": [
+          [
+            26.237,
+            4.745
+          ],
+          [
+            30.419,
+            9.885
+          ],
+          [
+            28.087,
+            11.797
+          ],
+          [
+            23.898,
+            6.648
+          ]
+        ]
+      },
+      "z_floor": 0.0,
+      "z_ceiling": 2.88,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "several small rooms not resolved in this draft"
+      }
+    }
+  ],
+  "openings": [
+    {
+      "guid": "o-n-win-01",
+      "wall": "x-north",
+      "kind": "window",
+      "s_start": 0.01,
+      "s_end": 1.81,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-n-win-02",
+      "wall": "x-north",
+      "kind": "window",
+      "s_start": 2.31,
+      "s_end": 4.31,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-n-win-03",
+      "wall": "x-north",
+      "kind": "window",
+      "s_start": 5.06,
+      "s_end": 6.91,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-n-win-04",
+      "wall": "x-north",
+      "kind": "window",
+      "s_start": 7.51,
+      "s_end": 9.36,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-n-win-05",
+      "wall": "x-north",
+      "kind": "window",
+      "s_start": 9.96,
+      "s_end": 11.76,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-n-win-06",
+      "wall": "x-north",
+      "kind": "window",
+      "s_start": 12.36,
+      "s_end": 14.16,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-n-win-07",
+      "wall": "x-north",
+      "kind": "window",
+      "s_start": 14.81,
+      "s_end": 16.61,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-n-win-08",
+      "wall": "x-north",
+      "kind": "window",
+      "s_start": 17.21,
+      "s_end": 19.01,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-n-win-09",
+      "wall": "x-north",
+      "kind": "window",
+      "s_start": 19.71,
+      "s_end": 21.51,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-n-win-10",
+      "wall": "x-north",
+      "kind": "window",
+      "s_start": 22.06,
+      "s_end": 23.96,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-n-win-11",
+      "wall": "x-north",
+      "kind": "window",
+      "s_start": 24.71,
+      "s_end": 26.46,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-n-win-12",
+      "wall": "x-north",
+      "kind": "window",
+      "s_start": 27.11,
+      "s_end": 28.91,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-s-win-01",
+      "wall": "x-south",
+      "kind": "window",
+      "s_start": 0.18,
+      "s_end": 2.03,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-s-win-02",
+      "wall": "x-south",
+      "kind": "window",
+      "s_start": 2.83,
+      "s_end": 4.63,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "partly occluded; extent inferred from the 2.43 m window rhythm"
+      }
+    },
+    {
+      "guid": "o-s-win-03",
+      "wall": "x-south",
+      "kind": "window",
+      "s_start": 5.3,
+      "s_end": 7.1,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-s-win-04",
+      "wall": "x-south",
+      "kind": "window",
+      "s_start": 7.75,
+      "s_end": 9.6,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-s-win-05",
+      "wall": "x-south",
+      "kind": "window",
+      "s_start": 10.15,
+      "s_end": 11.95,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-s-win-06",
+      "wall": "x-south",
+      "kind": "window",
+      "s_start": 12.55,
+      "s_end": 14.401,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-s-win-07",
+      "wall": "x-south",
+      "kind": "window",
+      "s_start": 14.901,
+      "s_end": 16.801,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-s-win-08",
+      "wall": "x-south",
+      "kind": "window",
+      "s_start": 17.401,
+      "s_end": 19.201,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-s-win-09",
+      "wall": "x-south",
+      "kind": "window",
+      "s_start": 19.801,
+      "s_end": 21.551,
+      "z_sill": 0.62,
+      "z_head": 2.72,
+      "is_external": true,
+      "source": "manual",
+      "locked": true
+    },
+    {
+      "guid": "o-ew-win-01",
+      "wall": "x-ewing-west",
+      "kind": "window",
+      "s_start": 8.156,
+      "s_end": 9.106,
+      "z_sill": 0.15,
+      "z_head": 2.15,
+      "is_external": true,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "rectangular, low sill (z 0.15-2.15 from the elevation)"
+      }
+    },
+    {
+      "guid": "o-ew-win-02",
+      "wall": "x-ewing-west",
+      "kind": "window",
+      "s_start": 6.506,
+      "s_end": 7.606,
+      "z_sill": 0.15,
+      "z_head": 2.15,
+      "is_external": true,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "rectangular, low sill (z 0.15-2.15 from the elevation)"
+      }
+    },
+    {
+      "guid": "o-ew-win-03",
+      "wall": "x-ewing-west",
+      "kind": "window",
+      "s_start": 4.706,
+      "s_end": 5.806,
+      "z_sill": 0.15,
+      "z_head": 2.15,
+      "is_external": true,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "rectangular, low sill (z 0.15-2.15 from the elevation)"
+      }
+    },
+    {
+      "guid": "o-ew-win-04",
+      "wall": "x-ewing-west",
+      "kind": "window",
+      "s_start": 2.806,
+      "s_end": 3.906,
+      "z_sill": 0.15,
+      "z_head": 2.15,
+      "is_external": true,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "rectangular, low sill (z 0.15-2.15 from the elevation)"
+      }
+    },
+    {
+      "guid": "o-ew-win-05",
+      "wall": "x-ewing-west",
+      "kind": "window",
+      "s_start": 1.006,
+      "s_end": 2.056,
+      "z_sill": 0.15,
+      "z_head": 2.15,
+      "is_external": true,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "rectangular, low sill (z 0.15-2.15 from the elevation)"
+      }
+    },
+    {
+      "guid": "o-sw-door",
+      "wall": "p-sw-north",
+      "kind": "door",
+      "s_start": 0.33,
+      "s_end": 1.23,
+      "z_sill": 0.0,
+      "z_head": 2.05,
+      "is_external": false,
+      "source": "manual",
+      "locked": true,
+      "state": "unknown",
+      "metadata": {
+        "note": "gap in the wall points below 1.9 m; head height assumed"
+      }
+    },
+    {
+      "guid": "o-ne-opening",
+      "wall": "p-corridor-east",
+      "kind": "opening",
+      "s_start": 8.22,
+      "s_end": 9.97,
+      "z_sill": 0.0,
+      "z_head": 2.05,
+      "is_external": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "no wall points between b=2.65 and 4.4 below 1.9 m: glazed or open; head height assumed"
+      }
+    },
+    {
+      "guid": "o-e3-door",
+      "wall": "p-corridor-east",
+      "kind": "door",
+      "s_start": 2.12,
+      "s_end": 2.67,
+      "z_sill": 0.0,
+      "z_head": 2.05,
+      "is_external": false,
+      "source": "manual",
+      "locked": true,
+      "state": "unknown",
+      "metadata": {
+        "note": "head height assumed"
+      }
+    },
+    {
+      "guid": "o-e4-door",
+      "wall": "p-corridor-east",
+      "kind": "door",
+      "s_start": 0.72,
+      "s_end": 1.22,
+      "z_sill": 0.0,
+      "z_head": 2.05,
+      "is_external": false,
+      "source": "manual",
+      "locked": true,
+      "state": "unknown",
+      "metadata": {
+        "note": "head height assumed"
+      }
+    },
+    {
+      "guid": "o-wc1-door",
+      "wall": "p-wc-south",
+      "kind": "door",
+      "s_start": 0.43,
+      "s_end": 1.08,
+      "z_sill": 0.0,
+      "z_head": 2.05,
+      "is_external": false,
+      "source": "manual",
+      "locked": true,
+      "state": "unknown",
+      "metadata": {
+        "note": "door leaf open; head height assumed"
+      }
+    },
+    {
+      "guid": "o-wc2-door",
+      "wall": "p-wc-south",
+      "kind": "door",
+      "s_start": 1.73,
+      "s_end": 2.33,
+      "z_sill": 0.0,
+      "z_head": 2.05,
+      "is_external": false,
+      "source": "manual",
+      "locked": true,
+      "state": "unknown",
+      "metadata": {
+        "note": "door leaf open; head height assumed"
+      }
+    }
+  ]
+}
