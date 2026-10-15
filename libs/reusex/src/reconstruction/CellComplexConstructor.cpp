@@ -310,6 +310,29 @@ CellComplex::CellComplex(
                "{} projected cells",
                verticals.size(), inserted_verticals, sorted_floors.size(),
                bounded_faces, n_sections, projected_cells);
+
+  // Zero-cell guard (issue reusex-qw0). A 0-cell complex is a structurally
+  // degenerate arrangement, not a solver problem: feeding it to Solidifier
+  // would build a vacuous 0-variable MIP and report a misleading "increase
+  // --time-limit / use --solver highs / stronger plane merging" hint that
+  // names the wrong cause. Fail fast here instead, naming the actual cause
+  // (0 bounded faces, or fewer than 2 horizontal planes) and the plane
+  // counts, before Solidifier is ever constructed — so no solve is attempted.
+  if (projected_cells == 0) {
+    const std::string reason =
+        bounded_faces == 0
+            ? "two vertical planes cannot enclose a cell"
+            : "fewer than 2 horizontal planes bound no section to extrude "
+              "cells into";
+    throw std::runtime_error(fmt::format(
+        "CellComplex: arrangement has {} bounded faces from {} vertical ({} "
+        "kept) / {} horizontal planes, {} sections => 0 projected cells; {}. "
+        "Check 'rux create planes' output (stronger region growing, more "
+        "planes, or weaker merging) before retrying create mesh.",
+        bounded_faces, verticals.size(), inserted_verticals,
+        sorted_floors.size(), n_sections, reason));
+  }
+
   if (projected_cells > max_cells) {
     throw std::runtime_error(fmt::format(
         "CellComplex: projected cell count {} exceeds max_cells {} "
