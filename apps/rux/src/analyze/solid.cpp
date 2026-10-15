@@ -18,20 +18,10 @@
 #include <iostream>
 #include <memory>
 #include <optional>
-#include <sstream>
 
 namespace fs = std::filesystem;
 
 namespace {
-
-std::string read_text(const std::string &path) {
-  std::ifstream in(path);
-  if (!in)
-    throw std::runtime_error(fmt::format("cannot read '{}'", path));
-  std::stringstream ss;
-  ss << in.rdbuf();
-  return ss.str();
-}
 
 std::string show(const std::optional<double> &v, double scale = 1.0,
                  const char *unit = "") {
@@ -98,9 +88,10 @@ void setup_subcommand_analyze_solid(CLI::App &app,
   sub->footer(R"(
 DESCRIPTION:
   Compares the project's typed building model (storeys, walls, spaces,
-  openings) with a reference plan in the solid-model JSON format
-  (docs/design/solid-model-json.md), and measures how well the scan cloud
-  fits the solid mesh:
+  openings) with a reference plan in the solid-model document format
+  (docs/design/solid-model-json.md), JSON or YAML (by extension: .yaml/.yml
+  is YAML, anything else JSON), and measures how well the scan cloud fits
+  the solid mesh:
 
   - room count error, room IoU (2D polygons, one-to-one matched)
   - wall recall / precision, wall position RMS, wall thickness error
@@ -131,11 +122,12 @@ NOTES:
 )");
 
   sub->add_option("--reference", opt->reference_path,
-                  "Reference plan (solid-model JSON)")
+                  "Reference plan (solid-model JSON or YAML)")
       ->required()
       ->check(CLI::ExistingFile);
-  sub->add_option("--model", opt->model_path,
-                  "Score this solid-model JSON instead of the project's model")
+  sub->add_option(
+         "--model", opt->model_path,
+         "Score this solid-model JSON/YAML instead of the project's model")
       ->check(CLI::ExistingFile);
   sub->add_option("--cloud", opt->cloud_name, "Scan cloud for the fit metrics")
       ->default_val(opt->cloud_name);
@@ -180,7 +172,7 @@ int run_subcommand_analyze_solid(SubcommandAnalyzeSolidOptions const &opt,
   using namespace reusex;
   core::SolidModel reference;
   try {
-    reference = io::solid_model_from_json(read_text(opt.reference_path));
+    reference = io::solid_model_from_file(opt.reference_path);
   } catch (const std::exception &e) {
     spdlog::error("Reference plan '{}': {}", opt.reference_path, e.what());
     return RuxError::INVALID_ARGUMENT;
@@ -191,7 +183,7 @@ int run_subcommand_analyze_solid(SubcommandAnalyzeSolidOptions const &opt,
     core::SolidModel detected;
     if (from_file) {
       try {
-        detected = io::solid_model_from_json(read_text(opt.model_path));
+        detected = io::solid_model_from_file(opt.model_path);
       } catch (const std::exception &e) {
         spdlog::error("Model '{}': {}", opt.model_path, e.what());
         return RuxError::INVALID_ARGUMENT;

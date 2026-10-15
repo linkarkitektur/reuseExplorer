@@ -264,6 +264,12 @@ find_package(opennurbs REQUIRED)
 # EXIF metadata reading (for 360 panoramic image import)
 find_package(exiv2 REQUIRED CONFIG)
 
+# YAML front-end for the solid-model reference document (reusex-yf4.1):
+# io::solid_model_from_yaml / solid_model_to_yaml convert YAML <-> nlohmann
+# json, so the existing strict JSON reader is the only validator. PRIVATE to
+# reusex_io: not part of any public header.
+find_package(yaml-cpp REQUIRED CONFIG)
+
 # -----------------------------------------------
 # Speckle upload support (HTTP, JSON, hashing)
 # -----------------------------------------------

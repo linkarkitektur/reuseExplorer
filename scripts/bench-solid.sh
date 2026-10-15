@@ -15,7 +15,9 @@
 #
 # Each row's project is COPIED to a scratch directory before any stage runs:
 # opening a .rux can migrate it, and a reference dataset must never be
-# touched in place. Format and metrics: docs/design/solid-model-json.md.
+# touched in place. A manifest's `reference` / `model` column may be .yaml,
+# .yml or .json -- `rux analyze solid` picks the front end by extension.
+# Format and metrics: docs/design/solid-model-json.md.
 
 set -euo pipefail
 

@@ -114,6 +114,8 @@ endif()
 find_dependency(CURL)
 find_dependency(OpenSSL)
 find_dependency(exiv2 CONFIG)
+# reusex_io: yaml-cpp (the solid-model YAML front-end, reusex-yf4.1).
+find_dependency(yaml-cpp CONFIG)
 find_dependency(Boost CONFIG COMPONENTS iostreams program_options serialization)
 find_dependency(jsoncpp)
 find_dependency(nanoflann)

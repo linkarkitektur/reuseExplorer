@@ -392,6 +392,9 @@ target_link_libraries(reusex_io PUBLIC reusex_geometry_common reusex_reconstruct
 # opencv_stitching: MultiBandBlender + ExposureCompensator for seam blend (#468).
 # PRIVATE: not part of any public header; opencv_core/imgproc arrive via reusex_common.
 target_link_libraries(reusex_io PRIVATE opencv_imgcodecs opencv_stitching)
+# yaml-cpp: the solid-model YAML front-end (solid_model_json.cpp). PRIVATE:
+# not part of any public header (reusex-yf4.1).
+target_link_libraries(reusex_io PRIVATE yaml-cpp::yaml-cpp)
 
 reusex_add_module(reusex_vision ${REUSEX_VISION_SOURCES})
 target_link_libraries(reusex_vision PUBLIC reusex_core)

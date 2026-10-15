@@ -51,14 +51,35 @@ std::string solid_model_to_json(const core::SolidModel &model, int indent = 2);
 ///         "walls[2] (guid 'w3'): axis has zero length".
 core::SolidModel solid_model_from_json(std::string_view text);
 
-/// Read and parse a document file (solid_model_from_json).
+/// Serialise a model as YAML (block style, the same fixed key order as
+/// `solid_model_to_json`): a human-friendly front end over the same document,
+/// meant for a hand-authored reference plan. Comments are not written back
+/// (there is nothing in `core::SolidModel` to hold them).
+std::string solid_model_to_yaml(const core::SolidModel &model);
+
+/// Parse a YAML document: converted to a `nlohmann::json` value first (plain
+/// scalars are typed as null / bool / integer / float / string the way YAML's
+/// core schema would; anything explicitly quoted is always a string), then
+/// read by the exact same strict validator as `solid_model_from_json` --
+/// there is one validator, so an invalid document throws the same
+/// element-naming `std::invalid_argument` either way. Comments are allowed
+/// (yaml-cpp drops them while parsing).
+///
+/// @throws std::invalid_argument naming the offending element, or
+///         ("document": ...) when the text is not valid YAML.
+core::SolidModel solid_model_from_yaml(std::string_view text);
+
+/// Read and parse a document file: `solid_model_from_yaml` for a `.yaml` /
+/// `.yml` path (case-insensitive), `solid_model_from_json` for everything
+/// else.
 ///
 /// @throws std::runtime_error naming the path when the file cannot be read.
 /// @throws std::invalid_argument when its content is not a valid document.
 core::SolidModel solid_model_from_file(const std::filesystem::path &path);
 
-/// Write @p model to @p path (solid_model_to_json, plus a final newline),
-/// creating parent directories.
+/// Write @p model to @p path, creating parent directories:
+/// `solid_model_to_yaml` for a `.yaml` / `.yml` path (case-insensitive),
+/// `solid_model_to_json` (plus a final newline) for everything else.
 ///
 /// @throws std::runtime_error naming the path when it cannot be written.
 void solid_model_to_file(const core::SolidModel &model,
