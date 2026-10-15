@@ -230,6 +230,19 @@ TEST_CASE("StageParameters_Mesh_MirrorMeshOptionsDefaults",
         static_cast<long long>(d.max_cells));
   CHECK(integer_default(JobStage::mesh, "sectioned_threshold") ==
         static_cast<long long>(d.sectioned_threshold));
+  // Structural plane selection (reusex-8l3).
+  CHECK(float_default(JobStage::mesh, "structural_min_wall_area") ==
+        static_cast<float>(d.structural.min_wall_area_m2));
+  CHECK(float_default(JobStage::mesh, "structural_collinear_offset") ==
+        static_cast<float>(d.structural.collinear_offset_m));
+  CHECK(float_default(JobStage::mesh, "structural_storey_clearance") ==
+        static_cast<float>(d.structural.min_storey_clearance_m));
+  CHECK(float_default(JobStage::mesh, "structural_footprint_overlap") ==
+        static_cast<float>(d.structural.min_footprint_overlap));
+  const ParameterDescriptor &structural =
+      *parameter_of(JobStage::mesh, "structural_filter");
+  REQUIRE(std::holds_alternative<bool>(structural.default_value));
+  CHECK(std::get<bool>(structural.default_value) == d.structural.enabled);
 
   const ParameterDescriptor &sectioned =
       *parameter_of(JobStage::mesh, "sectioned");

@@ -13,6 +13,7 @@
 // rux::set_stage_params_sink() keeps the subcommands from running: their
 // callbacks hand the parameter JSON over and return before opening a project.
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <create.hpp>
@@ -306,6 +307,24 @@ TEST_CASE("CliCommandRoundTrip_MeshAndOptimize_ShareTheStageReader",
     CHECK_FALSE(parsed.options.sectioned);
     CHECK(parsed.options.solver ==
           reusex::geometry::parse_solver_choice("highs"));
+  }
+  {
+    // Structural plane selection (reusex-8l3) reaches StructuralPlaneOptions.
+    const auto cmd = rux::qt::build_cli_command(
+        "mesh", "p.rux",
+        {{"structural_filter", CliValueKind::boolean, "false"},
+         {"structural_min_wall_area", CliValueKind::number, "2.5"},
+         {"structural_collinear_offset", CliValueKind::number, "0.2"},
+         {"structural_storey_clearance", CliValueKind::number, "1.5"},
+         {"structural_footprint_overlap", CliValueKind::number, "0.4"}});
+    const Captured got = parse_through_cli(cmd.args);
+    const auto s =
+        pl::mesh_options_from_parameters(got.params.dump()).options.structural;
+    CHECK_FALSE(s.enabled);
+    CHECK(s.min_wall_area_m2 == Catch::Approx(2.5));
+    CHECK(s.collinear_offset_m == Catch::Approx(0.2));
+    CHECK(s.min_storey_clearance_m == Catch::Approx(1.5));
+    CHECK(s.min_footprint_overlap == Catch::Approx(0.4));
   }
   {
     const auto cmd = rux::qt::build_cli_command(
