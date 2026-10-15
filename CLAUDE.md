@@ -459,6 +459,10 @@ and deleted the shims. `include/geometry/` now holds only the real
 - `segment_instances.hpp` / `reconcile_instances.hpp`: semantic → spatial instances
 - `depth_filters.hpp`, `downsample.hpp`, `sync_downsample.hpp`, `densify.hpp`
 - `Surfel.hpp` / `surfel_extraction.hpp`: surfels shared with `slam`
+- `level.hpp`: `detect_storeys()` — floor/ceiling LSQ fits, the measured
+  vertical (bisector of their normals) and storeys from a height histogram,
+  as `core::StoreyRecord`s sharing one level frame
+  (`geometry/level_frame.hpp`, header-only like `component_persistence.hpp`)
 
 **reconstruction** (`include/reconstruction/`):
 - `CellComplex.hpp`: Boost.Graph-based 3D spatial representation
