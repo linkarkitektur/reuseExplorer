@@ -4,6 +4,7 @@
 
 #include "reusex/reconstruction/solid_metrics.hpp"
 #include "reusex/core/logging.hpp"
+#include "reusex/geometry/level_frame.hpp"
 
 #include <CGAL/AABB_traits_3.h>
 #include <CGAL/AABB_tree.h>
@@ -19,12 +20,15 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
+#include <Eigen/Core>
+#include <Eigen/Geometry>
 #include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <map>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -387,36 +391,226 @@ std::set<int> covered_storeys(const core::SolidModel &ref) {
   return out;
 }
 
-/// @p det without the walls, spaces and openings (by host wall) that stand on
-/// a storey outside @p covered; the number left out goes to @p dropped.
-core::SolidModel restrict_to_storeys(const core::SolidModel &det,
+// ---------------------------------------------------------------------------
+// Level frames (reusex-4kt)
+
+/// The world -> level frame of each storey record of a model, by idx. A
+/// storey without a record has the identity frame (its level frame is world).
+std::map<int, LevelFrame> level_frames(const core::SolidModel &m,
+                                       const char *which) {
+  std::map<int, LevelFrame> out;
+  for (const auto &s : m.storeys) {
+    const LevelFrame f = LevelFrame::from_record(s);
+    const double det = f.world_to_level.linear().determinant();
+    bool finite = std::isfinite(det);
+    for (double v : s.level_transform)
+      finite = finite && std::isfinite(v);
+    if (!finite || std::abs(det) < 1e-9)
+      throw std::invalid_argument(fmt::format(
+          "solid metrics: {} storey {} ('{}') has a singular or non-finite "
+          "level_transform (determinant {})",
+          which, s.idx, s.guid, det));
+    out.emplace(s.idx, f);
+  }
+  return out;
+}
+
+LevelFrame frame_of(const std::map<int, LevelFrame> &frames, int idx) {
+  const auto it = frames.find(idx);
+  return it == frames.end() ? LevelFrame{} : it->second;
+}
+
+/// Which reference storey each detected storey is compared with.
+///
+/// When both models carry storey records, a detected storey corresponds to
+/// the reference storey whose floor is nearest in world z (floor = the
+/// storey's z_floor taken through its level_transform), within
+/// SolidMetricsOptions::storey_match_dist_m, one-to-one, closest first: a
+/// detector numbers storeys from the lowest one it saw, which need not be
+/// the reference's storey 0. Otherwise storeys correspond by idx.
+struct StoreyMap {
+  bool by_height = false;
+  std::map<int, int> det_to_ref;
+
+  [[nodiscard]] std::optional<int> operator()(int det_idx) const {
+    if (!by_height)
+      return det_idx;
+    const auto it = det_to_ref.find(det_idx);
+    if (it == det_to_ref.end())
+      return std::nullopt;
+    return it->second;
+  }
+};
+
+StoreyMap match_storeys(const core::SolidModel &det,
+                        const core::SolidModel &ref,
+                        const std::map<int, LevelFrame> &det_frames,
+                        const std::map<int, LevelFrame> &ref_frames,
+                        const SolidMetricsOptions &opt) {
+  StoreyMap out;
+  if (det.storeys.empty() || ref.storeys.empty())
+    return out;
+  out.by_height = true;
+  // World z of the storey's floor where it crosses the level z axis (as
+  // LevelFrame::world_z_at, with a general inverse: the reader does not
+  // require level_transform to be exactly rigid).
+  auto floor_z = [](const core::StoreyRecord &s, const LevelFrame &f) {
+    return (f.world_to_level.inverse(Eigen::Affine) *
+            Eigen::Vector3d(0.0, 0.0, s.z_floor))
+        .z();
+  };
+  std::vector<double> rz, dz;
+  for (const auto &s : ref.storeys)
+    rz.push_back(floor_z(s, ref_frames.at(s.idx)));
+  for (const auto &s : det.storeys)
+    dz.push_back(floor_z(s, det_frames.at(s.idx)));
+  std::vector<Candidate> cands;
+  for (std::size_t i = 0; i < rz.size(); ++i)
+    for (std::size_t j = 0; j < dz.size(); ++j) {
+      const double d = std::abs(rz[i] - dz[j]);
+      if (d <= opt.storey_match_dist_m)
+        cands.push_back({d, i, j});
+    }
+  for (const auto &m :
+       greedy_match(std::move(cands), rz.size(), dz.size(), false))
+    out.det_to_ref.emplace(det.storeys[m.det].idx, ref.storeys[m.ref].idx);
+  for (std::size_t j = 0; j < dz.size(); ++j)
+    if (!out.det_to_ref.count(det.storeys[j].idx))
+      reusex::debug("solid metrics: detected storey {} (floor at world z "
+                    "{:.3f} m) has no reference storey within {:.2f} m",
+                    det.storeys[j].idx, dz[j], opt.storey_match_dist_m);
+  if (out.det_to_ref.empty()) {
+    std::string ref_list, det_list;
+    for (double z : rz)
+      ref_list += fmt::format(" {:.3f}", z);
+    for (double z : dz)
+      det_list += fmt::format(" {:.3f}", z);
+    reusex::warn("solid metrics: no detected storey lies within {:.2f} m of a "
+                 "reference storey (floors at world z: reference{}, "
+                 "detected{}); nothing detected is scored. Check both "
+                 "models' level_transform",
+                 opt.storey_match_dist_m, ref_list, det_list);
+  }
+  return out;
+}
+
+/// @p det re-expressed for comparison with @p ref: every wall, space and
+/// opening moved to the reference storey it corresponds to (StoreyMap) and
+/// into that storey's level frame, through world (reference level frame
+/// <- world <- detected level frame). Elements on a detected storey with no
+/// corresponding reference storey, or one @p covered (when non-empty) does
+/// not contain, are left out and counted in @p dropped.
+core::SolidModel to_reference_frames(const core::SolidModel &det,
+                                     const core::SolidModel &ref,
                                      const std::set<int> &covered,
+                                     const SolidMetricsOptions &opt,
                                      std::size_t &dropped) {
+  const auto det_frames = level_frames(det, "detected");
+  const auto ref_frames = level_frames(ref, "reference");
+  const StoreyMap storey_of =
+      match_storeys(det, ref, det_frames, ref_frames, opt);
+
+  // The reference storey a detected storey is scored on (nullopt = left
+  // out), and the detected level -> reference level transform between them.
+  auto target = [&](int det_idx) -> std::optional<int> {
+    const auto r = storey_of(det_idx);
+    if (!r || (!covered.empty() && !covered.count(*r)))
+      return std::nullopt;
+    return r;
+  };
+  auto det_to_ref = [&](int det_idx, int ref_idx) {
+    return Eigen::Affine3d(
+        frame_of(ref_frames, ref_idx).world_to_level *
+        frame_of(det_frames, det_idx).world_to_level.inverse(Eigen::Affine));
+  };
+
   core::SolidModel out = det;
   out.walls.clear();
   out.spaces.clear();
   out.openings.clear();
-  std::unordered_map<std::string, int> host_storey;
-  for (const auto &w : det.walls) {
-    host_storey.emplace(w.guid, w.storey);
-    if (covered.count(w.storey))
-      out.walls.push_back(w);
-    else
+
+  // Walls: axis endpoints taken at mid-height, so a small tilt between the
+  // two frames' verticals moves them by the least.
+  // guid -> (index in det.walls, index in out.walls; nullopt = left out)
+  std::unordered_map<std::string,
+                     std::pair<std::size_t, std::optional<std::size_t>>>
+      host;
+  for (std::size_t i = 0; i < det.walls.size(); ++i) {
+    const auto &w = det.walls[i];
+    const auto r = target(w.storey);
+    if (!r) {
+      host.emplace(w.guid, std::make_pair(i, std::nullopt));
       ++dropped;
+      continue;
+    }
+    const Eigen::Affine3d T = det_to_ref(w.storey, *r);
+    const double zm = w.z_base + 0.5 * std::max(w.height, 0.0);
+    const Eigen::Vector3d a = T * Eigen::Vector3d(w.x0, w.y0, zm);
+    const Eigen::Vector3d b = T * Eigen::Vector3d(w.x1, w.y1, zm);
+    core::WallRecord m = w;
+    m.storey = *r;
+    m.x0 = a.x();
+    m.y0 = a.y();
+    m.x1 = b.x();
+    m.y1 = b.y();
+    m.z_base = (T * Eigen::Vector3d(w.x0, w.y0, w.z_base)).z();
+    host.emplace(w.guid, std::make_pair(i, out.walls.size()));
+    out.walls.push_back(std::move(m));
   }
+
+  // Spaces: polygons taken at the space's floor height.
   for (const auto &sp : det.spaces) {
-    if (covered.count(sp.storey))
-      out.spaces.push_back(sp);
-    else
+    const auto r = target(sp.storey);
+    if (!r) {
       ++dropped;
+      continue;
+    }
+    const Eigen::Affine3d T = det_to_ref(sp.storey, *r);
+    core::SpaceRecord m = sp;
+    m.storey = *r;
+    auto map_ring = [&](std::vector<core::PlanPoint> &ring) {
+      for (auto &q : ring) {
+        const Eigen::Vector3d p = T * Eigen::Vector3d(q[0], q[1], sp.z_floor);
+        q = {p.x(), p.y()};
+      }
+    };
+    map_ring(m.polygon.outer);
+    for (auto &h : m.polygon.holes)
+      map_ring(h);
+    out.spaces.push_back(std::move(m));
   }
+
+  // Openings: each end placed in 3D on its host wall (detected frame), at the
+  // opening's mid-height, then measured along the re-expressed host axis;
+  // sill and head are the reference-frame heights above the opening's centre.
   for (const auto &o : det.openings) {
-    const auto it = host_storey.find(o.wall);
-    // An opening with an unknown host is kept: place_openings reports it.
-    if (it == host_storey.end() || covered.count(it->second))
-      out.openings.push_back(o);
-    else
+    const auto it = host.find(o.wall);
+    if (it == host.end()) {
+      out.openings.push_back(o); // place_openings reports the unknown host
+      continue;
+    }
+    if (!it->second.second) {
       ++dropped;
+      continue;
+    }
+    const core::WallRecord &dw = det.walls[it->second.first];
+    const core::WallRecord &mw = out.walls[*it->second.second];
+    const Eigen::Affine3d T = det_to_ref(dw.storey, mw.storey);
+    const Axis da = axis_of(dw);
+    const Axis ma = axis_of(mw);
+    const double zm = 0.5 * (o.z_sill + o.z_head);
+    auto at = [&](double s, double z) {
+      return Eigen::Vector3d(
+          T * Eigen::Vector3d(da.ax + da.dx * s, da.ay + da.dy * s, z));
+    };
+    const Eigen::Vector3d p0 = at(o.s_start, zm), p1 = at(o.s_end, zm);
+    const double sc = 0.5 * (o.s_start + o.s_end);
+    core::OpeningRecord m = o;
+    m.s_start = along(ma, p0.x(), p0.y());
+    m.s_end = along(ma, p1.x(), p1.y());
+    m.z_sill = at(sc, o.z_sill).z();
+    m.z_head = at(sc, o.z_head).z();
+    out.openings.push_back(std::move(m));
   }
   return out;
 }
@@ -467,10 +661,8 @@ SolidModelReport compare_solid_models(const core::SolidModel &detected_in,
                                       const SolidMetricsOptions &opt) {
   SolidModelReport r;
   const std::set<int> covered = covered_storeys(reference);
-  const core::SolidModel detected =
-      covered.empty() ? detected_in
-                      : restrict_to_storeys(detected_in, covered,
-                                            r.detected_outside_reference);
+  const core::SolidModel detected = to_reference_frames(
+      detected_in, reference, covered, opt, r.detected_outside_reference);
   if (r.detected_outside_reference > 0)
     reusex::debug("solid metrics: {} detected elements stand on storeys the "
                   "reference does not cover and are not scored",

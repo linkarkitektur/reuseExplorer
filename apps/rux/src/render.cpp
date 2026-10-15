@@ -6,6 +6,7 @@
 #include "exit_status.hpp"
 
 #include <reusex/core/ProjectDB.hpp>
+#include <reusex/io/solid_model_json.hpp>
 #include <reusex/visualize/render_view.hpp>
 
 #include <fmt/format.h>
@@ -199,6 +200,9 @@ EXAMPLES:
   # Reproduce the viewpoint of a captured frame
   rux -p scan.rux render -o frame.png --view frame:1995
 
+  # Check an authored solid-model plan against the cut cloud
+  rux -p scan.rux render -o check.png --view plan:1.2 --plan ref.plan.json
+
 VIEWS:
   top          orthographic view looking down -Z (default). In a closed
                interior this shows the CEILING -- use `plan` for a floor plan.
@@ -219,6 +223,10 @@ NOTES:
   - --cut-height applies the same cut to any view (e.g. a cut axonometric).
   - Layers draw back to front in the order given.
   - A missing layer is an error naming the stage that produces it.
+  - --plan draws a solid-model plan JSON (docs/design/solid-model-json.md)
+    over the layers: walls as footprints with their axis, spaces as outlines,
+    openings as bars with end ticks; labelled by space name and wall guid.
+    In top/plan views it lies on top of everything and is not cut.
 )");
 
   sub->add_option("-o,--output", opt->output, "Output image path")
@@ -246,6 +254,12 @@ NOTES:
                               "above the floor; applies to any view "
                               "(default with --view plan: {:g} m)",
                               viz::kDefaultCutHeightM));
+  sub->add_option("--plan", opt->plan,
+                  "Solid-model plan JSON to draw over the layers (walls, "
+                  "spaces, openings)")
+      ->check(CLI::ExistingFile);
+  sub->add_flag("--no-plan-labels", opt->no_plan_labels,
+                "Do not label the --plan overlay's spaces and walls");
 
   sub->callback([opt, global_opt]() {
     spdlog::trace("Running render subcommand");
@@ -263,6 +277,16 @@ int run_subcommand_render(SubcommandRenderOptions const &opt,
     render_opts.mesh_name = opt.mesh_name;
     render_opts.point_size = opt.point_size;
     render_opts.orbit_elevation_deg = opt.orbit_elevation_deg;
+    render_opts.plan_labels = !opt.no_plan_labels;
+    if (!opt.plan.empty()) {
+      try {
+        render_opts.plan = reusex::io::solid_model_from_file(opt.plan);
+      } catch (const std::invalid_argument &e) {
+        spdlog::error("Render failed: invalid plan '{}': {}", opt.plan.string(),
+                      e.what());
+        return RuxError::INVALID_ARGUMENT;
+      }
+    }
 
     reusex::ProjectDB db(global_opt.project_db, /* readOnly */ true);
 

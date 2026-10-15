@@ -201,6 +201,10 @@ const std::vector<ParameterDescriptor> &rooms_parameters() {
         num("propagate_max_radius", "Propagation radius [m]",
             "Points with no room label inside this radius stay unlabeled.",
             d.propagate_max_radius, 0.0, 10.0),
+        num("min_room_area", "Minimum room area [m^2]",
+            "Plane surface a room's sample points must cover; smaller "
+            "communities join the room they see most. 0 keeps all.",
+            d.min_room_area, 0.0, 1000.0),
         optional_of(ParameterType::string, "filter", "Point filter",
                     "Filter expression restricting which points are "
                     "partitioned. Empty means the whole cloud."),
