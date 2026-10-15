@@ -14,7 +14,6 @@
 #include <global-params.hpp>
 
 #include <CLI/CLI.hpp>
-#include <spdlog/spdlog.h>
 
 #include <memory>
 #include <string>
@@ -23,15 +22,6 @@
 namespace {
 
 bool parse_mesh(const std::vector<std::string> &args) {
-  // The subcommand logs through spdlog's default logger, which an earlier
-  // test in the same binary may have shut down (spdlog::shutdown() leaves it
-  // null). Run against a sink-less logger and restore afterwards, mirroring
-  // test_optimize_moved_flags.cpp.
-  const auto previous_logger = spdlog::default_logger();
-  if (!previous_logger)
-    spdlog::set_default_logger(
-        std::make_shared<spdlog::logger>("test_create_mesh_flags"));
-
   CLI::App app{"rux"};
   auto global = std::make_shared<RuxOptions>();
   app.add_option("-p,--project", global->project_db);
@@ -50,8 +40,6 @@ bool parse_mesh(const std::vector<std::string> &args) {
   }
 
   rux::set_stage_params_sink({});
-  if (!previous_logger)
-    spdlog::set_default_logger(nullptr);
   return refused;
 }
 

@@ -22,11 +22,15 @@
 
 #include <pcl/common/io.h> // pcl::copyPointCloud
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <opencv2/opencv.hpp>
 #include <stdexcept>
+#include <utility>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 #include <Eigen/Core>
 
@@ -92,8 +96,31 @@ inline rtabmap::CameraModel createCameraModelFromIntrinsics(
 
 } // namespace
 
-auto project(const ProjectDB &db, CloudConstPtr cloud) -> CloudLPtr {
+std::string project_labels_parameters(const ProjectLabelsOptions &options) {
+  // Floats go through fmt's shortest round-trip for their own type, so 0.15f
+  // is logged as 0.15, not 0.15000000596046448 (as create/stage_bridge.hpp).
+  nlohmann::json j = nlohmann::json::object();
+  j["max_depth_m"] =
+      nlohmann::json::parse(fmt::format("{}", options.max_depth_m));
+  j["depth_tolerance_m"] =
+      nlohmann::json::parse(fmt::format("{}", options.depth_tolerance_m));
+  j[reusex::core::kLabelEncodingKey] = reusex::core::kLabelEncodingApiPlusOne;
+  return j.dump();
+}
+
+auto project(const ProjectDB &db, CloudConstPtr cloud,
+             const ProjectLabelsOptions &options) -> CloudLPtr {
   reusex::trace("calling project");
+
+  if (!std::isfinite(options.max_depth_m) || options.max_depth_m <= 0.0f)
+    throw std::invalid_argument(fmt::format(
+        "project (projecting_labels): max_depth_m must be > 0, got {}",
+        options.max_depth_m));
+  if (!std::isfinite(options.depth_tolerance_m) ||
+      options.depth_tolerance_m < 0.0f)
+    throw std::invalid_argument(fmt::format(
+        "project (projecting_labels): depth_tolerance_m must be >= 0, got {}",
+        options.depth_tolerance_m));
 
   // Validate the input before anything downstream can see it (STANDARDS §5).
   // Without this, an empty cloud reaches
@@ -116,6 +143,13 @@ auto project(const ProjectDB &db, CloudConstPtr cloud) -> CloudLPtr {
   labels->width = cloud->width;
   labels->height = cloud->height;
   labels->is_dense = cloud->is_dense;
+
+  // Per-point (point label, frame count) votes. Within one frame each point
+  // is visited by exactly one thread, so the per-point vectors need no lock;
+  // the final majority_label() is order-independent, so neither frame order
+  // nor thread count changes the result (STANDARDS §6).
+  std::vector<std::vector<std::pair<uint32_t, int>>> votes(
+      cloud->points.size());
 
   reusex::info("Loading sensor frames from ProjectDB ...");
   reusex::core::stopwatch timer;
@@ -260,20 +294,16 @@ auto project(const ProjectDB &db, CloudConstPtr cloud) -> CloudLPtr {
         auto cy = cm.cy();
         auto h = cm.imageHeight();
         auto w = cm.imageWidth();
-#pragma omp parallel for shared(labels, cloud, indices, labeledImage, zbuffer) \
-    firstprivate(t_cam, fx, fy, cx, cy, w, h)
+        const float max_depth = options.max_depth_m;
+        const float tolerance = options.depth_tolerance_m;
+#pragma omp parallel for shared(votes, cloud, indices, labeledImage, zbuffer)  \
+    firstprivate(t_cam, fx, fy, cx, cy, w, h, max_depth, tolerance)
         for (int j = 0; j < static_cast<int>(indices.size()); ++j) {
           auto idx = indices[j];
 
           auto pt_cam = rtabmap::util3d::transformPoint(cloud_lf->points[idx],
                                                         t_cam.inverse());
-          if (pt_cam.z <= 0.0f ||
-              pt_cam.z >
-                  7.0f) // TODO: Make maximum depth threshold configurable
-            // category=Vision estimate=30m
-            // Hardcoded 7.0m cutoff may not suit all sensors (LiDAR has longer
-            // range). Should add as function parameter or read from config
-            // file. Typical values: 3-5m for depth cameras, 10-30m for LiDAR
+          if (pt_cam.z <= 0.0f || pt_cam.z > max_depth)
             continue;
 
           auto inv_z = 1.0 / static_cast<double>(pt_cam.z);
@@ -288,17 +318,36 @@ auto project(const ProjectDB &db, CloudConstPtr cloud) -> CloudLPtr {
 
           const auto zb = zbuffer.at<float>(py, px);
           const auto z = static_cast<float>(pt_cam.z);
-          if (!std::isfinite(zb) || std::abs(z - zb) > 0.15f)
+          if (!std::isfinite(zb) || std::abs(z - zb) > tolerance)
             continue;
 
-          // labeledImage is API CV_32S (-1 = bg) -> point label (0 = unlabeled)
-          labels->points[idx].label =
+          // labeledImage is API CV_32S (-1 = bg) -> point label (0 =
+          // unlabeled). Background casts no vote: it never overwrites a class.
+          const uint32_t label =
               reusex::core::api_to_point_label(labeledImage.at<int>(py, px));
+          if (label == reusex::core::kUnlabeled)
+            continue;
+          auto &point_votes = votes[idx];
+          auto it = std::find_if(
+              point_votes.begin(), point_votes.end(),
+              [label](const auto &vote) { return vote.first == label; });
+          if (it != point_votes.end())
+            ++it->second;
+          else
+            point_votes.emplace_back(label, 1);
         }
       } // end assign labels
 
       ++(*observer);
     }
+  }
+
+  size_t labelledPoints = 0;
+#pragma omp parallel for reduction(+ : labelledPoints)
+  for (int i = 0; i < static_cast<int>(votes.size()); ++i) {
+    labels->points[i].label = reusex::core::majority_label(votes[i]);
+    if (labels->points[i].label != reusex::core::kUnlabeled)
+      ++labelledPoints;
   }
 
   // Degenerate output is not an error — annotation may simply not have run —
@@ -319,9 +368,17 @@ auto project(const ProjectDB &db, CloudConstPtr cloud) -> CloudLPtr {
                  framesSkippedNoPose, cloud->size());
   }
 
-  reusex::info("Projected labels from {}/{} sensor frames onto {} points in "
-               "{:.3f}s",
-               framesWithLabels, frameIds.size(), cloud->size(), timer);
+  if (framesWithLabels > 0 && labelledPoints == 0)
+    reusex::warn("{} sensor frames contributed labels but none of the {} "
+                 "points received a class vote (max depth {} m, depth "
+                 "tolerance {} m) — all points stay unlabeled",
+                 framesWithLabels, cloud->size(), options.max_depth_m,
+                 options.depth_tolerance_m);
+
+  reusex::info("Projected labels from {}/{} sensor frames onto {}/{} points "
+               "by majority vote in {:.3f}s",
+               framesWithLabels, frameIds.size(), labelledPoints, cloud->size(),
+               timer);
 
   return labels;
 }
