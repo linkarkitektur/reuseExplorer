@@ -5,9 +5,14 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 # Solid-model JSON and the solid-model benchmark
 
-One JSON document describes a typed building model: storeys, walls with a
-measured thickness, spaces with polygons, openings in walls. The same format
-holds both sides of the benchmark:
+One document describes a typed building model: storeys, walls with a
+measured thickness, spaces with polygons, openings in walls. It is written
+either as JSON or as YAML (picked by file extension: `.yaml` / `.yml` is
+YAML, anything else JSON) -- the two are the same document, lossless with
+each other and with the `core::SolidModel` records (reusex-yf4.1); YAML is
+the human-friendly front end for hand-authoring a reference, JSON the
+machine-written form the pipeline itself produces. The same document, in
+either form, holds both sides of the benchmark:
 
 - a **reference plan**, authored by a person or an agent, or converted from
   another tool;
@@ -15,18 +20,20 @@ holds both sides of the benchmark:
   reads it from the project's solid-model tables; a kind whose table does not
   exist is not provided).
 
-`rux analyze solid --reference plan.json` compares the two, and
-`scripts/bench-solid.sh` runs that over a manifest of fixtures.
+`rux analyze solid --reference plan.json` (or `plan.yaml`) compares the two,
+and `scripts/bench-solid.sh` runs that over a manifest of fixtures.
 
 | What | Where |
 |---|---|
 | Records (PODs) | `libs/reusex/include/core/solid_model.hpp` (`core::SolidModel`, `WallRecord`, ...) |
-| Reader / writer | `libs/reusex/include/io/solid_model_json.hpp` (`solid_model_from_json`, `solid_model_to_json`, `load_solid_model`) |
-| JSON Schema | [`solid-model-reference.schema.json`](solid-model-reference.schema.json) |
+| JSON reader / writer | `libs/reusex/include/io/solid_model_json.hpp` (`solid_model_from_json`, `solid_model_to_json`, `load_solid_model`) |
+| YAML reader / writer | same header (`solid_model_from_yaml`, `solid_model_to_yaml`); converts YAML <-> `nlohmann::json`, then shares the JSON reader's one validator |
+| Extension dispatch | `solid_model_from_file` / `solid_model_to_file`: `.yaml`/`.yml` (case-insensitive) is YAML, everything else JSON |
+| JSON Schema | [`solid-model-reference.schema.json`](solid-model-reference.schema.json) (describes the logical document; a YAML file follows the same schema read through the YAML front end) |
 | Metrics | `libs/reusex/include/reconstruction/solid_metrics.hpp` (`compare_solid_models`, `fit_report`) |
-| CLI | `rux analyze solid` (`apps/rux/src/analyze/solid.cpp`) |
+| CLI | `rux analyze solid` (`apps/rux/src/analyze/solid.cpp`), `rux render --plan`, `rux edit plan --import`/`--export` -- every one of these takes either extension |
 | Bench | `scripts/bench-solid.sh`, `scripts/bench-solid.manifest`, `scripts/bench-solid-compare.py` |
-| Fixtures | `tests/fixtures/solid_model/*.json`: hand-written synthetic plans, and references authored on our own scans (`newoffice.plan.json`, a DRAFT) |
+| Fixtures | `tests/fixtures/solid_model/*.json`: hand-written synthetic plans, and references authored on our own scans (`newoffice.plan.json`, a DRAFT). JSON only -- the committed fixtures are not converted to YAML |
 | Authoring | [`docs/guides/solid-model-reference-authoring.md`](../guides/solid-model-reference-authoring.md) (`rux edit plan`, `rux render --plan`) |
 
 ## No ground truth
@@ -64,6 +71,59 @@ synthetic plans and references authored on our own scans, JSON only).
 ```
 
 A complete example is `tests/fixtures/solid_model/two_rooms.plan.json`.
+
+The same document, as YAML (comments and all -- `rux edit plan --import` and
+`rux analyze solid --reference` read this unchanged):
+
+```yaml
+model_version: 1
+units: m
+name: two_rooms (synthetic reference)
+storeys:
+  - idx: 0
+    name: Ground
+    z_floor: 0.0
+    z_ceiling: 2.6
+walls:
+  - guid: w1
+    storey: 0
+    axis: [[0, 0], [8, 0]]
+    height: 2.6
+    thickness: 0.3
+    is_external: true   # a real boolean, not the string "true"
+spaces:
+  - guid: s1
+    storey: 0
+    name: Kitchen
+    polygon:
+      outer: [[0.15, 0.15], [3.95, 0.15], [3.95, 4.85], [0.15, 4.85]]
+openings:
+  - guid: o1
+    wall: w1
+    kind: door
+    s_start: 1.0
+    s_end: 2.0
+    z_sill: 0.0
+    z_head: 2.1
+```
+
+Reading converts the parsed YAML tree to a `nlohmann::json` value first, then
+hands it to the exact same strict reader the JSON form uses, so an invalid
+element throws the identical `std::invalid_argument` either way (e.g.
+`walls[0] (guid 'w1'): 'thickness' must be a number`, whether the bad value
+came from `"thick"` in JSON or `"thick"` in YAML). A plain (unquoted) scalar
+is typed the way this reader expects: `null`/`Null`/`NULL`/`~`/empty is null,
+exactly `true`/`false` is a boolean, a value that parses in full as a decimal
+integer or floating-point number is that number, and everything else --
+including YAML's own `yes`/`on`/`True` -- is a string. Quote a value
+explicitly (`"w1"`, `"123"`, `"true"`) to always read it as a string, whatever
+it looks like; `solid_model_to_yaml` does this itself for any string field
+that would otherwise come back as something else (a guid that happens to
+read as a number, say). Comments are allowed and ignored on read; there is
+nowhere in `core::SolidModel` to keep them, so a document written back out
+(`rux edit plan --export`, `rux edit plan --import ... --dry-run --export`)
+loses them -- the same way re-exporting is already lossy for JSON-only
+presentation details like key order in a hand-edited file.
 
 ### Conventions
 

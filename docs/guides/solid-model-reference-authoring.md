@@ -7,12 +7,16 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 The solid-model benchmark (`rux analyze solid`, `scripts/bench-solid.sh`)
 scores a detected building model against a **reference plan**: a solid-model
-JSON document (format: [`docs/design/solid-model-json.md`](../design/solid-model-json.md))
+document, JSON or YAML (format: [`docs/design/solid-model-json.md`](../design/solid-model-json.md))
 that a person or an agent authored on one of our own scans. Nothing we have is
 trusted ground truth, so a reference is only as good as the visual check it
 went through. This guide is that check: author walls, spaces and openings
 by measuring the scan, draw them over a plan cut of the cloud, and correct
-until the drawing and the scan agree.
+until the drawing and the scan agree. The examples below use `plan.json`
+throughout; `rux edit plan` and `rux render --plan` take `plan.yaml` exactly
+the same way (picked by extension) -- YAML's block style and comments make
+it the easier form to hand-edit while iterating; only the committed fixture
+(step 8) is JSON.
 
 The result is a benchmark target, never ground truth. Mark a reference that
 has not been reviewed by the maintainer as a draft (see
@@ -74,8 +78,20 @@ measure the cloud  ->  write / edit plan.json  ->  rux edit plan --dry-run
    - Windows sit in niches behind the inner face. Plot an elevation of the
      points just behind a facade (colour by depth): frames, sills and heads
      are easy to read there, and the niche extents give `s_start` / `s_end`.
+   - Name rooms from the sensor images, not from the plan shape. The pose
+     of each stored frame (`sensor_frames.transform`, row-major, column 0 is
+     the viewing direction) tells which room it was taken in; a contact
+     sheet of the colour images per room shows the WC, the copier, the
+     kitchen run. `rux render --view frame:<id>` gives the same viewpoint
+     over the cloud. Look in a cut near the ceiling (2.2 to 2.7 m) too:
+     furniture is gone there, so wall faces hidden behind cabinets or a
+     vanity show up. Kitchen base cabinets in a low cut look like a wall.
+     The maintainer's own description of the room layout, when there is
+     one, decides the names; say in the plan where the cloud contradicts it.
+   - Glass partitions scan as their frames only: look for full-height
+     mullion posts on a line and put the wall there, with `thickness: -1`.
 
-4. **Write the JSON.** Coordinates are in the storey's level frame:
+4. **Write the plan** (JSON or YAML). Coordinates are in the storey's level frame:
    z up, the floor at z = 0. The simplest frame for a reference is the
    project's world x / y plus a `level_transform` that only shifts z (world
    floor at `z_f` -> `[1,0,0,0, 0,1,0,0, 0,0,1,-z_f, 0,0,0,1]`), so the plan

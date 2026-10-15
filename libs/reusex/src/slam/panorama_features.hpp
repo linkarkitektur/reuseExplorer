@@ -223,6 +223,31 @@ int shuffled_best_slice_inliers(const std::vector<SlicePnPInput> &slices,
                                 const SlicePnPOptions &opt, int trials,
                                 unsigned seed);
 
+/// What the shuffled null reaches on one panorama (reusex-bx2.4, -bx2.8).
+struct NullFloor {
+  /// max PnP inliers of any slice in any trial (shuffled_best_slice_inliers)
+  int best_slice_inliers = 0;
+  /// max over every null slice pose of the pool it gates (the whole
+  /// permuted sphere, as bearings), before and after refine_bearing_pose;
+  /// -1 when not measured
+  int pooled_initial = -1;
+  int pooled_final = -1;
+};
+
+/// shuffled_best_slice_inliers(), plus the pooled support of the null poses
+/// when @p pooled is non-null: in each trial, every slice pose PnP found on
+/// the permuted correspondences is applied to the union of that trial's
+/// permuted slices (slice pixels turned into panorama bearings) and refined
+/// with @p pooled, exactly as the real best-slice pose is applied to the real
+/// pool. The best-slice permutations are drawn in the same order as
+/// shuffled_best_slice_inliers(), so `best_slice_inliers` is identical;
+/// slices with too few correspondences to PnP are permuted with a separate
+/// generator. Deterministic for a given @p seed (STANDARDS §6).
+NullFloor shuffled_null_floor(const std::vector<SlicePnPInput> &slices,
+                              const SlicePnPOptions &opt, int trials,
+                              unsigned seed,
+                              const BearingRefineOptions *pooled);
+
 /// The best-slice PnP inlier count a panorama needs to beat the noise floor:
 /// strictly more than @p margin x @p null_best, and never fewer than
 /// @p min_correspondences.
@@ -322,5 +347,37 @@ std::vector<SphereMatch> match_sphere_to_frame(const cv::Mat &frame_desc,
 /// count several times in every PnP inlier tally.
 std::vector<int> one_per_sphere_keypoint(const std::vector<int> &sphere_kp,
                                          const std::vector<float> &hamming);
+
+// --- candidate frame selection (reusex-bx2.6) ------------------------------
+
+/// Image sharpness: the variance of the Laplacian of the grey image, taken at
+/// a fixed working width (`kSharpnessWidth` px, area-resampled) so that it
+/// ranks frames by blur rather than by resolution. 0 for a flat image.
+/// Deterministic. Accepts 1, 3 or 4 channels.
+double image_sharpness(const cv::Mat &image);
+
+/// One frame that could be matched against a panorama.
+struct FrameChoice {
+  int node_id = -1;
+  double dt_s = 0.0;      ///< timestamp minus the seed frame's
+  double sharpness = 0.0; ///< image_sharpness()
+  Eigen::Vector3d view_dir = Eigen::Vector3d::UnitZ(); ///< optical axis, world
+};
+
+struct FrameSelectOptions {
+  int max_frames = 8;
+  /// drop frames less sharp than this fraction of the sharpest one
+  double min_sharpness_ratio = 0.5;
+  /// a frame opens a new viewing direction when its optical axis is at
+  /// least this far (deg) from every frame already chosen
+  double view_spread_deg = 30.0;
+};
+
+/// Choose up to `max_frames` of @p frames (indices, in pick order): drop the
+/// blurred ones, then repeatedly take the sharpest frame that opens a new
+/// viewing direction; when none does, fill up with the sharpest of the rest.
+/// Ties go to the smaller |dt|, then the smaller node id.
+std::vector<int> select_candidate_frames(const std::vector<FrameChoice> &frames,
+                                         const FrameSelectOptions &opt);
 
 } // namespace reusex::geometry::pano_detail

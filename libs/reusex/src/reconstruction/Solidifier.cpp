@@ -28,7 +28,6 @@ using HighsSolver = CGAL::HiGHS_mixed_integer_program_traits<double>;
 #include <set>
 #include <string>
 #include <type_traits>
-#include <typeinfo>
 #include <unordered_map>
 #include <vector>
 
@@ -112,6 +111,58 @@ SolverChoice parse_solver_choice(const std::string &s) {
     return SolverChoice::highs;
   throw std::runtime_error(fmt::format(
       "invalid --solver '{}': expected one of auto, cuopt, highs", s));
+}
+
+BackendDecision select_mip_backend(SolverChoice solver, bool primary_is_cuopt,
+                                   size_t estimated_variables,
+                                   size_t cuopt_max_variables) {
+  BackendDecision d;
+  switch (solver) {
+  case SolverChoice::highs:
+    d.use_highs = true;
+    return d;
+  case SolverChoice::cuopt:
+    // Explicit choice: always respected. If this build has no cuOpt
+    // compiled in as the primary backend there is nothing to force onto —
+    // HiGHS runs because it's the compiled primary, not because of a size
+    // guard, so size_guard_tripped stays false either way.
+    d.use_highs = !primary_is_cuopt;
+    return d;
+  case SolverChoice::automatic:
+  default:
+    if (!primary_is_cuopt) {
+      d.use_highs = true; // the compiled-in primary is already HiGHS
+      return d;
+    }
+    if (estimated_variables > cuopt_max_variables) {
+      d.use_highs = true;
+      d.size_guard_tripped = true;
+      return d;
+    }
+    d.use_highs = false;
+    return d;
+  }
+}
+
+std::string describe_mip_solver(SolverChoice solver, bool build_has_cuopt,
+                                size_t cuopt_max_variables) {
+  switch (solver) {
+  case SolverChoice::highs:
+    return "HiGHS (forced by --solver highs)";
+  case SolverChoice::cuopt:
+    return build_has_cuopt
+               ? "cuOpt (forced by --solver cuopt)"
+               : "HiGHS (--solver cuopt requested, but this build has no "
+                 "cuOpt; using the compiled primary backend)";
+  case SolverChoice::automatic:
+  default:
+    if (!build_has_cuopt)
+      return "HiGHS (auto; this build has no cuOpt)";
+    return fmt::format(
+        "cuOpt (auto; HiGHS fallback on a solver error, or pre-emptively "
+        "for a (sub)problem over {} MIP variables, reusex-81y)",
+        cuopt_max_variables);
+  }
 }
 
 namespace {
@@ -313,25 +364,69 @@ SubResult solve_subset(const CellComplex &cc, const SolidifierOptions &options,
 /// Solve one subproblem honoring the SolverChoice + fallback policy: run the
 /// requested primary backend, and if it returns a hard error/numerical-error
 /// (e.g. cuOpt GPU OOM), retry with HiGHS on the CPU before giving up
-/// (issue #226). @p used_highs_fallback reports whether the retry fired.
+/// (issue #226). Before that, `automatic` consults the size guard
+/// (reusex-81y): a (sub)problem whose *exact* variable count (@p
+/// subset_cells times n_rooms+1+n_walls) exceeds
+/// `options.cuopt_max_variables` runs on HiGHS pre-emptively instead of
+/// risking cuOpt's known SIGSEGV on huge sections. An explicit `--solver
+/// cuopt` past the guard is still respected, just logged loudly.
+/// @p used_highs_fallback reports whether the error-triggered retry fired;
+/// @p size_guard_tripped reports whether the pre-emptive size guard fired.
 SubResult solve_subset_with_fallback(const CellComplex &cc,
                                      const SolidifierOptions &options,
                                      const std::function<bool(Cd)> &in_subset,
-                                     bool &used_highs_fallback) {
+                                     size_t subset_cells,
+                                     bool &used_highs_fallback,
+                                     bool &size_guard_tripped) {
   used_highs_fallback = false;
+  size_guard_tripped = false;
 
   if (options.solver == SolverChoice::highs)
     return solve_subset<HighsSolver>(cc, options, in_subset);
 
-  // auto or cuopt: try the compiled-in primary backend first.
+  constexpr bool primary_is_cuopt = !std::is_same_v<PrimarySolver, HighsSolver>;
+  const size_t estimated_variables =
+      subset_cells * (cc.n_rooms + 1 + cc.n_walls);
+
+  if (primary_is_cuopt && estimated_variables > options.cuopt_max_variables) {
+    if (options.solver == SolverChoice::cuopt) {
+      reusex::warn(
+          "--solver cuopt forced on a {}-cell (sub)problem estimated at {} "
+          "MIP variables (over the {}-variable cuOpt size guard, "
+          "reusex-81y: cuOpt SIGSEGVs inside "
+          "branch_and_bound_t::set_final_solution on sections around 3.3M "
+          "variables) — respecting the explicit choice, but if this crashes, "
+          "retry with --solver highs, 'create rooms --min-room-area', or "
+          "stronger structural filtering",
+          subset_cells, estimated_variables, options.cuopt_max_variables);
+    } else {
+      reusex::warn(
+          "(Sub)problem has {} cells, estimated {} MIP variables — over the "
+          "{}-variable cuOpt size guard (reusex-81y: cuOpt SIGSEGVs inside "
+          "branch_and_bound_t::set_final_solution on sections around 3.3M "
+          "variables); using HiGHS (CPU) for this (sub)problem instead of "
+          "cuOpt. Consider 'create rooms --min-room-area' or stronger "
+          "structural filtering to shrink future sections",
+          subset_cells, estimated_variables, options.cuopt_max_variables);
+    }
+  }
+
+  const BackendDecision decision =
+      select_mip_backend(options.solver, primary_is_cuopt, estimated_variables,
+                         options.cuopt_max_variables);
+  size_guard_tripped = decision.size_guard_tripped;
+
+  if (decision.use_highs)
+    return solve_subset<HighsSolver>(cc, options, in_subset);
+
+  // auto or cuopt, under budget (or this build's primary is already cuOpt
+  // and within size): try the compiled-in primary backend first.
   SubResult res = solve_subset<PrimarySolver>(cc, options, in_subset);
 
-  const bool primary_is_highs = std::is_same_v<PrimarySolver, HighsSolver>;
   const bool hard_error = res.status == SolveStatus::error ||
                           res.status == SolveStatus::numerical_error;
   // Only auto retries on the CPU; an explicit --solver cuopt fails loudly.
-  if (!primary_is_highs && hard_error &&
-      options.solver == SolverChoice::automatic) {
+  if (hard_error && options.solver == SolverChoice::automatic) {
     reusex::warn("Primary MIP backend returned '{}'; retrying this problem "
                  "with HiGHS (CPU) as fallback (issue #226)",
                  to_string(res.status));
@@ -445,13 +540,15 @@ Solidifier::solve() {
   const auto n_cells =
       static_cast<size_t>(std::distance(cc.cells_begin(), cc.cells_end()));
 
-  reusex::info("Using MIP solver: {} (primary '{}', fallback HiGHS)",
+  constexpr bool build_has_cuopt =
 #ifdef USE_CUOPT
-               "cuOpt",
+      true;
 #else
-               "HiGHS",
+      false;
 #endif
-               typeid(PrimarySolver).name());
+  reusex::info("Using MIP solver: {}",
+               describe_mip_solver(opt.solver, build_has_cuopt,
+                                   opt.cuopt_max_variables));
 
   // Decide monolithic vs sectioned (issue #226): only section when enabled,
   // there is more than one storey, and the problem is large enough to warrant
@@ -470,8 +567,10 @@ Solidifier::solve() {
   if (!do_sectioned) {
     // Monolithic: single subproblem over all cells.
     bool used_fallback = false;
+    bool size_guard_tripped = false;
     auto all = [](Cd) { return true; };
-    SubResult res = solve_subset_with_fallback(cc, opt, all, used_fallback);
+    SubResult res = solve_subset_with_fallback(
+        cc, opt, all, n_cells, used_fallback, size_guard_tripped);
     pimpl_->_last_status = res.status;
     if (!res.solved) {
       reusex::error("MIP solver failed to find a solution [status={}, "
@@ -480,9 +579,9 @@ Solidifier::solve() {
                     to_string(res.status), n_cells);
       return {};
     }
-    reusex::info("Solved monolithic MIP in {:>.3f} seconds (status={}{})", sw,
-                 to_string(res.status),
-                 used_fallback ? ", HiGHS fallback" : "");
+    reusex::info("Solved monolithic MIP in {:>.3f} seconds (status={}{}{})", sw,
+                 to_string(res.status), used_fallback ? ", HiGHS fallback" : "",
+                 size_guard_tripped ? ", HiGHS size guard (reusex-81y)" : "");
     return std::make_pair(std::move(res.room_label), std::move(res.wall_label));
   }
 
@@ -513,8 +612,9 @@ Solidifier::solve() {
 
     auto sec_sw = reusex::core::stopwatch{};
     bool used_fallback = false;
-    SubResult res =
-        solve_subset_with_fallback(cc, opt, in_section, used_fallback);
+    bool size_guard_tripped = false;
+    SubResult res = solve_subset_with_fallback(
+        cc, opt, in_section, section_cells, used_fallback, size_guard_tripped);
 
     SectionSolveStats st;
     st.section = s;
@@ -524,17 +624,19 @@ Solidifier::solve() {
     st.seconds = sec_sw.elapsed();
     st.status = res.status;
     st.used_highs_fallback = used_fallback;
+    st.size_guard_tripped = size_guard_tripped;
     pimpl_->_section_stats.push_back(st);
 
     if (!res.solved) {
       ++failed_sections;
       reusex::error(
           "Section {} FAILED to solve [status={}, {} cells, {} vars, {} "
-          "constraints, {:.3f}s]{} — skipping this storey; other sections "
+          "constraints, {:.3f}s]{}{} — skipping this storey; other sections "
           "still meshed",
           s, to_string(res.status), section_cells, res.variables,
           res.constraints, st.seconds,
-          used_fallback ? " (after HiGHS fallback)" : "");
+          used_fallback ? " (after HiGHS fallback)" : "",
+          size_guard_tripped ? " (HiGHS size guard, reusex-81y)" : "");
       continue;
     }
 
@@ -550,10 +652,11 @@ Solidifier::solve() {
     interior_cells += sec_interior;
 
     reusex::info("Section {} solved [status={}, {} cells, {} vars, {} "
-                 "constraints, {:.3f}s, {} interior cells]{}",
+                 "constraints, {:.3f}s, {} interior cells]{}{}",
                  s, to_string(res.status), section_cells, res.variables,
                  res.constraints, st.seconds, sec_interior,
-                 used_fallback ? " (HiGHS fallback)" : "");
+                 used_fallback ? " (HiGHS fallback)" : "",
+                 size_guard_tripped ? " (HiGHS size guard, reusex-81y)" : "");
   }
 
   // Any cell without a label (unsolved section) defaults to outside so the

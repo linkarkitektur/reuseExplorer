@@ -254,6 +254,14 @@ const std::vector<ParameterDescriptor> &mesh_parameters() {
              "This job cannot be cancelled once the solver is running — set "
              "time_limit_seconds to bound wall-clock time on large scenes.",
              "auto"),
+        integer("cuopt_max_variables", "cuOpt size guard (variables)",
+                "With solver='auto', a (sub)problem over this many MIP "
+                "variables runs on HiGHS instead of cuOpt, pre-emptively "
+                "(reusex-81y: cuOpt crashes on sections around 3.3M "
+                "variables). Ignored for 'highs'; an explicit 'cuopt' past "
+                "this size is still honored, just logged loudly.",
+                static_cast<long long>(d.cuopt_max_variables), 1000.0,
+                10000000.0),
         num("time_limit_seconds", "Time limit [s]",
             "MIP solver wall-clock time limit. The solver returns its best "
             "solution found so far when this limit expires, guarding against "

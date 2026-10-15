@@ -55,7 +55,9 @@ NOTES:
     -vv logs the matching funnel per panorama, -vvv per slice and frame.
   - Acceptance is evidence-based: the best slice's PnP support must beat the
     same panorama's shuffled-correspondence null by --null-margin
-    (below_noise_floor otherwise), and the centre must stay within
+    (below_noise_floor otherwise), the pooled support of its pose must beat
+    the null's pooled support by --pooled-null-margin (too_few_pooled_inliers
+    / refinement_collapsed otherwise), and the centre must stay within
     --max-correction of the seed frame, the hand-held position prior for a
     360 camera carried next to the scanner. Raise or disable (0) it for a
     camera that was placed elsewhere.
@@ -75,7 +77,8 @@ NOTES:
       "Fix the panorama centre to the seed frame's stored position and solve "
       "for rotation only. Recommended when EXIF timestamps are reliable.");
   sub->add_option("--min-inliers", ao.min_inliers,
-                  "Accept an alignment above this many pooled inliers")
+                  "Floor of the pooled-inlier gate (the whole gate with "
+                  "--pooled-null-margin 0)")
       ->check(CLI::NonNegativeNumber)
       ->capture_default_str();
   sub->add_option("--window", ao.candidate_window,
@@ -85,6 +88,30 @@ NOTES:
   sub->add_option("--max-candidates", ao.max_candidates,
                   "Cap candidate frames matched per panorama")
       ->check(CLI::PositiveNumber)
+      ->capture_default_str();
+  sub->add_flag("--select-frames,!--no-select-frames", ao.select_frames,
+                "Choose candidate frames by sharpness and viewing direction "
+                "within --select-window of the seed, instead of by id")
+      ->capture_default_str();
+  sub->add_option("--select-window", ao.select_window_s,
+                  "Time window (s) around the seed frame that --select-frames "
+                  "chooses from")
+      ->check(CLI::NonNegativeNumber)
+      ->capture_default_str();
+  sub->add_option("--select-max-dist", ao.select_max_dist_m,
+                  "--select-frames considers only frames within this "
+                  "distance (m) of the seed frame (0: any)")
+      ->check(CLI::NonNegativeNumber)
+      ->capture_default_str();
+  sub->add_option("--min-sharpness-ratio", ao.min_sharpness_ratio,
+                  "Drop frames less sharp than this fraction of the sharpest "
+                  "in the window")
+      ->check(CLI::Range(0.0, 1.0))
+      ->capture_default_str();
+  sub->add_option("--view-spread", ao.view_spread_deg,
+                  "A frame opens a new viewing direction this many degrees "
+                  "from every frame already chosen")
+      ->check(CLI::Range(0.0, 180.0))
       ->capture_default_str();
   sub->add_option("--n-yaw", ao.n_yaw, "Perspective slices around the equator")
       ->check(CLI::Range(1, 64))
@@ -145,6 +172,11 @@ NOTES:
   sub->add_option("--null-margin", ao.null_margin,
                   "The best slice must beat the noise floor by this factor")
       ->check(CLI::Range(1.0, 100.0))
+      ->capture_default_str();
+  sub->add_option("--pooled-null-margin", ao.pooled_null_margin,
+                  "The pooled inliers must beat the shuffled null's pooled "
+                  "support by this factor (0: only --min-inliers)")
+      ->check(CLI::Range(0.0, 100.0))
       ->capture_default_str();
   sub->add_option("--max-correction", ao.max_correction_m,
                   "Hand-held position prior: reject a centre further than "

@@ -71,6 +71,7 @@ const std::vector<StageSpec> &stage_specs() {
       {"mesh",
        {"create", "mesh"},
        {{"solver", "--solver", {}, {}},
+        {"cuopt_max_variables", "--cuopt-max-variables", {}, {}},
         {"time_limit_seconds", "--time-limit", {}, {}},
         {"output_name", "--output-name", {}, {}},
         {"search_threshold", "--threshold", {}, {}},

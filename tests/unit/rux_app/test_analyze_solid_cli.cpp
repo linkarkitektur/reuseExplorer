@@ -12,6 +12,7 @@
 #include <global-params.hpp>
 
 #include <reusex/core/ProjectDB.hpp>
+#include <reusex/io/solid_model_json.hpp>
 
 #include "../../support/temp_path.hpp"
 
@@ -157,6 +158,31 @@ TEST_CASE("AnalyzeSolidCli_SyntheticDetectionAgainstReference_ScoresIt",
              WithinAbs(4.65 / 7.0, 1e-9));
   CHECK_THAT(j.at("assumed_share").get<double>(), WithinAbs(2.0 / 7.0, 1e-9));
   CHECK(j.at("fit_mean_m").is_null());
+}
+
+TEST_CASE("AnalyzeSolidCli_YamlReferenceAndModel_SameReportAsJson",
+          "[rux_app][cli][analyze]") {
+  // reusex-yf4.1: --reference / --model pick JSON or YAML by extension.
+  TempPath ref_yaml("test_analyze_solid_ref", ".yaml");
+  reusex::io::solid_model_to_file(
+      reusex::io::solid_model_from_file(fixture("two_rooms.plan.json")),
+      ref_yaml.path);
+  TempPath model_yaml("test_analyze_solid_model", ".yml");
+  reusex::io::solid_model_to_file(
+      reusex::io::solid_model_from_file(fixture("two_rooms.detected.json")),
+      model_yaml.path);
+
+  TempPath out_json("test_analyze_solid_via_json");
+  TempPath no_project("test_analyze_solid_yaml_absent");
+  REQUIRE(run_rux(no_project.path,
+                  {"--reference", fixture("two_rooms.plan.json").string(),
+                   "--model", fixture("two_rooms.detected.json").string(), "-o",
+                   out_json.path.string()}));
+  TempPath out_yaml("test_analyze_solid_via_yaml");
+  REQUIRE(run_rux(no_project.path,
+                  {"--reference", ref_yaml.path.string(), "--model",
+                   model_yaml.path.string(), "-o", out_yaml.path.string()}));
+  CHECK(read_json(out_json.path) == read_json(out_yaml.path));
 }
 
 TEST_CASE("AnalyzeSolidCli_InvalidReference_Fails", "[rux_app][cli][analyze]") {

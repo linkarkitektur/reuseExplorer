@@ -404,13 +404,26 @@ SliceResection resect_best_slice(const std::vector<SlicePnPInput> &slices,
   return out;
 }
 
-int shuffled_best_slice_inliers(const std::vector<SlicePnPInput> &slices,
-                                const SlicePnPOptions &opt, int trials,
-                                unsigned seed) {
+NullFloor shuffled_null_floor(const std::vector<SlicePnPInput> &slices,
+                              const SlicePnPOptions &opt, int trials,
+                              unsigned seed,
+                              const BearingRefineOptions *pooled) {
+  NullFloor out;
   std::mt19937 rng(seed);
   int ceiling = 0;
   std::vector<cv::Point2f> pixels;
-  for (const auto &s : slices) {
+  // With `pooled`: every trial's permuted pixels per slice, and every null
+  // slice pose, to gate that trial's whole permuted pool afterwards.
+  struct NullPose {
+    int trial;
+    Eigen::Matrix3d Q;
+    Eigen::Vector3d t;
+  };
+  std::vector<NullPose> poses;
+  std::vector<std::vector<std::vector<cv::Point2f>>> trial_pixels(
+      pooled ? slices.size() : 0);
+  for (size_t si = 0; si < slices.size(); ++si) {
+    const auto &s = slices[si];
     if (!pnp_eligible(s, opt))
       continue;
     // Group the correspondences by slice location. The junk the matcher
@@ -445,11 +458,78 @@ int shuffled_best_slice_inliers(const std::vector<SlicePnPInput> &slices,
       pixels.resize(s.pixels.size());
       for (size_t k = 0; k < s.pixels.size(); ++k)
         pixels[k] = anchor[perm[group[k]]] + (s.pixels[k] - anchor[group[k]]);
-      ceiling = std::max(ceiling,
-                         pnp_slice(s, pixels, s.world, opt, nullptr, nullptr));
+      if (!pooled) {
+        ceiling = std::max(
+            ceiling, pnp_slice(s, pixels, s.world, opt, nullptr, nullptr));
+        continue;
+      }
+      NullPose np{trial, Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero()};
+      const int n = pnp_slice(s, pixels, s.world, opt, &np.Q, &np.t);
+      ceiling = std::max(ceiling, n);
+      if (n >= opt.min_correspondences)
+        poses.push_back(np);
+      trial_pixels[si].push_back(pixels);
     }
   }
-  return ceiling;
+  out.best_slice_inliers = ceiling;
+  if (!pooled)
+    return out;
+  out.pooled_initial = 0;
+  out.pooled_final = 0;
+  if (trials <= 0 || poses.empty())
+    return out;
+
+  // Slices too small to PnP still enter the real pool; their pairings are
+  // permuted too, with a generator of their own so the best-slice draws
+  // above stay those of shuffled_best_slice_inliers().
+  std::mt19937 rng_small(seed ^ 0x9e3779b9u);
+  std::vector<Eigen::Vector3d> pts, brg;
+  for (int trial = 0; trial < trials; ++trial) {
+    pts.clear();
+    brg.clear();
+    for (size_t si = 0; si < slices.size(); ++si) {
+      const auto &s = slices[si];
+      if (s.pixels.size() != s.world.size())
+        continue;
+      if (pnp_eligible(s, opt)) {
+        const auto &px = trial_pixels[si][trial];
+        for (size_t k = 0; k < px.size(); ++k) {
+          pts.push_back(s.world[k]);
+          brg.push_back(slice_bearing(s.K, s.R_pano_from_view, px[k]));
+        }
+        continue;
+      }
+      std::vector<int> perm(s.pixels.size());
+      for (size_t k = 0; k < perm.size(); ++k)
+        perm[k] = static_cast<int>(k);
+      for (size_t i = perm.size(); i > 1; --i)
+        std::swap(perm[i - 1], perm[rng_small() % i]);
+      for (size_t k = 0; k < s.pixels.size(); ++k) {
+        pts.push_back(s.world[k]);
+        brg.push_back(
+            slice_bearing(s.K, s.R_pano_from_view, s.pixels[perm[k]]));
+      }
+    }
+    for (const NullPose &np : poses) {
+      if (np.trial != trial)
+        continue;
+      Eigen::Matrix3d Q = np.Q;
+      Eigen::Vector3d t = np.t;
+      int initial = 0;
+      const int fin = static_cast<int>(
+          refine_bearing_pose(pts, brg, *pooled, Q, t, &initial).size());
+      out.pooled_initial = std::max(out.pooled_initial, initial);
+      out.pooled_final = std::max(out.pooled_final, fin);
+    }
+  }
+  return out;
+}
+
+int shuffled_best_slice_inliers(const std::vector<SlicePnPInput> &slices,
+                                const SlicePnPOptions &opt, int trials,
+                                unsigned seed) {
+  return shuffled_null_floor(slices, opt, trials, seed, nullptr)
+      .best_slice_inliers;
 }
 
 int noise_floor_threshold(int null_best, double margin,
@@ -606,6 +686,87 @@ std::vector<int> one_per_sphere_keypoint(const std::vector<int> &sphere_kp,
     keep.push_back(kv.second);
   std::sort(keep.begin(), keep.end());
   return keep;
+}
+
+// --- candidate frame selection (reusex-bx2.6) ------------------------------
+
+namespace {
+constexpr int kSharpnessWidth = 320;
+}
+
+double image_sharpness(const cv::Mat &image) {
+  if (image.empty())
+    return 0.0;
+  cv::Mat gray;
+  if (image.channels() == 3)
+    cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+  else if (image.channels() == 4)
+    cv::cvtColor(image, gray, cv::COLOR_BGRA2GRAY);
+  else
+    gray = image;
+  cv::Mat small;
+  const double s = static_cast<double>(kSharpnessWidth) / gray.cols;
+  cv::resize(
+      gray, small,
+      cv::Size(kSharpnessWidth,
+               std::max(1, static_cast<int>(std::lround(gray.rows * s)))),
+      0, 0, cv::INTER_AREA);
+  cv::Mat lap;
+  cv::Laplacian(small, lap, CV_64F);
+  cv::Scalar mean, stddev;
+  cv::meanStdDev(lap, mean, stddev);
+  return stddev[0] * stddev[0];
+}
+
+std::vector<int> select_candidate_frames(const std::vector<FrameChoice> &frames,
+                                         const FrameSelectOptions &opt) {
+  double best = 0.0;
+  for (const auto &f : frames)
+    best = std::max(best, f.sharpness);
+  std::vector<int> order;
+  for (int i = 0; i < static_cast<int>(frames.size()); ++i)
+    if (frames[i].sharpness >= opt.min_sharpness_ratio * best)
+      order.push_back(i);
+  std::sort(order.begin(), order.end(), [&](int a, int b) {
+    const auto &fa = frames[a], &fb = frames[b];
+    if (fa.sharpness != fb.sharpness)
+      return fa.sharpness > fb.sharpness;
+    if (std::abs(fa.dt_s) != std::abs(fb.dt_s))
+      return std::abs(fa.dt_s) < std::abs(fb.dt_s);
+    return fa.node_id < fb.node_id;
+  });
+  const double cos_spread = std::cos(opt.view_spread_deg * M_PI / 180.0);
+  std::vector<int> picked;
+  std::vector<char> used(frames.size(), 0);
+  auto opens_new_direction = [&](int i) {
+    for (int j : picked)
+      if (frames[i].view_dir.normalized().dot(frames[j].view_dir.normalized()) >
+          cos_spread)
+        return false;
+    return true;
+  };
+  // first every frame that opens a new direction, sharpest first...
+  bool grew = true;
+  while (grew && static_cast<int>(picked.size()) < opt.max_frames) {
+    grew = false;
+    for (int i : order)
+      if (!used[i] && opens_new_direction(i)) {
+        picked.push_back(i);
+        used[i] = 1;
+        grew = true;
+        break;
+      }
+  }
+  // ...then the sharpest of the rest
+  for (int i : order) {
+    if (static_cast<int>(picked.size()) >= opt.max_frames)
+      break;
+    if (!used[i]) {
+      picked.push_back(i);
+      used[i] = 1;
+    }
+  }
+  return picked;
 }
 
 } // namespace reusex::geometry::pano_detail

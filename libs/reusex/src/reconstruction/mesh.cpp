@@ -199,6 +199,7 @@ pcl::PolygonMeshPtr mesh(CloudConstPtr cloud, CloudNConstPtr normals,
   solidifier_opts.sectioned = opt.sectioned;
   solidifier_opts.sectioned_threshold = opt.sectioned_threshold;
   solidifier_opts.solver = opt.solver;
+  solidifier_opts.cuopt_max_variables = opt.cuopt_max_variables;
   reusex::geometry::Solidifier solidifier(cc, solidifier_opts);
   auto results = solidifier.solve();
 
