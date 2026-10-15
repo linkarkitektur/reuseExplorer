@@ -246,6 +246,12 @@ cv::Mat render_view(const ProjectDB &db, const RenderOptions &opts) {
   scene.mesh_name = opts.mesh_name;
   scene.point_size = opts.point_size;
   scene.highlight = opts.highlight;
+  scene.plan = opts.plan;
+  scene.plan_labels = opts.plan_labels;
+  scene.plan_placement =
+      opts.view == ViewPreset::top || opts.view == ViewPreset::plan
+          ? PlanPlacement::above_scene
+          : PlanPlacement::level;
   const SceneInfo info = populate_scene(renderer, db, scene);
   const SceneBounds &bounds = info.bounds;
 

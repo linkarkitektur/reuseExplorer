@@ -32,6 +32,7 @@
 #include <vtkProperty.h>
 #include <vtkRenderer.h>
 #include <vtkUnsignedCharArray.h>
+#include <vtkVectorText.h>
 
 #include <algorithm>
 #include <cmath>
@@ -39,6 +40,7 @@
 #include <numbers>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 
 namespace reusex::visualize {
 
@@ -529,6 +531,334 @@ vtkActor *add_panorama_actor(vtkRenderer *renderer, const ProjectDB &db,
   return actor;
 }
 
+// ── Plan overlay (reusex-z1v.2.6) ────────────────────────────────────────────
+//
+// A solid-model plan drawn over the scene, the visual check of an authored
+// reference. Everything is built in the level frame of the element's storey
+// and mapped to world through the inverse of that storey's level_transform.
+
+/// Lift of a PlanPlacement::level overlay above its floor, so a footprint
+/// does not z-fight the floor points it lies on [m].
+constexpr double kPlanLevelLiftM = 0.02;
+/// Gap of a PlanPlacement::above_scene sheet over the drawn geometry [m].
+constexpr double kPlanAboveGapM = 0.05;
+/// Half-length of an opening's end tick beyond the wall face [m]; also the
+/// half-width used for a wall of unknown thickness.
+constexpr double kOpeningTickM = 0.1;
+constexpr double kPlanFillOpacity = 0.30;
+constexpr double kSpaceFillOpacity = 0.12;
+/// Label heights in the plan [m].
+constexpr double kSpaceLabelM = 0.30;
+constexpr double kWallLabelM = 0.15;
+
+/// Accumulates one actor's worth of plan geometry in world coordinates.
+struct PlanGeometry {
+  vtkNew<vtkPoints> points;
+  vtkNew<vtkCellArray> lines;
+  vtkNew<vtkCellArray> polys;
+  PlanGeometry() { points->SetDataType(VTK_DOUBLE); }
+  bool empty() const { return points->GetNumberOfPoints() == 0; }
+};
+
+class PlanBuilder {
+    public:
+  PlanBuilder(const core::SolidModel &plan, PlanPlacement placement,
+              const SceneBounds &scene)
+      : plan_(plan), placement_(placement) {
+    if (placement_ == PlanPlacement::above_scene) {
+      const double gap = scene.valid
+                             ? std::max(kPlanAboveGapM, 0.01 * scene.extent(2))
+                             : kPlanAboveGapM;
+      sheet_z_ = (scene.valid ? scene.max[2] : 0.0) + gap;
+    }
+  }
+
+  /// A level-frame point of storey @p storey at height @p z, in world.
+  Eigen::Vector3d world(int storey, double x, double y, double z) {
+    auto it = to_world_.find(storey);
+    if (it == to_world_.end()) {
+      Eigen::Affine3d t = Eigen::Affine3d::Identity();
+      for (const auto &s : plan_.storeys)
+        if (s.idx == storey)
+          t = geometry::to_affine(s.level_transform).inverse();
+      it = to_world_.emplace(storey, t).first;
+    }
+    Eigen::Vector3d p = it->second * Eigen::Vector3d(x, y, z + kPlanLevelLiftM);
+    if (placement_ == PlanPlacement::above_scene)
+      p.z() = sheet_z_;
+    return p;
+  }
+
+  vtkIdType add(PlanGeometry &g, const Eigen::Vector3d &p) {
+    points_seen_.push_back(p);
+    return g.points->InsertNextPoint(p.x(), p.y(), p.z());
+  }
+
+  /// A closed ring as an outline (and a filled polygon when @p fill).
+  void ring(PlanGeometry &outline, PlanGeometry *fill,
+            const std::vector<Eigen::Vector3d> &pts) {
+    const auto n = static_cast<vtkIdType>(pts.size());
+    std::vector<vtkIdType> ids;
+    for (const auto &p : pts)
+      ids.push_back(add(outline, p));
+    for (vtkIdType i = 0; i < n; ++i) {
+      const vtkIdType seg[2] = {ids[static_cast<std::size_t>(i)],
+                                ids[static_cast<std::size_t>((i + 1) % n)]};
+      outline.lines->InsertNextCell(2, seg);
+    }
+    if (fill != nullptr) {
+      std::vector<vtkIdType> fids;
+      for (const auto &p : pts)
+        fids.push_back(add(*fill, p));
+      fill->polys->InsertNextCell(n, fids.data());
+    }
+  }
+
+  void segment(PlanGeometry &g, const Eigen::Vector3d &a,
+               const Eigen::Vector3d &b) {
+    const vtkIdType seg[2] = {add(g, a), add(g, b)};
+    g.lines->InsertNextCell(2, seg);
+  }
+
+  /// Fold every overlay point into @p bounds: fully for a level overlay, in
+  /// plan only for the sheet (its z must not move the cut's reference).
+  void extend(SceneBounds &bounds) const {
+    const bool sheet = placement_ == PlanPlacement::above_scene && bounds.valid;
+    const double zlo = bounds.min[2], zhi = bounds.max[2];
+    for (const auto &p : points_seen_)
+      bounds.add(p.x(), p.y(), sheet ? std::clamp(p.z(), zlo, zhi) : p.z());
+  }
+
+    private:
+  const core::SolidModel &plan_;
+  PlanPlacement placement_;
+  double sheet_z_ = 0.0;
+  std::unordered_map<int, Eigen::Affine3d> to_world_;
+  std::vector<Eigen::Vector3d> points_seen_;
+};
+
+vtkActor *add_plan_actor(vtkRenderer *renderer, PlanGeometry &g,
+                         const std::array<std::uint8_t, 3> &rgb, double width,
+                         double opacity) {
+  vtkNew<vtkPolyData> poly;
+  poly->SetPoints(g.points);
+  if (g.lines->GetNumberOfCells() > 0)
+    poly->SetLines(g.lines);
+  if (g.polys->GetNumberOfCells() > 0)
+    poly->SetPolys(g.polys);
+  vtkNew<vtkPolyDataMapper> mapper;
+  mapper->SetInputData(poly);
+  vtkNew<vtkActor> actor;
+  actor->SetMapper(mapper);
+  actor->SetObjectName(kPlanOverlayActorName);
+  actor->GetProperty()->SetColor(rgb[0] / 255.0, rgb[1] / 255.0,
+                                 rgb[2] / 255.0);
+  actor->GetProperty()->SetLineWidth(width);
+  actor->GetProperty()->SetOpacity(opacity);
+  actor->GetProperty()->SetLighting(false);
+  renderer->AddActor(actor);
+  return actor;
+}
+
+/// A label as stroke-font geometry (vtkVectorText) lying flat in the plan,
+/// centred on @p at, @p height metres tall. Geometry rather than a
+/// screen-space text actor: it needs no text renderer or render window to
+/// build (vtkBillboardTextActor3D crashes in vtkRenderer::GetActors() without
+/// one), scales with the plan, and reads correctly from above.
+vtkActor *add_plan_label(vtkRenderer *renderer, const std::string &text,
+                         const Eigen::Vector3d &at,
+                         const std::array<std::uint8_t, 3> &rgb,
+                         double height) {
+  vtkNew<vtkVectorText> source;
+  source->SetText(text.c_str());
+  source->Update();
+  vtkPolyData *glyphs = source->GetOutput();
+  double b[6];
+  glyphs->GetBounds(b);
+  // vtkVectorText's capitals are about one unit tall.
+  const double scale = height;
+  const double cx = 0.5 * (b[0] + b[1]), cy = 0.5 * (b[2] + b[3]);
+  vtkNew<vtkPoints> points;
+  points->SetDataType(VTK_DOUBLE);
+  for (vtkIdType i = 0; i < glyphs->GetNumberOfPoints(); ++i) {
+    double p[3];
+    glyphs->GetPoint(i, p);
+    points->InsertNextPoint(at.x() + scale * (p[0] - cx),
+                            at.y() + scale * (p[1] - cy), at.z());
+  }
+  vtkNew<vtkPolyData> poly;
+  poly->SetPoints(points);
+  poly->SetPolys(glyphs->GetPolys());
+  vtkNew<vtkPolyDataMapper> mapper;
+  mapper->SetInputData(poly);
+  vtkNew<vtkActor> actor;
+  actor->SetMapper(mapper);
+  actor->SetObjectName(kPlanOverlayActorName);
+  actor->GetProperty()->SetColor(rgb[0] / 255.0, rgb[1] / 255.0,
+                                 rgb[2] / 255.0);
+  actor->GetProperty()->SetLighting(false);
+  renderer->AddActor(actor);
+  return actor;
+}
+
+/// Area centroid of a ring (vertex mean for a degenerate one).
+std::array<double, 2> ring_centroid(const std::vector<core::PlanPoint> &ring) {
+  double a = 0.0, cx = 0.0, cy = 0.0;
+  for (std::size_t i = 0; i < ring.size(); ++i) {
+    const auto &p = ring[i];
+    const auto &q = ring[(i + 1) % ring.size()];
+    const double c = p[0] * q[1] - q[0] * p[1];
+    a += c;
+    cx += (p[0] + q[0]) * c;
+    cy += (p[1] + q[1]) * c;
+  }
+  if (std::abs(a) < 1e-12) {
+    double mx = 0.0, my = 0.0;
+    for (const auto &p : ring)
+      mx += p[0], my += p[1];
+    const double n = static_cast<double>(std::max<std::size_t>(ring.size(), 1));
+    return {mx / n, my / n};
+  }
+  return {cx / (3.0 * a), cy / (3.0 * a)};
+}
+
+PlanOverlayInfo add_plan_overlay(vtkRenderer *renderer,
+                                 const core::SolidModel &plan,
+                                 const SceneOptions &opts,
+                                 SceneBounds &bounds) {
+  PlanOverlayInfo info;
+  PlanBuilder b(plan, opts.plan_placement, bounds);
+  PlanGeometry wall_fill, wall_outline, wall_axis, wall_face, space_fill,
+      space_outline, doors, windows, openings;
+  struct Label {
+    std::string text;
+    Eigen::Vector3d at;
+    bool space;
+  };
+  std::vector<Label> labels;
+
+  // Walls: footprint (fill + outline) and axis.
+  std::unordered_map<std::string, const core::WallRecord *> walls;
+  for (const auto &w : plan.walls) {
+    const Eigen::Vector2d p0(w.x0, w.y0), p1(w.x1, w.y1);
+    const double len = (p1 - p0).norm();
+    if (!(len > 0.0)) {
+      core::warn("render: plan wall '{}' has a zero-length axis; not drawn",
+                 w.guid);
+      continue;
+    }
+    walls.emplace(w.guid, &w);
+    const Eigen::Vector2d d = (p1 - p0) / len;
+    const Eigen::Vector2d n(-d.y(), d.x());
+    const double z = w.z_base;
+    // A wall of unknown thickness is only its axis: draw it heavier.
+    b.segment(w.thickness > 0.0 ? wall_axis : wall_face,
+              b.world(w.storey, p0.x(), p0.y(), z),
+              b.world(w.storey, p1.x(), p1.y(), z));
+    if (w.thickness > 0.0) {
+      const double h = 0.5 * w.thickness;
+      std::vector<Eigen::Vector3d> corners;
+      for (const Eigen::Vector2d &c :
+           {Eigen::Vector2d(p0 + n * h), Eigen::Vector2d(p1 + n * h),
+            Eigen::Vector2d(p1 - n * h), Eigen::Vector2d(p0 - n * h)})
+        corners.push_back(b.world(w.storey, c.x(), c.y(), z));
+      b.ring(wall_outline, &wall_fill, corners);
+    }
+    const Eigen::Vector2d mid = 0.5 * (p0 + p1);
+    labels.push_back({w.guid, b.world(w.storey, mid.x(), mid.y(), z), false});
+    ++info.walls;
+  }
+
+  // Spaces: outer ring filled, holes outlined (the fill does not cut holes).
+  for (const auto &s : plan.spaces) {
+    if (s.polygon.outer.size() < 3) {
+      core::warn("render: plan space '{}' has fewer than 3 points; not drawn",
+                 s.guid);
+      continue;
+    }
+    const auto to_world = [&](const std::vector<core::PlanPoint> &ring) {
+      std::vector<Eigen::Vector3d> out;
+      for (const auto &p : ring)
+        out.push_back(b.world(s.storey, p[0], p[1], s.z_floor));
+      return out;
+    };
+    b.ring(space_outline, &space_fill, to_world(s.polygon.outer));
+    for (const auto &hole : s.polygon.holes)
+      if (hole.size() >= 3)
+        b.ring(space_outline, nullptr, to_world(hole));
+    const auto c = ring_centroid(s.polygon.outer);
+    labels.push_back({s.name.empty() ? s.guid : s.name,
+                      b.world(s.storey, c[0], c[1], s.z_floor), true});
+    ++info.spaces;
+  }
+
+  // Openings: a bar along the host axis and a tick across the wall at each
+  // end.
+  std::size_t orphans = 0;
+  for (const auto &o : plan.openings) {
+    const auto it = walls.find(o.wall);
+    if (it == walls.end()) {
+      ++orphans;
+      continue;
+    }
+    const core::WallRecord &w = *it->second;
+    const Eigen::Vector2d p0(w.x0, w.y0), p1(w.x1, w.y1);
+    const Eigen::Vector2d d = (p1 - p0).normalized();
+    const Eigen::Vector2d n(-d.y(), d.x());
+    const double half =
+        (w.thickness > 0.0 ? 0.5 * w.thickness : 0.0) + kOpeningTickM;
+    PlanGeometry &g = o.kind == "door"     ? doors
+                      : o.kind == "window" ? windows
+                                           : openings;
+    const Eigen::Vector2d a = p0 + d * o.s_start, e = p0 + d * o.s_end;
+    const double z = w.z_base;
+    b.segment(g, b.world(w.storey, a.x(), a.y(), z),
+              b.world(w.storey, e.x(), e.y(), z));
+    for (const Eigen::Vector2d &c : {a, e}) {
+      const Eigen::Vector2d u = c + n * half, v = c - n * half;
+      b.segment(g, b.world(w.storey, u.x(), u.y(), z),
+                b.world(w.storey, v.x(), v.y(), z));
+    }
+    ++info.openings;
+  }
+  if (orphans > 0)
+    core::warn("render: {} of {} plan openings name a wall the plan does not "
+               "draw; they are skipped",
+               orphans, plan.openings.size());
+
+  // Translucent fills first, so the outlines draw over them.
+  const auto add = [&](PlanGeometry &g, const std::array<std::uint8_t, 3> &rgb,
+                       double width, double opacity) {
+    if (!g.empty())
+      info.actors.push_back(add_plan_actor(renderer, g, rgb, width, opacity));
+  };
+  add(space_fill, opts.plan_space_rgb, 1.0, kSpaceFillOpacity);
+  add(wall_fill, opts.plan_wall_rgb, 1.0, kPlanFillOpacity);
+  add(space_outline, opts.plan_space_rgb, 2.0, 1.0);
+  add(wall_outline, opts.plan_wall_rgb, 2.0, 1.0);
+  add(wall_axis, opts.plan_wall_rgb, 1.0, 1.0);
+  add(wall_face, opts.plan_wall_rgb, 3.0, 1.0);
+  add(openings, opts.plan_opening_rgb, 5.0, 1.0);
+  add(windows, opts.plan_window_rgb, 5.0, 1.0);
+  add(doors, opts.plan_door_rgb, 5.0, 1.0);
+
+  if (opts.plan_labels)
+    for (const auto &l : labels)
+      info.labels.push_back(
+          add_plan_label(renderer, l.text, l.at,
+                         l.space ? opts.plan_space_rgb : opts.plan_wall_rgb,
+                         l.space ? kSpaceLabelM : kWallLabelM));
+
+  b.extend(bounds);
+  if (info.walls + info.spaces + info.openings == 0)
+    core::warn("render: the plan overlay has no wall, space or opening to "
+               "draw");
+  else
+    core::info("render: plan overlay: {} walls, {} spaces, {} openings",
+               info.walls, info.spaces, info.openings);
+  return info;
+}
+
 /// Parallel scale (half the viewport height in world units) that exactly fits
 /// an @p across x @p up rectangle into an image of the given aspect ratio.
 ///
@@ -877,6 +1207,9 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
     info.layers.push_back(std::move(drawn));
   }
 
+  if (opts.plan)
+    info.plan = add_plan_overlay(renderer, *opts.plan, opts, bounds);
+
   if (!bounds.valid) {
     throw std::runtime_error(
         "render: the selected layers produced no drawable geometry");
@@ -939,6 +1272,8 @@ void apply_cut_plane(vtkRenderer *renderer, double z) {
   vtkActorCollection *actors = renderer->GetActors();
   actors->InitTraversal();
   while (vtkActor *actor = actors->GetNextActor()) {
+    if (actor->GetObjectName() == kPlanOverlayActorName)
+      continue; // a drawing over the section, not part of it
     if (vtkMapper *mapper = actor->GetMapper())
       mapper->AddClippingPlane(plane);
   }
