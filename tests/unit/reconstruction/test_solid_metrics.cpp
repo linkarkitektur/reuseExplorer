@@ -119,6 +119,7 @@ TEST_CASE("CompareSolidModels_EmptyModels_EveryMetricIsNa",
   CHECK(j.at("wall_recall").is_null());
   CHECK(j.at("room_iou_mean").is_null());
   CHECK(j.at("fit_mean_m").is_null());
+  CHECK(j.at("mesh_unsupported_share").is_null());
 }
 
 TEST_CASE("CompareSolidModels_ProvidedButEmptyDetection_ScoresAMiss",
@@ -342,6 +343,54 @@ TEST_CASE("FitReport_PointsAboveAQuad_MeanDistanceAndWithinShare",
   CHECK(r.fit_points == 2);
   CHECK_THAT(r.fit_mean_m.value(), WithinAbs(0.03, 1e-6));
   CHECK_THAT(r.fit_within_share.value(), WithinAbs(0.5, 1e-12));
+}
+
+TEST_CASE("FitReport_MeshWithoutScanPoints_UnsupportedShare",
+          "[reconstruction][solid_metrics]") {
+  // Two 1 x 1 quads; the scan covers only the first (points every 5 cm).
+  // The second one stands where the cloud has nothing -- a fake wall.
+  pcl::PointCloud<pcl::PointXYZ> verts;
+  for (const float x0 : {0.0F, 5.0F}) {
+    verts.push_back({x0, 0, 0});
+    verts.push_back({x0 + 1, 0, 0});
+    verts.push_back({x0 + 1, 1, 0});
+    verts.push_back({x0, 1, 0});
+  }
+  pcl::PolygonMesh mesh;
+  pcl::toPCLPointCloud2(verts, mesh.cloud);
+  for (std::uint32_t q : {0U, 4U}) {
+    pcl::Vertices quad;
+    quad.vertices = {q, q + 1, q + 2, q + 3};
+    mesh.polygons.push_back(quad);
+  }
+  reusex::Cloud cloud;
+  pcl::PointXYZRGB p;
+  for (int i = 0; i <= 20; ++i)
+    for (int j = 0; j <= 20; ++j) {
+      p.x = 0.05F * i;
+      p.y = 0.05F * j;
+      p.z = 0.0F;
+      cloud.push_back(p);
+    }
+
+  SolidModelReport r;
+  fit_report(cloud, mesh, SolidMetricsOptions{}, r);
+  CHECK_THAT(r.mesh_area_m2.value(), WithinAbs(2.0, 1e-9));
+  CHECK_THAT(r.mesh_unsupported_share.value(), WithinAbs(0.5, 0.01));
+  CHECK(r.support_samples > 0);
+  const auto j = nlohmann::json::parse(r.to_json());
+  CHECK_THAT(j.at("mesh_unsupported_share").get<double>(),
+             WithinAbs(0.5, 0.01));
+  CHECK(j.at("counts").at("support_samples").get<std::size_t>() ==
+        r.support_samples);
+
+  // With a 5 m support distance the second quad (4 m from the scan) counts
+  // as supported too.
+  SolidMetricsOptions far;
+  far.support_dist_m = 5.0;
+  SolidModelReport r2;
+  fit_report(cloud, mesh, far, r2);
+  CHECK_THAT(r2.mesh_unsupported_share.value(), WithinAbs(0.0, 1e-12));
 }
 
 TEST_CASE("FitReport_MeshWithoutTriangles_Throws",

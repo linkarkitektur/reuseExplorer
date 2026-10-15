@@ -115,6 +115,16 @@ def main() -> int:
     check("room count error +2 -> -1 improves",
           v[("a", "room_count_error")].verdict == "improved")
 
+    v = verdicts(report(row("a", mesh_unsupported_share=0.12)),
+                 report(row("a", mesh_unsupported_share=0.2)))
+    check("more unsupported mesh regresses",
+          v[("a", "mesh_unsupported_share")].regression)
+    v = verdicts(report(row("a", mesh_area_m2=1200.0)),
+                 report(row("a", mesh_area_m2=1400.0)))
+    check("mesh area is informational, never gates",
+          v[("a", "mesh_area_m2")].verdict == "info"
+          and not v[("a", "mesh_area_m2")].regression)
+
     v = verdicts(report(row("a")), report(row("a", wall_recall=None)))
     check("number -> n/a is LOST and regresses",
           v[("a", "wall_recall")].verdict == "LOST"

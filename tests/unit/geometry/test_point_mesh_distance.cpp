@@ -16,6 +16,7 @@
 #include <stdexcept>
 
 using Catch::Matchers::WithinAbs;
+using reusex::geometry::mesh_support;
 using reusex::geometry::point_to_mesh_distances;
 using reusex::geometry::summarize_distances;
 
@@ -87,4 +88,48 @@ TEST_CASE("SummarizeDistances_MeanP95AndThresholdShares",
 
   const auto empty = summarize_distances({std::nan("")}, 0.05, 0.2);
   CHECK(empty.points == 0);
+}
+
+TEST_CASE("MeshSupport_CloudOverHalfTheQuad_HalfTheAreaIsUnsupported",
+          "[geometry][point_mesh_distance]") {
+  // Points every 5 cm over x in [0, 1] only: the x > 1 half of the 2 x 2
+  // quad has no scan point within 0.25 m except a 0.25 m strip at x = 1.
+  reusex::Cloud cloud;
+  for (int i = 0; i <= 20; ++i)
+    for (int j = 0; j <= 40; ++j)
+      cloud.push_back(at(0.05F * i, 0.05F * j, 0.02F));
+  cloud.push_back(at(std::nanf(""), 0, 0)); // ignored
+  const auto s = mesh_support(cloud, quad_mesh(), 0.25, 0.02);
+  CHECK_THAT(s.area_m2, WithinAbs(4.0, 1e-9));
+  // unsupported: x in (1.25, 2] = 0.75 of the 2 m width -> 1.5 m^2
+  CHECK_THAT(s.unsupported_area_m2, WithinAbs(1.5, 0.03));
+  CHECK(s.samples >= 9000); // ~ area / spacing^2
+
+  // Deterministic: the same inputs give the same numbers.
+  const auto t = mesh_support(cloud, quad_mesh(), 0.25, 0.02);
+  CHECK(t.unsupported_area_m2 == s.unsupported_area_m2);
+  CHECK(t.samples == s.samples);
+}
+
+TEST_CASE("MeshSupport_NoCloudNearTheMesh_EverythingUnsupported",
+          "[geometry][point_mesh_distance]") {
+  reusex::Cloud cloud;
+  cloud.push_back(at(10, 10, 10));
+  const auto s = mesh_support(cloud, quad_mesh(), 0.25, 0.1);
+  CHECK_THAT(s.unsupported_area_m2, WithinAbs(4.0, 1e-9));
+}
+
+TEST_CASE("MeshSupport_BadInputs_Throw", "[geometry][point_mesh_distance]") {
+  reusex::Cloud cloud;
+  cloud.push_back(at(0, 0, 0));
+  CHECK_THROWS_AS(mesh_support(cloud, pcl::PolygonMesh{}, 0.25, 0.05),
+                  std::invalid_argument);
+  CHECK_THROWS_AS(mesh_support(cloud, quad_mesh(), 0.0, 0.05),
+                  std::invalid_argument);
+  CHECK_THROWS_AS(mesh_support(cloud, quad_mesh(), 0.25, 0.0),
+                  std::invalid_argument);
+  reusex::Cloud nan_only;
+  nan_only.push_back(at(std::nanf(""), 0, 0));
+  CHECK_THROWS_AS(mesh_support(nan_only, quad_mesh(), 0.25, 0.05),
+                  std::invalid_argument);
 }

@@ -42,6 +42,7 @@ std::string format_solid_summary(const reusex::geometry::SolidModelReport &r) {
       "opening precision     {}  ({} detected openings)\n"
       "fit mean              {}  ({} points)\n"
       "fit within            {}\n"
+      "mesh unsupported      {}  (of {} mesh)\n"
       "fit source            {}\n"
       "seen share (mean)     {}\n"
       "assumed share         {}\n",
@@ -55,7 +56,8 @@ std::string format_solid_summary(const reusex::geometry::SolidModelReport &r) {
       show(r.wall_thickness_err_p95_m, 1000.0, " mm"), show(r.opening_recall),
       r.matched_openings, r.reference_openings, show(r.opening_precision),
       r.detected_openings, show(r.fit_mean_m, 1000.0, " mm"), r.fit_points,
-      show(r.fit_within_share),
+      show(r.fit_within_share), show(r.mesh_unsupported_share),
+      show(r.mesh_area_m2, 1.0, " m2"),
       r.fit_source.empty() ? std::string("n/a") : r.fit_source,
       show(r.seen_share_mean), show(r.assumed_share));
 }
@@ -101,6 +103,8 @@ DESCRIPTION:
   - wall recall / precision, wall position RMS, wall thickness error
   - opening recall / precision (IoU in the wall face)
   - point-to-solid fit: mean distance, share within --fit-within
+  - solid-to-scan support: share of the mesh area with no scan point within
+    --support-dist (fake walls and other surfaces the scan does not show)
   - seen share / assumed share of the detected walls
 
   A metric is n/a (JSON null) when either side does not provide the element
@@ -162,6 +166,11 @@ NOTES:
   sub->add_option("--fit-within", m.fit_within_m,
                   "Distance a fitting point may be from the solid [m]")
       ->default_val(m.fit_within_m)
+      ->check(CLI::PositiveNumber);
+  sub->add_option("--support-dist", m.support_dist_m,
+                  "Distance within which a scan point supports the solid "
+                  "mesh [m] (mesh_unsupported_share)")
+      ->default_val(m.support_dist_m)
       ->check(CLI::PositiveNumber);
 
   sub->callback([opt, global_opt, sub]() {

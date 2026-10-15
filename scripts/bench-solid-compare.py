@@ -51,6 +51,7 @@ DIRECTIONS: "dict[str, str]" = {
     "opening_precision": HIGHER,
     "fit_mean_m": LOWER,
     "fit_within_share": HIGHER,
+    "mesh_unsupported_share": LOWER,
     "seen_share_mean": HIGHER,
     "assumed_share": LOWER,
 }
