@@ -4,9 +4,12 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <opencv2/core.hpp>
 
@@ -192,6 +195,45 @@ inline cv::Mat api_mat_to_storage(const cv::Mat &api) {
   cv::Mat storage;
   offset.convertTo(storage, CV_16U);
   return storage;
+}
+
+// ── Voting ────────────────────────────────────────────────────────────────
+
+/// The label that wins a vote, given (point label, count) pairs.
+///
+/// The one vote rule of the semantic stages (`rux create project` across
+/// frames, `rux create clouds` inside a voxel): `kUnlabeled` never votes, so
+/// background never overwrites a class; entries with the same label are
+/// summed; the highest total wins and an exact tie goes to the lowest label
+/// (STANDARDS §6: the result does not depend on the order of @p counts).
+/// Entries with a count <= 0 are ignored.
+///
+/// @return the winning label, or `kUnlabeled` when no class voted.
+inline uint32_t
+majority_label(const std::vector<std::pair<uint32_t, int>> &counts) {
+  std::vector<std::pair<uint32_t, long long>> totals;
+  totals.reserve(counts.size());
+  for (const auto &[label, count] : counts) {
+    if (label == kUnlabeled || count <= 0)
+      continue;
+    totals.emplace_back(label, count);
+  }
+  std::sort(totals.begin(), totals.end());
+
+  uint32_t best_label = kUnlabeled;
+  long long best_total = 0;
+  for (size_t i = 0; i < totals.size();) {
+    const uint32_t label = totals[i].first;
+    long long total = 0;
+    for (; i < totals.size() && totals[i].first == label; ++i)
+      total += totals[i].second;
+    // Ascending label order + strict '>' keeps the lowest label on a tie.
+    if (total > best_total) {
+      best_total = total;
+      best_label = label;
+    }
+  }
+  return best_label;
 }
 
 } // namespace reusex::core

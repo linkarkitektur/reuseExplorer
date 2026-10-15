@@ -178,13 +178,15 @@ Run a semantic segmentation model over the stored frames.
 
 ### `project` (`rux create project`)
 
-Project the 2D semantic labels onto the 3D cloud.
+Project the 2D semantic labels onto the 3D cloud by multi-view majority vote:
+each frame that sees a point votes for the class at its pixel, background
+never votes, and an exact tie goes to the lowest class (`core::majority_label`).
 
 | | |
 |---|---|
-| Consumes | `cloud`, `segmentation_images` |
-| Produces | `labels` (`Label`) |
-| Options  | `rux create project` CLI options |
+| Consumes | `cloud`, `segmentation_images`, the latest `annotate_class_map` pipeline-log entry (class names) |
+| Produces | `labels` (`Label`, stamped `label_encoding`, with `label_definitions` keyed by point label) |
+| Options  | `ProjectLabelsOptions` (`libs/reusex/include/vision/project.hpp`): `--max-depth`, `--depth-tolerance` |
 | Checks   | `cloud` present; at least one frame carries a segmentation image |
 
 ### `planes` (`rux create planes`)

@@ -10,7 +10,8 @@
 // be computed in the test. The geometry is a fronto-parallel grid of points at
 // a known constant depth, which also makes the internally-computed z-buffer
 // (built at 1/16 resolution and resized back up) a constant field, so the
-// 0.15 m occlusion test is satisfied everywhere the label image is defined.
+// default 0.15 m occlusion tolerance is satisfied everywhere the label image is
+// defined.
 //
 // The assertions are the label contract of docs/STANDARDS.md §3:
 //   * segmentation storage is CV_16U with a +1 offset, the ProjectDB API is
@@ -38,6 +39,7 @@
 #include <types/point_types.hpp>
 #include <vision/project.hpp>
 
+#include <nlohmann/json.hpp>
 #include <opencv2/core.hpp>
 
 #include <array>
@@ -48,6 +50,10 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 using reusex::ProjectDB;
 using reusex::vision::project;
@@ -64,7 +70,7 @@ constexpr double kCx = 64.0;
 constexpr double kCy = 64.0;
 
 /// Depth of the synthetic wall, in metres. Comfortably inside project()'s
-/// hard-coded 7 m far cutoff.
+/// default 7 m far cutoff (ProjectLabelsOptions::max_depth_m).
 constexpr float kDepth = 2.0F;
 
 /// The labelled square, in pixels: [kPatchLo, kPatchHi) on both axes.
@@ -299,7 +305,7 @@ TEST_CASE("Project_PointsBeyondFarCutoff_LeavesPointsUnlabeled",
           "[vision][project]") {
   auto db = make_project(make_label_image());
 
-  // project() hard-codes a 7 m maximum depth (see the TODO in project.cpp).
+  // The default ProjectLabelsOptions::max_depth_m is 7 m.
   auto wall = make_wall();
   reusex::CloudPtr far(new reusex::Cloud);
   for (const auto &p : wall->points) {
@@ -317,4 +323,184 @@ TEST_CASE("Project_PointsBeyondFarCutoff_LeavesPointsUnlabeled",
   REQUIRE(labels->size() == far->size());
   for (const auto &pt : labels->points)
     REQUIRE(pt.label == reusex::core::kUnlabeled);
+}
+
+// ── Multi-view vote (reusex-z1v.2.2) ──────────────────────────────────────
+// Every frame below sits at the same identity pose, so each frame sees the
+// same points at the same pixels and only the label images differ. project()
+// used to be last-frame-wins: the frame order is chosen so that last-wins
+// gives a different answer than the vote in every case.
+
+namespace {
+
+/// One frame per label image, ids 1..N in order, all at the identity pose.
+std::shared_ptr<ProjectDB>
+make_multi_frame_project(const std::vector<cv::Mat> &label_images) {
+  auto db = std::make_shared<ProjectDB>(":memory:");
+  cv::Mat color(kHeight, kWidth, CV_8UC3, cv::Scalar(0, 0, 0));
+  int id = 1;
+  for (const auto &img : label_images) {
+    db->save_sensor_frame(id, color, cv::Mat(), cv::Mat(), identity4(),
+                          make_intrinsics());
+    db->save_segmentation_image(id, img);
+    ++id;
+  }
+  return db;
+}
+
+cv::Mat uniform_label_image(int api_class) {
+  return cv::Mat(kHeight, kWidth, CV_32S, cv::Scalar(api_class));
+}
+
+/// Number of points whose label is @p label; also REQUIREs that every other
+/// point is unlabeled, so a stray third value cannot hide.
+size_t count_label(const reusex::CloudL &labels, uint32_t label) {
+  size_t n = 0;
+  for (const auto &pt : labels.points) {
+    REQUIRE((pt.label == label || pt.label == reusex::core::kUnlabeled));
+    if (pt.label == label)
+      ++n;
+  }
+  return n;
+}
+
+} // namespace
+
+TEST_CASE("Project_ClassThenBackgroundFrame_BackgroundNeverOverwritesClass",
+          "[vision][project][vote]") {
+  // Frame 1 sees the patch as class 7, frame 2 sees everything as background.
+  cv::Mat background(kHeight, kWidth, CV_32S,
+                     cv::Scalar(reusex::core::kBackgroundApi));
+  auto db = make_multi_frame_project({make_label_image(), background});
+  auto cloud = make_wall();
+
+  auto labels = project(*db, cloud);
+
+  REQUIRE(labels->size() == cloud->size());
+  size_t labelled = 0;
+  for (size_t i = 0; i < cloud->size(); ++i) {
+    const auto [px, py] = pixel_of(cloud->points[i]);
+    const uint32_t got = labels->points[i].label;
+    if (inside_patch(px, py)) {
+      REQUIRE(got == reusex::core::api_to_point_label(kPatchClass));
+      ++labelled;
+    } else {
+      REQUIRE(got == reusex::core::kUnlabeled);
+    }
+  }
+  REQUIRE(labelled > 100);
+}
+
+TEST_CASE("Project_TwoFramesAgainstOne_MajorityWins",
+          "[vision][project][vote]") {
+  // API class 3 twice, then class 5 once (last, so last-wins would pick 5).
+  auto db = make_multi_frame_project(
+      {uniform_label_image(3), uniform_label_image(3), uniform_label_image(5)});
+  auto cloud = make_wall();
+
+  auto labels = project(*db, cloud);
+
+  REQUIRE(labels->size() == cloud->size());
+  REQUIRE(count_label(*labels, reusex::core::api_to_point_label(3)) > 1000);
+}
+
+TEST_CASE("Project_ExactTie_LowestClassWins", "[vision][project][vote]") {
+  // One vote each; the higher class comes last so last-wins would pick it.
+  auto db = make_multi_frame_project(
+      {uniform_label_image(2), uniform_label_image(9)});
+  auto cloud = make_wall();
+
+  auto labels = project(*db, cloud);
+
+  REQUIRE(labels->size() == cloud->size());
+  REQUIRE(count_label(*labels, reusex::core::api_to_point_label(2)) > 1000);
+}
+
+TEST_CASE("Project_RepeatedRuns_AreBitIdentical", "[vision][project][vote]") {
+  // A mix of disagreeing frames, so the vote has real work to do.
+  cv::Mat mixed = uniform_label_image(4);
+  mixed(cv::Range(0, kHeight / 2), cv::Range::all())
+      .setTo(reusex::core::kBackgroundApi);
+  auto db = make_multi_frame_project(
+      {make_label_image(), mixed, uniform_label_image(4), make_label_image()});
+  auto cloud = make_wall();
+
+  auto first = project(*db, cloud);
+  REQUIRE(first->size() == cloud->size());
+  for (int run = 0; run < 3; ++run) {
+    auto again = project(*db, cloud);
+    REQUIRE(again->size() == first->size());
+    for (size_t i = 0; i < first->size(); ++i)
+      REQUIRE(again->points[i].label == first->points[i].label);
+  }
+}
+
+TEST_CASE("Project_MaxDepthOption_PointsBeyondItStayUnlabeled",
+          "[vision][project][options]") {
+  auto db = make_project(make_label_image());
+  auto cloud = make_wall(); // at kDepth = 2 m
+
+  reusex::vision::ProjectLabelsOptions near_only;
+  near_only.max_depth_m = kDepth - 0.5F;
+  auto labels = project(*db, cloud, near_only);
+  REQUIRE(labels->size() == cloud->size());
+  for (const auto &pt : labels->points)
+    REQUIRE(pt.label == reusex::core::kUnlabeled);
+
+  // The default (7 m) reaches the wall.
+  auto defaults = project(*db, cloud, reusex::vision::ProjectLabelsOptions{});
+  REQUIRE(count_label(*defaults,
+                      reusex::core::api_to_point_label(kPatchClass)) > 100);
+}
+
+TEST_CASE("Project_InvalidOptions_Throw", "[vision][project][options]") {
+  auto db = make_project(make_label_image());
+  auto cloud = make_wall();
+
+  reusex::vision::ProjectLabelsOptions bad_depth;
+  bad_depth.max_depth_m = 0.0F;
+  REQUIRE_THROWS_AS(project(*db, cloud, bad_depth), std::invalid_argument);
+
+  reusex::vision::ProjectLabelsOptions bad_tol;
+  bad_tol.depth_tolerance_m = -0.1F;
+  REQUIRE_THROWS_AS(project(*db, cloud, bad_tol), std::invalid_argument);
+}
+
+TEST_CASE("ProjectLabelsParameters_CarryOptionsAndLabelEncoding",
+          "[vision][project][options]") {
+  reusex::vision::ProjectLabelsOptions opt;
+  opt.max_depth_m = 4.5F;
+  opt.depth_tolerance_m = 0.25F;
+
+  const auto j =
+      nlohmann::json::parse(reusex::vision::project_labels_parameters(opt));
+
+  REQUIRE(j.at("max_depth_m").get<double>() == 4.5);
+  REQUIRE(j.at("depth_tolerance_m").get<double>() == 0.25);
+  REQUIRE(j.at(reusex::core::kLabelEncodingKey).get<std::string>() ==
+          reusex::core::kLabelEncodingApiPlusOne);
+}
+
+TEST_CASE("Project_DifferentThreadCounts_AreBitIdentical",
+          "[vision][project][vote]") {
+#ifdef _OPENMP
+  cv::Mat mixed = uniform_label_image(4);
+  mixed(cv::Range(0, kHeight / 2), cv::Range::all()).setTo(1);
+  auto db = make_multi_frame_project(
+      {make_label_image(), mixed, uniform_label_image(1), make_label_image()});
+  auto cloud = make_wall();
+
+  const int saved = omp_get_max_threads();
+  omp_set_num_threads(1);
+  auto serial = project(*db, cloud);
+  omp_set_num_threads(4);
+  auto parallel = project(*db, cloud);
+  omp_set_num_threads(saved);
+
+  REQUIRE(serial->size() == parallel->size());
+  for (size_t i = 0; i < serial->size(); ++i)
+    REQUIRE(serial->points[i].label == parallel->points[i].label);
+#else
+  SKIP("test binary built without OpenMP");
+#endif
 }

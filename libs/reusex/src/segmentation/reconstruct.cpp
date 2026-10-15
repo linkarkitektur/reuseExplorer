@@ -5,6 +5,7 @@
 #include "segmentation/reconstruct.hpp"
 #include "core/ProjectDB.hpp"
 #include "core/SensorIntrinsics.hpp"
+#include "core/annotate_class_map.hpp"
 #include "core/label_semantics.hpp"
 #include "core/logging.hpp"
 #include "core/processing_observer.hpp"
@@ -38,7 +39,6 @@
 #include <cstring>
 #include <limits>
 #include <numeric>
-#include <unordered_map>
 
 namespace reusex::geometry {
 
@@ -368,20 +368,14 @@ void reconstruct_point_clouds(ProjectDB &db,
     std::vector<float> distances;
     kdtree.radiusSearch((*ds_cloud)[i], half_res, indices, distances);
 
-    std::unordered_map<uint32_t, int> counts;
-    for (int idx : indices) {
-      counts[(*merged_labels)[idx].label]++;
-    }
-
-    uint32_t best_label = core::kUnlabeled;
-    int best_count = 0;
-    for (const auto &[label, count] : counts) {
-      if (count > best_count) {
-        best_count = count;
-        best_label = label;
-      }
-    }
-    (*ds_labels)[i].label = best_label;
+    // One vote per merged point; majority_label() ignores kUnlabeled and
+    // breaks a tie towards the lowest label, independent of the order the
+    // KdTree returns neighbours in (STANDARDS §6).
+    std::vector<std::pair<uint32_t, int>> votes;
+    votes.reserve(indices.size());
+    for (int idx : indices)
+      votes.emplace_back((*merged_labels)[idx].label, 1);
+    (*ds_labels)[i].label = core::majority_label(votes);
   }
 
   // ── Outlier removal ──────────────────────────────────────────────
@@ -528,24 +522,10 @@ void reconstruct_point_clouds(ProjectDB &db,
     db.save_point_cloud("labels", *out_labels, "reconstruct",
                         labelParams.dump());
 
-    // Copy class names from annotation pipeline log to label_definitions.
-    // The log is keyed by API class id; the definitions by point label.
-    for (const auto &entry : db.pipeline_log()) {
-      if (entry.stage == "annotate_class_map" && !entry.parameters.empty()) {
-        try {
-          auto j = nlohmann::json::parse(entry.parameters);
-          std::map<int, std::string> class_map;
-          for (auto &[key, val] : j.items())
-            class_map[static_cast<int>(core::api_to_point_label(
-                std::stoi(key)))] = val.get<std::string>();
-          if (!class_map.empty())
-            db.save_label_definitions("labels", class_map);
-        } catch (const std::exception &e) {
-          core::warn("Failed to parse annotation class map: {}", e.what());
-        }
-        break;
-      }
-    }
+    // Class names of the latest annotate run, keyed by point label.
+    if (auto definitions = core::annotated_label_definitions(db);
+        !definitions.empty())
+      db.save_label_definitions("labels", definitions);
   }
 
   core::info("Reconstruction complete: {} points, {} normals, {} labels",

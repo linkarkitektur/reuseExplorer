@@ -159,3 +159,44 @@ TEST_CASE("MatLabelConverters_EmptyOrWrongTypeInput_ThrowsOrReturnsEmpty",
     REQUIRE_THROWS_AS(api_mat_to_storage(wrong), std::invalid_argument);
   }
 }
+
+// ── majority_label (reusex-z1v.2.2) ───────────────────────────────────────
+// The one vote rule shared by `rux create project` (votes across frames) and
+// `rux create clouds` (votes inside a voxel): kUnlabeled never votes, the
+// highest count wins, an exact tie goes to the lowest label.
+
+TEST_CASE("MajorityLabel_NoVotes_ReturnsUnlabeled", "[label_semantics]") {
+  REQUIRE(majority_label({}) == kUnlabeled);
+}
+
+TEST_CASE("MajorityLabel_OnlyUnlabeledVotes_ReturnsUnlabeled",
+          "[label_semantics]") {
+  REQUIRE(majority_label({{kUnlabeled, 12}}) == kUnlabeled);
+}
+
+TEST_CASE("MajorityLabel_UnlabeledOutnumbersAClass_ClassWins",
+          "[label_semantics]") {
+  // Background never overwrites a class, however many frames saw background.
+  REQUIRE(majority_label({{kUnlabeled, 9}, {4u, 1}}) == 4u);
+}
+
+TEST_CASE("MajorityLabel_TwoVersusOne_MajorityWins", "[label_semantics]") {
+  REQUIRE(majority_label({{6u, 1}, {4u, 2}}) == 4u);
+  REQUIRE(majority_label({{4u, 1}, {6u, 2}}) == 6u);
+}
+
+TEST_CASE("MajorityLabel_ExactTie_LowestLabelWinsInAnyOrder",
+          "[label_semantics]") {
+  REQUIRE(majority_label({{10u, 3}, {3u, 3}}) == 3u);
+  REQUIRE(majority_label({{3u, 3}, {10u, 3}}) == 3u);
+  REQUIRE(majority_label({{kUnlabeled, 3}, {10u, 3}, {7u, 3}}) == 7u);
+}
+
+TEST_CASE("MajorityLabel_RepeatedLabelEntries_AreSummed", "[label_semantics]") {
+  // Callers may hand in one entry per vote rather than pre-aggregated counts.
+  REQUIRE(majority_label({{5u, 1}, {2u, 1}, {5u, 1}}) == 5u);
+}
+
+TEST_CASE("MajorityLabel_NonPositiveCounts_DoNotVote", "[label_semantics]") {
+  REQUIRE(majority_label({{5u, 0}, {2u, -3}}) == kUnlabeled);
+}
