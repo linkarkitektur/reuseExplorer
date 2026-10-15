@@ -1,0 +1,774 @@
+# SPDX-FileCopyrightText: 2026 Povl Filip Sonne-Frederiksen
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# house1 reference plan -- DRAFT, maintainer review pending (reusex-yf4.3).
+#
+# Hand-authored ground-truth target for the solid-model benchmark
+# (docs/design/solid-model-json.md, docs/guides/solid-model-reference-authoring.md).
+# Never round-trip this file through a writer (rux edit plan --export drops the
+# comments): edit it by hand with the --watch loop.
+#
+# Source scan: scan archive 2024-06-13_house-1_afb3234950/reusex/project.rux
+# (238 frames), clouds/planes regenerated with sensor-oriented normals, then
+# `rux create storeys` (one storey). Nothing derived from the scan except this
+# file is committed; point $REUSEX_HOUSE1_RUX at such a copy to use it.
+#
+# What the scan shows: an empty, stripped single-family house, one storey with a
+# SPLIT LEVEL. The north block (entrance, WC, utility, kitchen, hall, two bedrooms)
+# has its floor 0.75 m above the south block (living room, room S2, bathroom) and
+# the east wing (bedroom, back entry); a short stair at x ~ -7.3 leads down from
+# the hall into the living room, and the hall overlooks the living room over a
+# parapet. The south block and the wing have a mono-pitch ceiling (~2.38 at the
+# south facade to ~3.0 at the split wall). (reusex-2kd quoted ~0.85 m for the
+# step; the floor-plane modes here give 0.75 m: north 0.73-0.75, south 0.00-0.02.)
+#
+# How the split level is represented: ONE storey (z_floor 0 = the lower, south
+# floor). North-block spaces have z_floor 0.75 and its walls z_base 0.75; the two
+# split walls (i-split-w/-e) run 0 -> 3.09. The format cannot represent the sloped
+# ceiling (one z_ceiling per space, one height per wall) or the stair itself
+# (see the follow-up bead in the report / reusex-yf4.3 notes).
+#
+# Method: wall faces fitted per 0.4 m bin from the cloud (sensor-oriented normals
+# tell which side a face was seen from), axis = mean of the two faces, thickness =
+# their separation where both sides agree; -1 (unknown) for external walls (only
+# the inner face scanned; axis on the inner face) and where pose drift makes the
+# two faces disagree by > 10 cm. Openings from depth-coloured elevations of the
+# wall band. Rooms named from the sensor images (frame ids in each space's
+# metadata); the house is empty, so names rest on fixtures left behind.
+# Pose drift between rooms is 5-40 cm in places (see i-split-w); the plan follows
+# the scan as registered, it does not correct the drift.
+model_version: 1
+units: m
+name: "house1 reference (DRAFT)"
+description: "DRAFT - needs maintainer review. Agent-authored on the house1 scan (scan archive 2024-06-13_house-1_afb3234950) with the loop in docs/guides/solid-model-reference-authoring.md; not ground truth (decision D5). One storey with a split level: north block floor at level z 0.75, south block and east wing at z 0; sloped ceiling in the south block not representable. Coordinates in the detected level frame stored in level_transform."
+storeys:
+  - guid: "storey-0"
+    idx: 0
+    name: "Stueetage"
+    z_floor: 0.0
+    z_ceiling: 3.09
+    # Detected level frame (rux create storeys on a copy, schema v31 build of 2026-10-15),
+    # copied verbatim: a shift of world x/y/z plus a 0.1 deg tilt. Plan x/y below are
+    # in THIS frame (not world x/y).
+    level_transform: [0.999999134, -8.74024445e-07, -0.00131617678, -9.44123126, -8.74024445e-07, 0.999999118, -0.00132812506, 4.24242662, 0.00131617678, 0.00132812506, 0.999998252, 2.3796382, 0, 0, 0, 1]
+    source: manual
+    locked: true
+    metadata: {status: "draft - needs maintainer review", split_level: "north block floor at z 0.75, south block at z 0 (one storey; the split level is carried by z_floor of the spaces and z_base of the walls)", sloped_ceiling: "south block ceiling rises from ~2.38 (south facade) to ~3.0 (split wall), ~9.5 deg; not representable (one z_ceiling per space, one height per wall)"}
+walls:
+  # South facade, split in three (x-south-1/2/3): one physical facade, but the scan of the
+  # adjacent rooms disagrees by 4-10 cm at the room junctions (pose drift), so one straight
+  # line would sit off the points at both ends.
+  - guid: "x-south-1"
+    storey: 0
+    axis: [[-10.419, -1.643], [-4.202, -1.982]]
+    z_base: 0.00
+    height: 2.38
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin, both ends), thickness unknown. South facade of the living room; top = eave at ~2.38."}
+  - guid: "x-south-2"
+    storey: 0
+    axis: [[-4.200, -1.945], [0.600, -2.164]]
+    z_base: 0.00
+    height: 2.38
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin, both ends), thickness unknown. Facade of room S2 and the bathroom."}
+  - guid: "x-south-3"
+    storey: 0
+    axis: [[0.603, -2.061], [6.802, -2.467]]
+    z_base: 0.00
+    height: 2.38
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin, both ends), thickness unknown. Facade of the east wing (bedroom + back entry). Starts ~10 cm north of x-south-2 at x=0.6: the wing appears to be an extension (see i-s3, 0.33 m, likely the old external wall)."}
+  - guid: "x-east"
+    storey: 0
+    axis: [[6.746, -2.494], [7.210, 1.421]]
+    z_base: 0.00
+    height: 2.90
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin, both ends), thickness unknown. East gable of the wing; south block: its top follows the mono-pitch ceiling (level z ~2.38 at the south facade rising ~0.17 m/m to ~3.0 at the split wall); the format has one height per wall, so height is the HIGHEST point of the wall and the slope is not represented"}
+  # North wall of the east wing (the house is L-shaped; outside to the north).
+  - guid: "x-north-wing-e"
+    storey: 0
+    axis: [[7.219, 1.435], [5.000, 1.680]]
+    z_base: 0.00
+    height: 2.95
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin, both ends), thickness unknown. North wall of the back entry (wing). Split from x-north-wing-w at x=5.0: the back entry was scanned with a ~6 deg yaw drift (see i-s4), so its stretch of this wall is rotated against the bedroom stretch."}
+  - guid: "x-north-wing-w"
+    storey: 0
+    axis: [[5.000, 1.560], [0.900, 1.670]]
+    z_base: 0.00
+    height: 2.95
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external, inner face only, thickness unknown. North wall of the wing bedroom, hidden behind built-in wardrobes (their fronts at y~1.1 are furniture, not the wall): the face is read from the strips of wall visible above / between the wardrobes (y 1.66 at x 1.2, 1.58 at x 4.3), +-3 cm. Wall support is low by construction (wardrobes occlude it)."}
+  # North block (north block (raised floor at level z 0.75, flat ceiling 3.09)): its walls start at z_base 0.75, the raised floor.
+  - guid: "x-east-n"
+    storey: 0
+    axis: [[0.757, 1.702], [0.957, 7.330]]
+    z_base: 0.75
+    height: 2.34
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin, both ends), thickness unknown. East facade of the north block (raised floor at level z 0.75, flat ceiling 3.09)."}
+  - guid: "x-north-e"
+    storey: 0
+    axis: [[0.950, 7.317], [-2.752, 7.395]]
+    z_base: 0.75
+    height: 2.34
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin, both ends), thickness unknown. North facade, bedroom 1; 6 cm south of x-north-w where they meet at x=-2.75 (drift), so split there."}
+  - guid: "x-north-w"
+    storey: 0
+    axis: [[-2.750, 7.456], [-9.900, 7.609]]
+    z_base: 0.75
+    height: 2.34
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin, both ends), thickness unknown. North facade of kitchen + utility room."}
+  - guid: "x-west-n"
+    storey: 0
+    axis: [[-9.886, 7.599], [-10.025, 2.300]]
+    z_base: 0.75
+    height: 2.34
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin, both ends), thickness unknown. West facade of the north block (WC, entrance, utility); front and back doors in it."}
+  - guid: "x-west-s"
+    storey: 0
+    axis: [[-10.130, 2.351], [-10.437, -1.619]]
+    z_base: 0.00
+    height: 2.85
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin, both ends), thickness unknown. West gable of the living room (south block); south block: its top follows the mono-pitch ceiling (level z ~2.38 at the south facade rising ~0.17 m/m to ~3.0 at the split wall); the format has one height per wall, so height is the HIGHEST point of the wall and the slope is not represented. ~4 deg off the north block's west wall: rotation drift between the blocks."}
+  # Split-level wall (y ~2): retains the 0.75 m step between the blocks. Two segments with a
+  # 9 cm jog at x=-7.55 (where the stair opening starts).
+  - guid: "i-split-w"
+    storey: 0
+    axis: [[-10.107, 2.134], [-7.550, 2.100]]
+    z_base: 0.00
+    height: 3.09
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "The split-level wall between the WC (north, floor 0.75) and the living room (south, floor 0), full height 0 -> 3.09. Faces seen from the two sides are INVERTED (north face at y~1.95-2.07, south face at y~2.30-2.12, up to 0.38 m apart the wrong way): pose drift between the scan of the north and south blocks. Axis is the mean of the two faces; thickness unknown."}
+  - guid: "i-split-e"
+    storey: 0
+    axis: [[-7.546, 2.189], [0.800, 1.728]]
+    z_base: 0.00
+    height: 3.09
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Split-level wall between the hall / bedroom 2 (north, floor 0.75) and living room / room S2 / bathroom (south, floor 0). Face positions disagree along the wall (thickness +4 cm at the west end, -18 cm at the east end): drift. Axis = mean of the fitted faces; thickness unknown. Holds the stair opening and the balustrade opening over the living room."}
+  - guid: "i-s1"
+    storey: 0
+    axis: [[-4.329, -1.917], [-4.043, 1.999]]
+    z_base: 0.00
+    height: 3.00
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Living room | room S2. Faces inconsistent (-12 / +11 cm, a 0.2 m deep object west of it at y<0.8 pulls the west-face fit); thickness unknown. south block: its top follows the mono-pitch ceiling (level z ~2.38 at the south facade rising ~0.17 m/m to ~3.0 at the split wall); the format has one height per wall, so height is the HIGHEST point of the wall and the slope is not represented"}
+  - guid: "i-s2"
+    storey: 0
+    axis: [[-1.436, -2.079], [-1.276, 1.849]]
+    z_base: 0.00
+    height: 3.00
+    thickness: 0.12
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Room S2 | bathroom; thickness 0.12 = mean of 0.17 (south end) and 0.07 (north end) face separations. south block: its top follows the mono-pitch ceiling (level z ~2.38 at the south facade rising ~0.17 m/m to ~3.0 at the split wall); the format has one height per wall, so height is the HIGHEST point of the wall and the slope is not represented"}
+  - guid: "i-s3"
+    storey: 0
+    axis: [[0.554, -2.180], [0.767, 1.702]]
+    z_base: 0.00
+    height: 3.00
+    thickness: 0.33
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Bathroom | wing bedroom; 0.33 m thick (0.28 south end, 0.39 north end) - probably the old external wall before the wing was added. south block: its top follows the mono-pitch ceiling (level z ~2.38 at the south facade rising ~0.17 m/m to ~3.0 at the split wall); the format has one height per wall, so height is the HIGHEST point of the wall and the slope is not represented"}
+  - guid: "i-s4"
+    storey: 0
+    axis: [[4.715, -2.300], [4.876, 1.549]]
+    z_base: 0.00
+    height: 2.95
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Wing bedroom | back entry. The east face is rotated ~6 deg against the west face (separation 0.18 m at the south end, 0.41 m at the north end): the back entry was scanned with a yaw drift. Axis ON THE WEST (bedroom) FACE, which is straight and well supported; thickness unknown. south block: its top follows the mono-pitch ceiling (level z ~2.38 at the south facade rising ~0.17 m/m to ~3.0 at the split wall); the format has one height per wall, so height is the HIGHEST point of the wall and the slope is not represented"}
+  - guid: "i-n-w1"
+    storey: 0
+    axis: [[-10.000, 3.391], [-7.550, 3.393]]
+    z_base: 0.75
+    height: 2.34
+    thickness: 0.22
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "WC | entrance, 0.22 m (0.20/0.23 at the ends)."}
+  - guid: "i-n1"
+    storey: 0
+    axis: [[-7.571, 2.100], [-7.467, 5.050]]
+    z_base: 0.75
+    height: 2.34
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "WC + entrance | hall. Faces inverted at the south end (-17 cm) and +5 cm at the north end: drift; thickness unknown."}
+  - guid: "i-n-w2"
+    storey: 0
+    axis: [[-9.950, 5.165], [-7.550, 5.065]]
+    z_base: 0.75
+    height: 2.34
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Entrance | utility room. Faces inconsistent (-11 / -3 cm): drift; thickness unknown. A closet (short wall at x=-8.84, y 5.15..5.67) in the utility room's south-west corner is not modelled."}
+  - guid: "i-n2"
+    storey: 0
+    axis: [[-6.397, 4.950], [-6.341, 7.550]]
+    z_base: 0.75
+    height: 2.34
+    thickness: 0.08
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Utility room | kitchen, 0.08 m."}
+  - guid: "i-n-mid-w"
+    storey: 0
+    axis: [[-6.397, 4.981], [-5.700, 4.920]]
+    z_base: 0.75
+    height: 2.34
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "0.7 m wall stub at the west end of the kitchen/hall boundary, seen from the hall only; the rest of that line (x -5.7..-2.75) is OPEN in the scan (kitchen open to the hall)."}
+  - guid: "i-n3"
+    storey: 0
+    axis: [[-2.849, 2.001], [-2.591, 7.448]]
+    z_base: 0.75
+    height: 2.34
+    thickness: 0.12
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Hall + kitchen | bedrooms 1 and 2, 0.12 m."}
+  - guid: "i-n-e"
+    storey: 0
+    axis: [[-2.749, 4.651], [0.850, 4.503]]
+    z_base: 0.75
+    height: 2.34
+    thickness: 0.07
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Bedroom 2 | bedroom 1, 0.07 m."}
+spaces:
+  # South block: floor at level z 0 (the storey floor).
+  - guid: "s-living"
+    storey: 0
+    name: "Living room"
+    kind: room
+    polygon:
+      outer: [[-10.439, -1.642], [-4.333, -1.975], [-4.043, 1.996], [-7.550, 2.189], [-7.550, 2.100], [-10.147, 2.135]]
+    z_floor: 0.00
+    z_ceiling: 2.70
+    source: manual
+    locked: true
+    metadata: {identified_by: "Largest room, two south windows + patio door, stair down from the hall (frames 121-137). Name from size/position: no furniture left in the house. south block: sloped (mono-pitch) ceiling from ~2.38 at the south facade to ~3.0 at the split wall; z_ceiling is the footprint mean (~2.70) since a space has one ceiling height"}
+  - guid: "s-room-s2"
+    storey: 0
+    name: "Room S2 (parquet)"
+    kind: room
+    polygon:
+      outer: [[-4.331, -1.939], [-1.496, -2.068], [-1.336, 1.846], [-4.043, 1.996]]
+    z_floor: 0.00
+    z_ceiling: 2.70
+    source: manual
+    locked: true
+    confidence: 0.5
+    metadata: {identified_by: "Parquet room between living room and bathroom (frames 140-160); patches of removed wall tiles (frames 145, 160) - use not evident, possibly a former kitchen/dining or a bedroom. south block: sloped (mono-pitch) ceiling from ~2.38 at the south facade to ~3.0 at the split wall; z_ceiling is the footprint mean (~2.70) since a space has one ceiling height"}
+  - guid: "s-bath"
+    storey: 0
+    name: "Bathroom"
+    kind: room
+    polygon:
+      outer: [[-1.376, -2.074], [0.390, -2.154], [0.604, 1.739], [-1.216, 1.839]]
+    z_floor: 0.00
+    z_ceiling: 2.70
+    source: manual
+    locked: true
+    metadata: {identified_by: "Built-in bathtub at the north end, tiled walls, ceiling extract (frames 168-183). south block: sloped (mono-pitch) ceiling from ~2.38 at the south facade to ~3.0 at the split wall; z_ceiling is the footprint mean (~2.70) since a space has one ceiling height"}
+  - guid: "s-bed-wing"
+    storey: 0
+    name: "Bedroom (wing)"
+    kind: room
+    polygon:
+      outer: [[0.725, -2.069], [4.714, -2.330], [4.877, 1.563], [0.930, 1.669]]
+    z_floor: 0.00
+    z_ceiling: 2.70
+    source: manual
+    locked: true
+    metadata: {identified_by: "Built-in wardrobes along the north wall, patio door + two windows (frames 186-214). south block: sloped (mono-pitch) ceiling from ~2.38 at the south facade to ~3.0 at the split wall; z_ceiling is the footprint mean (~2.70) since a space has one ceiling height"}
+  - guid: "s-back-entry"
+    storey: 0
+    name: "Back entry / utility (wing)"
+    kind: room
+    polygon:
+      outer: [[4.714, -2.330], [6.750, -2.464], [7.212, 1.436], [4.882, 1.693]]
+    z_floor: 0.00
+    z_ceiling: 2.70
+    source: manual
+    locked: true
+    confidence: 0.6
+    metadata: {identified_by: "Exterior door in the north wall, grey floor, radiator, two windows east (frames 218-238). south block: sloped (mono-pitch) ceiling from ~2.38 at the south facade to ~3.0 at the split wall; z_ceiling is the footprint mean (~2.70) since a space has one ceiling height"}
+  # North block: floor at level z 0.75 (split level, 0.75 m above the storey floor),
+  # flat ceiling at 3.09 (2.34 m clear).
+  - guid: "s-wc"
+    storey: 0
+    name: "WC / bathroom 2"
+    kind: room
+    polygon:
+      outer: [[-10.029, 2.133], [-7.571, 2.100], [-7.529, 3.283], [-9.999, 3.281]]
+    z_floor: 0.75
+    z_ceiling: 3.09
+    source: manual
+    locked: true
+    metadata: {identified_by: "Floor drain, toilet stub, ceiling extract vent, small window (frames 25-35)."}
+  - guid: "s-entrance"
+    storey: 0
+    name: "Entrance hall"
+    kind: room
+    polygon:
+      outer: [[-9.993, 3.501], [-7.522, 3.503], [-7.467, 5.062], [-9.950, 5.165]]
+    z_floor: 0.75
+    z_ceiling: 3.09
+    source: manual
+    locked: true
+    metadata: {identified_by: "Front door (black, with side light) in the west wall, wardrobe (frames 1-24)."}
+  - guid: "s-utility"
+    storey: 0
+    name: "Utility room (bryggers)"
+    kind: room
+    polygon:
+      outer: [[-9.950, 5.165], [-7.467, 5.062], [-6.436, 4.984], [-6.381, 7.534], [-9.886, 7.609]]
+    z_floor: 0.75
+    z_ceiling: 3.09
+    source: manual
+    locked: true
+    confidence: 0.7
+    metadata: {identified_by: "Back door with glazing in the west wall, electrical panel / pipes, floor hatch, attic ladder nearby (frames 40-50). Its south-east strip (x -7.55..-6.4) opens to the hall without a wall."}
+  - guid: "s-kitchen"
+    storey: 0
+    name: "Kitchen"
+    kind: room
+    polygon:
+      outer: [[-6.356, 4.977], [-2.786, 4.606], [-2.651, 7.454], [-6.301, 7.532]]
+    z_floor: 0.75
+    z_ceiling: 3.09
+    source: manual
+    locked: true
+    metadata: {identified_by: "Removed kitchen: band of removed backsplash tiles at counter height, two north windows, ceiling hatch (frames 54-60). Open to the hall: boundary drawn on the line of the 0.7 m stub i-n-mid-w."}
+  - guid: "s-hall"
+    storey: 0
+    name: "Hall"
+    kind: corridor
+    polygon:
+      outer: [[-7.568, 2.190], [-7.466, 5.075], [-6.356, 4.977], [-2.786, 4.606], [-2.912, 1.933]]
+    z_floor: 0.75
+    z_ceiling: 3.09
+    source: manual
+    locked: true
+    metadata: {identified_by: "Circulation between entrance, kitchen, bedrooms and the stair down to the living room (frames 109-120). Includes the 2-3 steps at x -7.7..-6.8, y 2.1..2.8 (level z ~0.35) that lead down through the stair opening; the format has no stair element."}
+  - guid: "s-bed-2"
+    storey: 0
+    name: "Bedroom 2"
+    kind: room
+    polygon:
+      outer: [[-2.792, 1.926], [-2.665, 4.613], [0.855, 4.468], [0.758, 1.730]]
+    z_floor: 0.75
+    z_ceiling: 3.09
+    source: manual
+    locked: true
+    metadata: {identified_by: "Space-themed wallpaper, wardrobe (frames 89-108). A small closet (x -2.8..-2.2, y 2.45..2.85) in its south-west corner is not modelled."}
+  - guid: "s-bed-1"
+    storey: 0
+    name: "Bedroom 1"
+    kind: room
+    polygon:
+      outer: [[-2.662, 4.682], [-2.534, 7.390], [0.957, 7.317], [0.858, 4.538]]
+    z_floor: 0.75
+    z_ceiling: 3.09
+    source: manual
+    locked: true
+    metadata: {identified_by: "Graffiti on walls and window, cot, forest wallpaper (frames 64-85)."}
+openings:
+  # Openings: read off elevations of the cloud (points within the wall band, coloured by depth;
+  # window niches show as the deeper ring). Edges +-5 cm.
+  - guid: "o-s1-win-1"
+    wall: "x-south-1"
+    kind: window
+    s_start: 0.60
+    s_end: 1.95
+    z_sill: 1.00
+    z_head: 2.12
+    is_external: true
+    source: manual
+    locked: true
+  - guid: "o-s1-win-2"
+    wall: "x-south-1"
+    kind: window
+    s_start: 2.40
+    s_end: 3.50
+    z_sill: 1.00
+    z_head: 2.12
+    is_external: true
+    source: manual
+    locked: true
+  - guid: "o-s1-patio"
+    wall: "x-south-1"
+    kind: door
+    s_start: 4.15
+    s_end: 5.90
+    z_sill: 0.00
+    z_head: 2.10
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "patio door, living room"}
+  - guid: "o-s2-win"
+    wall: "x-south-2"
+    kind: window
+    s_start: 0.35
+    s_end: 1.45
+    z_sill: 0.98
+    z_head: 2.12
+    is_external: true
+    source: manual
+    locked: true
+  - guid: "o-s2-bath-win"
+    wall: "x-south-2"
+    kind: window
+    s_start: 2.95
+    s_end: 4.55
+    z_sill: 1.20
+    z_head: 2.05
+    is_external: true
+    source: manual
+    locked: true
+    confidence: 0.4
+    metadata: {note: "bathroom: the elevation shows two partial window outlines (high sill), extent uncertain"}
+  - guid: "o-s3-patio"
+    wall: "x-south-3"
+    kind: door
+    s_start: 0.15
+    s_end: 1.00
+    z_sill: 0.00
+    z_head: 2.05
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "glazed door, wing bedroom"}
+  - guid: "o-s3-win-1"
+    wall: "x-south-3"
+    kind: window
+    s_start: 1.45
+    s_end: 1.95
+    z_sill: 1.18
+    z_head: 1.75
+    is_external: true
+    source: manual
+    locked: true
+  - guid: "o-s3-win-2"
+    wall: "x-south-3"
+    kind: window
+    s_start: 2.35
+    s_end: 2.95
+    z_sill: 1.18
+    z_head: 1.75
+    is_external: true
+    source: manual
+    locked: true
+  - guid: "o-e-win-1"
+    wall: "x-east"
+    kind: window
+    s_start: 1.25
+    s_end: 1.85
+    z_sill: 1.20
+    z_head: 1.78
+    is_external: true
+    source: manual
+    locked: true
+  - guid: "o-e-win-2"
+    wall: "x-east"
+    kind: window
+    s_start: 2.25
+    s_end: 2.75
+    z_sill: 1.20
+    z_head: 1.78
+    is_external: true
+    source: manual
+    locked: true
+  - guid: "o-nw-door"
+    wall: "x-north-wing-e"
+    kind: door
+    s_start: 0.75
+    s_end: 1.50
+    z_sill: 0.00
+    z_head: 2.10
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "exterior door of the back entry"}
+  - guid: "o-en-win-1"
+    wall: "x-east-n"
+    kind: window
+    s_start: 0.50
+    s_end: 1.75
+    z_sill: 1.72
+    z_head: 2.85
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "bedroom 2"}
+  - guid: "o-en-win-2"
+    wall: "x-east-n"
+    kind: window
+    s_start: 3.25
+    s_end: 4.40
+    z_sill: 1.72
+    z_head: 2.85
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "bedroom 1"}
+  - guid: "o-nw-win-1"
+    wall: "x-north-w"
+    kind: window
+    s_start: 0.20
+    s_end: 1.50
+    z_sill: 1.72
+    z_head: 2.85
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "kitchen"}
+  - guid: "o-nw-win-2"
+    wall: "x-north-w"
+    kind: window
+    s_start: 1.95
+    s_end: 3.05
+    z_sill: 1.72
+    z_head: 2.85
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "kitchen"}
+  - guid: "o-nw-win-3"
+    wall: "x-north-w"
+    kind: window
+    s_start: 4.05
+    s_end: 5.75
+    z_sill: 1.45
+    z_head: 2.95
+    is_external: true
+    source: manual
+    locked: true
+    confidence: 0.4
+    metadata: {note: "utility room: large gap in sparse points; may be one or two windows"}
+  - guid: "o-wn-backdoor"
+    wall: "x-west-n"
+    kind: door
+    s_start: 0.75
+    s_end: 1.60
+    z_sill: 0.75
+    z_head: 2.85
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "back door (glazed upper half), utility room"}
+  - guid: "o-wn-front"
+    wall: "x-west-n"
+    kind: door
+    s_start: 2.65
+    s_end: 4.00
+    z_sill: 0.75
+    z_head: 2.85
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "front door incl. its side light (one niche)"}
+  - guid: "o-wn-wc-win"
+    wall: "x-west-n"
+    kind: window
+    s_start: 4.60
+    s_end: 5.25
+    z_sill: 1.40
+    z_head: 2.15
+    is_external: true
+    source: manual
+    locked: true
+    confidence: 0.5
+  # Interior openings. Door heads where the scan shows no lintel: floor + 2.05.
+  - guid: "o-split-stair"
+    wall: "i-split-e"
+    kind: opening
+    s_start: 0.00
+    s_end: 0.92
+    z_sill: 0.00
+    z_head: 2.80
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "stair passage from the hall down into the living room (steps on the hall side)"}
+  - guid: "o-split-balustrade"
+    wall: "i-split-e"
+    kind: opening
+    s_start: 0.92
+    s_end: 3.45
+    z_sill: 1.62
+    z_head: 2.80
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "the hall overlooks the living room: wall up to 1.62 (0.87 above the hall floor, a parapet), open to a 0.3 m header"}
+  - guid: "o-s1-door"
+    wall: "i-s1"
+    kind: opening
+    s_start: 0.20
+    s_end: 0.80
+    z_sill: 0.00
+    z_head: 2.38
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "doorway living room -> room S2, open to the (sloped) ceiling, no lintel seen"}
+  - guid: "o-s2-door"
+    wall: "i-s2"
+    kind: door
+    s_start: 0.20
+    s_end: 1.00
+    z_sill: 0.00
+    z_head: 2.05
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "room S2 -> bathroom"}
+  - guid: "o-s3-door"
+    wall: "i-s3"
+    kind: door
+    s_start: 2.10
+    s_end: 2.85
+    z_sill: 0.00
+    z_head: 2.02
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "bathroom -> wing bedroom (frame 186 looks through it)"}
+  - guid: "o-s4-door"
+    wall: "i-s4"
+    kind: door
+    s_start: 2.85
+    s_end: 3.60
+    z_sill: 0.00
+    z_head: 2.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "wing bedroom -> back entry"}
+  - guid: "o-nw1-door"
+    wall: "i-n-w1"
+    kind: door
+    s_start: 1.60
+    s_end: 2.35
+    z_sill: 0.75
+    z_head: 2.80
+    is_external: false
+    source: manual
+    locked: true
+    confidence: 0.6
+    metadata: {note: "WC -> entrance"}
+  - guid: "o-n1-door"
+    wall: "i-n1"
+    kind: door
+    s_start: 2.12
+    s_end: 2.78
+    z_sill: 0.75
+    z_head: 2.80
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "entrance -> hall (frame 1 looks through it)"}
+  - guid: "o-nw2-door"
+    wall: "i-n-w2"
+    kind: door
+    s_start: 0.15
+    s_end: 1.05
+    z_sill: 0.75
+    z_head: 2.80
+    is_external: false
+    source: manual
+    locked: true
+    confidence: 0.6
+    metadata: {note: "entrance -> utility room"}
+  - guid: "o-n3-door-1"
+    wall: "i-n3"
+    kind: door
+    s_start: 1.75
+    s_end: 2.50
+    z_sill: 0.75
+    z_head: 2.80
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "hall -> bedroom 2"}
+  - guid: "o-n3-door-2"
+    wall: "i-n3"
+    kind: door
+    s_start: 3.00
+    s_end: 3.60
+    z_sill: 0.75
+    z_head: 2.80
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "hall/kitchen -> bedroom 1"}
