@@ -97,8 +97,6 @@ complete -c rux -n "__fish_seen_subcommand_from create; and __fish_seen_subcomma
 # Options for: create mesh
 complete -c rux -n "__fish_seen_subcommand_from create; and __fish_seen_subcommand_from mesh" -s h -l help -d "Print this help message and exit"
 complete -c rux -n "__fish_seen_subcommand_from create; and __fish_seen_subcommand_from mesh" -l output-name -d "Name for the output mesh in ProjectDB" -r
-complete -c rux -n "__fish_seen_subcommand_from create; and __fish_seen_subcommand_from mesh" -s a -l angle -r
-complete -c rux -n "__fish_seen_subcommand_from create; and __fish_seen_subcommand_from mesh" -s l -l distance -r
 complete -c rux -n "__fish_seen_subcommand_from create; and __fish_seen_subcommand_from mesh" -s t -l threshold -r
 complete -c rux -n "__fish_seen_subcommand_from create; and __fish_seen_subcommand_from mesh" -s o -l offset -r
 complete -c rux -n "__fish_seen_subcommand_from create; and __fish_seen_subcommand_from mesh" -s f -l filter -d "Filter expression to limit processing to specific labeled points." -r

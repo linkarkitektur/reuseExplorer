@@ -53,7 +53,6 @@ DESCRIPTION:
 
 EXAMPLES:
   rux create mesh                      # Default thresholds
-  rux create mesh -a 15 -l 0.3         # Custom angle/distance
   rux create mesh -f 'rooms == 2'      # Mesh only room 2
   rux create mesh --output-name room1  # Custom mesh name
 
@@ -67,8 +66,6 @@ WORKFLOW:
 
 NOTES:
   - Requires 'cloud', 'normals', 'planes', 'rooms', plane centroids/normals
-  - Angle threshold controls plane pairing perpendicularity (degrees)
-  - Distance threshold sets maximum gap between paired planes
   - Filter syntax: 'planes in [1,2,5]' or 'rooms == 3'
   - Output saved to ProjectDB with name specified by --output-name
   - Uses HiGHS MIP solver (CPU-based optimization)
@@ -77,16 +74,6 @@ NOTES:
   sub->add_option("--output-name", opt->output_mesh_name,
                   "Name for the output mesh in ProjectDB")
       ->default_val(opt->output_mesh_name);
-
-  sub->add_option("-a, --angle", opt->angle_threshold,
-                  "Angle threshold for plane pairing in degrees.")
-      ->default_val(opt->angle_threshold)
-      ->check(CLI::Range(1.0, 180.0));
-
-  sub->add_option("-l, --distance", opt->distance_threshold,
-                  "Maximum distance threshold for plane pairing.")
-      ->default_val(opt->distance_threshold)
-      ->check(CLI::Range(0.001, 3.0));
 
   sub->add_option("-t, --threshold", opt->search_threshold,
                   "Search distance threshold for finding nearby planes.")
