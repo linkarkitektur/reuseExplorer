@@ -114,6 +114,36 @@ NOTES:
       ->default_val(opt->sectioned_threshold)
       ->check(CLI::Range(size_t{1}, size_t{1000000}));
 
+  sub->add_flag("!--no-structural-filter", opt->structural.enabled,
+                "Build the cell complex from every plane instead of only wall "
+                "lines and storey floors/ceilings (reusex-8l3). The filter is "
+                "on by default.");
+
+  sub->add_option("--structural-min-area", opt->structural.min_wall_area_m2,
+                  "Surface [m^2] a wall line needs, counting the opposite "
+                  "face of the same wall, to become an arrangement line.")
+      ->default_val(opt->structural.min_wall_area_m2)
+      ->check(CLI::Range(0.0, 100.0));
+
+  sub->add_option("--structural-collinear", opt->structural.collinear_offset_m,
+                  "Same-facing wall planes closer than this [m] become one "
+                  "arrangement line.")
+      ->default_val(opt->structural.collinear_offset_m)
+      ->check(CLI::Range(0.0, 2.0));
+
+  sub->add_option("--structural-clearance",
+                  opt->structural.min_storey_clearance_m,
+                  "A horizontal plane less than this [m] above a larger floor "
+                  "under it is furniture, not a storey section.")
+      ->default_val(opt->structural.min_storey_clearance_m)
+      ->check(CLI::Range(0.0, 10.0));
+
+  sub->add_option("--structural-overlap", opt->structural.min_footprint_overlap,
+                  "Fraction of a horizontal plane's footprint over the floor "
+                  "below needed for the clearance rule to apply.")
+      ->default_val(opt->structural.min_footprint_overlap)
+      ->check(CLI::Range(0.0, 1.0));
+
   sub->add_option("--solver", opt->solver,
                   "MIP backend: 'auto' (primary backend with HiGHS CPU "
                   "fallback on GPU error/OOM), 'cuopt' (force GPU), or 'highs' "
@@ -166,6 +196,11 @@ std::string mesh_stage_parameters(SubcommandMeshOptions const &opt) {
       .set("sectioned", opt.sectioned)
       .set("sectioned_threshold", opt.sectioned_threshold)
       .set("cuopt_max_variables", opt.cuopt_max_variables)
+      .set("structural_filter", opt.structural.enabled)
+      .set("structural_min_wall_area", opt.structural.min_wall_area_m2)
+      .set("structural_collinear_offset", opt.structural.collinear_offset_m)
+      .set("structural_storey_clearance", opt.structural.min_storey_clearance_m)
+      .set("structural_footprint_overlap", opt.structural.min_footprint_overlap)
       .set_if(!opt.filter_expr.empty(), "filter", opt.filter_expr)
       .dump();
 }

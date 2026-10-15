@@ -4,6 +4,7 @@
 
 #pragma once
 #include "reusex/reconstruction/Solidifier.hpp"
+#include "reusex/reconstruction/structural_planes.hpp"
 #include "reusex/types.hpp"
 
 #include <pcl/PolygonMesh.h>
@@ -51,6 +52,10 @@ struct MeshOptions {
   /// variables runs on HiGHS instead of cuOpt, pre-emptively (reusex-81y:
   /// cuOpt SIGSEGVs on sections around ~3.3M variables).
   size_t cuopt_max_variables = 2'000'000;
+
+  /// Which planes become arrangement lines and storey sections
+  /// (reusex-8l3). See StructuralPlaneOptions.
+  StructuralPlaneOptions structural{};
 };
 
 /**

@@ -39,6 +39,7 @@
 #include <mutex>
 #include <optional>
 #include <random>
+#include <regex>
 #include <set>
 #include <span>
 #include <sstream>
@@ -419,9 +420,13 @@ class ProjectDB::Impl {
   bool hasInitialTransform = false;
   /// project_settings exists (v28).
   bool hasSettingsTable = false;
+  /// storeys exists (v30).
+  bool hasStoreysTable = false;
+  /// plane_classes exists (v31).
+  bool hasPlaneClassesTable = false;
 
   // cppcheck-suppress unusedStructMember
-  static constexpr int LATEST_SCHEMA_VERSION = 29;
+  static constexpr int LATEST_SCHEMA_VERSION = 31;
 
   // How long one statement waits for a lock another connection holds before
   // failing with SQLITE_BUSY. sqlite's default is not to wait at all.
@@ -544,6 +549,8 @@ class ProjectDB::Impl {
     hasPoseGraphV28 = columnExists("pose_graph_edges", "status");
     hasInitialTransform = columnExists("sensor_frames", "initial_transform");
     hasSettingsTable = tableExists("project_settings");
+    hasStoreysTable = tableExists("storeys");
+    hasPlaneClassesTable = tableExists("plane_classes");
   }
 
   /// True the first time this process opens dbPath read-only at schema
@@ -843,6 +850,14 @@ class ProjectDB::Impl {
 
     if (current < 29) {
       migrateToV29();
+    }
+
+    if (current < 30) {
+      migrateToV30();
+    }
+
+    if (current < 31) {
+      migrateToV31();
     }
 
     reusex::trace("Schema version: {}", getCurrentSchemaVersion());
@@ -3162,6 +3177,494 @@ class ProjectDB::Impl {
     return sqlite3_column_int(stmt, 0);
   }
 
+  void migrateToV30() {
+    reusex::info("Migrating database to schema version 30");
+    // Solid-model WP1 (reusex-z1v.3.2): the storeys table, and the project
+    // GUID every deterministic row GUID is derived from
+    // (core::deterministic_guid). The GUID lives in project_settings, not in
+    // `projects`: that is the legacy passport table, keyed by a user-chosen
+    // text id and holding zero or several rows, so it cannot name "this
+    // project". level_transform = 16 row-major doubles (world -> level frame),
+    // like sensor_frames.transform. idx is UNIQUE: it is the key walls,
+    // spaces and plane classes refer to a storey by.
+    Savepoint sp(db, "migrate_v30");
+    execOrThrow(R"(
+      CREATE TABLE IF NOT EXISTS storeys (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        guid            TEXT    NOT NULL UNIQUE,
+        idx             INTEGER NOT NULL UNIQUE,
+        name            TEXT    NOT NULL DEFAULT '',
+        z_floor         REAL    NOT NULL,
+        z_ceiling       REAL    NOT NULL,
+        level_transform BLOB    NOT NULL CHECK (length(level_transform) = 128),
+        source          TEXT    NOT NULL DEFAULT 'detected'
+          CHECK (source IN ('detected', 'manual', 'imported')),
+        locked          INTEGER NOT NULL DEFAULT 0 CHECK (locked IN (0, 1)),
+        confidence      REAL    NOT NULL DEFAULT -1,
+        metadata        TEXT    NOT NULL DEFAULT '',
+        run_id          INTEGER,
+        created_at      TEXT    NOT NULL
+          DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+      );
+      CREATE TABLE IF NOT EXISTS project_settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+    )");
+    {
+      sqlite3_stmt *st = prepare_or_throw(
+          db,
+          "INSERT OR IGNORE INTO project_settings (key, value) "
+          "VALUES ('project_guid', ?);",
+          "migrateToV30");
+      StmtGuard guard(st);
+      bind_text(st, 1, core::generate_guid());
+      if (sqlite3_step(st) != SQLITE_DONE)
+        throw std::runtime_error("migrateToV30: failed to mint project_guid: " +
+                                 std::string(sqlite3_errmsg(db)));
+    }
+    insertSchemaVersion(30, "Solid model: storeys table; project_guid "
+                            "setting (namespace of deterministic GUIDs)");
+    sp.release();
+    reusex::info("Migration to schema version 30 complete");
+  }
+
+  // ── Storeys (v30) ────────────────────────────────────────────────────────
+
+  static constexpr const char *kStoreyColumns =
+      "id, guid, idx, name, z_floor, z_ceiling, level_transform, source, "
+      "locked, confidence, metadata";
+
+  static core::StoreyRecord readStorey(sqlite3_stmt *s) {
+    core::StoreyRecord r;
+    r.id = sqlite3_column_int64(s, 0);
+    r.guid = column_text(s, 1);
+    r.idx = sqlite3_column_int(s, 2);
+    r.name = column_text(s, 3);
+    r.z_floor = sqlite3_column_double(s, 4);
+    r.z_ceiling = sqlite3_column_double(s, 5);
+    if (auto t = optionalBlob<16>(s, 6))
+      r.level_transform = *t;
+    r.source = column_text(s, 7);
+    r.locked = sqlite3_column_int(s, 8) != 0;
+    r.confidence = sqlite3_column_double(s, 9);
+    r.metadata = column_text(s, 10);
+    return r;
+  }
+
+  std::string projectGuid() const {
+    auto g = getSetting("project_guid");
+    if (!g || g->empty())
+      throw std::runtime_error(
+          "project_guid: project schema predates v30; open it read-write "
+          "once to migrate: " +
+          dbPath.string());
+    static const std::regex kUuid(
+        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+        "[0-9a-fA-F]{12}$");
+    if (!std::regex_match(*g, kUuid))
+      throw std::runtime_error("project_guid: the stored value '" + *g +
+                               "' is not a UUID (project_settings key "
+                               "'project_guid' was edited by hand?): " +
+                               dbPath.string());
+    return *g;
+  }
+
+  std::vector<core::StoreyRecord> listStoreys() const {
+    std::vector<core::StoreyRecord> out;
+    if (!hasStoreysTable)
+      return out;
+    const std::string sql =
+        std::string("SELECT ") + kStoreyColumns + " FROM storeys ORDER BY idx;";
+    sqlite3_stmt *s = prepare_or_throw(db, sql.c_str(), "storeys");
+    StmtGuard guard(s);
+    int rc;
+    while ((rc = sqlite3_step(s)) == SQLITE_ROW)
+      out.push_back(readStorey(s));
+    if (rc != SQLITE_DONE)
+      throw std::runtime_error("storeys: " + std::string(sqlite3_errmsg(db)));
+    return out;
+  }
+
+  std::optional<core::StoreyRecord> storeyByGuid(std::string_view guid) const {
+    if (!hasStoreysTable)
+      return std::nullopt;
+    const std::string sql = std::string("SELECT ") + kStoreyColumns +
+                            " FROM storeys WHERE guid = ?;";
+    sqlite3_stmt *s = prepare_or_throw(db, sql.c_str(), "storey_by_guid");
+    StmtGuard guard(s);
+    bind_text(s, 1, guid);
+    if (sqlite3_step(s) != SQLITE_ROW)
+      return std::nullopt;
+    return readStorey(s);
+  }
+
+  size_t saveStoreys(const std::vector<core::StoreyRecord> &storeys,
+                     int runId) {
+    checkWritable();
+    if (!hasStoreysTable)
+      throw std::runtime_error("save_storeys: project schema predates v30");
+    std::set<std::string> guids;
+    std::set<int> idxs;
+    for (const auto &r : storeys) {
+      if (r.guid.empty())
+        throw std::invalid_argument("save_storeys: storey " +
+                                    std::to_string(r.idx) + " has no guid");
+      if (r.source != "detected" && r.source != "manual" &&
+          r.source != "imported")
+        throw std::invalid_argument("save_storeys: storey " +
+                                    std::to_string(r.idx) +
+                                    " has invalid source '" + r.source + "'");
+      if (!guids.insert(r.guid).second)
+        throw std::invalid_argument("save_storeys: duplicate guid " + r.guid);
+      if (!idxs.insert(r.idx).second)
+        throw std::invalid_argument("save_storeys: duplicate idx " +
+                                    std::to_string(r.idx));
+    }
+
+    Savepoint sp(db, "save_storeys");
+    std::set<std::string> lockedGuids;
+    std::set<int> lockedIdx;
+    {
+      sqlite3_stmt *s = prepare_or_throw(
+          db, "SELECT guid, idx FROM storeys WHERE locked = 1;",
+          "save_storeys");
+      StmtGuard guard(s);
+      int rc;
+      while ((rc = sqlite3_step(s)) == SQLITE_ROW) {
+        lockedGuids.insert(column_text(s, 0));
+        lockedIdx.insert(sqlite3_column_int(s, 1));
+      }
+      if (rc != SQLITE_DONE)
+        throw std::runtime_error("save_storeys: reading locked rows: " +
+                                 std::string(sqlite3_errmsg(db)));
+    }
+    execOrThrow("DELETE FROM storeys WHERE locked = 0;");
+
+    sqlite3_stmt *ins = prepare_or_throw(
+        db,
+        "INSERT INTO storeys (guid, idx, name, z_floor, z_ceiling, "
+        "level_transform, source, locked, confidence, metadata, run_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+        "save_storeys");
+    StmtGuard guard(ins);
+    size_t written = 0;
+    for (const auto &r : storeys) {
+      if (lockedGuids.count(r.guid)) {
+        reusex::info("save_storeys: storey {} ({}) is locked; kept the stored "
+                     "row",
+                     r.idx, r.guid);
+        continue;
+      }
+      if (lockedIdx.count(r.idx)) {
+        reusex::warn("save_storeys: storey idx {} is held by a locked row "
+                     "with another guid; the new storey {} was not written",
+                     r.idx, r.guid);
+        continue;
+      }
+      sqlite3_reset(ins);
+      sqlite3_clear_bindings(ins);
+      bind_text(ins, 1, r.guid);
+      sqlite3_bind_int(ins, 2, r.idx);
+      bind_text(ins, 3, r.name);
+      sqlite3_bind_double(ins, 4, r.z_floor);
+      sqlite3_bind_double(ins, 5, r.z_ceiling);
+      sqlite3_bind_blob(ins, 6, r.level_transform.data(),
+                        static_cast<int>(sizeof(double) * 16),
+                        SQLITE_TRANSIENT);
+      bind_text(ins, 7, r.source);
+      sqlite3_bind_int(ins, 8, r.locked ? 1 : 0);
+      sqlite3_bind_double(ins, 9, r.confidence);
+      bind_text(ins, 10, r.metadata);
+      if (runId >= 0)
+        sqlite3_bind_int(ins, 11, runId);
+      else
+        sqlite3_bind_null(ins, 11);
+      if (sqlite3_step(ins) != SQLITE_DONE)
+        throw std::runtime_error("save_storeys: insert of storey " +
+                                 std::to_string(r.idx) +
+                                 " failed: " + sqlite3_errmsg(db));
+      ++written;
+    }
+    sp.release();
+    return written;
+  }
+
+  bool hasStoreys() const {
+    if (!hasStoreysTable)
+      return false;
+    sqlite3_stmt *s = prepare_or_throw(
+        db, "SELECT EXISTS (SELECT 1 FROM storeys);", "has_storeys");
+    StmtGuard guard(s);
+    return sqlite3_step(s) == SQLITE_ROW && sqlite3_column_int(s, 0) != 0;
+  }
+
+  void deleteStoreys() {
+    checkWritable();
+    if (hasStoreysTable)
+      execOrThrow("DELETE FROM storeys;");
+  }
+
+  void migrateToV31() {
+    reusex::info("Migrating database to schema version 31");
+    // Solid-model WP2 (reusex-z1v.4.2): the role each plane of a label cloud
+    // ("planes") plays. Keyed by the cloud's row and the plane label; the
+    // rows go with the cloud (ON DELETE CASCADE). `storey` is the storey's
+    // idx (the key solid-model records refer to a storey by), not a foreign
+    // key to storeys(id): a storeys re-run replaces those rows, which a
+    // foreign key would refuse. semantic_class / class_confidence are NULL
+    // when no class won the vote.
+    Savepoint sp(db, "migrate_v31");
+    execOrThrow(R"(
+      CREATE TABLE IF NOT EXISTS plane_classes (
+        cloud_id         INTEGER NOT NULL
+          REFERENCES point_clouds(id) ON DELETE CASCADE,
+        plane_label      INTEGER NOT NULL CHECK (plane_label >= 1),
+        guid             TEXT    NOT NULL UNIQUE,
+        orientation      TEXT    NOT NULL
+          CHECK (orientation IN ('horizontal', 'vertical', 'slanted')),
+        semantic_class   INTEGER,
+        class_confidence REAL,
+        role             TEXT    NOT NULL
+          CHECK (role IN ('wall', 'floor', 'ceiling', 'slab', 'furniture',
+                          'clutter', 'unknown')),
+        role_source      TEXT    NOT NULL DEFAULT 'none'
+          CHECK (role_source IN ('semantic', 'rules', 'overruled', 'none',
+                                 'manual')),
+        storey           INTEGER NOT NULL DEFAULT -1,
+        point_count      INTEGER NOT NULL DEFAULT 0,
+        area             REAL    NOT NULL DEFAULT -1,
+        z_min            REAL    NOT NULL DEFAULT 0,
+        z_max            REAL    NOT NULL DEFAULT 0,
+        source           TEXT    NOT NULL DEFAULT 'detected'
+          CHECK (source IN ('detected', 'manual', 'imported')),
+        locked           INTEGER NOT NULL DEFAULT 0 CHECK (locked IN (0, 1)),
+        metadata         TEXT    NOT NULL DEFAULT '',
+        run_id           INTEGER,
+        created_at       TEXT    NOT NULL
+          DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        PRIMARY KEY (cloud_id, plane_label)
+      );
+    )");
+    insertSchemaVersion(31, "Solid model: plane_classes table (role of each "
+                            "plane of a label cloud)");
+    sp.release();
+    reusex::info("Migration to schema version 31 complete");
+  }
+
+  // ── Plane classes (v31) ──────────────────────────────────────────────────
+
+  static constexpr const char *kPlaneClassColumns =
+      "pc.plane_label, pc.guid, pc.orientation, pc.semantic_class, "
+      "pc.class_confidence, pc.role, pc.role_source, pc.storey, "
+      "pc.point_count, pc.area, pc.z_min, pc.z_max, pc.source, pc.locked, "
+      "pc.metadata";
+
+  static core::PlaneClassRecord readPlaneClass(sqlite3_stmt *s) {
+    core::PlaneClassRecord r;
+    r.plane_label = sqlite3_column_int(s, 0);
+    r.guid = column_text(s, 1);
+    r.orientation = column_text(s, 2);
+    r.semantic_class = sqlite3_column_type(s, 3) == SQLITE_NULL
+                           ? -1
+                           : sqlite3_column_int(s, 3);
+    r.class_confidence = column_opt_double(s, 4).value_or(-1.0);
+    r.role = column_text(s, 5);
+    r.role_source = column_text(s, 6);
+    r.storey = sqlite3_column_int(s, 7);
+    r.point_count = sqlite3_column_int(s, 8);
+    r.area = sqlite3_column_double(s, 9);
+    r.z_min = sqlite3_column_double(s, 10);
+    r.z_max = sqlite3_column_double(s, 11);
+    r.source = column_text(s, 12);
+    r.locked = sqlite3_column_int(s, 13) != 0;
+    r.metadata = column_text(s, 14);
+    return r;
+  }
+
+  std::vector<core::PlaneClassRecord>
+  listPlaneClasses(std::string_view cloud) const {
+    std::vector<core::PlaneClassRecord> out;
+    if (!hasPlaneClassesTable)
+      return out;
+    const std::string sql =
+        std::string("SELECT ") + kPlaneClassColumns +
+        " FROM plane_classes pc JOIN point_clouds c ON c.id = pc.cloud_id "
+        "WHERE c.name = ? ORDER BY pc.plane_label;";
+    sqlite3_stmt *s = prepare_or_throw(db, sql.c_str(), "plane_classes");
+    StmtGuard guard(s);
+    bind_text(s, 1, cloud);
+    int rc;
+    while ((rc = sqlite3_step(s)) == SQLITE_ROW)
+      out.push_back(readPlaneClass(s));
+    if (rc != SQLITE_DONE)
+      throw std::runtime_error("plane_classes: " +
+                               std::string(sqlite3_errmsg(db)));
+    return out;
+  }
+
+  size_t savePlaneClasses(std::string_view cloud,
+                          const std::vector<core::PlaneClassRecord> &classes,
+                          int runId) {
+    checkWritable();
+    if (!hasPlaneClassesTable)
+      throw std::runtime_error(
+          "save_plane_classes: project schema predates v31");
+    static const std::set<std::string, std::less<>> kOrientations = {
+        "horizontal", "vertical", "slanted"};
+    static const std::set<std::string, std::less<>> kRoles = {
+        "wall", "floor", "ceiling", "slab", "furniture", "clutter", "unknown"};
+    static const std::set<std::string, std::less<>> kRoleSources = {
+        "semantic", "rules", "overruled", "none", "manual"};
+    std::set<std::string> guids;
+    std::set<int> labels;
+    for (const auto &r : classes) {
+      const auto where =
+          "save_plane_classes: plane " + std::to_string(r.plane_label);
+      if (r.plane_label < 1)
+        throw std::invalid_argument(where + ": plane_label must be >= 1");
+      if (r.guid.empty())
+        throw std::invalid_argument(where + " has no guid");
+      if (r.source != "detected" && r.source != "manual" &&
+          r.source != "imported")
+        throw std::invalid_argument(where + " has invalid source '" + r.source +
+                                    "'");
+      if (!kOrientations.count(r.orientation))
+        throw std::invalid_argument(where + " has invalid orientation '" +
+                                    r.orientation + "'");
+      if (!kRoles.count(r.role))
+        throw std::invalid_argument(where + " has invalid role '" + r.role +
+                                    "'");
+      if (!kRoleSources.count(r.role_source))
+        throw std::invalid_argument(where + " has invalid role_source '" +
+                                    r.role_source + "'");
+      if (!guids.insert(r.guid).second)
+        throw std::invalid_argument("save_plane_classes: duplicate guid " +
+                                    r.guid);
+      if (!labels.insert(r.plane_label).second)
+        throw std::invalid_argument(
+            "save_plane_classes: duplicate plane_label " +
+            std::to_string(r.plane_label));
+    }
+
+    Savepoint sp(db, "save_plane_classes");
+    const int cloudId = getCloudId(cloud); // throws for an unknown cloud
+    std::set<std::string> lockedGuids;
+    std::set<int> lockedLabels;
+    {
+      sqlite3_stmt *s =
+          prepare_or_throw(db,
+                           "SELECT guid, plane_label FROM plane_classes "
+                           "WHERE locked = 1 AND cloud_id = ?;",
+                           "save_plane_classes");
+      StmtGuard guard(s);
+      sqlite3_bind_int(s, 1, cloudId);
+      int rc;
+      while ((rc = sqlite3_step(s)) == SQLITE_ROW) {
+        lockedGuids.insert(column_text(s, 0));
+        lockedLabels.insert(sqlite3_column_int(s, 1));
+      }
+      if (rc != SQLITE_DONE)
+        throw std::runtime_error("save_plane_classes: reading locked rows: " +
+                                 std::string(sqlite3_errmsg(db)));
+    }
+    {
+      sqlite3_stmt *del = prepare_or_throw(
+          db, "DELETE FROM plane_classes WHERE locked = 0 AND cloud_id = ?;",
+          "save_plane_classes");
+      StmtGuard guard(del);
+      sqlite3_bind_int(del, 1, cloudId);
+      if (sqlite3_step(del) != SQLITE_DONE)
+        throw std::runtime_error("save_plane_classes: delete failed: " +
+                                 std::string(sqlite3_errmsg(db)));
+    }
+
+    sqlite3_stmt *ins = prepare_or_throw(
+        db,
+        "INSERT INTO plane_classes (cloud_id, plane_label, guid, orientation, "
+        "semantic_class, class_confidence, role, role_source, storey, "
+        "point_count, area, z_min, z_max, source, locked, metadata, run_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+        "save_plane_classes");
+    StmtGuard guard(ins);
+    size_t written = 0;
+    size_t skipped = 0;
+    for (const auto &r : classes) {
+      if (lockedLabels.count(r.plane_label) || lockedGuids.count(r.guid)) {
+        ++skipped;
+        continue;
+      }
+      sqlite3_reset(ins);
+      sqlite3_clear_bindings(ins);
+      sqlite3_bind_int(ins, 1, cloudId);
+      sqlite3_bind_int(ins, 2, r.plane_label);
+      bind_text(ins, 3, r.guid);
+      bind_text(ins, 4, r.orientation);
+      if (r.semantic_class >= 0)
+        sqlite3_bind_int(ins, 5, r.semantic_class);
+      else
+        sqlite3_bind_null(ins, 5);
+      if (r.class_confidence >= 0.0)
+        sqlite3_bind_double(ins, 6, r.class_confidence);
+      else
+        sqlite3_bind_null(ins, 6);
+      bind_text(ins, 7, r.role);
+      bind_text(ins, 8, r.role_source);
+      sqlite3_bind_int(ins, 9, r.storey);
+      sqlite3_bind_int(ins, 10, r.point_count);
+      sqlite3_bind_double(ins, 11, r.area);
+      sqlite3_bind_double(ins, 12, r.z_min);
+      sqlite3_bind_double(ins, 13, r.z_max);
+      bind_text(ins, 14, r.source);
+      sqlite3_bind_int(ins, 15, r.locked ? 1 : 0);
+      bind_text(ins, 16, r.metadata);
+      if (runId >= 0)
+        sqlite3_bind_int(ins, 17, runId);
+      else
+        sqlite3_bind_null(ins, 17);
+      if (sqlite3_step(ins) != SQLITE_DONE)
+        throw std::runtime_error("save_plane_classes: insert of plane " +
+                                 std::to_string(r.plane_label) +
+                                 " failed: " + sqlite3_errmsg(db));
+      ++written;
+    }
+    sp.release();
+    if (skipped > 0)
+      reusex::info("save_plane_classes: {} plane(s) of '{}' are locked; kept "
+                   "the stored rows",
+                   skipped, cloud);
+    return written;
+  }
+
+  bool hasPlaneClasses(std::string_view cloud) const {
+    if (!hasPlaneClassesTable)
+      return false;
+    sqlite3_stmt *s = prepare_or_throw(
+        db,
+        "SELECT EXISTS (SELECT 1 FROM plane_classes pc JOIN point_clouds c "
+        "ON c.id = pc.cloud_id WHERE c.name = ?);",
+        "has_plane_classes");
+    StmtGuard guard(s);
+    bind_text(s, 1, cloud);
+    return sqlite3_step(s) == SQLITE_ROW && sqlite3_column_int(s, 0) != 0;
+  }
+
+  void deletePlaneClasses(std::string_view cloud) {
+    checkWritable();
+    if (!hasPlaneClassesTable)
+      return;
+    sqlite3_stmt *s =
+        prepare_or_throw(db,
+                         "DELETE FROM plane_classes WHERE cloud_id IN "
+                         "(SELECT id FROM point_clouds WHERE name = ?);",
+                         "delete_plane_classes");
+    StmtGuard guard(s);
+    bind_text(s, 1, cloud);
+    if (sqlite3_step(s) != SQLITE_DONE)
+      throw std::runtime_error("delete_plane_classes: " +
+                               std::string(sqlite3_errmsg(db)));
+  }
+
   // ── Scan helpers (#129) ──────────────────────────────────────────────────
 
   ProjectDB::ScanRecord createScan(const std::string &source_path,
@@ -3747,6 +4250,12 @@ class ProjectDB::Impl {
   }
 
   void putSetting(std::string_view key, std::string_view value) {
+    // Write-once: every deterministic row GUID is derived from it, so a
+    // change would orphan the identity of every stored solid-model row.
+    if (key == "project_guid")
+      throw std::invalid_argument(
+          "set_setting: 'project_guid' is write-once (minted by the v30 "
+          "migration)");
     checkWritable();
     if (!hasSettingsTable)
       throw std::runtime_error("set_setting: project schema predates v28");
@@ -7745,6 +8254,45 @@ std::optional<std::string> ProjectDB::setting(std::string_view key) const {
 }
 void ProjectDB::set_setting(std::string_view key, std::string_view value) {
   impl_->putSetting(key, value);
+}
+
+std::string ProjectDB::project_guid() const { return impl_->projectGuid(); }
+
+size_t ProjectDB::save_storeys(const std::vector<core::StoreyRecord> &storeys,
+                               int run_id) {
+  return impl_->saveStoreys(storeys, run_id);
+}
+
+std::vector<core::StoreyRecord> ProjectDB::storeys() const {
+  return impl_->listStoreys();
+}
+
+std::optional<core::StoreyRecord>
+ProjectDB::storey_by_guid(std::string_view guid) const {
+  return impl_->storeyByGuid(guid);
+}
+
+bool ProjectDB::has_storeys() const { return impl_->hasStoreys(); }
+
+void ProjectDB::delete_storeys() { impl_->deleteStoreys(); }
+
+size_t ProjectDB::save_plane_classes(
+    std::string_view cloud, const std::vector<core::PlaneClassRecord> &classes,
+    int run_id) {
+  return impl_->savePlaneClasses(cloud, classes, run_id);
+}
+
+std::vector<core::PlaneClassRecord>
+ProjectDB::plane_classes(std::string_view cloud) const {
+  return impl_->listPlaneClasses(cloud);
+}
+
+bool ProjectDB::has_plane_classes(std::string_view cloud) const {
+  return impl_->hasPlaneClasses(cloud);
+}
+
+void ProjectDB::delete_plane_classes(std::string_view cloud) {
+  impl_->deletePlaneClasses(cloud);
 }
 
 core::SensorIntrinsics ProjectDB::sensor_frame_intrinsics(int nodeId) const {

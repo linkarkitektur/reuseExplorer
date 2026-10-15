@@ -34,6 +34,11 @@ struct SubcommandMeshOptions {
   size_t cuopt_max_variables =
       reusex::geometry::MeshOptions{}.cuopt_max_variables; ///< issue reusex-81y
 
+  /// Structural plane selection (reusex-8l3). Defaults mirror
+  /// MeshOptions::structural.
+  reusex::geometry::StructuralPlaneOptions structural =
+      reusex::geometry::MeshOptions{}.structural;
+
   std::string filter_expr; ///< Filter expression to limit processing
 };
 

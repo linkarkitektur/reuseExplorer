@@ -39,6 +39,12 @@ const std::vector<Artifact> &artifacts() {
        "per-point room labels (Label)"},
       {"instances", ArtifactKind::point_cloud, Alignment::per_point,
        "per-point instance labels (Label), plus the `instances` table"},
+      {"storeys", ArtifactKind::table, Alignment::none,
+       "storeys: floor/ceiling heights in the level frame and the "
+       "world->level transform (schema v30)"},
+      {"plane_classes", ArtifactKind::table, Alignment::none,
+       "plane_classes: orientation, majority class, role, storey and extent "
+       "of each plane of `planes` (schema v31)"},
       {"mesh", ArtifactKind::mesh, Alignment::none,
        "the reconstructed watertight mesh"},
       {"textured_mesh", ArtifactKind::mesh, Alignment::none,
@@ -152,6 +158,28 @@ const std::vector<StageContract> &contracts() {
        // was never annotated.
        {{{"cloud"}}, {{"labels", "planes"}}},
        {"instances"}},
+
+      {PipelineStage::storeys,
+       "storeys",
+       {},
+       "rux create storeys",
+       "detect storeys and the measured vertical (level frame)",
+       // Horizontal planes give the floor/ceiling fits and the height
+       // histogram; `cloud` + `planes` carry their inlier points.
+       {{{"cloud"}}, {{"planes"}}, {{"plane_centroids"}}, {{"plane_normals"}}},
+       {"storeys"}},
+
+      {PipelineStage::classify,
+       "classify",
+       {},
+       "rux create classify",
+       "classify each plane: wall, floor, ceiling, furniture, ...",
+       // Plane inliers (`cloud` + `planes`) and normals give orientation,
+       // area and heights; the storeys give the level frame and the floor /
+       // ceiling bands. `labels` is an optional enrichment (the semantic
+       // vote), so it is not declared, as for `survey`.
+       {{{"cloud"}}, {{"planes"}}, {{"plane_normals"}}, {{"storeys"}}},
+       {"plane_classes"}},
 
       {PipelineStage::mesh,
        "mesh",
