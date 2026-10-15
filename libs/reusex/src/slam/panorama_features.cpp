@@ -13,10 +13,13 @@
 #include "core/SensorIntrinsics.hpp"
 #include "core/logging.hpp"
 
+#include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <random>
 
 namespace reusex::geometry::pano_detail {
 
@@ -302,6 +305,135 @@ std::vector<int> refine_bearing_pose_rotation_only(
   if (static_cast<int>(inl.size()) < opt.min_inliers)
     return {};
   return inl;
+}
+
+// --- per-slice PnP and its noise floor (reusex-bx2.4) ----------------------
+
+namespace {
+
+/// Correspondences whose slice pixels fall in the same cell of this size are
+/// one group for the noise-floor null (they move together).
+constexpr float kNullGroupCellPx = 2.0f;
+
+// One slice's solvePnPRansac (EPnP). Returns the inlier count (0 when PnP
+// failed) and, on success, the pano_from_world pose it implies.
+int pnp_slice(const SlicePnPInput &s, const std::vector<cv::Point2f> &pixels,
+              const std::vector<Eigen::Vector3d> &world,
+              const SlicePnPOptions &opt, Eigen::Matrix3d *Q,
+              Eigen::Vector3d *t) {
+  std::vector<cv::Point3f> obj;
+  obj.reserve(world.size());
+  for (const auto &w : world)
+    obj.emplace_back(static_cast<float>(w.x()), static_cast<float>(w.y()),
+                     static_cast<float>(w.z()));
+  const cv::Mat Kcv = (cv::Mat_<double>(3, 3) << s.K(0, 0), 0, s.K(0, 2), 0,
+                       s.K(1, 1), s.K(1, 2), 0, 0, 1);
+  cv::Mat rvec, tvec, inliers;
+  const bool ok = cv::solvePnPRansac(
+      obj, pixels, Kcv, cv::noArray(), rvec, tvec,
+      /*useExtrinsicGuess=*/false, opt.ransac_iterations, opt.ransac_reproj_px,
+      0.99, inliers, cv::SOLVEPNP_EPNP);
+  if (!ok)
+    return 0;
+  if (Q && t) {
+    cv::Mat Rcv;
+    cv::Rodrigues(rvec, Rcv);
+    Eigen::Matrix3d R_ws; // world -> slice-cam
+    Eigen::Vector3d t_ws;
+    for (int r = 0; r < 3; ++r) {
+      for (int c = 0; c < 3; ++c)
+        R_ws(r, c) = Rcv.at<double>(r, c);
+      t_ws(r) = tvec.at<double>(r);
+    }
+    // pano_from_world = R_pano_from_view * (world -> slice-cam)
+    *Q = s.R_pano_from_view * R_ws;
+    *t = s.R_pano_from_view * t_ws;
+  }
+  return inliers.rows;
+}
+
+bool pnp_eligible(const SlicePnPInput &s, const SlicePnPOptions &opt) {
+  return s.pixels.size() == s.world.size() &&
+         static_cast<int>(s.pixels.size()) >= opt.min_correspondences;
+}
+
+} // namespace
+
+SliceResection resect_best_slice(const std::vector<SlicePnPInput> &slices,
+                                 const SlicePnPOptions &opt) {
+  SliceResection out;
+  out.slice_inliers.assign(slices.size(), -1);
+  for (size_t si = 0; si < slices.size(); ++si) {
+    if (!pnp_eligible(slices[si], opt))
+      continue;
+    Eigen::Matrix3d Q;
+    Eigen::Vector3d t;
+    const int n =
+        pnp_slice(slices[si], slices[si].pixels, slices[si].world, opt, &Q, &t);
+    out.slice_inliers[si] = n;
+    if (n < opt.min_correspondences || n <= out.best_inliers)
+      continue;
+    out.best_slice = static_cast<int>(si);
+    out.best_inliers = n;
+    out.Q = Q;
+    out.t = t;
+  }
+  return out;
+}
+
+int shuffled_best_slice_inliers(const std::vector<SlicePnPInput> &slices,
+                                const SlicePnPOptions &opt, int trials,
+                                unsigned seed) {
+  std::mt19937 rng(seed);
+  int ceiling = 0;
+  std::vector<cv::Point2f> pixels;
+  for (const auto &s : slices) {
+    if (!pnp_eligible(s, opt))
+      continue;
+    // Group the correspondences by slice location. The junk the matcher
+    // emits is not independent per pair: one slice keypoint mis-matched to
+    // the same surface point in several near-identical candidate frames, or
+    // ORB's duplicate detections of one corner on several pyramid levels,
+    // give runs of (almost) the same pair. Any pose that explains one of them
+    // explains the run, so permuting single pairs would underestimate the
+    // noise floor. Instead whole location groups are moved together.
+    std::map<std::pair<int, int>, int> cell_of;
+    std::vector<int> group(s.pixels.size());
+    std::vector<cv::Point2f> anchor; // first pixel of each group
+    for (size_t k = 0; k < s.pixels.size(); ++k) {
+      const std::pair<int, int> cell{
+          static_cast<int>(std::floor(s.pixels[k].x / kNullGroupCellPx)),
+          static_cast<int>(std::floor(s.pixels[k].y / kNullGroupCellPx))};
+      auto [it, inserted] =
+          cell_of.emplace(cell, static_cast<int>(anchor.size()));
+      if (inserted)
+        anchor.push_back(s.pixels[k]);
+      group[k] = it->second;
+    }
+    std::vector<int> perm(anchor.size());
+    for (int trial = 0; trial < trials; ++trial) {
+      // Fisher-Yates with a plain modulo draw: std::shuffle and
+      // std::uniform_int_distribution are implementation-defined, mt19937's
+      // output sequence is not (STANDARDS §6).
+      for (size_t g = 0; g < perm.size(); ++g)
+        perm[g] = static_cast<int>(g);
+      for (size_t i = perm.size() - 1; i > 0; --i)
+        std::swap(perm[i], perm[rng() % (i + 1)]);
+      pixels.resize(s.pixels.size());
+      for (size_t k = 0; k < s.pixels.size(); ++k)
+        pixels[k] = anchor[perm[group[k]]] + (s.pixels[k] - anchor[group[k]]);
+      ceiling = std::max(ceiling,
+                         pnp_slice(s, pixels, s.world, opt, nullptr, nullptr));
+    }
+  }
+  return ceiling;
+}
+
+int noise_floor_threshold(int null_best, double margin,
+                          int min_correspondences) {
+  const int beat =
+      static_cast<int>(std::floor(margin * std::max(0, null_best))) + 1;
+  return std::max(min_correspondences, null_best > 0 ? beat : 0);
 }
 
 } // namespace reusex::geometry::pano_detail

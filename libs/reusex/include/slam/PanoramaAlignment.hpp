@@ -42,15 +42,20 @@ class ProjectDB;
 namespace reusex::geometry {
 
 /// Parameters for content-based panorama alignment.
+///
+/// These defaults are the ONE source of truth: `rux align 360` binds its
+/// flags to a default-constructed instance (STANDARDS §4).
 struct PanoramaAlignmentOptions {
   // --- candidate sensor frames -------------------------------------------
   /// Try the timestamp-seed frame plus this many frames on each side of it (in
-  /// sensor-frame-id order). A wider window co-observes the panorama from more
-  /// directions, which conditions the translation in bearing resection.
-  int candidate_window = 25;
+  /// sensor-frame-id order). In principle a wider window co-observes the
+  /// panorama from more directions; on NewOffice it mostly added junk faster
+  /// than signal (docs/research/panorama-alignment-failure-modes.md), so the
+  /// window is narrow by default.
+  int candidate_window = 12;
   /// Cap the number of candidate frames actually matched (nearest-to-seed
   /// first), bounding the O(slices x frames) matcher cost.
-  int max_candidates = 20;
+  int max_candidates = 8;
 
   // --- panorama slicing (geometry/EquirectProjection) --------------------
   int n_yaw = 8;         ///< perspective slices around the equator
@@ -65,20 +70,37 @@ struct PanoramaAlignmentOptions {
 
   // --- PnP resection -----------------------------------------------------
   int min_slice_correspondences = 6; ///< need this many to PnP a slice
-  int min_inliers = 25;              ///< accept alignment above this (total)
+  int min_inliers = 40;              ///< accept alignment above this (total)
   float ransac_reproj_px = 5.0f;     ///< solvePnPRansac reprojection threshold
   int ransac_iterations = 500;
   int refine_iterations = 10; ///< bearing-space Gauss-Newton refinement steps
 
-  /// Plausibility gate: reject an alignment whose refined centre is further
-  /// than this from the timestamp-seed frame. Bearing-only resection is weakly
-  /// constrained in translation when the matched frames span a narrow cone, and
-  /// can slide the centre far away with a still-small angular residual. The
-  /// timestamp seed is a good spatial prior (the panorama was captured in the
-  /// same session, metres from the nearest frame), so a large disagreement is
-  /// an ill-conditioned solve, not a real correction. Set <= 0 to disable.
-  double max_correction_m = 5.0;
-  unsigned seed = 42;
+  // --- noise-floor gate (reusex-bx2.4) -----------------------------------
+  /// Before any pose is trusted, the per-slice PnP is re-run this many times
+  /// on the panorama's own correspondences with each slice's world points
+  /// randomly permuted (a null model: same counts and distributions, no
+  /// geometry). The best of those null counts is the support pure noise
+  /// reaches on this panorama; on NewOffice it was 0-17 inliers per panorama
+  /// with 8 candidate frames and up to 27 with 20, well above the fixed
+  /// `min_slice_correspondences`. 0 disables the gate.
+  int null_trials = 5;
+  /// The real best slice must have strictly more than `null_margin` x the
+  /// null's best-slice inliers (and at least `min_slice_correspondences`),
+  /// else the panorama is rejected as `below_noise_floor`.
+  double null_margin = 1.5;
+
+  /// Hand-held position prior: reject an alignment whose refined centre is
+  /// further than this from the timestamp-seed frame. Bearing-only resection
+  /// is weakly constrained in translation when the matched frames span a
+  /// narrow cone, and can slide the centre metres away at a still-small
+  /// angular residual. A hand-held 360 capture is taken next to the scanning
+  /// device (on NewOffice the iPad is visible in the nadir, and every
+  /// panorama lies within 1.7 s of its seed frame), so its centre is within
+  /// about an arm's span of the seed frame: 1.5 m allows for the span between
+  /// the two hands plus the seed frame's timing. Raise it (or set <= 0 to
+  /// disable) for a 360 camera that was NOT carried with the scanner.
+  double max_correction_m = 1.5;
+  unsigned seed = 42; ///< seeds the noise-floor permutations (STANDARDS §6)
 
   /// Fix the panorama centre to the timestamp-seed frame's stored position and
   /// solve for rotation only.
@@ -120,6 +142,10 @@ enum class PanoramaAlignmentOutcome {
   /// no slice reached `min_slice_correspondences` PnP inliers (or the pool of
   /// depth-backed correspondences was empty)
   no_slice_pnp,
+  /// the best slice's PnP inliers do not beat the shuffled-correspondence
+  /// null by `null_margin` (reusex-bx2.4): the matches carry no geometric
+  /// signal distinguishable from noise
+  below_noise_floor,
   /// the best slice's PnP rotation is upside down against the seed frame's
   /// gravity direction (#364)
   upside_down,
@@ -197,6 +223,11 @@ struct PanoramaAlignmentDiagnostics {
   int correspondences_total = 0; ///< pooled depth-backed correspondences
   int best_slice = -1;           ///< slice whose PnP seeded the refinement
   int best_slice_inliers = 0;
+  /// best-slice PnP inliers under the shuffled-correspondence null (max over
+  /// `null_trials`); -1 when the gate did not run
+  int null_best_slice_inliers = -1;
+  /// best-slice inliers needed to pass the noise floor; -1 when not run
+  int noise_floor_threshold = -1;
   /// pano_down . seed_down of the PnP seed rotation (gravity check, #364);
   /// NaN when not evaluated
   double down_dot = std::numeric_limits<double>::quiet_NaN();
@@ -206,6 +237,8 @@ struct PanoramaAlignmentDiagnostics {
   /// refined centre's distance from the seed (m), also for a pose the
   /// plausibility gate rejected; -1 when not measured
   double delta_from_seed_m = -1.0;
+  /// the position-prior gate the delta was held against (m); <= 0 when off
+  double max_correction_m = -1.0;
   int inlier_frames = 0; ///< distinct frames among the final inliers
   int inlier_slices = 0; ///< distinct slices among the final inliers
   std::vector<PanoramaCorrespondence> correspondences;
@@ -244,6 +277,13 @@ struct PanoramaAlignmentResult {
 /// writes per panorama.
 std::string
 panorama_alignment_diagnostics_json(const PanoramaAlignmentResult &r);
+
+/// One line naming @p r's outcome and the numbers that decided it, e.g.
+/// "below_noise_floor: best slice 13 PnP inliers, needs >= 23 (shuffled null
+/// 15)"
+/// or "correction_gate: centre 2.49 m from seed > 1.50 m". Callers log it
+/// for every rejected panorama (STANDARDS §5).
+std::string panorama_alignment_summary(const PanoramaAlignmentResult &r);
 
 /// Align one panorama against nearby sensor frames. Read-only on @p db (does
 /// not write the pose back — the caller decides, e.g. `rux align 360
