@@ -10,6 +10,7 @@
 
 #include <reusex/core/ProjectDB.hpp>
 #include <reusex/core/SensorIntrinsics.hpp>
+#include <reusex/core/label_semantics.hpp>
 
 #include <QAbstractSpinBox>
 #include <QApplication>
@@ -1068,8 +1069,13 @@ Selection FrameBrowser::frame_selection(bool side_b) const {
     if (auto f = loader_.frame(id); f && !f->label_pixels.empty()) {
       SelectionSection labels{"Mærkater", {}, {}};
       for (const auto &[cls, px] : f->label_pixels) {
-        QString name = QString("klasse %1").arg(cls);
-        if (auto it = label_names_.find(cls); it != label_names_.end())
+        // `cls` is the image's API class; the "labels" definitions (and the
+        // "Klasse N" names the 3D legend and survey use) are keyed by point
+        // label = API class + 1 (STANDARDS §3.1).
+        const int point_label =
+            static_cast<int>(reusex::core::api_to_point_label(cls));
+        QString name = QString("klasse %1").arg(point_label);
+        if (auto it = label_names_.find(point_label); it != label_names_.end())
           name = QString::fromStdString(it->second);
         SelectionRow row{
             name, dec(100.0 * px / std::max(1, f->label_total), 1) + " %",

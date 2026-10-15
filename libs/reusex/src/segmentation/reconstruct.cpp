@@ -521,16 +521,23 @@ void reconstruct_point_clouds(ProjectDB &db,
     db.save_point_cloud("normals", *out_normals, "reconstruct", paramsJson);
 
   if (!out_labels->empty()) {
-    db.save_point_cloud("labels", *out_labels, "reconstruct", paramsJson);
+    // The semantic cloud records its encoding (point label = API class + 1,
+    // STANDARDS §3.1) so the schema v29 migration never shifts it twice.
+    auto labelParams = nlohmann::json::parse(paramsJson);
+    labelParams[core::kLabelEncodingKey] = core::kLabelEncodingApiPlusOne;
+    db.save_point_cloud("labels", *out_labels, "reconstruct",
+                        labelParams.dump());
 
-    // Copy class names from annotation pipeline log to label_definitions
+    // Copy class names from annotation pipeline log to label_definitions.
+    // The log is keyed by API class id; the definitions by point label.
     for (const auto &entry : db.pipeline_log()) {
       if (entry.stage == "annotate_class_map" && !entry.parameters.empty()) {
         try {
           auto j = nlohmann::json::parse(entry.parameters);
           std::map<int, std::string> class_map;
           for (auto &[key, val] : j.items())
-            class_map[std::stoi(key)] = val.get<std::string>();
+            class_map[static_cast<int>(core::api_to_point_label(
+                std::stoi(key)))] = val.get<std::string>();
           if (!class_map.empty())
             db.save_label_definitions("labels", class_map);
         } catch (const std::exception &e) {

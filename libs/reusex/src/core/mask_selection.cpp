@@ -393,7 +393,12 @@ apply_mask_selection(ProjectDB &db, const std::vector<std::size_t> &indices,
     return created ? std::pair<std::string, std::string>{"segment_resource", ""}
                    : db.point_cloud_provenance(name);
   };
-  const auto label_prov = provenance(opts.semantic_cloud, labels_created);
+  auto label_prov = provenance(opts.semantic_cloud, labels_created);
+  // A semantic cloud created here follows the point-label encoding
+  // (STANDARDS §3.1) like every other semantic writer's.
+  if (labels_created)
+    label_prov.second =
+        nlohmann::json{{kLabelEncodingKey, kLabelEncodingApiPlusOne}}.dump();
   const auto inst_prov = provenance(opts.instance_cloud, instances_created);
   db.save_point_cloud(opts.semantic_cloud, *labels, label_prov.first,
                       label_prov.second);

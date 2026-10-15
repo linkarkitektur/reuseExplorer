@@ -73,7 +73,9 @@ inline constexpr int kInvalidSlot = -2;
 /// label 0 or an empty palette; kInvalidSlot for an out-of-contract label
 /// (a wrapped -1), which must not borrow a class's colour. The same rule as the
 /// web viewport's `labelColorIndex()` — indexing with `label` itself would
-/// shift every class by one against the legend.
+/// shift every class by one against the legend. For a semantic cloud (point
+/// label = API class + 1, STANDARDS §3.1) the slot is `api % size`, the same
+/// colour the 2D segmentation overlays give that class.
 int label_palette_slot(std::uint32_t label, std::size_t size);
 
 /// The colour of @p label in @p palette.
