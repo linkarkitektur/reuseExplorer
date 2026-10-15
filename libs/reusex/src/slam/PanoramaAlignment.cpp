@@ -217,6 +217,10 @@ panorama_alignment_diagnostics_json(const PanoramaAlignmentResult &r) {
   j["aligned"] = r.aligned;
   j["translation_fixed"] = r.translation_fixed;
   j["correspondences_total"] = d.correspondences_total;
+  j["sphere_keypoints"] = d.sphere_keypoints;
+  j["dropped_overlap"] = d.dropped_overlap;
+  j["dropped_pole"] = d.dropped_pole;
+  j["dropped_repeats"] = d.dropped_repeats;
   j["best_slice"] = d.best_slice;
   j["best_slice_inliers"] = d.best_slice_inliers;
   j["null_best_slice_inliers"] = d.null_best_slice_inliers;
@@ -229,11 +233,14 @@ panorama_alignment_diagnostics_json(const PanoramaAlignmentResult &r) {
   j["delta_from_seed_m"] = num(d.delta_from_seed_m);
   j["inlier_frames"] = d.inlier_frames;
   j["inlier_slices"] = d.inlier_slices;
+  if (r.aligned) // panorama-optical->world, row-major 4x4
+    j["pose"] = r.pose;
   json slices = json::array();
   for (const auto &s : d.slices)
     slices.push_back({{"yaw_deg", s.yaw_deg},
                       {"pitch_deg", s.pitch_deg},
                       {"keypoints", s.keypoints},
+                      {"pooled_keypoints", s.pooled_keypoints},
                       {"ratio_matches", s.ratio_matches},
                       {"correspondences", s.correspondences},
                       {"pnp_inliers", s.pnp_inliers},
@@ -394,62 +401,109 @@ PanoramaAlignmentResult align_panorama(ProjectDB &db, int pano_id,
     diag.slices[si].pitch_deg = slices[si].pitch_deg;
   }
 
-  cv::BFMatcher matcher(cv::NORM_HAMMING);
+  // --- the panorama's keypoints over the whole sphere (reusex-bx2.5) -------
+  std::vector<pano_detail::SliceKeypoints> slice_kps(slices.size());
+  for (size_t si = 0; si < slices.size(); ++si) {
+    const auto &view = slices[si];
+    auto &sk = slice_kps[si];
+    sk.K = view.K;
+    sk.R_pano_from_view = view.R_pano_from_view;
+    sk.size = view.image.size();
+    cv::Mat sgray;
+    cv::cvtColor(view.image, sgray, cv::COLOR_BGR2GRAY);
+    std::vector<cv::KeyPoint> skps;
+    orb->detectAndCompute(sgray, cv::noArray(), skps, sk.descriptors);
+    diag.slices[si].keypoints = static_cast<int>(skps.size());
+    if (sk.descriptors.empty())
+      continue;
+    sk.pixels.reserve(skps.size());
+    for (const auto &kp : skps)
+      sk.pixels.push_back(kp.pt);
+  }
+  pano_detail::SpherePoolOptions sopt;
+  sopt.dedupe_overlap = opt.dedupe_overlap;
+  sopt.nadir_mask_deg = opt.nadir_mask_deg;
+  sopt.zenith_mask_deg = opt.zenith_mask_deg;
+  const pano_detail::SphereKeypoints sphere =
+      pano_detail::pool_sphere_keypoints(slice_kps, sopt);
+  diag.sphere_keypoints = static_cast<int>(sphere.bearings.size());
+  diag.dropped_overlap = sphere.dropped_overlap;
+  diag.dropped_pole = sphere.dropped_pole;
+  for (int k = 0; k < static_cast<int>(sphere.slice.size()); ++k)
+    ++diag.slices[sphere.slice[k]].pooled_keypoints;
+
+  // --- match every candidate frame against the sphere ------------------------
+  struct Match {
+    int frame_idx;
+    pano_detail::SphereMatch m;
+  };
+  std::vector<Match> matches;
+  for (size_t fi = 0; fi < frames.size(); ++fi) {
+    const auto &fr = frames[fi];
+    if (fr.descriptors().empty())
+      continue;
+    const std::vector<pano_detail::SphereMatch> fm =
+        opt.frame_to_sphere
+            ? pano_detail::match_frame_to_sphere(
+                  fr.descriptors(), sphere, opt.ratio_test, opt.distinct_deg)
+            : pano_detail::match_sphere_to_frame(fr.descriptors(), sphere,
+                                                 opt.ratio_test);
+    for (const auto &m : fm) {
+      ++diag.slices[sphere.slice[m.sphere_kp]].ratio_matches;
+      ++diag.frames[fi].ratio_matches;
+      if (fr.valid(m.frame_kp))
+        matches.push_back({static_cast<int>(fi), m});
+    }
+  }
+  // One bearing constraint per panorama keypoint, however many near-identical
+  // frames it matched (the lowest Hamming distance wins).
+  if (opt.one_per_keypoint) {
+    std::vector<int> kp(matches.size());
+    std::vector<float> ham(matches.size());
+    for (size_t i = 0; i < matches.size(); ++i) {
+      kp[i] = matches[i].m.sphere_kp;
+      ham[i] = matches[i].m.hamming;
+    }
+    std::vector<Match> kept;
+    for (int i : pano_detail::one_per_sphere_keypoint(kp, ham))
+      kept.push_back(matches[i]);
+    diag.dropped_repeats = static_cast<int>(matches.size() - kept.size());
+    matches = std::move(kept);
+  }
+  // Slice-major, then frame, then keypoint: the order the per-slice PnP and
+  // its RANSAC see (and the order the original slice-by-slice loop produced).
+  std::sort(matches.begin(), matches.end(),
+            [&](const Match &a, const Match &b) {
+              const int sa = sphere.slice[a.m.sphere_kp],
+                        sb = sphere.slice[b.m.sphere_kp];
+              if (sa != sb)
+                return sa < sb;
+              if (a.frame_idx != b.frame_idx)
+                return a.frame_idx < b.frame_idx;
+              return a.m.sphere_kp < b.m.sphere_kp;
+            });
 
   // Per-slice correspondences (kept separate so each slice PnPs with its own
   // K), plus a global pool for the bearing-space refinement.
   std::vector<std::vector<Corr>> slice_corr(slices.size());
   std::vector<Corr> pool;
-
-  for (size_t si = 0; si < slices.size(); ++si) {
-    const auto &view = slices[si];
-    cv::Mat sgray;
-    cv::cvtColor(view.image, sgray, cv::COLOR_BGR2GRAY);
-    std::vector<cv::KeyPoint> skps;
-    cv::Mat sdesc;
-    orb->detectAndCompute(sgray, cv::noArray(), skps, sdesc);
-    diag.slices[si].keypoints = static_cast<int>(skps.size());
-    if (sdesc.empty())
-      continue;
-
-    const double fx = view.K(0, 0), fy = view.K(1, 1);
-    const double cx = view.K(0, 2), cy = view.K(1, 2);
-
-    for (size_t fi = 0; fi < frames.size(); ++fi) {
-      const auto &fr = frames[fi];
-      if (fr.descriptors().empty())
-        continue;
-      std::vector<std::vector<cv::DMatch>> knn;
-      matcher.knnMatch(sdesc, fr.f.descriptors, knn,
-                       2); // query=slice, train=frame
-      for (const auto &m : knn) {
-        if (m.size() < 2)
-          continue;
-        if (m[0].distance > opt.ratio_test * m[1].distance)
-          continue;
-        const int qs = m[0].queryIdx; // slice keypoint
-        const int tf = m[0].trainIdx; // frame keypoint
-        ++diag.slices[si].ratio_matches;
-        ++diag.frames[fi].ratio_matches;
-        if (!fr.valid(tf))
-          continue;
-        ++diag.slices[si].correspondences;
-        ++diag.frames[fi].correspondences;
-        Corr corr;
-        corr.slice_px = skps[qs].pt;
-        corr.world = fr.world[tf];
-        corr.slice_idx = static_cast<int>(si);
-        corr.frame_node = cand[fi];
-        corr.frame_idx = static_cast<int>(fi);
-        corr.frame_px = fr.f.keypoints[tf].pt;
-        corr.hamming = m[0].distance;
-        const Eigen::Vector3d ray_view((corr.slice_px.x - cx) / fx,
-                                       (corr.slice_px.y - cy) / fy, 1.0);
-        corr.bearing = (view.R_pano_from_view * ray_view).normalized();
-        slice_corr[si].push_back(corr);
-        pool.push_back(corr);
-      }
-    }
+  pool.reserve(matches.size());
+  for (const Match &mt : matches) {
+    const auto &fr = frames[mt.frame_idx];
+    const int k = mt.m.sphere_kp;
+    Corr corr;
+    corr.slice_px = sphere.pixels[k];
+    corr.world = fr.world[mt.m.frame_kp];
+    corr.bearing = sphere.bearings[k];
+    corr.slice_idx = sphere.slice[k];
+    corr.frame_node = cand[mt.frame_idx];
+    corr.frame_idx = mt.frame_idx;
+    corr.frame_px = fr.f.keypoints[mt.m.frame_kp].pt;
+    corr.hamming = mt.m.hamming;
+    ++diag.slices[corr.slice_idx].correspondences;
+    ++diag.frames[mt.frame_idx].correspondences;
+    slice_corr[corr.slice_idx].push_back(corr);
+    pool.push_back(corr);
   }
 
   diag.correspondences_total = static_cast<int>(pool.size());
@@ -490,6 +544,8 @@ PanoramaAlignmentResult align_panorama(ProjectDB &db, int pano_id,
   popt.min_correspondences = opt.min_slice_correspondences;
   popt.ransac_iterations = opt.ransac_iterations;
   popt.ransac_reproj_px = opt.ransac_reproj_px;
+  popt.usac = opt.usac;
+  popt.usac_seed = static_cast<int>(opt.seed);
   const pano_detail::SliceResection best =
       pano_detail::resect_best_slice(pnp_in, popt);
   for (size_t si = 0; si < slices.size(); ++si)

@@ -105,9 +105,42 @@ NOTES:
                   "Ignore frame keypoints deeper than this (m)")
       ->check(CLI::PositiveNumber)
       ->capture_default_str();
+  sub->add_flag("--dedupe-overlap,!--no-dedupe-overlap", ao.dedupe_overlap,
+                "Keep each panorama keypoint once, in the slice whose axis "
+                "is closest to it (adjacent slices overlap)")
+      ->capture_default_str();
+  sub->add_option("--nadir-mask", ao.nadir_mask_deg,
+                  "Drop panorama keypoints within this angle (deg) of "
+                  "straight down: the operator and the stick (0 keeps them)")
+      ->check(CLI::Range(0.0, 90.0))
+      ->capture_default_str();
+  sub->add_option("--zenith-mask", ao.zenith_mask_deg,
+                  "Drop panorama keypoints within this angle (deg) of "
+                  "straight up (0 keeps them)")
+      ->check(CLI::Range(0.0, 90.0))
+      ->capture_default_str();
+  sub->add_flag("--frame-to-sphere,!--no-frame-to-sphere", ao.frame_to_sphere,
+                "Match each frame keypoint against the whole panorama sphere "
+                "(Lowe ratio against a rival elsewhere on the sphere) instead "
+                "of each panorama keypoint against each frame")
+      ->capture_default_str();
+  sub->add_option("--distinct-deg", ao.distinct_deg,
+                  "Panorama keypoints closer than this (deg) are one place "
+                  "and never each other's Lowe rival")
+      ->check(CLI::Range(0.0, 90.0))
+      ->capture_default_str();
+  sub->add_flag("--one-per-keypoint,!--no-one-per-keypoint",
+                ao.one_per_keypoint,
+                "Keep one correspondence per panorama keypoint (the best "
+                "over all candidate frames)")
+      ->capture_default_str();
   sub->add_option("--ransac-iterations", ao.ransac_iterations,
                   "solvePnPRansac iterations per slice")
       ->check(CLI::PositiveNumber)
+      ->capture_default_str();
+  sub->add_flag("--usac,!--no-usac", ao.usac,
+                "Resect slices with OpenCV USAC (MAGSAC++) instead of EPnP "
+                "RANSAC")
       ->capture_default_str();
   sub->add_option("--null-trials", ao.null_trials,
                   "Shuffled-correspondence trials that measure each "

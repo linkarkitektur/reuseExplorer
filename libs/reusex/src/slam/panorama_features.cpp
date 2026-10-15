@@ -329,11 +329,34 @@ int pnp_slice(const SlicePnPInput &s, const std::vector<cv::Point2f> &pixels,
   const cv::Mat Kcv = (cv::Mat_<double>(3, 3) << s.K(0, 0), 0, s.K(0, 2), 0,
                        s.K(1, 1), s.K(1, 2), 0, 0, 1);
   cv::Mat rvec, tvec, inliers;
-  const bool ok = cv::solvePnPRansac(
-      obj, pixels, Kcv, cv::noArray(), rvec, tvec,
-      /*useExtrinsicGuess=*/false, opt.ransac_iterations, opt.ransac_reproj_px,
-      0.99, inliers, cv::SOLVEPNP_EPNP);
-  if (!ok)
+  bool ok = false;
+  if (opt.usac) {
+    // MAGSAC++ scoring with its own local optimisation; the generator state
+    // is the only randomness, so a fixed seed makes it reproducible.
+    cv::UsacParams up;
+    up.confidence = 0.99;
+    up.isParallel = false; // parallel USAC is not reproducible
+    up.maxIterations = opt.ransac_iterations;
+    up.threshold = opt.ransac_reproj_px;
+    up.randomGeneratorState = opt.usac_seed;
+    up.sampler = cv::SAMPLING_UNIFORM;
+    up.score = cv::SCORE_METHOD_MAGSAC;
+    up.loMethod = cv::LOCAL_OPTIM_SIGMA;
+    up.loIterations = 10;
+    up.loSampleSize = 50;
+    try {
+      ok = cv::solvePnPRansac(obj, pixels, Kcv, cv::noArray(), rvec, tvec,
+                              inliers, up);
+    } catch (const cv::Exception &) {
+      ok = false; // degenerate input: treated like a failed PnP
+    }
+  } else {
+    ok = cv::solvePnPRansac(obj, pixels, Kcv, cv::noArray(), rvec, tvec,
+                            /*useExtrinsicGuess=*/false, opt.ransac_iterations,
+                            opt.ransac_reproj_px, 0.99, inliers,
+                            cv::SOLVEPNP_EPNP);
+  }
+  if (!ok || rvec.empty() || tvec.empty())
     return 0;
   if (Q && t) {
     cv::Mat Rcv;
@@ -434,6 +457,152 @@ int noise_floor_threshold(int null_best, double margin,
   const int beat =
       static_cast<int>(std::floor(margin * std::max(0, null_best))) + 1;
   return std::max(min_correspondences, null_best > 0 ? beat : 0);
+}
+
+} // namespace reusex::geometry::pano_detail
+
+namespace reusex::geometry::pano_detail {
+
+// --- the correspondence pool (reusex-bx2.5) --------------------------------
+
+Eigen::Vector3d slice_bearing(const Eigen::Matrix3d &K,
+                              const Eigen::Matrix3d &R_pano_from_view,
+                              const cv::Point2f &px) {
+  const Eigen::Vector3d ray((px.x - K(0, 2)) / K(0, 0),
+                            (px.y - K(1, 2)) / K(1, 1), 1.0);
+  return (R_pano_from_view * ray).normalized();
+}
+
+namespace {
+
+bool slice_sees(const SliceKeypoints &s, const Eigen::Vector3d &bearing) {
+  const Eigen::Vector3d d = s.R_pano_from_view.transpose() * bearing;
+  if (d.z() <= 1e-9)
+    return false;
+  const double u = s.K(0, 0) * d.x() / d.z() + s.K(0, 2);
+  const double v = s.K(1, 1) * d.y() / d.z() + s.K(1, 2);
+  return u >= 0.0 && v >= 0.0 && u < s.size.width && v < s.size.height;
+}
+
+// Angle (rad) between unit vectors.
+double angle_between(const Eigen::Vector3d &a, const Eigen::Vector3d &b) {
+  return std::acos(std::clamp(a.dot(b), -1.0, 1.0));
+}
+
+} // namespace
+
+int owning_slice(const std::vector<SliceKeypoints> &slices,
+                 const Eigen::Vector3d &bearing) {
+  int best = -1;
+  double best_cos = -2.0;
+  for (size_t i = 0; i < slices.size(); ++i) {
+    if (!slice_sees(slices[i], bearing))
+      continue;
+    const double c = slices[i].R_pano_from_view.col(2).dot(bearing);
+    if (c > best_cos + 1e-12) {
+      best_cos = c;
+      best = static_cast<int>(i);
+    }
+  }
+  return best;
+}
+
+SphereKeypoints pool_sphere_keypoints(const std::vector<SliceKeypoints> &slices,
+                                      const SpherePoolOptions &opt) {
+  SphereKeypoints out;
+  const Eigen::Vector3d down(0.0, 1.0, 0.0); // +y of the panorama frame
+  const double nadir = opt.nadir_mask_deg * M_PI / 180.0;
+  const double zenith = opt.zenith_mask_deg * M_PI / 180.0;
+  for (size_t si = 0; si < slices.size(); ++si) {
+    const auto &s = slices[si];
+    for (size_t k = 0; k < s.pixels.size(); ++k) {
+      if (static_cast<int>(k) >= s.descriptors.rows)
+        break;
+      const Eigen::Vector3d b =
+          slice_bearing(s.K, s.R_pano_from_view, s.pixels[k]);
+      if ((nadir > 0.0 && angle_between(b, down) < nadir) ||
+          (zenith > 0.0 && angle_between(b, -down) < zenith)) {
+        ++out.dropped_pole;
+        continue;
+      }
+      if (opt.dedupe_overlap) {
+        // a keypoint on the slice's own edge can fall just outside its image
+        // after the float round trip; the detecting slice then still owns it
+        const int owner = owning_slice(slices, b);
+        if (owner >= 0 && owner != static_cast<int>(si)) {
+          ++out.dropped_overlap;
+          continue;
+        }
+      }
+      out.pixels.push_back(s.pixels[k]);
+      out.slice.push_back(static_cast<int>(si));
+      out.bearings.push_back(b);
+      out.descriptors.push_back(s.descriptors.row(static_cast<int>(k)));
+    }
+  }
+  return out;
+}
+
+std::vector<SphereMatch> match_frame_to_sphere(const cv::Mat &frame_desc,
+                                               const SphereKeypoints &sphere,
+                                               float ratio, double distinct_deg,
+                                               int k) {
+  std::vector<SphereMatch> out;
+  if (frame_desc.empty() || sphere.descriptors.rows < 2)
+    return out;
+  cv::BFMatcher matcher(cv::NORM_HAMMING);
+  std::vector<std::vector<cv::DMatch>> knn;
+  matcher.knnMatch(frame_desc, sphere.descriptors, knn, std::max(2, k));
+  const double distinct = distinct_deg * M_PI / 180.0;
+  for (const auto &m : knn) {
+    if (m.empty())
+      continue;
+    const Eigen::Vector3d &b0 = sphere.bearings[m[0].trainIdx];
+    // the nearest descriptor at a different place on the sphere
+    const cv::DMatch *rival = nullptr;
+    for (size_t j = 1; j < m.size(); ++j)
+      if (angle_between(sphere.bearings[m[j].trainIdx], b0) > distinct) {
+        rival = &m[j];
+        break;
+      }
+    if (rival && m[0].distance > ratio * rival->distance)
+      continue;
+    out.push_back({m[0].queryIdx, m[0].trainIdx, m[0].distance});
+  }
+  return out;
+}
+
+std::vector<SphereMatch> match_sphere_to_frame(const cv::Mat &frame_desc,
+                                               const SphereKeypoints &sphere,
+                                               float ratio) {
+  std::vector<SphereMatch> out;
+  if (frame_desc.rows < 2 || sphere.descriptors.empty())
+    return out;
+  cv::BFMatcher matcher(cv::NORM_HAMMING);
+  std::vector<std::vector<cv::DMatch>> knn;
+  matcher.knnMatch(sphere.descriptors, frame_desc, knn, 2);
+  for (const auto &m : knn) {
+    if (m.size() < 2 || m[0].distance > ratio * m[1].distance)
+      continue;
+    out.push_back({m[0].trainIdx, m[0].queryIdx, m[0].distance});
+  }
+  return out;
+}
+
+std::vector<int> one_per_sphere_keypoint(const std::vector<int> &sphere_kp,
+                                         const std::vector<float> &hamming) {
+  std::map<int, int> best; // sphere keypoint -> entry
+  for (size_t i = 0; i < sphere_kp.size(); ++i) {
+    auto [it, inserted] = best.emplace(sphere_kp[i], static_cast<int>(i));
+    if (!inserted && hamming[i] < hamming[it->second])
+      it->second = static_cast<int>(i);
+  }
+  std::vector<int> keep;
+  keep.reserve(best.size());
+  for (const auto &kv : best)
+    keep.push_back(kv.second);
+  std::sort(keep.begin(), keep.end());
+  return keep;
 }
 
 } // namespace reusex::geometry::pano_detail

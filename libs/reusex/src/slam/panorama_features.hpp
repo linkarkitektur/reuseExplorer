@@ -186,6 +186,11 @@ struct SlicePnPOptions {
   int min_correspondences = 6; ///< PnP a slice only with at least this many
   int ransac_iterations = 500;
   float ransac_reproj_px = 5.0f;
+  /// OpenCV's USAC framework (MAGSAC++ scoring, PROSAC-free uniform sampler,
+  /// local optimisation) instead of the classic EPnP RANSAC loop. Seeded by
+  /// @ref usac_seed, so it is as reproducible as the classic path.
+  bool usac = false;
+  int usac_seed = 0;
 };
 
 /// The strongest single-slice resection of a panorama.
@@ -223,5 +228,96 @@ int shuffled_best_slice_inliers(const std::vector<SlicePnPInput> &slices,
 /// @p min_correspondences.
 int noise_floor_threshold(int null_best, double margin,
                           int min_correspondences);
+
+// --- the correspondence pool (reusex-bx2.5) --------------------------------
+//
+// The original pool let every slice keypoint pick its 1-NN in every candidate
+// frame, so slices facing away from all frames still contributed 40-50 % of
+// their keypoints as junk, overlapping slices entered the same panorama
+// keypoint twice, and the nadir (operator, hand, stick) contributed 10 % of
+// the pool and no inliers (docs/research/panorama-alignment-failure-modes.md).
+// These helpers build the pool from the panorama's keypoints pooled over the
+// whole sphere instead.
+
+/// ORB keypoints of one perspective slice, as detected.
+struct SliceKeypoints {
+  Eigen::Matrix3d K = Eigen::Matrix3d::Identity(); ///< slice intrinsics
+  Eigen::Matrix3d R_pano_from_view = Eigen::Matrix3d::Identity();
+  cv::Size size;                   ///< slice image size (px)
+  std::vector<cv::Point2f> pixels; ///< detected keypoints
+  cv::Mat descriptors;             ///< one row per pixel
+};
+
+/// Which slice keypoints enter the sphere pool.
+struct SpherePoolOptions {
+  /// Keep a keypoint only in the slice that owns its bearing (owning_slice():
+  /// each direction of the sphere is owned by exactly one slice), so a
+  /// keypoint seen by two overlapping slices enters the pool once.
+  bool dedupe_overlap = true;
+  /// Drop keypoints whose bearing is within this angle (deg) of straight down
+  /// (+y of the panorama frame) — the operator, hand and stick of a hand-held
+  /// capture. 0 keeps everything.
+  double nadir_mask_deg = 0.0;
+  /// Same, around straight up (-y). 0 keeps everything.
+  double zenith_mask_deg = 0.0;
+};
+
+/// The panorama's keypoints over the whole sphere. Parallel arrays.
+struct SphereKeypoints {
+  std::vector<cv::Point2f> pixels;       ///< pixel in the owning slice
+  std::vector<int> slice;                ///< owning slice
+  std::vector<Eigen::Vector3d> bearings; ///< unit bearing, panorama frame
+  cv::Mat descriptors;                   ///< one row per keypoint
+  int dropped_overlap = 0;               ///< owned by another slice
+  int dropped_pole = 0;                  ///< inside the nadir/zenith mask
+};
+
+/// Unit bearing (panorama frame) of slice pixel @p px.
+Eigen::Vector3d slice_bearing(const Eigen::Matrix3d &K,
+                              const Eigen::Matrix3d &R_pano_from_view,
+                              const cv::Point2f &px);
+
+/// Index of the slice that owns @p bearing: among the slices whose image
+/// contains the bearing, the one whose optical axis is closest to it (ties go
+/// to the lower index). -1 when no slice sees it.
+int owning_slice(const std::vector<SliceKeypoints> &slices,
+                 const Eigen::Vector3d &bearing);
+
+/// Pool the slices' keypoints over the sphere (slice order, then keypoint
+/// order — deterministic).
+SphereKeypoints pool_sphere_keypoints(const std::vector<SliceKeypoints> &slices,
+                                      const SpherePoolOptions &opt);
+
+/// One frame keypoint matched to one sphere keypoint.
+struct SphereMatch {
+  int frame_kp = -1;
+  int sphere_kp = -1;
+  float hamming = 0.0f;
+};
+
+/// Frame-driven matching against the whole sphere: every frame keypoint takes
+/// its nearest sphere keypoint, and keeps it only when it beats, by Lowe's
+/// @p ratio, the nearest sphere keypoint at a DIFFERENT place on the sphere
+/// (bearing more than @p distinct_deg away). The competitor is searched among
+/// the @p k nearest descriptors; when all of them sit at the same place
+/// (ORB's duplicate detections of one corner), the match is kept.
+std::vector<SphereMatch> match_frame_to_sphere(const cv::Mat &frame_desc,
+                                               const SphereKeypoints &sphere,
+                                               float ratio, double distinct_deg,
+                                               int k = 4);
+
+/// The legacy direction: every sphere keypoint takes its nearest frame
+/// keypoint, Lowe-tested against the frame's second nearest.
+std::vector<SphereMatch> match_sphere_to_frame(const cv::Mat &frame_desc,
+                                               const SphereKeypoints &sphere,
+                                               float ratio);
+
+/// Indices (ascending) of the entries to keep so that each sphere keypoint
+/// appears once: the lowest @p hamming wins, ties go to the earlier entry.
+/// A panorama keypoint is one bearing constraint however many near-identical
+/// candidate frames it matched; keeping all of them would let one wrong match
+/// count several times in every PnP inlier tally.
+std::vector<int> one_per_sphere_keypoint(const std::vector<int> &sphere_kp,
+                                         const std::vector<float> &hamming);
 
 } // namespace reusex::geometry::pano_detail

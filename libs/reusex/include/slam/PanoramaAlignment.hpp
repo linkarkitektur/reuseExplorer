@@ -68,11 +68,43 @@ struct PanoramaAlignmentOptions {
   float min_depth = 0.3f;   ///< ignore frame keypoints outside [min,max] depth
   float max_depth = 6.0f;
 
+  // --- correspondence pool (reusex-bx2.5) --------------------------------
+  /// Keep each panorama keypoint once: only in the slice whose optical axis
+  /// is closest to it among the slices that see it. Adjacent slices overlap
+  /// 45 deg at 8 x 90 deg, so without this the same keypoint enters the pool
+  /// (and every inlier tally) twice.
+  bool dedupe_overlap = false;
+  /// Drop panorama keypoints within this angle (deg) of straight down: the
+  /// operator, hand and stick of a hand-held capture, which gave 10 % of the
+  /// NewOffice pool and no inliers. 0 keeps them.
+  double nadir_mask_deg = 0.0;
+  /// Same, around straight up. 0 keeps them.
+  double zenith_mask_deg = 0.0;
+  /// Frame-driven matching: each frame keypoint takes its nearest panorama
+  /// keypoint over the whole sphere, Lowe-tested against the nearest one at
+  /// a different place (> `distinct_deg` away). When false, each panorama
+  /// keypoint takes its nearest keypoint in each frame (the original
+  /// slice-driven matching, which passed 40-50 % of the keypoints of slices
+  /// no frame sees).
+  bool frame_to_sphere = false;
+  /// Two panorama keypoints closer than this (deg) are the same place (ORB's
+  /// duplicate detections across pyramid levels) and never each other's Lowe
+  /// competitor.
+  double distinct_deg = 1.0;
+  /// Keep one correspondence per panorama keypoint (the lowest Hamming
+  /// distance over all candidate frames), so a keypoint matched in several
+  /// near-identical frames counts once.
+  bool one_per_keypoint = false;
+
   // --- PnP resection -----------------------------------------------------
   int min_slice_correspondences = 6; ///< need this many to PnP a slice
   int min_inliers = 40;              ///< accept alignment above this (total)
   float ransac_reproj_px = 5.0f;     ///< solvePnPRansac reprojection threshold
   int ransac_iterations = 500;
+  /// Resect each slice with OpenCV's USAC (MAGSAC++ scoring, local
+  /// optimisation; seeded by `seed`) instead of the classic EPnP RANSAC loop.
+  /// The noise-floor null uses the same estimator.
+  bool usac = false;
   int refine_iterations = 10; ///< bearing-space Gauss-Newton refinement steps
 
   // --- noise-floor gate (reusex-bx2.4) -----------------------------------
@@ -176,6 +208,9 @@ struct PanoramaSliceStats {
   /// of those, the ones whose frame keypoint has valid depth in
   /// [min_depth, max_depth] — the slice's PnP input
   int correspondences = 0;
+  /// keypoints of this slice that entered the sphere pool (after the
+  /// overlap dedupe and the nadir/zenith masks)
+  int pooled_keypoints = 0;
   /// solvePnPRansac inliers of this slice alone; -1 when PnP was not attempted
   /// (fewer than `min_slice_correspondences` correspondences)
   int pnp_inliers = -1;
@@ -221,7 +256,13 @@ struct PanoramaAlignmentDiagnostics {
   std::vector<PanoramaSliceStats> slices;
   std::vector<PanoramaFrameStats> frames; ///< candidate frames, match order
   int correspondences_total = 0; ///< pooled depth-backed correspondences
-  int best_slice = -1;           ///< slice whose PnP seeded the refinement
+  int sphere_keypoints = 0;      ///< panorama keypoints in the sphere pool
+  int dropped_overlap = 0;       ///< keypoints dropped as another slice's
+  int dropped_pole = 0;          ///< keypoints inside the nadir/zenith masks
+  /// depth-backed matches dropped as repeats of a panorama keypoint already
+  /// matched in another frame (`one_per_keypoint`)
+  int dropped_repeats = 0;
+  int best_slice = -1; ///< slice whose PnP seeded the refinement
   int best_slice_inliers = 0;
   /// best-slice PnP inliers under the shuffled-correspondence null (max over
   /// `null_trials`); -1 when the gate did not run
