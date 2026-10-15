@@ -49,6 +49,7 @@ enum class JobStage {
   optimize,  ///< refine per-frame sensor poses via plane-landmark pose graph
   annotate,  ///< ML semantic labelling of the stored sensor frames
   graph_discover, ///< find loop edges and store them in the pose graph
+  storeys,        ///< detect storeys and the level frame -> "storeys" table
 };
 
 /// Canonical lower-case stage name (the token used on the wire and the CLI).
@@ -159,6 +160,13 @@ StageResult run_stage(ProjectDB &db, const StageContext &ctx);
 StageResult run_logged_stage(ProjectDB &db, const StageContext &ctx,
                              std::string_view name, std::string_view log_name,
                              const std::function<StageResult()> &body);
+
+/// As above, handing @p body the id of the pipeline_log row it runs under,
+/// so a stage can attribute the rows it writes to its run (storeys.run_id).
+StageResult
+run_logged_stage(ProjectDB &db, const StageContext &ctx, std::string_view name,
+                 std::string_view log_name,
+                 const std::function<StageResult(int log_id)> &body);
 
 /// Open `ctx.project` read-write and run the stage against it.
 StageResult run_stage(const StageContext &ctx);

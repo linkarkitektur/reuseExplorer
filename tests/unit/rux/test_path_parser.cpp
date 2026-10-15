@@ -27,9 +27,10 @@ using namespace rux::database;
 
 TEST_CASE("IsValidCollection_KnownAndUnknownNames_AcceptsOnlyRoutedOnes",
           "[rux][path_parser]") {
-  // The nine collections that actually have a router in apps/rux/src/database.
-  for (const auto *name : {"clouds", "components", "frames", "labels", "log",
-                           "materials", "meshes", "panoramas", "projects"}) {
+  // The ten collections that actually have a router in apps/rux/src/database.
+  for (const auto *name :
+       {"clouds", "components", "frames", "labels", "log", "materials",
+        "meshes", "panoramas", "projects", "storeys"}) {
     INFO("collection: " << name);
     CHECK(is_valid_collection(name));
   }

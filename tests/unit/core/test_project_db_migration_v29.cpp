@@ -341,5 +341,5 @@ TEST_CASE("MigrationV29_FreshProject_IsAtLatestVersion",
   TempPath tmp("test_migration_v29_fresh");
   ProjectDB db(tmp.path);
   CHECK(db.schema_version() == ProjectDB::latest_schema_version());
-  CHECK(ProjectDB::latest_schema_version() == 29);
+  CHECK(ProjectDB::latest_schema_version() >= 29);
 }

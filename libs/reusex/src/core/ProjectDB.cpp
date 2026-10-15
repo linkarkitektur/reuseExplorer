@@ -39,6 +39,7 @@
 #include <mutex>
 #include <optional>
 #include <random>
+#include <regex>
 #include <set>
 #include <span>
 #include <sstream>
@@ -419,9 +420,11 @@ class ProjectDB::Impl {
   bool hasInitialTransform = false;
   /// project_settings exists (v28).
   bool hasSettingsTable = false;
+  /// storeys exists (v30).
+  bool hasStoreysTable = false;
 
   // cppcheck-suppress unusedStructMember
-  static constexpr int LATEST_SCHEMA_VERSION = 29;
+  static constexpr int LATEST_SCHEMA_VERSION = 30;
 
   // How long one statement waits for a lock another connection holds before
   // failing with SQLITE_BUSY. sqlite's default is not to wait at all.
@@ -544,6 +547,7 @@ class ProjectDB::Impl {
     hasPoseGraphV28 = columnExists("pose_graph_edges", "status");
     hasInitialTransform = columnExists("sensor_frames", "initial_transform");
     hasSettingsTable = tableExists("project_settings");
+    hasStoreysTable = tableExists("storeys");
   }
 
   /// True the first time this process opens dbPath read-only at schema
@@ -843,6 +847,10 @@ class ProjectDB::Impl {
 
     if (current < 29) {
       migrateToV29();
+    }
+
+    if (current < 30) {
+      migrateToV30();
     }
 
     reusex::trace("Schema version: {}", getCurrentSchemaVersion());
@@ -3162,6 +3170,234 @@ class ProjectDB::Impl {
     return sqlite3_column_int(stmt, 0);
   }
 
+  void migrateToV30() {
+    reusex::info("Migrating database to schema version 30");
+    // Solid-model WP1 (reusex-z1v.3.2): the storeys table, and the project
+    // GUID every deterministic row GUID is derived from
+    // (core::deterministic_guid). The GUID lives in project_settings, not in
+    // `projects`: that is the legacy passport table, keyed by a user-chosen
+    // text id and holding zero or several rows, so it cannot name "this
+    // project". level_transform = 16 row-major doubles (world -> level frame),
+    // like sensor_frames.transform. idx is UNIQUE: it is the key walls,
+    // spaces and plane classes refer to a storey by.
+    Savepoint sp(db, "migrate_v30");
+    execOrThrow(R"(
+      CREATE TABLE IF NOT EXISTS storeys (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        guid            TEXT    NOT NULL UNIQUE,
+        idx             INTEGER NOT NULL UNIQUE,
+        name            TEXT    NOT NULL DEFAULT '',
+        z_floor         REAL    NOT NULL,
+        z_ceiling       REAL    NOT NULL,
+        level_transform BLOB    NOT NULL CHECK (length(level_transform) = 128),
+        source          TEXT    NOT NULL DEFAULT 'detected'
+          CHECK (source IN ('detected', 'manual', 'imported')),
+        locked          INTEGER NOT NULL DEFAULT 0 CHECK (locked IN (0, 1)),
+        confidence      REAL    NOT NULL DEFAULT -1,
+        metadata        TEXT    NOT NULL DEFAULT '',
+        run_id          INTEGER,
+        created_at      TEXT    NOT NULL
+          DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+      );
+      CREATE TABLE IF NOT EXISTS project_settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+    )");
+    {
+      sqlite3_stmt *st = prepare_or_throw(
+          db,
+          "INSERT OR IGNORE INTO project_settings (key, value) "
+          "VALUES ('project_guid', ?);",
+          "migrateToV30");
+      StmtGuard guard(st);
+      bind_text(st, 1, core::generate_guid());
+      if (sqlite3_step(st) != SQLITE_DONE)
+        throw std::runtime_error("migrateToV30: failed to mint project_guid: " +
+                                 std::string(sqlite3_errmsg(db)));
+    }
+    insertSchemaVersion(30, "Solid model: storeys table; project_guid "
+                            "setting (namespace of deterministic GUIDs)");
+    sp.release();
+    reusex::info("Migration to schema version 30 complete");
+  }
+
+  // ── Storeys (v30) ────────────────────────────────────────────────────────
+
+  static constexpr const char *kStoreyColumns =
+      "id, guid, idx, name, z_floor, z_ceiling, level_transform, source, "
+      "locked, confidence, metadata";
+
+  static core::StoreyRecord readStorey(sqlite3_stmt *s) {
+    core::StoreyRecord r;
+    r.id = sqlite3_column_int64(s, 0);
+    r.guid = column_text(s, 1);
+    r.idx = sqlite3_column_int(s, 2);
+    r.name = column_text(s, 3);
+    r.z_floor = sqlite3_column_double(s, 4);
+    r.z_ceiling = sqlite3_column_double(s, 5);
+    if (auto t = optionalBlob<16>(s, 6))
+      r.level_transform = *t;
+    r.source = column_text(s, 7);
+    r.locked = sqlite3_column_int(s, 8) != 0;
+    r.confidence = sqlite3_column_double(s, 9);
+    r.metadata = column_text(s, 10);
+    return r;
+  }
+
+  std::string projectGuid() const {
+    auto g = getSetting("project_guid");
+    if (!g || g->empty())
+      throw std::runtime_error(
+          "project_guid: project schema predates v30; open it read-write "
+          "once to migrate: " +
+          dbPath.string());
+    static const std::regex kUuid(
+        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+        "[0-9a-fA-F]{12}$");
+    if (!std::regex_match(*g, kUuid))
+      throw std::runtime_error("project_guid: the stored value '" + *g +
+                               "' is not a UUID (project_settings key "
+                               "'project_guid' was edited by hand?): " +
+                               dbPath.string());
+    return *g;
+  }
+
+  std::vector<core::StoreyRecord> listStoreys() const {
+    std::vector<core::StoreyRecord> out;
+    if (!hasStoreysTable)
+      return out;
+    const std::string sql =
+        std::string("SELECT ") + kStoreyColumns + " FROM storeys ORDER BY idx;";
+    sqlite3_stmt *s = prepare_or_throw(db, sql.c_str(), "storeys");
+    StmtGuard guard(s);
+    int rc;
+    while ((rc = sqlite3_step(s)) == SQLITE_ROW)
+      out.push_back(readStorey(s));
+    if (rc != SQLITE_DONE)
+      throw std::runtime_error("storeys: " + std::string(sqlite3_errmsg(db)));
+    return out;
+  }
+
+  std::optional<core::StoreyRecord> storeyByGuid(std::string_view guid) const {
+    if (!hasStoreysTable)
+      return std::nullopt;
+    const std::string sql = std::string("SELECT ") + kStoreyColumns +
+                            " FROM storeys WHERE guid = ?;";
+    sqlite3_stmt *s = prepare_or_throw(db, sql.c_str(), "storey_by_guid");
+    StmtGuard guard(s);
+    bind_text(s, 1, guid);
+    if (sqlite3_step(s) != SQLITE_ROW)
+      return std::nullopt;
+    return readStorey(s);
+  }
+
+  size_t saveStoreys(const std::vector<core::StoreyRecord> &storeys,
+                     int runId) {
+    checkWritable();
+    if (!hasStoreysTable)
+      throw std::runtime_error("save_storeys: project schema predates v30");
+    std::set<std::string> guids;
+    std::set<int> idxs;
+    for (const auto &r : storeys) {
+      if (r.guid.empty())
+        throw std::invalid_argument("save_storeys: storey " +
+                                    std::to_string(r.idx) + " has no guid");
+      if (r.source != "detected" && r.source != "manual" &&
+          r.source != "imported")
+        throw std::invalid_argument("save_storeys: storey " +
+                                    std::to_string(r.idx) +
+                                    " has invalid source '" + r.source + "'");
+      if (!guids.insert(r.guid).second)
+        throw std::invalid_argument("save_storeys: duplicate guid " + r.guid);
+      if (!idxs.insert(r.idx).second)
+        throw std::invalid_argument("save_storeys: duplicate idx " +
+                                    std::to_string(r.idx));
+    }
+
+    Savepoint sp(db, "save_storeys");
+    std::set<std::string> lockedGuids;
+    std::set<int> lockedIdx;
+    {
+      sqlite3_stmt *s = prepare_or_throw(
+          db, "SELECT guid, idx FROM storeys WHERE locked = 1;",
+          "save_storeys");
+      StmtGuard guard(s);
+      int rc;
+      while ((rc = sqlite3_step(s)) == SQLITE_ROW) {
+        lockedGuids.insert(column_text(s, 0));
+        lockedIdx.insert(sqlite3_column_int(s, 1));
+      }
+      if (rc != SQLITE_DONE)
+        throw std::runtime_error("save_storeys: reading locked rows: " +
+                                 std::string(sqlite3_errmsg(db)));
+    }
+    execOrThrow("DELETE FROM storeys WHERE locked = 0;");
+
+    sqlite3_stmt *ins = prepare_or_throw(
+        db,
+        "INSERT INTO storeys (guid, idx, name, z_floor, z_ceiling, "
+        "level_transform, source, locked, confidence, metadata, run_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+        "save_storeys");
+    StmtGuard guard(ins);
+    size_t written = 0;
+    for (const auto &r : storeys) {
+      if (lockedGuids.count(r.guid)) {
+        reusex::info("save_storeys: storey {} ({}) is locked; kept the stored "
+                     "row",
+                     r.idx, r.guid);
+        continue;
+      }
+      if (lockedIdx.count(r.idx)) {
+        reusex::warn("save_storeys: storey idx {} is held by a locked row "
+                     "with another guid; the new storey {} was not written",
+                     r.idx, r.guid);
+        continue;
+      }
+      sqlite3_reset(ins);
+      sqlite3_clear_bindings(ins);
+      bind_text(ins, 1, r.guid);
+      sqlite3_bind_int(ins, 2, r.idx);
+      bind_text(ins, 3, r.name);
+      sqlite3_bind_double(ins, 4, r.z_floor);
+      sqlite3_bind_double(ins, 5, r.z_ceiling);
+      sqlite3_bind_blob(ins, 6, r.level_transform.data(),
+                        static_cast<int>(sizeof(double) * 16),
+                        SQLITE_TRANSIENT);
+      bind_text(ins, 7, r.source);
+      sqlite3_bind_int(ins, 8, r.locked ? 1 : 0);
+      sqlite3_bind_double(ins, 9, r.confidence);
+      bind_text(ins, 10, r.metadata);
+      if (runId >= 0)
+        sqlite3_bind_int(ins, 11, runId);
+      else
+        sqlite3_bind_null(ins, 11);
+      if (sqlite3_step(ins) != SQLITE_DONE)
+        throw std::runtime_error("save_storeys: insert of storey " +
+                                 std::to_string(r.idx) +
+                                 " failed: " + sqlite3_errmsg(db));
+      ++written;
+    }
+    sp.release();
+    return written;
+  }
+
+  bool hasStoreys() const {
+    if (!hasStoreysTable)
+      return false;
+    sqlite3_stmt *s = prepare_or_throw(
+        db, "SELECT EXISTS (SELECT 1 FROM storeys);", "has_storeys");
+    StmtGuard guard(s);
+    return sqlite3_step(s) == SQLITE_ROW && sqlite3_column_int(s, 0) != 0;
+  }
+
+  void deleteStoreys() {
+    checkWritable();
+    if (hasStoreysTable)
+      execOrThrow("DELETE FROM storeys;");
+  }
+
   // ── Scan helpers (#129) ──────────────────────────────────────────────────
 
   ProjectDB::ScanRecord createScan(const std::string &source_path,
@@ -3747,6 +3983,12 @@ class ProjectDB::Impl {
   }
 
   void putSetting(std::string_view key, std::string_view value) {
+    // Write-once: every deterministic row GUID is derived from it, so a
+    // change would orphan the identity of every stored solid-model row.
+    if (key == "project_guid")
+      throw std::invalid_argument(
+          "set_setting: 'project_guid' is write-once (minted by the v30 "
+          "migration)");
     checkWritable();
     if (!hasSettingsTable)
       throw std::runtime_error("set_setting: project schema predates v28");
@@ -7746,6 +7988,26 @@ std::optional<std::string> ProjectDB::setting(std::string_view key) const {
 void ProjectDB::set_setting(std::string_view key, std::string_view value) {
   impl_->putSetting(key, value);
 }
+
+std::string ProjectDB::project_guid() const { return impl_->projectGuid(); }
+
+size_t ProjectDB::save_storeys(const std::vector<core::StoreyRecord> &storeys,
+                               int run_id) {
+  return impl_->saveStoreys(storeys, run_id);
+}
+
+std::vector<core::StoreyRecord> ProjectDB::storeys() const {
+  return impl_->listStoreys();
+}
+
+std::optional<core::StoreyRecord>
+ProjectDB::storey_by_guid(std::string_view guid) const {
+  return impl_->storeyByGuid(guid);
+}
+
+bool ProjectDB::has_storeys() const { return impl_->hasStoreys(); }
+
+void ProjectDB::delete_storeys() { impl_->deleteStoreys(); }
 
 core::SensorIntrinsics ProjectDB::sensor_frame_intrinsics(int nodeId) const {
   return impl_->getSensorFrameIntrinsics(nodeId);

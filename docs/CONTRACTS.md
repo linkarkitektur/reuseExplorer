@@ -44,7 +44,13 @@ subcommand makes, so a stage that validates cannot then be refused when run.
   can declare a per-plane cloud index-aligned with a per-point one.
 - **Tables** are relational rows keyed by cloud name and id — `sensor_frames`,
   `segmentation_images`, `instances`, `instance_materials`,
-  `building_components`, `meshes`.
+  `building_components`, `meshes` — or, for the solid-model tables
+  (`storeys`, ...), by a stable GUID with `source` / `locked` columns: a
+  re-run replaces the unlocked rows and keeps the locked ones, and a
+  re-detected element keeps the GUID of the stored element it matches. New
+  GUIDs are deterministic (`core::deterministic_guid` over the project GUID,
+  `ProjectDB::project_guid()`). A file copy of a `.rux` is the **same**
+  project: same project GUID, same row GUIDs.
 - **Options struct** is the single library-side parameter object for the stage;
   CLI flags mirror its defaults (STANDARDS §4).
 - Several commands can be pointed at a differently-named cloud (`rux create
@@ -232,6 +238,42 @@ Separate semantic labels into spatial instances (connected-component clustering)
 `--semantic-cloud <name>` overrides `labels`. An explicit override is an
 instruction, not a preference: the fallback is dropped and the named cloud must
 exist.
+
+### `storeys` (`rux create storeys`)
+
+Fit each storey's floor and ceiling to the horizontal planes (iterated least
+squares), measure the vertical as the bisector of their normals, and find the
+storeys as peaks of a height histogram (`segmentation/level.hpp`,
+`detect_storeys`). The scan is never rewritten: each row stores the
+world → level transform (storey-0 floor at z = 0) next to its floor and
+ceiling height in that frame.
+
+| | |
+|---|---|
+| Consumes | `cloud`, `planes`, `plane_centroids`, `plane_normals` |
+| Produces | `storeys` (`storeys` table, schema v30: one row per storey, a stable GUID — see below) |
+| Options  | `LevelOptions` (`libs/reusex/include/segmentation/level.hpp`), parameter keys are its field names; plus `guid_match_m` (`core::StoreyIdentityOptions`, `core/storey_identity.hpp`) |
+| Checks   | `cloud`/`planes` present + aligned; `plane_centroids`/`plane_normals` present + aligned |
+
+Never zero rows: a scan with one level, no ceiling or no horizontal plane is
+one storey whose `metadata` records the reason (logged at `warn`).
+
+Identity: `idx` is the rank from the bottom and moves when a re-run finds a
+storey below the old lowest one; the GUID does not. A re-detected storey takes
+the GUID of the stored storey whose floor lies within `guid_match_m` (default
+0.5 m) of its own, compared in the new run's level frame; only an unmatched
+storey gets a fresh GUID, `uuid5(project_guid, "storeys/z<floor cm>")`,
+suffixed until unique.
+
+Rows with `locked = 1` survive a re-run unchanged, frame included; a new
+storey whose GUID or `idx` a locked row holds is not written. Every row one run
+writes carries the same `level_transform` today (the column is per storey so a
+drifted multi-storey scan can later get one frame per storey,
+reusex-z1v.3.5), so **mixed frames in the table arise only through locked
+rows**: the stage warns, with the angle and shift, when a kept locked row's
+frame differs from the new run's, and when its height range overlaps a new
+row's. `rux get storeys` prints the table; `rux del storeys` removes it, and
+needs `--force` when any row is locked.
 
 ### `mesh` (`rux create mesh`)
 
@@ -445,6 +487,7 @@ rasterizer.
 
 ```
 import → [graph_init] → [graph_discover] → (optimize|register) → clouds → planes → rooms → mesh → texture
+                                                                                   ↘ storeys
                                                     ↘ annotate → project → instances → windows
                                                     ↘ gsplat (leaf: produces `splat`)
 ```

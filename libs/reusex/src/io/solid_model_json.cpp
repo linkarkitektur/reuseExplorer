@@ -692,12 +692,18 @@ core::SolidModel solid_model_from_json(std::string_view text) {
   return m;
 }
 
-core::SolidModel load_solid_model(const ProjectDB & /*db*/) {
-  // No solid-model table exists before WP1. Each table's WP fills its part
-  // here and sets the matching `provided` flag when the table exists, so a
+core::SolidModel load_solid_model(const ProjectDB &db) {
+  // Each table's WP fills its part here and sets the matching `provided`
+  // flag once the project says something about that element kind, so a
   // project that has run the stage and found nothing is scored as a miss,
   // not as n/a.
-  return {};
+  core::SolidModel m;
+  // The storeys stage never writes zero rows (detect_storeys always yields
+  // at least one storey, with the reason logged), so an empty table means
+  // the stage has not run: n/a, not a miss.
+  m.storeys = db.storeys();
+  m.provided.storeys = !m.storeys.empty();
+  return m;
 }
 
 core::SolidModel solid_model_from_file(const std::filesystem::path &path) {

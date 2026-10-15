@@ -5,7 +5,9 @@
 #include "utils/parse_number.hpp"
 #include <reusex/pipeline/stage_parameters.hpp>
 
+#include <reusex/core/storey_identity.hpp>
 #include <reusex/reconstruction/mesh.hpp>
+#include <reusex/segmentation/level.hpp>
 #include <reusex/segmentation/reconstruct.hpp>
 #include <reusex/segmentation/segment_instances.hpp>
 #include <reusex/segmentation/segment_planes.hpp>
@@ -47,6 +49,18 @@ ParameterDescriptor num(std::string key, std::string label,
                              minimum,
                              maximum,
                              false};
+}
+
+/// A fractional option whose struct field is a `double` (LevelOptions):
+/// no float widening to undo, the default is carried as is.
+ParameterDescriptor dnum(std::string key, std::string label,
+                         std::string description, double default_value,
+                         std::optional<double> minimum = std::nullopt,
+                         std::optional<double> maximum = std::nullopt) {
+  return ParameterDescriptor{std::move(key),   ParameterType::number,
+                             std::move(label), std::move(description),
+                             default_value,    minimum,
+                             maximum,          false};
 }
 
 ParameterDescriptor integer(std::string key, std::string label,
@@ -379,6 +393,48 @@ const std::vector<ParameterDescriptor> &graph_discover_parameters() {
   return table;
 }
 
+const std::vector<ParameterDescriptor> &storeys_parameters() {
+  // Keys are the LevelOptions field names plus guid_match_m
+  // (core::StoreyIdentityOptions::match_m); bounds mirror the CLI's
+  // CLI::Range checks (apps/rux/src/create/storeys.cpp).
+  static const std::vector<ParameterDescriptor> table = [] {
+    const geometry::LevelOptions d{};
+    return std::vector<ParameterDescriptor>{
+        dnum("horizontal_cos", "Horizontal cosine",
+             "A plane is horizontal when |n.z| exceeds this cosine.",
+             d.horizontal_cos, 0.5, 1.0),
+        dnum("inlier_m", "Fit inlier band [m]",
+             "Inlier band of the iterated floor/ceiling least-squares fit.",
+             d.inlier_m, 0.001, 0.5),
+        integer("max_fit_iterations", "Max fit iterations",
+                "Refits per floor/ceiling surface (bounded).",
+                d.max_fit_iterations, 1.0, 100.0),
+        dnum("hist_bin_m", "Histogram bin [m]",
+             "Bin width of the height histogram of horizontal-plane points.",
+             d.hist_bin_m, 0.005, 1.0),
+        dnum("peak_min_share", "Peak minimum share",
+             "A histogram bin is a level when it holds at least this share "
+             "of the fullest bin.",
+             d.peak_min_share, 0.01, 1.0),
+        dnum("slab_merge_m", "Slab merge [m]",
+             "Surfaces closer than this along the vertical are one level "
+             "(a slab: a ceiling below, a floor above).",
+             d.slab_merge_m, 0.0, 3.0),
+        dnum("min_storey_height_m", "Minimum storey height [m]",
+             "Consecutive levels closer than this are not a storey.",
+             d.min_storey_height_m, 0.5, 20.0),
+        dnum("default_height_m", "Default storey height [m]",
+             "Storey height used when no ceiling level exists.",
+             d.default_height_m, 0.5, 20.0),
+        dnum("guid_match_m", "Identity match [m]",
+             "A re-detected storey keeps the GUID of the stored storey whose "
+             "floor is within this distance (in the new level frame).",
+             core::StoreyIdentityOptions{}.match_m, 0.0, 5.0),
+    };
+  }();
+  return table;
+}
+
 } // namespace
 
 std::string_view to_string(ParameterType type) {
@@ -417,6 +473,8 @@ const std::vector<ParameterDescriptor> &stage_parameters(JobStage stage) {
     return annotate_parameters();
   case JobStage::graph_discover:
     return graph_discover_parameters();
+  case JobStage::storeys:
+    return storeys_parameters();
   }
   throw std::logic_error("unhandled JobStage in stage_parameters()");
 }

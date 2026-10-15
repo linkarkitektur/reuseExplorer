@@ -12,6 +12,8 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -54,6 +56,17 @@ class ResourceRouter {
    * @throws std::runtime_error if operation fails
    */
   virtual void del(const std::vector<PathComponent> &components) = 0;
+
+  /**
+   * @brief Why deleting @p components needs `rux del --force`, if it does
+   *
+   * `rux del` refuses such a path without --force, the way it refuses a
+   * wildcard. Default: never (nullopt).
+   */
+  virtual std::optional<std::string>
+  del_requires_force(const std::vector<PathComponent> & /*components*/) const {
+    return std::nullopt;
+  }
 
   /**
    * @brief List all items in this collection

@@ -13,9 +13,11 @@
 #include "reusex/core/guid.hpp"
 #include "reusex/core/label_semantics.hpp"
 #include "reusex/core/logging.hpp"
+#include "reusex/core/storey_identity.hpp"
 #include "reusex/core/validate.hpp"
 #include "reusex/io/reusex.hpp"
 #include "reusex/reconstruction/mesh.hpp"
+#include "reusex/segmentation/level.hpp"
 #include "reusex/segmentation/reconcile_instances.hpp"
 #include "reusex/segmentation/reconstruct.hpp"
 #include "reusex/segmentation/segment_instances.hpp"
@@ -29,6 +31,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <exception>
 #include <map>
 #include <set>
@@ -54,7 +57,7 @@ struct StageName {
 // used in `ruxd`'s HTTP contract (docs/gui/openapi.yaml, in its own repo) and
 // `contract` selects the input check run before the stage executes
 // (docs/CONTRACTS.md).
-constexpr std::array<StageName, 8> kStages{{
+constexpr std::array<StageName, 9> kStages{{
     {JobStage::clouds, "clouds", "cloud_reconstruction",
      core::PipelineStage::clouds, false},
     {JobStage::planes, "planes", "segment_planes", core::PipelineStage::planes,
@@ -90,6 +93,10 @@ constexpr std::array<StageName, 8> kStages{{
     // header-only pipeline/optimize_stage.hpp executor runs it (#464).
     {JobStage::graph_discover, "graph_discover", "graph_discover",
      core::PipelineStage::graph_discover, false},
+    // Not cancellable: one histogram and a few bounded least-squares fits
+    // over the horizontal planes, seconds even on a large scan.
+    {JobStage::storeys, "storeys", "storeys", core::PipelineStage::storeys,
+     false},
 }};
 
 const StageName &descriptor(JobStage stage) {
@@ -570,8 +577,85 @@ StageResult run_mesh(ProjectDB &db, const StageContext & /*ctx*/,
       {{"mesh", output_name, vertex_count}});
 }
 
-StageResult dispatch(ProjectDB &db, const StageContext &ctx,
-                     const json &params) {
+StageResult run_storeys(ProjectDB &db, const json &params, int log_id) {
+  geometry::LevelOptions o;
+  o.horizontal_cos = param_or(params, "horizontal_cos", o.horizontal_cos);
+  o.inlier_m = param_or(params, "inlier_m", o.inlier_m);
+  o.max_fit_iterations =
+      param_or(params, "max_fit_iterations", o.max_fit_iterations);
+  o.hist_bin_m = param_or(params, "hist_bin_m", o.hist_bin_m);
+  o.peak_min_share = param_or(params, "peak_min_share", o.peak_min_share);
+  o.slab_merge_m = param_or(params, "slab_merge_m", o.slab_merge_m);
+  o.min_storey_height_m =
+      param_or(params, "min_storey_height_m", o.min_storey_height_m);
+  o.default_height_m = param_or(params, "default_height_m", o.default_height_m);
+  core::StoreyIdentityOptions identity;
+  identity.match_m = param_or(params, "guid_match_m", identity.match_m);
+
+  const auto cloud = db.point_cloud_xyzrgb("cloud");
+  const auto planes = db.point_cloud_label("planes");
+  const auto centroids = db.point_cloud_xyz("plane_centroids");
+  const auto normals = db.point_cloud_normal("plane_normals");
+
+  geometry::StoreysResult r;
+  try {
+    r = geometry::detect_storeys(*cloud, *planes, *centroids, *normals, o);
+  } catch (const std::invalid_argument &e) {
+    // Mismatched cloud/planes sizes or a scan with no plane: the input, not
+    // the stage, is at fault.
+    return StageResult::invalid(e.what());
+  }
+
+  // Stable identity (reusex-z1v, STANDARDS §6): a re-detected storey keeps
+  // the GUID of the stored storey whose floor it matches in the new level
+  // frame, so walls/spaces referring to it, and a locked (hand-edited) row,
+  // survive a re-run that renumbers the storeys. Only an unmatched storey
+  // gets a fresh deterministic GUID (core/storey_identity.hpp).
+  const auto stored = db.storeys();
+  const auto ids =
+      core::assign_storey_guids(r.storeys, stored, db.project_guid(), identity);
+  for (auto &s : r.storeys)
+    if (s.name.empty())
+      s.name = fmt::format("Etage {}", s.idx);
+  info("storeys: {} matched a stored storey (within {} m), {} new GUID(s)",
+       ids.matched, identity.match_m, ids.minted);
+
+  // Locked rows survive the re-run in THEIR frame and height range; say so
+  // when that no longer agrees with this run (docs/CONTRACTS.md: mixed
+  // frames are possible only through locked rows).
+  for (const auto &c : core::locked_storey_conflicts(stored, r.storeys)) {
+    if (c.frame_differs)
+      warn("storeys: locked storey {} ({}) keeps its own level frame, "
+           "{:.3f} deg / {:.3f} m away from this run's",
+           c.idx, c.guid, c.frame_angle_deg, c.frame_shift_m);
+    if (!c.overlapping_idx.empty())
+      warn("storeys: locked storey {} ({}) overlaps the height range of "
+           "new storey(s) [{}]",
+           c.idx, c.guid, fmt::join(c.overlapping_idx, ", "));
+  }
+
+  const size_t written = db.save_storeys(r.storeys, log_id);
+  const auto rows = db.storeys();
+  const auto locked_kept = static_cast<size_t>(std::count_if(
+      rows.begin(), rows.end(), [](const auto &s) { return s.locked; }));
+  if (written < r.storeys.size())
+    warn("storeys: {} of {} detected storey(s) not written: a locked row "
+         "holds their GUID or idx",
+         r.storeys.size() - written, r.storeys.size());
+
+  const double tilt_deg =
+      std::acos(std::clamp(r.vertical[2], -1.0, 1.0)) * 180.0 / M_PI;
+  return StageResult::success(
+      fmt::format("{} storey(s) from {} level(s) of {} horizontal plane(s); "
+                  "vertical {:.3f} deg off world z; {} row(s) written, {} "
+                  "locked row(s) kept",
+                  r.storeys.size(), r.levels, r.horizontal_planes, tilt_deg,
+                  written, locked_kept),
+      {{"table", "storeys", static_cast<int64_t>(written)}});
+}
+
+StageResult dispatch(ProjectDB &db, const StageContext &ctx, const json &params,
+                     int log_id) {
   switch (ctx.stage) {
   case JobStage::clouds:
     return run_clouds(db, ctx, params);
@@ -605,6 +689,8 @@ StageResult dispatch(ProjectDB &db, const StageContext &ctx,
     return StageResult::failure(
         "the graph_discover stage requires the slam executor "
         "(pipeline::stage_executor_with_optimize, see #464)");
+  case JobStage::storeys:
+    return run_storeys(db, params, log_id);
   }
   return StageResult::failure("unknown stage");
 }
@@ -709,6 +795,13 @@ bool stage_supports_cancellation(JobStage stage) {
 StageResult run_logged_stage(ProjectDB &db, const StageContext &ctx,
                              std::string_view name, std::string_view log_name,
                              const std::function<StageResult()> &body) {
+  return run_logged_stage(db, ctx, name, log_name,
+                          [&body](int /*log_id*/) { return body(); });
+}
+
+StageResult run_logged_stage(ProjectDB &db, const StageContext &ctx,
+                             std::string_view name, std::string_view log_name,
+                             const std::function<StageResult(int)> &body) {
   int log_id = -1;
 
   // Parameters are parsed before anything is recorded: a blob that is not even
@@ -740,7 +833,7 @@ StageResult run_logged_stage(ProjectDB &db, const StageContext &ctx,
         db.log_pipeline_start(log_name, logged_parameters(params, ctx.job_id));
 
     core::stopwatch watch;
-    StageResult result = body();
+    StageResult result = body(log_id);
     const double elapsed = watch.elapsed();
 
     if (result.cancelled) {
@@ -791,7 +884,7 @@ StageResult run_logged_stage(ProjectDB &db, const StageContext &ctx,
 StageResult run_stage(ProjectDB &db, const StageContext &ctx) {
   const auto &desc = descriptor(ctx.stage);
   return run_logged_stage(
-      db, ctx, desc.name, desc.log_name, [&]() -> StageResult {
+      db, ctx, desc.name, desc.log_name, [&](int log_id) -> StageResult {
         // body() only runs once run_logged_stage has already parsed
         // ctx.parameters successfully (that parse is what gated opening the log
         // row), so this cannot throw; it is a second parse, not re-validation,
@@ -802,7 +895,7 @@ StageResult run_stage(ProjectDB &db, const StageContext &ctx) {
         if (auto problem = check_inputs(db, desc.contract,
                                         contract_overrides(ctx.stage, params)))
           return StageResult::invalid(*problem);
-        return dispatch(db, ctx, params);
+        return dispatch(db, ctx, params, log_id);
       });
 }
 

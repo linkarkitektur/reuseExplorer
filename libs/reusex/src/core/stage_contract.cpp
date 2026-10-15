@@ -39,6 +39,9 @@ const std::vector<Artifact> &artifacts() {
        "per-point room labels (Label)"},
       {"instances", ArtifactKind::point_cloud, Alignment::per_point,
        "per-point instance labels (Label), plus the `instances` table"},
+      {"storeys", ArtifactKind::table, Alignment::none,
+       "storeys: floor/ceiling heights in the level frame and the "
+       "world->level transform (schema v30)"},
       {"mesh", ArtifactKind::mesh, Alignment::none,
        "the reconstructed watertight mesh"},
       {"textured_mesh", ArtifactKind::mesh, Alignment::none,
@@ -152,6 +155,16 @@ const std::vector<StageContract> &contracts() {
        // was never annotated.
        {{{"cloud"}}, {{"labels", "planes"}}},
        {"instances"}},
+
+      {PipelineStage::storeys,
+       "storeys",
+       {},
+       "rux create storeys",
+       "detect storeys and the measured vertical (level frame)",
+       // Horizontal planes give the floor/ceiling fits and the height
+       // histogram; `cloud` + `planes` carry their inlier points.
+       {{{"cloud"}}, {{"planes"}}, {{"plane_centroids"}}, {{"plane_normals"}}},
+       {"storeys"}},
 
       {PipelineStage::mesh,
        "mesh",
