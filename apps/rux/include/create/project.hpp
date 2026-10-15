@@ -6,12 +6,16 @@
 #include "../global-params.hpp"
 #include <CLI/CLI.hpp>
 #include <memory>
+#include <reusex/vision/project.hpp>
 #include <string>
 
 namespace fs = std::filesystem;
 
-/// Collection of all options of Subcommand A.
-struct SubcommandProjectOptions {};
+/// Options of `rux create project`. Defaults come from the library's
+/// vision::ProjectLabelsOptions (STANDARDS §4).
+struct SubcommandProjectOptions {
+  reusex::vision::ProjectLabelsOptions labels;
+};
 
 // Function declarations.
 void setup_subcommand_create_project(CLI::App &app,
