@@ -21,6 +21,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 using namespace reusex;
 using namespace reusex::test_support;
@@ -86,4 +87,89 @@ TEST_CASE("ReconstructPointClouds_ApiClassZero_BecomesPointLabelOneAndInstance",
   REQUIRE_FALSE(result.instance_to_semantic.empty());
   for (const auto &[inst, cls] : result.instance_to_semantic)
     CHECK(cls == core::api_to_point_label(0));
+}
+
+// ── Voxel vote (reusex-z1v.2.2) ───────────────────────────────────────────
+// Frames below share one pose, so every voxel collects one vote per frame for
+// the same surface. The vote ignores kUnlabeled (a background frame never
+// overwrites a class) and breaks an exact tie towards the lowest label; it
+// used to count unlabeled as a candidate and break ties in unordered_map
+// iteration order.
+
+namespace {
+
+/// Frames 1..N at the identity pose, frame i labelled uniformly with
+/// @p api_classes[i] (kBackgroundApi for an all-background frame).
+void save_uniform_frames(ProjectDB &db, const std::vector<int> &api_classes) {
+  int id = 1;
+  for (int api : api_classes) {
+    db.save_sensor_frame(
+        id, make_color(kW, kH), make_depth(kW, kH, 1.5), cv::Mat(),
+        translation_pose(0.0, 0.0, 0.0),
+        make_intrinsics(64.0, 64.0, kW / 2.0, kH / 2.0, kW, kH, identity16()));
+    db.save_segmentation_image(id, cv::Mat(kH, kW, CV_32S, cv::Scalar(api)));
+    ++id;
+  }
+}
+
+/// Every stored label must be @p expected.
+void require_all_labels(const ProjectDB &db, uint32_t expected) {
+  REQUIRE(db.has_point_cloud("labels"));
+  auto labels = db.point_cloud_label("labels");
+  REQUIRE_FALSE(labels->empty());
+  for (const auto &l : *labels)
+    REQUIRE(l.label == expected);
+}
+
+} // namespace
+
+TEST_CASE("ReconstructPointClouds_ClassAgainstTwoBackgroundFrames_ClassWins",
+          "[segmentation][reconstruct][label_semantics]") {
+  TempPath tmp("test_reconstruct_vote_bg");
+  ProjectDB db(tmp.path);
+  save_uniform_frames(db, {0, core::kBackgroundApi, core::kBackgroundApi});
+
+  geometry::reconstruct_point_clouds(db, test_params());
+
+  require_all_labels(db, core::api_to_point_label(0));
+}
+
+TEST_CASE("ReconstructPointClouds_ExactTie_LowestLabelWins",
+          "[segmentation][reconstruct][label_semantics]") {
+  TempPath tmp("test_reconstruct_vote_tie");
+  ProjectDB db(tmp.path);
+  save_uniform_frames(db, {6, 2});
+
+  geometry::reconstruct_point_clouds(db, test_params());
+
+  require_all_labels(db, core::api_to_point_label(2));
+}
+
+TEST_CASE("ReconstructPointClouds_TwoAgainstOne_MajorityWins",
+          "[segmentation][reconstruct][label_semantics]") {
+  TempPath tmp("test_reconstruct_vote_majority");
+  ProjectDB db(tmp.path);
+  save_uniform_frames(db, {1, 5, 5});
+
+  geometry::reconstruct_point_clouds(db, test_params());
+
+  require_all_labels(db, core::api_to_point_label(5));
+}
+
+TEST_CASE("ReconstructPointClouds_SeveralAnnotateRuns_LatestClassMapWins",
+          "[segmentation][reconstruct][label_semantics]") {
+  TempPath tmp("test_reconstruct_latest_class_map");
+  ProjectDB db(tmp.path);
+  save_uniform_frames(db, {0});
+  const int old_run =
+      db.log_pipeline_start("annotate_class_map", R"({"0":"door"})");
+  db.log_pipeline_end(old_run, true);
+  const int new_run = db.log_pipeline_start("annotate_class_map",
+                                            R"({"0":"wall","1":"floor"})");
+  db.log_pipeline_end(new_run, true);
+
+  geometry::reconstruct_point_clouds(db, test_params());
+
+  CHECK(db.label_definitions("labels") ==
+        std::map<int, std::string>{{1, "wall"}, {2, "floor"}});
 }
