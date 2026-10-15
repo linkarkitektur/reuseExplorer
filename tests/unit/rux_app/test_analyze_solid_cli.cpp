@@ -117,7 +117,8 @@ TEST_CASE("AnalyzeSolidCli_ProjectWithoutSolidModelTables_ReportsAllNa",
        {"room_count_error", "room_iou_mean", "wall_position_rms_m",
         "wall_thickness_err_mean_m", "wall_thickness_err_p95_m", "wall_recall",
         "wall_precision", "opening_recall", "opening_precision", "fit_mean_m",
-        "fit_within_share", "seen_share_mean", "assumed_share"}) {
+        "fit_within_share", "mesh_area_m2", "mesh_unsupported_share",
+        "seen_share_mean", "assumed_share"}) {
     INFO(k);
     CHECK(j.at(k).is_null());
   }
@@ -232,9 +233,28 @@ TEST_CASE("AnalyzeSolidCli_ProjectMeshAndCloud_ReportsFitWithItsSource",
   const auto j = read_json(out.path);
   CHECK_THAT(j.at("fit_mean_m").get<double>(), WithinAbs(0.03, 1e-6));
   CHECK_THAT(j.at("fit_within_share").get<double>(), WithinAbs(0.5, 1e-12));
+  // Both scan points sit over the quad's centre: only a ~0.25 m disc around
+  // them (pi * 0.25^2 of the 4 m^2) is supported at the default distance.
+  CHECK_THAT(j.at("mesh_area_m2").get<double>(), WithinAbs(4.0, 1e-9));
+  CHECK_THAT(j.at("mesh_unsupported_share").get<double>(),
+             WithinAbs(1.0 - 0.196 / 4.0, 0.01));
   REQUIRE(j.at("fit_source").is_string());
   CHECK(j.at("fit_source").get<std::string>().find("mesh 'mesh'") !=
         std::string::npos);
+}
+
+TEST_CASE("AnalyzeSolidCli_SupportDist_WidensWhatCountsAsSupported",
+          "[rux_app][cli][analyze]") {
+  TempPath project("test_analyze_solid_support_project");
+  make_fit_project(project.path, /*degenerate=*/false);
+  TempPath out("test_analyze_solid_support_out");
+  // Every point of the 2 x 2 quad is within 1.5 m of the scan points at its
+  // centre (the corners are sqrt(2) m away).
+  REQUIRE(run_rux(project.path,
+                  {"--reference", fixture("two_rooms.plan.json").string(),
+                   "--support-dist", "1.5", "-o", out.path.string()}));
+  CHECK_THAT(read_json(out.path).at("mesh_unsupported_share").get<double>(),
+             WithinAbs(0.0, 1e-12));
 }
 
 TEST_CASE("AnalyzeSolidCli_FitCannotBeComputed_ReportIsStillWritten",

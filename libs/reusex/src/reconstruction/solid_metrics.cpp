@@ -634,6 +634,8 @@ std::string SolidModelReport::to_json(int indent) const {
   j["opening_precision"] = opt_json(opening_precision);
   j["fit_mean_m"] = opt_json(fit_mean_m);
   j["fit_within_share"] = opt_json(fit_within_share);
+  j["mesh_area_m2"] = opt_json(mesh_area_m2);
+  j["mesh_unsupported_share"] = opt_json(mesh_unsupported_share);
   j["seen_share_mean"] = opt_json(seen_share_mean);
   j["assumed_share"] = opt_json(assumed_share);
   j["fit_source"] = fit_source.empty() ? nlohmann::ordered_json(nullptr)
@@ -648,6 +650,7 @@ std::string SolidModelReport::to_json(int indent) const {
                  {"detected_openings", detected_openings},
                  {"matched_openings", matched_openings},
                  {"fit_points", fit_points},
+                 {"support_samples", support_samples},
                  {"thickness_pairs", thickness_pairs},
                  {"thickness_assumed_excluded", thickness_assumed_excluded},
                  {"detected_outside_reference", detected_outside_reference}};
@@ -694,14 +697,23 @@ void fit_report(const Cloud &cloud, const pcl::PolygonMesh &mesh,
     throw std::invalid_argument(fmt::format(
         "fit_report: cloud has no finite point ({} points)", cloud.size()));
 
+  const MeshSupport support =
+      mesh_support(cloud, mesh, opt.support_dist_m, opt.support_spacing_m);
+
   report.fit_points = n;
   report.fit_mean_m = sum / static_cast<double>(n);
   report.fit_within_share =
       static_cast<double>(within) / static_cast<double>(n);
+  report.support_samples = support.samples;
+  report.mesh_area_m2 = support.area_m2;
+  report.mesh_unsupported_share = support.unsupported_area_m2 / support.area_m2;
   reusex::debug("fit_report: {} points against {} faces, mean {:.4f} m, "
-                "{:.1f}% within {:.3f} m",
+                "{:.1f}% within {:.3f} m; {:.1f}% of {:.1f} m^2 mesh without "
+                "a point within {:.2f} m",
                 n, mesh.polygons.size(), *report.fit_mean_m,
-                100.0 * *report.fit_within_share, opt.fit_within_m);
+                100.0 * *report.fit_within_share, opt.fit_within_m,
+                100.0 * *report.mesh_unsupported_share, support.area_m2,
+                opt.support_dist_m);
 }
 
 } // namespace reusex::geometry
