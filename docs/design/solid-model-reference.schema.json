@@ -188,7 +188,12 @@
         "point_count": {"type": "integer"},
         "area": {"type": "number"},
         "z_min": {"type": "number"},
-        "z_max": {"type": "number"}
+        "z_max": {"type": "number"},
+        "role_source": {"enum": ["semantic", "rules", "overruled", "none", "manual"]},
+        "guid": {"$ref": "#/$defs/guid"},
+        "source": {"$ref": "#/$defs/source"},
+        "locked": {"type": "boolean"},
+        "metadata": {}
       }
     },
     "scene_relation": {

@@ -5,7 +5,10 @@
 #include "utils/parse_number.hpp"
 #include <reusex/pipeline/stage_parameters.hpp>
 
+#include <reusex/core/storey_identity.hpp>
 #include <reusex/reconstruction/mesh.hpp>
+#include <reusex/segmentation/classify_planes.hpp>
+#include <reusex/segmentation/level.hpp>
 #include <reusex/segmentation/reconstruct.hpp>
 #include <reusex/segmentation/segment_instances.hpp>
 #include <reusex/segmentation/segment_planes.hpp>
@@ -47,6 +50,18 @@ ParameterDescriptor num(std::string key, std::string label,
                              minimum,
                              maximum,
                              false};
+}
+
+/// A fractional option whose struct field is a `double` (LevelOptions):
+/// no float widening to undo, the default is carried as is.
+ParameterDescriptor dnum(std::string key, std::string label,
+                         std::string description, double default_value,
+                         std::optional<double> minimum = std::nullopt,
+                         std::optional<double> maximum = std::nullopt) {
+  return ParameterDescriptor{std::move(key),   ParameterType::number,
+                             std::move(label), std::move(description),
+                             default_value,    minimum,
+                             maximum,          false};
 }
 
 ParameterDescriptor integer(std::string key, std::string label,
@@ -400,6 +415,129 @@ const std::vector<ParameterDescriptor> &graph_discover_parameters() {
   return table;
 }
 
+const std::vector<ParameterDescriptor> &storeys_parameters() {
+  // Keys are the LevelOptions field names plus guid_match_m
+  // (core::StoreyIdentityOptions::match_m); bounds mirror the CLI's
+  // CLI::Range checks (apps/rux/src/create/storeys.cpp).
+  static const std::vector<ParameterDescriptor> table = [] {
+    const geometry::LevelOptions d{};
+    return std::vector<ParameterDescriptor>{
+        dnum("horizontal_cos", "Horizontal cosine",
+             "A plane is horizontal when |n.z| exceeds this cosine.",
+             d.horizontal_cos, 0.5, 1.0),
+        dnum("surface_max_tilt_deg", "Surface maximum tilt [deg]",
+             "A horizontal plane more than this off the measured vertical "
+             "(a sloped ceiling, a ramp) is not a floor/ceiling candidate.",
+             d.surface_max_tilt_deg, 0.1, 30.0),
+        dnum("inlier_m", "Fit inlier band [m]",
+             "Inlier band of the iterated floor/ceiling least-squares fit.",
+             d.inlier_m, 0.001, 0.5),
+        integer("max_fit_iterations", "Max fit iterations",
+                "Refits per floor/ceiling surface (bounded).",
+                d.max_fit_iterations, 1.0, 100.0),
+        dnum("hist_bin_m", "Height bin [m]",
+             "Horizontal planes within two bins of a stronger plane's "
+             "height form one surface.",
+             d.hist_bin_m, 0.005, 1.0),
+        dnum("peak_min_share", "Surface minimum share",
+             "A surface is a level when it holds at least this share of "
+             "the strongest surface's points.",
+             d.peak_min_share, 0.01, 1.0),
+        dnum("slab_merge_m", "Slab merge [m]",
+             "Surfaces closer than this along the vertical are one level "
+             "(a slab: a ceiling below, a floor above).",
+             d.slab_merge_m, 0.0, 3.0),
+        dnum("min_storey_height_m", "Minimum storey height [m]",
+             "Consecutive levels closer than this are not a storey.",
+             d.min_storey_height_m, 0.5, 20.0),
+        dnum("default_height_m", "Default storey height [m]",
+             "Storey height used when no ceiling level exists.",
+             d.default_height_m, 0.5, 20.0),
+        boolean("use_normal_sign", "Use normal sign",
+                "Tell floors (up-facing) from ceilings (down-facing) by the "
+                "sensor-oriented plane normals when they carry that.",
+                d.use_normal_sign),
+        boolean("per_storey_frame", "Per-storey frame",
+                "Give a storey whose vertical disagrees with the shared one "
+                "its own level frame (drifted multi-storey scans).",
+                d.per_storey_frame),
+        dnum("storey_frame_tol_deg", "Storey frame tolerance [deg]",
+             "A storey gets its own frame when its vertical is more than "
+             "this off the shared one.",
+             d.storey_frame_tol_deg, 0.0, 10.0),
+        dnum("guid_match_m", "Identity match [m]",
+             "A re-detected storey keeps the GUID of the stored storey whose "
+             "floor is within this distance (in the new level frame).",
+             core::StoreyIdentityOptions{}.match_m, 0.0, 5.0),
+    };
+  }();
+  return table;
+}
+
+const std::vector<ParameterDescriptor> &classify_parameters() {
+  // Keys are the ClassifyPlanesOptions field names plus role_map; bounds
+  // mirror the CLI's CLI::Range checks (apps/rux/src/create/classify.cpp).
+  // oriented_normals is not a parameter: the stage reads it from the clouds'
+  // provenance (reusex-0se).
+  static const std::vector<ParameterDescriptor> table = [] {
+    const geometry::ClassifyPlanesOptions d{};
+    return std::vector<ParameterDescriptor>{
+        dnum("horizontal_cos", "Horizontal cosine",
+             "A plane is horizontal when |n.up| exceeds this cosine.",
+             d.horizontal_cos, 0.5, 1.0),
+        dnum("vertical_cos", "Vertical cosine",
+             "A plane is vertical when |n.up| is below this cosine; between "
+             "the two it is slanted.",
+             d.vertical_cos, 0.0, 0.5),
+        dnum("min_large_area_m2", "Minimum floor/ceiling area [m^2]",
+             "A floor or ceiling candidate covers at least this much area.",
+             d.min_large_area_m2, 0.0, 1000.0),
+        dnum("band_m", "Floor/ceiling band [m]",
+             "Within this of the storey's floor / ceiling height.", d.band_m,
+             0.0, 2.0),
+        dnum("min_wall_height_m", "Minimum wall height [m]",
+             "A wall's robust vertical extent is at least this ...",
+             d.min_wall_height_m, 0.0, 20.0),
+        dnum("min_wall_height_share", "Minimum wall height share",
+             "... or this share of its storey's height, whichever is less.",
+             d.min_wall_height_share, 0.0, 1.0),
+        dnum("max_furniture_area_m2", "Maximum furniture area [m^2]",
+             "A horizontal plane larger than this is structure, never "
+             "furniture.",
+             d.max_furniture_area_m2, 0.0, 1000.0),
+        dnum("table_min_m", "Lowest table top [m]",
+             "Table-top heights above the floor start here.", d.table_min_m,
+             0.0, 3.0),
+        dnum("table_max_m", "Highest table top [m]",
+             "Table-top heights above the floor end here.", d.table_max_m, 0.0,
+             3.0),
+        dnum("min_storey_height_m", "Minimum storey height [m]",
+             "Without storeys: the ceiling is at least this far above the "
+             "floor.",
+             d.min_storey_height_m, 0.5, 20.0),
+        dnum("area_cell_m", "Area grid cell [m]",
+             "Side of the occupancy grid measuring a plane's area; at or "
+             "above the cloud's point spacing.",
+             d.area_cell_m, 0.005, 1.0),
+        dnum("extent_quantile", "Extent quantile",
+             "Robust height range = these quantiles of the inlier heights.",
+             d.extent_quantile, 0.0, 0.49),
+        dnum("min_labelled_share", "Minimum labelled share",
+             "The semantic class decides only if this share of the plane's "
+             "inliers carries a label ...",
+             d.min_labelled_share, 0.0, 1.0),
+        dnum("min_class_share", "Minimum class share",
+             "... and the majority class holds this share of those votes.",
+             d.min_class_share, 0.0, 1.0),
+        text("role_map", "Role map file",
+             "Class -> role map JSON file (core/class_role_map.hpp); empty = "
+             "the built-in map.",
+             ""),
+    };
+  }();
+  return table;
+}
+
 } // namespace
 
 std::string_view to_string(ParameterType type) {
@@ -438,6 +576,10 @@ const std::vector<ParameterDescriptor> &stage_parameters(JobStage stage) {
     return annotate_parameters();
   case JobStage::graph_discover:
     return graph_discover_parameters();
+  case JobStage::storeys:
+    return storeys_parameters();
+  case JobStage::classify:
+    return classify_parameters();
   }
   throw std::logic_error("unhandled JobStage in stage_parameters()");
 }

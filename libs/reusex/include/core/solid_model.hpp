@@ -134,16 +134,27 @@ struct OpeningRecord {
   std::string metadata;
 };
 
-/// The role one plane of the "planes" cloud plays (one row per plane label).
+/// The role one plane of the "planes" cloud plays (one row per plane label;
+/// the plane_classes table, schema v31, keys it by cloud + plane_label).
 struct PlaneClassRecord {
   int plane_label = 0;
   std::string orientation; ///< horizontal | vertical | slanted
   int semantic_class = -1; ///< majority API class over the inliers, -1 none
-  double class_confidence = -1.0;
-  std::string role = "unknown"; ///< wall|floor|ceiling|slab|furniture|...
-  int storey = -1;              ///< StoreyRecord::idx, -1 none
+  double class_confidence = -1.0; ///< vote share of that class, -1 none
+  std::string role = "unknown";   ///< wall|floor|ceiling|slab|furniture|...
+  int storey = -1;                ///< StoreyRecord::idx, -1 none
   int point_count = 0;
   double area = -1.0, z_min = 0.0, z_max = 0.0;
+  /// Who decided `role`: semantic (the class map) | rules (geometry, no
+  /// usable class) | overruled (the class's role was contradicted by the
+  /// geometry; rules won) | none (no points) | manual (set by hand).
+  std::string role_source = "none";
+  /// Stable key: uuid5(project_guid, "plane_classes/<cloud>/<plane_label>")
+  /// for a detected row. "" in a record that was never stored.
+  std::string guid;
+  std::string source = "detected";
+  bool locked = false;
+  std::string metadata;
 };
 
 /// A typed relation between two elements, by guid (#138).
@@ -167,6 +178,7 @@ struct SolidModelProvided {
   bool walls = false;
   bool spaces = false;
   bool openings = false;
+  bool plane_classes = false;
 };
 
 /// The whole typed building model of one project (or one authored reference).
@@ -194,6 +206,9 @@ struct SolidModel {
   }
   [[nodiscard]] bool has_openings() const {
     return provided.openings || !openings.empty();
+  }
+  [[nodiscard]] bool has_plane_classes() const {
+    return provided.plane_classes || !plane_classes.empty();
   }
 };
 

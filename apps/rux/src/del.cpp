@@ -167,6 +167,16 @@ int run_subcommand_del(const DatabaseDelOptions &opt,
       }
     }
 
+    // Paths a router protects (e.g. storeys with locked rows) need --force,
+    // like wildcards.
+    if (!opt.force)
+      for (const auto &path : expanded_paths)
+        if (auto reason = router.del_requires_force(path)) {
+          spdlog::error("{}", *reason);
+          fmt::print("Hint: Use 'rux del {} --force' to proceed\n", opt.path);
+          return 1;
+        }
+
     // Perform deletions
     int deleted_count = 0;
     int failed_count = 0;
