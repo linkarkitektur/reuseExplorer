@@ -13,6 +13,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <reusex/core/ProjectDB.hpp>
+#include <reusex/core/solid_model.hpp>
 #include <reusex/types/point_types.hpp>
 #include <reusex/visualize/scene.hpp>
 #include <rux_qt/tokens.hpp>
@@ -26,14 +27,18 @@
 #include <vtkNew.h>
 #include <vtkPointData.h>
 #include <vtkPolyData.h>
+#include <vtkProperty.h>
 #include <vtkRenderer.h>
 #include <vtkUnsignedCharArray.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 using namespace reusex;
 using namespace reusex::test_support;
@@ -379,4 +384,177 @@ TEST_CASE("PlacePresetCamera_Yaw_TurnsTheViewAboutZ",
   // The 10 m side now runs up the page: a square viewport frames the same
   // extent, so the scale is unchanged; with a wide aspect it would grow.
   CHECK(r->GetActiveCamera()->GetParallelScale() == Catch::Approx(s0));
+}
+
+// ── Plan overlay (reusex-z1v.2.6): a solid-model plan drawn over the scene ───
+
+namespace {
+
+/// One storey, one 4 m wall along +x (0.2 m thick) with a door in it, and one
+/// 4 x 3 m space north of it.
+core::SolidModel overlay_plan() {
+  core::SolidModel m;
+  core::StoreyRecord s;
+  s.idx = 0;
+  s.guid = "storey-0";
+  m.storeys.push_back(s);
+  core::WallRecord w;
+  w.guid = "w1";
+  w.x0 = 0.0, w.y0 = 0.0, w.x1 = 4.0, w.y1 = 0.0;
+  w.height = 2.5;
+  w.thickness = 0.2;
+  m.walls.push_back(w);
+  core::SpaceRecord sp;
+  sp.guid = "s1";
+  sp.name = "Office";
+  sp.polygon.outer = {{0.1, 0.1}, {4.0, 0.1}, {4.0, 3.0}, {0.1, 3.0}};
+  m.spaces.push_back(sp);
+  core::OpeningRecord o;
+  o.guid = "o1";
+  o.wall = "w1";
+  o.kind = "door";
+  o.s_start = 1.0, o.s_end = 2.0, o.z_sill = 0.0, o.z_head = 2.1;
+  m.openings.push_back(o);
+  return m;
+}
+
+/// Every point of every overlay actor, as {x, y, z}.
+std::vector<std::array<double, 3>> overlay_points(const viz::SceneInfo &info) {
+  std::vector<std::array<double, 3>> out;
+  for (vtkActor *a : info.plan.actors) {
+    auto *poly = vtkPolyData::SafeDownCast(a->GetMapper()->GetInput());
+    REQUIRE(poly != nullptr);
+    for (vtkIdType i = 0; i < poly->GetNumberOfPoints(); ++i) {
+      double p[3];
+      poly->GetPoint(i, p);
+      out.push_back({p[0], p[1], p[2]});
+    }
+  }
+  return out;
+}
+
+} // namespace
+
+TEST_CASE("PopulateScene_PlanOverlay_DrawsWallsSpacesAndOpenings",
+          "[visualize][scene][plan]") {
+  TempPath tmp("test_scene_plan");
+  ProjectDB db(tmp.path);
+  seed_cloud(db, 10);
+
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.layers = {viz::Layer::cloud};
+  o.plan = overlay_plan();
+  const viz::SceneInfo info = viz::populate_scene(renderer, db, o);
+
+  CHECK(info.plan.walls == 1);
+  CHECK(info.plan.spaces == 1);
+  CHECK(info.plan.openings == 1);
+  REQUIRE_FALSE(info.plan.actors.empty());
+  // The space's name and the wall's guid are labelled.
+  CHECK(info.plan.labels.size() == 2);
+
+  // The wall's footprint is its axis +/- half the thickness; the door's end
+  // ticks reach 0.1 m past each face.
+  double ymin = 1e9, ymax = -1e9;
+  bool face = false;
+  for (const auto &p : overlay_points(info)) {
+    ymin = std::min(ymin, p[1]);
+    ymax = std::max(ymax, p[1]);
+    if (std::abs(p[1] + 0.1) < 1e-9 && std::abs(p[0] - 4.0) < 1e-9)
+      face = true; // footprint corner (4, -0.1)
+  }
+  CHECK(face);
+  CHECK(ymin == Catch::Approx(-0.2));
+  CHECK(ymax == Catch::Approx(3.0));
+  // The overlay widens the framing: the cloud spans y = 0.5 only.
+  CHECK(info.bounds.max[1] == Catch::Approx(3.0));
+  CHECK(info.bounds.min[1] == Catch::Approx(-0.2));
+
+  // Overlay colours: walls on --label-2.
+  const auto &pal = viz::default_label_palette();
+  bool wall_colour = false;
+  for (vtkActor *a : info.plan.actors) {
+    double rgb[3];
+    a->GetProperty()->GetColor(rgb);
+    if (std::abs(rgb[0] * 255.0 - pal.colors[2][0]) < 0.5 &&
+        std::abs(rgb[1] * 255.0 - pal.colors[2][1]) < 0.5 &&
+        std::abs(rgb[2] * 255.0 - pal.colors[2][2]) < 0.5)
+      wall_colour = true;
+  }
+  CHECK(wall_colour);
+}
+
+TEST_CASE("PopulateScene_PlanOverlay_AppliesTheInverseLevelTransform",
+          "[visualize][scene][plan]") {
+  TempPath tmp("test_scene_plan_level");
+  ProjectDB db(tmp.path);
+  seed_cloud(db, 10);
+
+  core::SolidModel plan = overlay_plan();
+  // world -> level: shift by (-10, -20, +1.5), i.e. the level origin sits at
+  // world (10, 20, -1.5).
+  plan.storeys[0].level_transform = {1, 0, 0, -10, 0, 1, 0, -20,
+                                     0, 0, 1, 1.5, 0, 0, 0, 1};
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.layers = {viz::Layer::cloud};
+  o.plan = plan;
+  o.plan_placement = viz::PlanPlacement::level;
+  const auto info = viz::populate_scene(renderer, db, o);
+
+  double xmin = 1e9, ymax = -1e9, zmin = 1e9, zmax = -1e9;
+  for (const auto &p : overlay_points(info)) {
+    xmin = std::min(xmin, p[0]);
+    ymax = std::max(ymax, p[1]);
+    zmin = std::min(zmin, p[2]);
+    zmax = std::max(zmax, p[2]);
+  }
+  CHECK(xmin == Catch::Approx(10.0).margin(0.06));
+  CHECK(ymax == Catch::Approx(23.0));
+  // Level placement draws on the storey floor (world z = -1.5), lifted a
+  // hair so it does not z-fight the floor points.
+  CHECK(zmin == Catch::Approx(-1.5).margin(0.05));
+  CHECK(zmax == Catch::Approx(-1.5).margin(0.05));
+}
+
+TEST_CASE("PopulateScene_PlanOverlay_AboveScene_SitsOnTopAndSurvivesTheCut",
+          "[visualize][scene][plan]") {
+  TempPath tmp("test_scene_plan_top");
+  ProjectDB db(tmp.path);
+  seed_cloud(db, 10); // z in [0, 0.5]
+
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.layers = {viz::Layer::cloud};
+  o.plan = overlay_plan();
+  o.plan_placement = viz::PlanPlacement::above_scene;
+  const auto info = viz::populate_scene(renderer, db, o);
+
+  for (const auto &p : overlay_points(info))
+    CHECK(p[2] >= info.bounds.max[2]);
+  // The overlay never moves the vertical extent the cut is measured in.
+  CHECK(info.bounds.max[2] == Catch::Approx(0.5));
+
+  viz::apply_cut_plane(renderer, 0.2);
+  for (vtkActor *a : info.plan.actors)
+    CHECK(a->GetMapper()->GetNumberOfClippingPlanes() == 0);
+  for (const auto &layer : info.layers)
+    for (vtkActor *a : layer.actors)
+      CHECK(a->GetMapper()->GetNumberOfClippingPlanes() == 1);
+}
+
+TEST_CASE("PopulateScene_PlanOverlay_OpeningOnAMissingWall_IsSkippedLoudly",
+          "[visualize][scene][plan]") {
+  TempPath tmp("test_scene_plan_orphan");
+  ProjectDB db(tmp.path);
+  seed_cloud(db, 10);
+  core::SolidModel plan = overlay_plan();
+  plan.openings[0].wall = "nope";
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.plan = plan;
+  const auto info = viz::populate_scene(renderer, db, o);
+  CHECK(info.plan.openings == 0);
+  CHECK(info.plan.walls == 1);
 }

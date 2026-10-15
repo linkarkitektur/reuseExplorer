@@ -24,7 +24,13 @@
 #include "pmmintrin.h"
 #include "xmmintrin.h" // for SSE intrinsics raytracing
 
+#include <algorithm>
+#include <cstdint>
+#include <limits>
+#include <stdexcept>
 #include <thread>
+#include <utility>
+#include <vector>
 
 using IT = int32_t; // Index type
 using NT = float;   // Numeric type
@@ -37,6 +43,125 @@ using NT = float;   // Numeric type
     initializer(omp_priv = std::vector<std::tuple<IT, IT, NT>>())
 
 namespace pcl {
+
+/// Membership value for a vertex that no kept community claims.
+constexpr int kNoCommunity = -1;
+
+/** \brief Dissolve communities smaller than \p min_size into their
+ * neighbours.
+ *
+ * Modularity-based community detection gives every isolated vertex, and every
+ * small connected component, a community of its own. On a visibility graph
+ * those are sample points that see (almost) nothing — points under furniture,
+ * on an exterior face, behind clutter — not rooms. Each vertex of a community
+ * with fewer than \p min_size members is moved to the kept community it has
+ * the largest total edge weight to (ties go to the smallest community id).
+ * Passes repeat, with every pass reading the previous pass's assignment, so a
+ * dissolved vertex that only sees other dissolved vertices is reached once
+ * they are assigned; the result does not depend on vertex order. A vertex
+ * that never reaches a kept community gets \ref kNoCommunity.
+ *
+ * Kept communities are renumbered 0..k-1 in their original order.
+ *
+ * \param[in] n          number of vertices
+ * \param[in] edges      undirected edges (vertex index pairs)
+ * \param[in] weights    one weight per edge
+ * \param[in] membership community id per vertex (0-based, dense)
+ * \param[in] min_size   minimum community size to keep; <= 1 keeps all
+ * \return the new membership, \ref kNoCommunity for unassigned vertices
+ */
+inline std::vector<int> dissolveSmallCommunities(
+    std::size_t n, const std::vector<std::pair<int, int>> &edges,
+    const std::vector<double> &weights, const std::vector<int> &membership,
+    std::size_t min_size) {
+  if (membership.size() != n || weights.size() != edges.size())
+    throw std::invalid_argument(
+        "dissolveSmallCommunities: membership/weights size mismatch");
+
+  int n_communities = 0;
+  for (const int c : membership) {
+    if (c < 0)
+      throw std::invalid_argument(
+          "dissolveSmallCommunities: negative community id");
+    n_communities = std::max(n_communities, c + 1);
+  }
+
+  std::vector<std::size_t> sizes(static_cast<std::size_t>(n_communities), 0);
+  for (const int c : membership)
+    ++sizes[static_cast<std::size_t>(c)];
+
+  // Renumber kept communities densely, preserving their order.
+  std::vector<int> new_id(static_cast<std::size_t>(n_communities),
+                          kNoCommunity);
+  int next_id = 0;
+  for (std::size_t c = 0; c < sizes.size(); ++c)
+    if (sizes[c] >= min_size)
+      new_id[c] = next_id++;
+
+  std::vector<int> out(n, kNoCommunity);
+  for (std::size_t v = 0; v < n; ++v)
+    out[v] = new_id[static_cast<std::size_t>(membership[v])];
+
+  if (min_size <= 1)
+    return out;
+
+  // Adjacency in CSR form.
+  std::vector<std::size_t> offset(n + 1, 0);
+  for (const auto &[a, b] : edges) {
+    ++offset[static_cast<std::size_t>(a) + 1];
+    ++offset[static_cast<std::size_t>(b) + 1];
+  }
+  for (std::size_t v = 0; v < n; ++v)
+    offset[v + 1] += offset[v];
+  std::vector<std::pair<int, double>> adjacency(offset[n]);
+  {
+    std::vector<std::size_t> fill(offset.begin(), offset.end() - 1);
+    for (std::size_t e = 0; e < edges.size(); ++e) {
+      const auto [a, b] = edges[e];
+      adjacency[fill[static_cast<std::size_t>(a)]++] = {b, weights[e]};
+      adjacency[fill[static_cast<std::size_t>(b)]++] = {a, weights[e]};
+    }
+  }
+
+  // Each pass assigns at least one vertex or ends the loop, so n passes bound
+  // it (STANDARDS §5: no unbounded loops).
+  std::vector<double> pull(static_cast<std::size_t>(next_id), 0.0);
+  for (std::size_t pass = 0; pass < n; ++pass) {
+    std::vector<int> next = out;
+    bool changed = false;
+    for (std::size_t v = 0; v < n; ++v) {
+      if (out[v] != kNoCommunity)
+        continue;
+      std::vector<int> touched;
+      for (std::size_t k = offset[v]; k < offset[v + 1]; ++k) {
+        const int c = out[static_cast<std::size_t>(adjacency[k].first)];
+        if (c == kNoCommunity)
+          continue;
+        if (pull[static_cast<std::size_t>(c)] == 0.0)
+          touched.push_back(c);
+        pull[static_cast<std::size_t>(c)] += adjacency[k].second;
+      }
+      int best = kNoCommunity;
+      double best_pull = 0.0;
+      for (const int c : touched) {
+        const double p = pull[static_cast<std::size_t>(c)];
+        if (p > best_pull || (p == best_pull && c < best)) {
+          best = c;
+          best_pull = p;
+        }
+        pull[static_cast<std::size_t>(c)] = 0.0;
+      }
+      if (best != kNoCommunity) {
+        next[v] = best;
+        changed = true;
+      }
+    }
+    out.swap(next);
+    if (!changed)
+      break;
+  }
+  return out;
+}
 
 /** \brief Community-based point cloud clustering using Leiden algorithm.
  *
@@ -115,6 +240,20 @@ class PCL_EXPORTS CommunityClustering : public PCLBase<PointT> {
   inline float getGridSize() const { return radius_ / M_SQRT2; }
 
   inline size_t getNumClusters() const { return numClusters_; }
+
+  /** \brief Label written for a sampled point that no kept community claims
+   * (see setMinClusterSize()). */
+  static constexpr std::uint32_t kUnassigned =
+      std::numeric_limits<std::uint32_t>::max();
+
+  /** \brief Communities with fewer vertices than this are dissolved into the
+   * community they see most (see dissolveSmallCommunities()); <= 1 keeps all.
+   */
+  inline void setMinClusterSize(std::size_t min_size) {
+    min_cluster_size_ = min_size;
+  }
+
+  inline std::size_t getMinClusterSize() const { return min_cluster_size_; }
 
   inline void registerVisualizationCallback(VisualizationCallback callback) {
     visualization_callback_ = callback;
@@ -223,13 +362,68 @@ class PCL_EXPORTS CommunityClustering : public PCLBase<PointT> {
         "Leiden results: {} clusters, quality: {:.4f}, modularity: {:.4f}",
         nb_clusters, quality, modularity);
 
+    // Every isolated vertex and every small component is a community of its
+    // own; dissolve those below the minimum size (reusex-3vc).
+    std::vector<std::pair<int, int>> edge_list(
+        static_cast<std::size_t>(igraph_ecount(&graph)));
+    std::vector<double> weight_list(edge_list.size());
+    std::size_t isolated = 0;
+    {
+      std::vector<char> has_edge(static_cast<std::size_t>(n), 0);
+      for (igraph_int_t e = 0; e < igraph_ecount(&graph); ++e) {
+        const auto a = static_cast<int>(IGRAPH_FROM(&graph, e));
+        const auto b = static_cast<int>(IGRAPH_TO(&graph, e));
+        edge_list[static_cast<std::size_t>(e)] = {a, b};
+        weight_list[static_cast<std::size_t>(e)] = VECTOR(weights)[e];
+        has_edge[static_cast<std::size_t>(a)] = 1;
+        has_edge[static_cast<std::size_t>(b)] = 1;
+      }
+      for (const char h : has_edge)
+        if (h == 0)
+          ++isolated;
+    }
+    std::vector<int> leiden_membership(static_cast<std::size_t>(n));
+    for (igraph_int_t i = 0; i < n; ++i)
+      leiden_membership[static_cast<std::size_t>(i)] =
+          static_cast<int>(VECTOR(membership)[i]);
+
+    const std::vector<int> kept = dissolveSmallCommunities(
+        static_cast<std::size_t>(n), edge_list, weight_list, leiden_membership,
+        min_cluster_size_);
+
+    int n_kept = 0;
+    std::size_t unassigned = 0;
+    std::size_t dissolved = 0; // vertices whose Leiden community was dropped
+    {
+      std::vector<std::size_t> leiden_size(
+          static_cast<std::size_t>(nb_clusters), 0);
+      for (const int c : leiden_membership)
+        ++leiden_size[static_cast<std::size_t>(c)];
+      for (std::size_t v = 0; v < kept.size(); ++v) {
+        n_kept = std::max(n_kept, kept[v] + 1);
+        if (kept[v] == kNoCommunity)
+          ++unassigned;
+        if (leiden_size[static_cast<std::size_t>(leiden_membership[v])] <
+            min_cluster_size_)
+          ++dissolved;
+      }
+    }
+    reusex::core::info(
+        "Visibility graph: {} vertices, {} edges, {} isolated. {} of {} "
+        "communities have >= {} vertices; of the {} vertices in smaller "
+        "ones, {} joined the community they see most and {} see none and "
+        "stay unassigned",
+        n, edge_list.size(), isolated, n_kept, nb_clusters, min_cluster_size_,
+        dissolved, dissolved - unassigned, unassigned);
+
     // Extract membership into labels
     labels.resize(input_->size());
     for (igraph_int_t i = 0; i < n; ++i) {
+      const int c = kept[static_cast<std::size_t>(i)];
       labels.points[indices_->at(i)].label =
-          static_cast<unsigned int>(VECTOR(membership)[i]);
+          c == kNoCommunity ? kUnassigned : static_cast<std::uint32_t>(c);
     }
-    numClusters_ = static_cast<size_t>(nb_clusters);
+    numClusters_ = static_cast<size_t>(n_kept);
 
     // Cleanup igraph objects
     igraph_vector_int_destroy(&membership);
@@ -523,7 +717,8 @@ class PCL_EXPORTS CommunityClustering : public PCLBase<PointT> {
 
   double resolution_{1.0};
   double beta_{0.01};
-  int max_iter_{-1}; // negative = iterate until convergence
+  int max_iter_{-1};                // negative = iterate until convergence
+  std::size_t min_cluster_size_{1}; // 1 = keep every community
 
   VisualizationCallback visualization_callback_{nullptr};
   static constexpr unsigned int N_ =

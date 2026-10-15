@@ -16,6 +16,8 @@
 // Keep this header light (STANDARDS §2): cv::Mat and ProjectDB are
 // forward-declared, and no VTK header is exposed to consumers.
 
+#include "reusex/core/solid_model.hpp"
+
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -202,6 +204,15 @@ struct RenderOptions {
   /// evidence). Applies to every point layer; needs the named Label cloud,
   /// index-aligned with cloud_name.
   std::optional<InstanceHighlight> highlight;
+
+  /// A solid-model plan to draw over the layers (`rux render --plan`), e.g. an
+  /// authored reference (docs/guides/solid-model-reference-authoring.md). The
+  /// top and plan views draw it flattened on top of everything and uncut
+  /// (PlanPlacement::above_scene); every other view on its storey's floor
+  /// (PlanPlacement::level). See SceneOptions::plan for what is drawn.
+  std::optional<core::SolidModel> plan;
+  /// Label spaces by name and walls by guid (SceneOptions::plan_labels).
+  bool plan_labels = true;
 };
 
 /// This machine cannot create an offscreen OpenGL context (#313).

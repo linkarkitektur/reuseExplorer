@@ -165,3 +165,31 @@ TEST_CASE("PanoramaAlignmentDiagnosticsJson_RejectedResult_CarriesOutcome",
   CHECK(j.at("final_inliers") == 30);
   CHECK(j.at("delta_from_seed_m") == 7.5);
 }
+
+TEST_CASE("PanoramaAlignmentDiagnosticsJson_PoolCountsAndAlignedPose",
+          "[slam][panorama][align]") {
+  PanoramaAlignmentResult r;
+  r.outcome = PanoramaAlignmentOutcome::correction_gate;
+  r.diagnostics.sphere_keypoints = 1200;
+  r.diagnostics.dropped_overlap = 300;
+  r.diagnostics.dropped_pole = 80;
+  r.diagnostics.dropped_repeats = 45;
+  r.diagnostics.slices.resize(1);
+  r.diagnostics.slices[0].pooled_keypoints = 150;
+  auto j = nlohmann::json::parse(panorama_alignment_diagnostics_json(r));
+  CHECK(j.at("sphere_keypoints") == 1200);
+  CHECK(j.at("dropped_overlap") == 300);
+  CHECK(j.at("dropped_pole") == 80);
+  CHECK(j.at("dropped_repeats") == 45);
+  CHECK(j.at("slices")[0].at("pooled_keypoints") == 150);
+  CHECK_FALSE(j.contains("pose")); // a rejected pose is not reported
+
+  // an accepted pose is, so runs can be compared panorama by panorama
+  r.outcome = PanoramaAlignmentOutcome::aligned;
+  r.aligned = true;
+  r.pose[3] = 1.25;
+  j = nlohmann::json::parse(panorama_alignment_diagnostics_json(r));
+  REQUIRE(j.contains("pose"));
+  CHECK(j.at("pose").size() == 16);
+  CHECK(j.at("pose")[3] == 1.25);
+}
