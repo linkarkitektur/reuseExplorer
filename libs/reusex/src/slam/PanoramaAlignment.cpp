@@ -237,6 +237,7 @@ panorama_alignment_diagnostics_json(const PanoramaAlignmentResult &r) {
   j["delta_from_seed_m"] = num(d.delta_from_seed_m);
   j["inlier_frames"] = d.inlier_frames;
   j["inlier_slices"] = d.inlier_slices;
+  j["frames_considered"] = d.frames_considered;
   if (r.aligned) // panorama-optical->world, row-major 4x4
     j["pose"] = r.pose;
   json slices = json::array();
@@ -257,6 +258,7 @@ panorama_alignment_diagnostics_json(const PanoramaAlignmentResult &r) {
                       {"dist_from_seed_m", num(f.dist_from_seed_m)},
                       {"keypoints", f.keypoints},
                       {"keypoints_with_depth", f.keypoints_with_depth},
+                      {"sharpness", f.sharpness},
                       {"ratio_matches", f.ratio_matches},
                       {"correspondences", f.correspondences},
                       {"final_inliers", f.final_inliers}});
@@ -353,9 +355,63 @@ PanoramaAlignmentResult align_panorama(ProjectDB &db, int pano_id,
     return finish(PanoramaAlignmentOutcome::seed_not_found);
   }
   const int seed_idx = static_cast<int>(seed_it - all_ids.begin());
-  // order candidates by |offset| so the nearest frames are matched first
+  const double seed_ts = db.sensor_frame_timestamp(seed_node_id);
   std::vector<int> cand;
-  for (int d = 0; d <= opt.candidate_window; ++d) {
+  std::map<int, double> cand_sharpness;
+  if (opt.select_frames && seed_ts >= 0.0) {
+    // --- by quality: sharp frames spread over viewing directions ----------
+    // Walk out from the seed in id order while the frames stay inside the
+    // time window (ids follow capture order).
+    std::vector<pano_detail::FrameChoice> choices;
+    const bool seed_posed = db.has_sensor_frame_pose(seed_node_id);
+    const Eigen::Vector3d seed_c =
+        seed_posed
+            ? Eigen::Vector3d(to_matrix4(db.sensor_frame_pose(seed_node_id))
+                                  .block<3, 1>(0, 3))
+            : Eigen::Vector3d::Zero();
+    auto consider = [&](int idx) {
+      const int nid = all_ids[idx];
+      const double ts = db.sensor_frame_timestamp(nid);
+      if (ts < 0.0 || std::abs(ts - seed_ts) > opt.select_window_s)
+        return false;
+      if (!db.has_sensor_frame_pose(nid))
+        return true; // no world points to offer, but keep walking
+      const Eigen::Matrix4d T = to_matrix4(db.sensor_frame_pose(nid));
+      if (seed_posed && opt.select_max_dist_m > 0.0 &&
+          (T.block<3, 1>(0, 3) - seed_c).norm() > opt.select_max_dist_m)
+        return true; // too far from the seed, keep walking
+      pano_detail::FrameChoice fc;
+      fc.node_id = nid;
+      fc.dt_s = ts - seed_ts;
+      fc.sharpness = pano_detail::image_sharpness(db.sensor_frame_image(nid));
+      fc.view_dir = T.block<3, 1>(0, 2).normalized();
+      choices.push_back(fc);
+      return true;
+    };
+    consider(seed_idx);
+    for (int idx = seed_idx - 1; idx >= 0 && consider(idx); --idx) {
+    }
+    for (int idx = seed_idx + 1;
+         idx < static_cast<int>(all_ids.size()) && consider(idx); ++idx) {
+    }
+    pano_detail::FrameSelectOptions fso;
+    fso.max_frames = opt.max_candidates;
+    fso.min_sharpness_ratio = opt.min_sharpness_ratio;
+    fso.view_spread_deg = opt.view_spread_deg;
+    for (int i : pano_detail::select_candidate_frames(choices, fso)) {
+      cand.push_back(choices[i].node_id);
+      cand_sharpness[choices[i].node_id] = choices[i].sharpness;
+    }
+    diag.frames_considered = static_cast<int>(choices.size());
+  }
+  if (opt.select_frames && cand.empty())
+    core::warn("PanoramaAlignment: panorama {} — no frame to choose by "
+               "quality (seed {} timestamp {}, {} frames in the window); "
+               "falling back to the id window",
+               pano_id, seed_node_id, seed_ts, diag.frames_considered);
+  // by id: order candidates by |offset| so the nearest frames come first
+  const bool by_id = cand.empty();
+  for (int d = 0; by_id && d <= opt.candidate_window; ++d) {
     for (int s : (d == 0 ? std::vector<int>{0} : std::vector<int>{-d, +d})) {
       const int idx = seed_idx + s;
       if (idx >= 0 && idx < static_cast<int>(all_ids.size()))
@@ -380,12 +436,14 @@ PanoramaAlignmentResult align_panorama(ProjectDB &db, int pano_id,
   if (seed_has_pose)
     seed_centre =
         to_matrix4(db.sensor_frame_pose(seed_node_id)).block<3, 1>(0, 3);
-  const double seed_ts = db.sensor_frame_timestamp(seed_node_id);
   diag.frames.resize(cand.size());
   for (size_t fi = 0; fi < cand.size(); ++fi) {
     auto &fs = diag.frames[fi];
     const auto &fr = frames[fi];
     fs.node_id = cand[fi];
+    if (const auto it = cand_sharpness.find(cand[fi]);
+        it != cand_sharpness.end())
+      fs.sharpness = it->second;
     const double ts = db.sensor_frame_timestamp(cand[fi]);
     fs.dt_from_seed_s = (ts >= 0.0 && seed_ts >= 0.0)
                             ? ts - seed_ts

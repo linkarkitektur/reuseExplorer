@@ -348,4 +348,36 @@ std::vector<SphereMatch> match_sphere_to_frame(const cv::Mat &frame_desc,
 std::vector<int> one_per_sphere_keypoint(const std::vector<int> &sphere_kp,
                                          const std::vector<float> &hamming);
 
+// --- candidate frame selection (reusex-bx2.6) ------------------------------
+
+/// Image sharpness: the variance of the Laplacian of the grey image, taken at
+/// a fixed working width (`kSharpnessWidth` px, area-resampled) so that it
+/// ranks frames by blur rather than by resolution. 0 for a flat image.
+/// Deterministic. Accepts 1, 3 or 4 channels.
+double image_sharpness(const cv::Mat &image);
+
+/// One frame that could be matched against a panorama.
+struct FrameChoice {
+  int node_id = -1;
+  double dt_s = 0.0;      ///< timestamp minus the seed frame's
+  double sharpness = 0.0; ///< image_sharpness()
+  Eigen::Vector3d view_dir = Eigen::Vector3d::UnitZ(); ///< optical axis, world
+};
+
+struct FrameSelectOptions {
+  int max_frames = 8;
+  /// drop frames less sharp than this fraction of the sharpest one
+  double min_sharpness_ratio = 0.5;
+  /// a frame opens a new viewing direction when its optical axis is at
+  /// least this far (deg) from every frame already chosen
+  double view_spread_deg = 30.0;
+};
+
+/// Choose up to `max_frames` of @p frames (indices, in pick order): drop the
+/// blurred ones, then repeatedly take the sharpest frame that opens a new
+/// viewing direction; when none does, fill up with the sharpest of the rest.
+/// Ties go to the smaller |dt|, then the smaller node id.
+std::vector<int> select_candidate_frames(const std::vector<FrameChoice> &frames,
+                                         const FrameSelectOptions &opt);
+
 } // namespace reusex::geometry::pano_detail

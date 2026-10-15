@@ -89,6 +89,30 @@ NOTES:
                   "Cap candidate frames matched per panorama")
       ->check(CLI::PositiveNumber)
       ->capture_default_str();
+  sub->add_flag("--select-frames,!--no-select-frames", ao.select_frames,
+                "Choose candidate frames by sharpness and viewing direction "
+                "within --select-window of the seed, instead of by id")
+      ->capture_default_str();
+  sub->add_option("--select-window", ao.select_window_s,
+                  "Time window (s) around the seed frame that --select-frames "
+                  "chooses from")
+      ->check(CLI::NonNegativeNumber)
+      ->capture_default_str();
+  sub->add_option("--select-max-dist", ao.select_max_dist_m,
+                  "--select-frames considers only frames within this "
+                  "distance (m) of the seed frame (0: any)")
+      ->check(CLI::NonNegativeNumber)
+      ->capture_default_str();
+  sub->add_option("--min-sharpness-ratio", ao.min_sharpness_ratio,
+                  "Drop frames less sharp than this fraction of the sharpest "
+                  "in the window")
+      ->check(CLI::Range(0.0, 1.0))
+      ->capture_default_str();
+  sub->add_option("--view-spread", ao.view_spread_deg,
+                  "A frame opens a new viewing direction this many degrees "
+                  "from every frame already chosen")
+      ->check(CLI::Range(0.0, 180.0))
+      ->capture_default_str();
   sub->add_option("--n-yaw", ao.n_yaw, "Perspective slices around the equator")
       ->check(CLI::Range(1, 64))
       ->capture_default_str();

@@ -688,4 +688,85 @@ std::vector<int> one_per_sphere_keypoint(const std::vector<int> &sphere_kp,
   return keep;
 }
 
+// --- candidate frame selection (reusex-bx2.6) ------------------------------
+
+namespace {
+constexpr int kSharpnessWidth = 320;
+}
+
+double image_sharpness(const cv::Mat &image) {
+  if (image.empty())
+    return 0.0;
+  cv::Mat gray;
+  if (image.channels() == 3)
+    cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+  else if (image.channels() == 4)
+    cv::cvtColor(image, gray, cv::COLOR_BGRA2GRAY);
+  else
+    gray = image;
+  cv::Mat small;
+  const double s = static_cast<double>(kSharpnessWidth) / gray.cols;
+  cv::resize(
+      gray, small,
+      cv::Size(kSharpnessWidth,
+               std::max(1, static_cast<int>(std::lround(gray.rows * s)))),
+      0, 0, cv::INTER_AREA);
+  cv::Mat lap;
+  cv::Laplacian(small, lap, CV_64F);
+  cv::Scalar mean, stddev;
+  cv::meanStdDev(lap, mean, stddev);
+  return stddev[0] * stddev[0];
+}
+
+std::vector<int> select_candidate_frames(const std::vector<FrameChoice> &frames,
+                                         const FrameSelectOptions &opt) {
+  double best = 0.0;
+  for (const auto &f : frames)
+    best = std::max(best, f.sharpness);
+  std::vector<int> order;
+  for (int i = 0; i < static_cast<int>(frames.size()); ++i)
+    if (frames[i].sharpness >= opt.min_sharpness_ratio * best)
+      order.push_back(i);
+  std::sort(order.begin(), order.end(), [&](int a, int b) {
+    const auto &fa = frames[a], &fb = frames[b];
+    if (fa.sharpness != fb.sharpness)
+      return fa.sharpness > fb.sharpness;
+    if (std::abs(fa.dt_s) != std::abs(fb.dt_s))
+      return std::abs(fa.dt_s) < std::abs(fb.dt_s);
+    return fa.node_id < fb.node_id;
+  });
+  const double cos_spread = std::cos(opt.view_spread_deg * M_PI / 180.0);
+  std::vector<int> picked;
+  std::vector<char> used(frames.size(), 0);
+  auto opens_new_direction = [&](int i) {
+    for (int j : picked)
+      if (frames[i].view_dir.normalized().dot(frames[j].view_dir.normalized()) >
+          cos_spread)
+        return false;
+    return true;
+  };
+  // first every frame that opens a new direction, sharpest first...
+  bool grew = true;
+  while (grew && static_cast<int>(picked.size()) < opt.max_frames) {
+    grew = false;
+    for (int i : order)
+      if (!used[i] && opens_new_direction(i)) {
+        picked.push_back(i);
+        used[i] = 1;
+        grew = true;
+        break;
+      }
+  }
+  // ...then the sharpest of the rest
+  for (int i : order) {
+    if (static_cast<int>(picked.size()) >= opt.max_frames)
+      break;
+    if (!used[i]) {
+      picked.push_back(i);
+      used[i] = 1;
+    }
+  }
+  return picked;
+}
+
 } // namespace reusex::geometry::pano_detail

@@ -51,11 +51,35 @@ struct PanoramaAlignmentOptions {
   /// sensor-frame-id order). In principle a wider window co-observes the
   /// panorama from more directions; on NewOffice it mostly added junk faster
   /// than signal (docs/research/panorama-alignment-failure-modes.md), so the
-  /// window is narrow by default.
+  /// window is narrow by default. Used only without `select_frames`.
   int candidate_window = 12;
   /// Cap the number of candidate frames actually matched (nearest-to-seed
   /// first), bounding the O(slices x frames) matcher cost.
   int max_candidates = 8;
+  /// Choose the candidates by quality instead of id (reusex-bx2.6): of the
+  /// frames within `select_window_s` of the seed frame, drop the blurred
+  /// ones (variance of the Laplacian below `min_sharpness_ratio` x the
+  /// sharpest), then take the sharpest frame that looks in a new direction
+  /// (optical axis at least `view_spread_deg` from every frame already
+  /// chosen), and fill up with the sharpest of the rest. Up to
+  /// `max_candidates`; `candidate_window` is then unused. Falls back to the
+  /// id window when the seed frame has no timestamp.
+  ///
+  /// Measured on NewOffice (4 seeds + shuffled null, with max_depth 20;
+  /// docs/research/panorama-alignment-failure-modes.md): 7.0 -> 7.5
+  /// panoramas per run against the id window, 007 at 15x its noise floor in
+  /// every seed. The window of 10 s holds the frames taken while the operator
+  /// stood for the panorama (6 s: 6.75); the 1.5 m limit drops the frames
+  /// of walking away, which matched nothing and made 006 and 015 move about
+  /// 1 m between seeds (no limit: 6.0). Without the sharpness filter: 6.5.
+  /// A view spread of 15 deg keeps 010 and 019 within 0.4 m across seeds;
+  /// 0 (sharpest first) accepts 7.75 but moves them 0.8 m; 30-45 deg: 7.0.
+  bool select_frames = true;
+  double select_window_s = 10.0;
+  /// ...and within this distance (m) of the seed frame's centre (<= 0: any)
+  double select_max_dist_m = 1.5;
+  double min_sharpness_ratio = 0.5;
+  double view_spread_deg = 15.0;
 
   // --- panorama slicing (geometry/EquirectProjection) --------------------
   int n_yaw = 8;         ///< perspective slices around the equator
@@ -66,7 +90,13 @@ struct PanoramaAlignmentOptions {
   int max_features = 3000;  ///< ORB features per image
   float ratio_test = 0.85f; ///< Lowe ratio threshold
   float min_depth = 0.3f;   ///< ignore frame keypoints outside [min,max] depth
-  float max_depth = 6.0f;
+  /// 20 m (reusex-bx2.6): at 6 m the hall panoramas of NewOffice lost
+  /// 53-75 % of their frame keypoints. Far depth is less accurate, but the
+  /// panorama is within about a metre of the frame, so a depth error along
+  /// the frame ray subtends a small angle at the panorama (an 8 % error at
+  /// 15 m: ~0.3 deg). A depth-dependent weighting of the refinement and a
+  /// confidence-map filter beyond 6 m were both measured and did not help.
+  float max_depth = 20.0f;
 
   // --- correspondence pool (reusex-bx2.5) --------------------------------
   // Each of these was measured on NewOffice (18 panoramas, 4 seeds, with the
@@ -254,6 +284,9 @@ struct PanoramaFrameStats {
   double dist_from_seed_m = -1.0;
   int keypoints = 0;            ///< ORB keypoints detected in the frame
   int keypoints_with_depth = 0; ///< of those, with depth in range
+  /// variance of the Laplacian at 320 px width (reusex-bx2.6); -1 when the
+  /// frame was not chosen by quality
+  double sharpness = -1.0;
   int ratio_matches = 0;   ///< Lowe-passing matches from all slices (pre-depth)
   int correspondences = 0; ///< of those, depth-backed
   int final_inliers = 0;   ///< correspondences in the final inlier set
@@ -279,6 +312,9 @@ struct PanoramaCorrespondence {
 struct PanoramaAlignmentDiagnostics {
   std::vector<PanoramaSliceStats> slices;
   std::vector<PanoramaFrameStats> frames; ///< candidate frames, match order
+  /// frames inside the selection window, before the sharpness / view choice
+  /// (`select_frames`); 0 when frames were taken by id
+  int frames_considered = 0;
   int correspondences_total = 0; ///< pooled depth-backed correspondences
   int sphere_keypoints = 0;      ///< panorama keypoints in the sphere pool
   int dropped_overlap = 0;       ///< keypoints dropped as another slice's
