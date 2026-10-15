@@ -70,8 +70,13 @@ A complete example is `tests/fixtures/solid_model/two_rooms.plan.json`.
 - **Frame.** Wall axes, space polygons and opening heights are in the
   storey's *level frame*: z up, storey 0's floor at z = 0. A storey's
   `level_transform` (16 numbers, 4x4 row-major) maps world to level
-  coordinates; omitted means identity. Two models are only comparable when
-  they share a level frame.
+  coordinates; omitted means identity. Each storey has its own frame, so an
+  opening's `z_sill` / `z_head` are in its host wall's storey frame. Two
+  models need not share a level frame: the benchmark compares them through
+  world (see *Level frames and storeys* below). An authored reference
+  typically keeps world x/y and only shifts z (`level_transform` a
+  translation by minus the floor's world z); the detector puts its origin on
+  a storey-0 floor point (`geometry::make_level_frame`).
 - **References by key, not row id.** A wall, space or opening names its
   storey by the storey's `idx`; an opening names its host wall, a join its two
   walls and a boundary its space and wall by `guid`. A `guid` is any
@@ -132,9 +137,32 @@ exactly `io::kSolidModelJsonVersion`.
 reference, options)`. Every metric is `null` when either model does not
 provide the element kind it needs.
 
+**Level frames and storeys.** Each detected wall, space and opening is
+taken out of its storey's level frame (the inverse of `level_transform`) and
+into the level frame of the reference storey it is compared with, so the
+two models meet in world whatever level frames they were written in. Wall
+axes are mapped at the wall's mid-height, space polygons at the space's
+`z_floor`, and an opening's ends at its mid-height and then measured along
+the mapped host axis; its sill and head are mapped above its centre. For
+frames that share the vertical (any yaw and translation) this is exact;
+a small tilt between the two verticals moves plan positions by roughly
+height x tilt. A `level_transform` that is singular or not finite is
+rejected (`std::invalid_argument`).
+
+When both models list `storeys`, a detected storey corresponds to the
+reference storey whose floor (its `z_floor` taken to world) is nearest in
+world z, within `storey_match_dist_m` (1.0 m), one-to-one, closest first:
+a detector numbers storeys from the lowest one it saw, which need not be
+the reference's storey 0. A detected storey with no reference storey that
+close is left out like an uncovered one below (a warning names the floor
+heights when no detected storey matched at all). When either model lists no
+storeys, storeys correspond by `idx` and the missing side's frames are
+identity.
+
 **Storey coverage.** The reference covers the storeys in its `storeys` plus
 every storey one of its walls or spaces stands on. Detected walls, spaces and
-openings (by their host wall's storey) on any other storey are left out of
+openings (by their host wall's storey) on a storey that corresponds to no
+covered reference storey are left out of
 every metric, so a reference that models only the ground floor does not
 charge a multi-storey detection false positives or extra rooms; the number
 left out is `counts.detected_outside_reference`. A reference that names no
@@ -166,8 +194,8 @@ report is deterministic (STANDARDS §6):
 - **Spaces** on the same storey: exact 2D IoU (CGAL boolean set operations
   on polygons with holes), highest first.
 - **Openings** on the same storey (their host walls' storeys): the detected
-  opening is placed in plan through its host wall,
-  then re-expressed in the reference opening's host-wall coordinates (s
+  opening is placed in plan through its host wall (after the level-frame
+  mapping above), then re-expressed in the reference opening's host-wall coordinates (s
   along that axis, z); a match needs near-parallel host walls, the detected
   opening within `wall_match_dist_m` of the reference wall line, and a face
   IoU of at least `opening_match_iou` (0.5). Opening kind is not compared.
