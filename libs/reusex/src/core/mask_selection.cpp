@@ -8,6 +8,7 @@
 #include "core/SensorIntrinsics.hpp"
 #include "core/frame_projection.hpp"
 #include "core/guid.hpp"
+#include "core/label_encoding.hpp"
 #include "core/label_semantics.hpp"
 #include "core/logging.hpp"
 #include "core/survey.hpp"
@@ -276,6 +277,8 @@ apply_mask_selection(ProjectDB &db, const std::vector<std::size_t> &indices,
   bool labels_created = false;
   auto labels =
       label_cloud_or_zeros(db, opts.semantic_cloud, n, labels_created);
+  if (!labels_created)
+    warn_if_unstamped_semantic_cloud(db, opts.semantic_cloud);
   auto label_defs = labels_created ? std::map<int, std::string>{}
                                    : db.label_definitions(opts.semantic_cloud);
   for (const auto &[id, name] : label_defs)
@@ -397,8 +400,7 @@ apply_mask_selection(ProjectDB &db, const std::vector<std::size_t> &indices,
   // A semantic cloud created here follows the point-label encoding
   // (STANDARDS §3.1) like every other semantic writer's.
   if (labels_created)
-    label_prov.second =
-        nlohmann::json{{kLabelEncodingKey, kLabelEncodingApiPlusOne}}.dump();
+    label_prov.second = stamp_label_encoding("");
   const auto inst_prov = provenance(opts.instance_cloud, instances_created);
   db.save_point_cloud(opts.semantic_cloud, *labels, label_prov.first,
                       label_prov.second);

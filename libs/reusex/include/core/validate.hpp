@@ -75,6 +75,13 @@ void check_instances_without_label_defs(const ProjectDB &db,
 void check_sibling_cloud_sizes(const ProjectDB &db,
                                std::vector<ValidationIssue> &out);
 
+/// Semantic label clouds (core::is_semantic_label_cloud(), not instance
+/// clouds) without `parameters.label_encoding = "api_plus_one"` in a project
+/// at schema >= 29 — written by a pre-v29 binary, so their class ids are
+/// probably one too low (STANDARDS §3.1). Reported as warnings.
+void check_unstamped_semantic_clouds(const ProjectDB &db,
+                                     std::vector<ValidationIssue> &out);
+
 /// Run every check and aggregate the findings.
 ValidationReport validate_project(const ProjectDB &db);
 

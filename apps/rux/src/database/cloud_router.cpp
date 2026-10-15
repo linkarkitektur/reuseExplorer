@@ -4,6 +4,8 @@
 
 #include "database/cloud_router.hpp"
 
+#include <reusex/core/label_encoding.hpp>
+
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -190,7 +192,15 @@ void CloudRouter::set_cloud_from_binary(std::string_view name,
   if (has_field("label")) {
     pcl::PointCloud<pcl::Label>::Ptr cloud_l(new pcl::PointCloud<pcl::Label>);
     pcl::fromPCLPointCloud2(cloud2, *cloud_l);
-    db_->save_point_cloud(name, *cloud_l);
+    // The semantic cloud is stored as point label = API class + 1; a set of
+    // the default semantic cloud is taken to be in that encoding and stamped
+    // so readers and `rux validate` do not flag it (STANDARDS §3.1). Other
+    // label clouds keep whatever encoding their author gave them.
+    if (reusex::core::is_semantic_label_cloud(name, ""))
+      db_->save_point_cloud(name, *cloud_l, /*stage=*/"",
+                            reusex::core::stamp_label_encoding(""));
+    else
+      db_->save_point_cloud(name, *cloud_l);
     spdlog::info("Saved label cloud '{}' ({} points)", name, cloud_l->size());
   } else if (has_field("normal_x")) {
     pcl::PointCloud<pcl::Normal>::Ptr cloud_n(new pcl::PointCloud<pcl::Normal>);

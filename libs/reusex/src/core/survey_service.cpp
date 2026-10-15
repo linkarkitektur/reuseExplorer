@@ -7,6 +7,7 @@
 #include "reusex/core/frame_projection.hpp"
 #include "reusex/core/guid.hpp"
 #include "reusex/core/instance_evidence.hpp"
+#include "reusex/core/label_encoding.hpp"
 #include "reusex/core/label_semantics.hpp"
 #include "reusex/core/logging.hpp"
 #include "reusex/core/resource_view.hpp"
@@ -281,6 +282,7 @@ SurveySyncReport sync_survey(ProjectDB &db, const SurveySyncOptions &opts) {
                  opts.rooms_cloud);
   }
 
+  warn_if_unstamped_semantic_cloud(db, opts.semantic_cloud);
   const auto class_names = db.has_point_cloud(opts.semantic_cloud)
                                ? db.label_definitions(opts.semantic_cloud)
                                : std::map<int, std::string>{};
