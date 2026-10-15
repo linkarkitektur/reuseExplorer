@@ -60,7 +60,8 @@ new `panorama_segmentation` table.
 the remaining 12 kept their timestamp placement (too few cross-camera matches,
 or rejected by the plausibility gate as ill-conditioned). The 360 camera is a
 different device from the iPad-LiDAR scan, so cross-camera ORB matching is the
-hard part — but where enough features co-observe, the resection is tight:
+hard part — but where enough features co-observe, the resection is tight (see the 2026-10
+re-measurement below before trusting this table):
 
 | panorama | inliers | RMS (deg) |
 |----------|--------:|----------:|
@@ -124,3 +125,12 @@ does **not** reuse the aligned panorama pose — doing so would be circular — 
 resects each panorama independently against every frame it matches. Written up,
 with the measured result and why it does not yet help, in
 [`panorama-loop-closure.md`](panorama-loop-closure.md).
+
+## Follow-up — why most panoramas fail (reusex-bx2.1, 2026-10-15)
+Re-measured with the per-panorama diagnostics (`rux align 360 --diagnostics`)
+in [`panorama-alignment-failure-modes.md`](panorama-alignment-failure-modes.md).
+In short: 15 of 18 panoramas never rise above the RANSAC noise floor, measured
+by shuffling the correspondences. The gate that "rejects" each one is
+incidental. Several accepted poses are noise-level false positives; only 2–4
+land within the ~1 m hand-held prior. The dual-fisheye seam and the stitcher
+are ruled out.
