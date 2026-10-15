@@ -124,6 +124,14 @@ inline StageResult run_graph_discover_stage(ProjectDB &db,
 /// default_stage_executor() plus `optimize` and `graph_discover`
 /// (run_optimize_stage / run_graph_discover_stage on a read-write open of
 /// the job's project).
+///
+/// Both stages are wrapped in run_logged_stage() (reusex::pipeline::
+/// run_stage()'s shared pipeline_log open/close protocol), so a Qt
+/// Pipeline/Rediger or ruxd run of either leaves the same kind of
+/// `pipeline_log` row `rux optimize` / `rux graph discover` have always
+/// written, under the same log name (reusex-xlg.5) — instead of the silent
+/// gap stage_executor_with_optimize() left by calling the two stage bodies
+/// directly.
 inline StageExecutor stage_executor_with_optimize() {
   auto default_exec = default_stage_executor();
   return [default_exec =
@@ -132,9 +140,13 @@ inline StageExecutor stage_executor_with_optimize() {
         ctx.stage == JobStage::graph_discover) {
       try {
         ProjectDB db(ctx.project, /*readOnly=*/false);
-        return ctx.stage == JobStage::optimize
-                   ? run_optimize_stage(db, ctx)
-                   : run_graph_discover_stage(db, ctx);
+        return run_logged_stage(
+            db, ctx, to_string(ctx.stage), pipeline_log_name(ctx.stage),
+            [&db, &ctx]() -> StageResult {
+              return ctx.stage == JobStage::optimize
+                         ? run_optimize_stage(db, ctx)
+                         : run_graph_discover_stage(db, ctx);
+            });
       } catch (const std::exception &e) {
         return StageResult::failure(fmt::format(
             "could not open project '{}': {}", ctx.project.string(), e.what()));
