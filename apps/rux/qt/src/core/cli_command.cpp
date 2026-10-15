@@ -99,6 +99,7 @@ const std::vector<StageSpec> &stage_specs() {
       {"storeys",
        {"create", "storeys"},
        {{"horizontal_cos", "--horizontal-cos", {}, {}},
+        {"surface_max_tilt_deg", "--surface-max-tilt", {}, {}},
         {"inlier_m", "--inlier", {}, {}},
         {"max_fit_iterations", "--max-fit-iterations", {}, {}},
         {"hist_bin_m", "--hist-bin", {}, {}},
@@ -106,6 +107,9 @@ const std::vector<StageSpec> &stage_specs() {
         {"slab_merge_m", "--slab-merge", {}, {}},
         {"min_storey_height_m", "--min-storey-height", {}, {}},
         {"default_height_m", "--default-height", {}, {}},
+        {"use_normal_sign", {}, {}, "--no-normal-sign"},
+        {"per_storey_frame", {}, {}, "--shared-frame"},
+        {"storey_frame_tol_deg", "--storey-frame-tol", {}, {}},
         {"guid_match_m", "--guid-match", {}, {}}}},
   };
   return specs;

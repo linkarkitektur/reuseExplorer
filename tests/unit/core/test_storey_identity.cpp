@@ -119,3 +119,26 @@ TEST_CASE("LockedStoreyConflicts_ReportFrameAndOverlap", "[core][storeys]") {
     CHECK(c[0].overlapping_idx == std::vector<int>{0});
   }
 }
+
+TEST_CASE("LockedStoreyConflicts_PerStoreyFrames_UseTheMatchingRowsFrame",
+          "[core][storeys]") {
+  // reusex-z1v.3.5: a run may give each storey its own frame. A locked row
+  // is compared with the new row that carries its GUID, not with storey 0's
+  // frame, and overlap is measured in each new row's own frame.
+  auto locked =
+      storey(1, 3.0, 5.6, lift(0.5), deterministic_guid(kProject, "upper"));
+  locked.locked = true;
+  locked.source = "manual";
+  std::vector<StoreyRecord> fresh{storey(0, 0.0, 2.6, lift(0.0)),
+                                  storey(1, 3.0, 5.6, lift(0.5), locked.guid)};
+  CHECK(locked_storey_conflicts({locked}, fresh).empty());
+
+  // Without a matching GUID the frame of the new row whose floor is nearest
+  // is used (storey 1, same frame). Storey 0 (world [0, 2.6]) does not
+  // overlap the locked world [3.5, 6.1]; storey 1 (world [3.4, 6.0]) does.
+  fresh[1] = storey(1, 2.9, 5.5, lift(0.5));
+  const auto c = locked_storey_conflicts({locked}, fresh);
+  REQUIRE(c.size() == 1);
+  CHECK_FALSE(c[0].frame_differs);
+  CHECK(c[0].overlapping_idx == std::vector<int>{1});
+}

@@ -20,12 +20,16 @@ void setup_subcommand_create_storeys(CLI::App &app,
 
   sub->footer(R"(
 DESCRIPTION:
-  Fits the floor and ceiling of each storey to the horizontal planes of the
-  plane segmentation (iterated least squares), measures the vertical as the
-  bisector of their normals, and finds storeys as peaks of a height
-  histogram. Writes one row per storey to the 'storeys' table: floor and
-  ceiling height in the level frame (storey-0 floor at z = 0) and the
-  world -> level transform. The scan itself is never rewritten.
+  Groups the horizontal planes of the plane segmentation into surfaces by
+  height, fits each storey's floor and ceiling (iterated least squares) and
+  measures the vertical as the bisector of their normals. Sensor-oriented
+  plane normals tell floors (seen from above) from ceilings (seen from
+  below), so the floor over a slab is found however small it is. A storey
+  whose vertical disagrees with the others (pose drift) gets its own level
+  frame (--shared-frame to keep one). Writes one row per storey to the
+  'storeys' table: floor and ceiling height in its level frame (storey-0
+  floor at z = 0) and the world -> level transform. The scan itself is
+  never rewritten.
 
 EXAMPLES:
   rux create storeys                        # Default settings
@@ -52,6 +56,11 @@ NOTES:
                   "A plane is horizontal when |n.z| exceeds this cosine")
       ->default_val(l.horizontal_cos)
       ->check(CLI::Range(0.5, 1.0));
+  sub->add_option("--surface-max-tilt", l.surface_max_tilt_deg,
+                  "A horizontal plane more than this off the measured "
+                  "vertical is not a floor/ceiling candidate [deg]")
+      ->default_val(l.surface_max_tilt_deg)
+      ->check(CLI::Range(0.1, 30.0));
   sub->add_option("--inlier", l.inlier_m,
                   "Inlier band of the iterated floor/ceiling fit [m]")
       ->default_val(l.inlier_m)
@@ -60,12 +69,14 @@ NOTES:
                   "Refits per floor/ceiling surface")
       ->default_val(l.max_fit_iterations)
       ->check(CLI::Range(1, 100));
-  sub->add_option("--hist-bin", l.hist_bin_m, "Height histogram bin [m]")
+  sub->add_option("--hist-bin", l.hist_bin_m,
+                  "Height bin: planes within two bins of a stronger plane's "
+                  "height form one surface [m]")
       ->default_val(l.hist_bin_m)
       ->check(CLI::Range(0.005, 1.0));
   sub->add_option("--peak-min-share", l.peak_min_share,
-                  "A histogram bin is a level when it holds at least this "
-                  "share of the fullest bin")
+                  "A surface is a level when it holds at least this share "
+                  "of the strongest surface's points")
       ->default_val(l.peak_min_share)
       ->check(CLI::Range(0.01, 1.0));
   sub->add_option("--slab-merge", l.slab_merge_m,
@@ -81,6 +92,19 @@ NOTES:
                   "Storey height used when no ceiling level exists [m]")
       ->default_val(l.default_height_m)
       ->check(CLI::Range(0.5, 20.0));
+  sub->add_flag("--normal-sign,!--no-normal-sign", l.use_normal_sign,
+                "Tell floors (up-facing) from ceilings (down-facing) by the "
+                "sensor-oriented plane normals when they carry that")
+      ->default_str(l.use_normal_sign ? "true" : "false");
+  sub->add_flag("--per-storey-frame,!--shared-frame", l.per_storey_frame,
+                "Give a storey whose vertical disagrees with the shared one "
+                "its own level frame (drifted multi-storey scans)")
+      ->default_str(l.per_storey_frame ? "true" : "false");
+  sub->add_option("--storey-frame-tol", l.storey_frame_tol_deg,
+                  "A storey gets its own frame when its vertical is more "
+                  "than this off the shared one [deg]")
+      ->default_val(l.storey_frame_tol_deg)
+      ->check(CLI::Range(0.0, 10.0));
 
   sub->add_option("--guid-match", opt->identity.match_m,
                   "A re-detected storey keeps the GUID of the stored storey "
@@ -101,6 +125,7 @@ storeys_stage_parameters(SubcommandCreateStoreysOptions const &opt) {
   const auto &l = opt.level;
   return rux::StageParams()
       .set("horizontal_cos", l.horizontal_cos)
+      .set("surface_max_tilt_deg", l.surface_max_tilt_deg)
       .set("inlier_m", l.inlier_m)
       .set("max_fit_iterations", l.max_fit_iterations)
       .set("hist_bin_m", l.hist_bin_m)
@@ -108,6 +133,9 @@ storeys_stage_parameters(SubcommandCreateStoreysOptions const &opt) {
       .set("slab_merge_m", l.slab_merge_m)
       .set("min_storey_height_m", l.min_storey_height_m)
       .set("default_height_m", l.default_height_m)
+      .set("use_normal_sign", l.use_normal_sign)
+      .set("per_storey_frame", l.per_storey_frame)
+      .set("storey_frame_tol_deg", l.storey_frame_tol_deg)
       .set("guid_match_m", opt.identity.match_m)
       .dump();
 }

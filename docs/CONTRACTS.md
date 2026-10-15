@@ -241,12 +241,17 @@ exist.
 
 ### `storeys` (`rux create storeys`)
 
-Fit each storey's floor and ceiling to the horizontal planes (iterated least
-squares), measure the vertical as the bisector of their normals, and find the
-storeys as peaks of a height histogram (`segmentation/level.hpp`,
-`detect_storeys`). The scan is never rewritten: each row stores the
-world → level transform (storey-0 floor at z = 0) next to its floor and
-ceiling height in that frame.
+Group the horizontal planes into surfaces by height, fit each storey's floor
+and ceiling to its surface's own points (iterated least squares) and measure
+the vertical as the bisector of their normals (`segmentation/level.hpp`,
+`detect_storeys`). When `plane_normals` face their sensors (see `clouds`
+above) an up-facing surface is a floor and a down-facing one a ceiling, so
+the floor over a slab is the strongest up-facing surface above the ceiling
+below it however small it is; a cloud whose normals all face the world origin
+(before reusex-0pi) is read by height alone, and the success message says
+which. The scan is never rewritten: each row stores the world → level
+transform (storey-0 floor at z = 0) next to its floor and ceiling height in
+that frame.
 
 | | |
 |---|---|
@@ -265,14 +270,25 @@ the GUID of the stored storey whose floor lies within `guid_match_m` (default
 storey gets a fresh GUID, `uuid5(project_guid, "storeys/z<floor cm>")`,
 suffixed until unique.
 
+Frames: the rows of one run share one `level_transform` unless pose drift
+left a storey rotated against the others. With `per_storey_frame` (default
+on) a storey whose own floor/ceiling bisector is more than
+`storey_frame_tol_deg` (0.25°) off the shared vertical gets its own frame,
+rotated to its own vertical and placed so that its floor centroid keeps its
+shared-frame level coordinates. `z_floor` is that centroid's height above the
+storey-0 floor centroid along the shared vertical, in either kind of frame;
+`z_ceiling` is measured on the row's vertical through it. Level x/y agree with
+the shared frame's at the floor centroid, and level `(0, 0, z_floor)` stays a
+world point at the storey's floor height, which is what GUID matching and the
+solid-model benchmark take to world through each row's own frame
+(reusex-z1v.3.5). Each row's `metadata` records its `frame`
+(`shared`/`storey`), its own `vertical` and `tilt_vs_shared_deg`.
+
 Rows with `locked = 1` survive a re-run unchanged, frame included; a new
-storey whose GUID or `idx` a locked row holds is not written. Every row one run
-writes carries the same `level_transform` today (the column is per storey so a
-drifted multi-storey scan can later get one frame per storey,
-reusex-z1v.3.5), so **mixed frames in the table arise only through locked
-rows**: the stage warns, with the angle and shift, when a kept locked row's
-frame differs from the new run's, and when its height range overlaps a new
-row's. `rux get storeys` prints the table; `rux del storeys` removes it, and
+storey whose GUID or `idx` a locked row holds is not written. The stage
+warns, with the angle and shift, when a kept locked row's frame differs from
+that of the new row it stands for (same GUID, else nearest floor), and when
+its height range overlaps a new row's (measured in that row's frame). `rux get storeys` prints the table; `rux del storeys` removes it, and
 needs `--force` when any row is locked.
 
 ### `mesh` (`rux create mesh`)

@@ -580,6 +580,8 @@ StageResult run_mesh(ProjectDB &db, const StageContext & /*ctx*/,
 StageResult run_storeys(ProjectDB &db, const json &params, int log_id) {
   geometry::LevelOptions o;
   o.horizontal_cos = param_or(params, "horizontal_cos", o.horizontal_cos);
+  o.surface_max_tilt_deg =
+      param_or(params, "surface_max_tilt_deg", o.surface_max_tilt_deg);
   o.inlier_m = param_or(params, "inlier_m", o.inlier_m);
   o.max_fit_iterations =
       param_or(params, "max_fit_iterations", o.max_fit_iterations);
@@ -589,6 +591,10 @@ StageResult run_storeys(ProjectDB &db, const json &params, int log_id) {
   o.min_storey_height_m =
       param_or(params, "min_storey_height_m", o.min_storey_height_m);
   o.default_height_m = param_or(params, "default_height_m", o.default_height_m);
+  o.use_normal_sign = param_or(params, "use_normal_sign", o.use_normal_sign);
+  o.per_storey_frame = param_or(params, "per_storey_frame", o.per_storey_frame);
+  o.storey_frame_tol_deg =
+      param_or(params, "storey_frame_tol_deg", o.storey_frame_tol_deg);
   core::StoreyIdentityOptions identity;
   identity.match_m = param_or(params, "guid_match_m", identity.match_m);
 
@@ -647,10 +653,14 @@ StageResult run_storeys(ProjectDB &db, const json &params, int log_id) {
       std::acos(std::clamp(r.vertical[2], -1.0, 1.0)) * 180.0 / M_PI;
   return StageResult::success(
       fmt::format("{} storey(s) from {} level(s) of {} horizontal plane(s); "
-                  "vertical {:.3f} deg off world z; {} row(s) written, {} "
-                  "locked row(s) kept",
+                  "vertical {:.3f} deg off world z; storey verticals up to "
+                  "{:.3f} deg off it, {} storey(s) in their own "
+                  "frame; floor/ceiling by {}; {} row(s) written, {} locked "
+                  "row(s) kept",
                   r.storeys.size(), r.levels, r.horizontal_planes, tilt_deg,
-                  written, locked_kept),
+                  r.max_storey_tilt_deg, r.own_frames,
+                  r.normal_sign_used ? "normal sign" : "height", written,
+                  locked_kept),
       {{"table", "storeys", static_cast<int64_t>(written)}});
 }
 
