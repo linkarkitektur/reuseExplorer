@@ -13,6 +13,9 @@
 #include <rux_app.hpp>
 #include <rux_qt/background.hpp>
 
+#include <reusex/core/logging.hpp>
+
+#include <spdlog/sinks/ostream_sink.h>
 #include <spdlog/spdlog.h>
 
 #include "../../support/temp_path.hpp"
@@ -20,7 +23,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <future>
+#include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -122,4 +127,27 @@ TEST_CASE("GuiLaunch_NoDetachedWork_ShutsTheLoggerDown",
   REQUIRE(call.called);
   CHECK(spdlog::default_logger() == nullptr); // spdlog::shutdown() ran
   CHECK_FALSE(rux::logging_left_up());
+}
+
+TEST_CASE("GuiLaunch_Teardown_DetachesTheLibraryLogHandler",
+          "[rux_app][gui_launch]") {
+  // run() routes ReUseX library logs into spdlog. Its teardown shuts spdlog
+  // down (the default logger becomes null), so it must also take that handler
+  // down: a library log after run() — from a lingering thread, a static
+  // destructor or, in this binary, the next test — would otherwise call
+  // spdlog::warn() on a null default logger and crash (reusex-m8o).
+  Call call;
+  run_with({"rux"}, call);
+  REQUIRE(call.called);
+  REQUIRE(spdlog::default_logger() == nullptr);
+
+  std::ostringstream out;
+  spdlog::set_default_logger(std::make_shared<spdlog::logger>(
+      "test_gui_launch",
+      std::make_shared<spdlog::sinks::ostream_sink_mt>(out)));
+  reusex::warn("after run");
+  spdlog::default_logger()->flush();
+  const std::string logged = out.str();
+  spdlog::set_default_logger(nullptr); // `out` dies with this scope
+  CHECK(logged.find("after run") == std::string::npos);
 }
