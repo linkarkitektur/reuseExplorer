@@ -15,6 +15,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -422,4 +423,24 @@ TEST_CASE("SolidModelFixture_NewOffice_IsAValidDraftReference",
   CHECK_THAT(m.description, ContainsSubstring("DRAFT"));
   CHECK_THAT(m.storeys[0].metadata,
              ContainsSubstring("draft - needs maintainer review"));
+}
+
+TEST_CASE("SolidModelFixture_NewOffice_FollowsTheMaintainersRoomLayout",
+          "[io][solid_model]") {
+  // The maintainer's description of NewOffice (2026-10-15, reusex-z1v.2.6):
+  // one open office, two meeting rooms at its end, a closed office, a
+  // bathroom with 3 stalls (one space, stall walls inside), a printer and
+  // server room, a kitchen / assembly space and a meeting room / storage.
+  const SolidModel m =
+      reusex::io::solid_model_from_file(fixture("newoffice.plan.json"));
+  std::vector<std::string> names;
+  for (const auto &s : m.spaces)
+    names.push_back(s.name);
+  std::sort(names.begin(), names.end());
+  CHECK(names == std::vector<std::string>{
+                     "Bathroom", "Closed office", "Kitchen/assembly",
+                     "Meeting room 1", "Meeting room 2", "Meeting room/storage",
+                     "Open office", "Printer/server room"});
+  CHECK_THAT(m.description, ContainsSubstring("maintainer's description"));
+  CHECK_THAT(m.storeys[0].metadata, ContainsSubstring("room_layout"));
 }
