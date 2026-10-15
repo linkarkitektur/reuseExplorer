@@ -9,6 +9,7 @@
 #include <opencv2/core.hpp>
 
 #include <stdexcept>
+#include <string>
 
 using namespace reusex::core;
 
@@ -43,14 +44,35 @@ TEST_CASE("ApiPointLabelConversion_VariousInputs_RoundTripsCorrectly",
     REQUIRE(point_label_to_api(kUnlabeled) == kBackgroundApi);
   }
 
-  SECTION("valid class ids pass through") {
-    REQUIRE(api_to_point_label(0) == 0u); // API class 0 is a valid class id
-    REQUIRE(api_to_point_label(5) == 5u);
-    REQUIRE(point_label_to_api(5u) == 5);
+  SECTION("API class 0 is a real class, not unlabeled") {
+    // STANDARDS §3.1: point label = API class + 1. API class 0 (the first
+    // prompt class) used to map to 0 == kUnlabeled and was silently dropped.
+    REQUIRE(api_to_point_label(0) == 1u);
+    REQUIRE(is_valid_label(api_to_point_label(0)));
+    REQUIRE(point_label_to_api(1u) == 0);
+  }
+
+  SECTION("valid class ids shift by one") {
+    REQUIRE(api_to_point_label(5) == 6u);
+    REQUIRE(point_label_to_api(6u) == 5);
+  }
+
+  SECTION("round-trip through point labels for valid API classes") {
+    for (int a : {0, 1, 5, 65533, 65534})
+      REQUIRE(point_label_to_api(api_to_point_label(a)) == a);
+  }
+
+  SECTION("label encoding marker") {
+    REQUIRE(std::string(kLabelEncodingKey) == "label_encoding");
+    REQUIRE(std::string(kLabelEncodingApiPlusOne) == "api_plus_one");
   }
 
   SECTION("negative non-sentinel throws") {
     REQUIRE_THROWS_AS(api_to_point_label(-2), std::out_of_range);
+  }
+
+  SECTION("out-of-contract point label throws instead of wrapping") {
+    REQUIRE_THROWS_AS(point_label_to_api(0xFFFFFFFFu), std::out_of_range);
   }
 
   SECTION("round-trip through api for valid labels") {

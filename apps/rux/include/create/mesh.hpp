@@ -15,17 +15,9 @@ namespace fs = std::filesystem;
 /// Collection of all options of Subcommand A.
 ///
 /// search_threshold / new_plane_offset defaults are derived from
-/// reusex::geometry::MeshOptions (docs/STANDARDS.md §4). angle_threshold,
-/// distance_threshold and grid_size have no library counterpart in MeshOptions
-/// (they are not forwarded to reusex::geometry::mesh()), so they keep local
-/// literals until the library grows matching fields.
+/// reusex::geometry::MeshOptions (docs/STANDARDS.md §4).
 struct SubcommandMeshOptions {
   std::string output_mesh_name = "mesh"; ///< Mesh name in ProjectDB
-
-  float grid_size = 0.5;
-
-  double angle_threshold = 25.0;
-  double distance_threshold = 0.2;
 
   double search_threshold = reusex::geometry::MeshOptions{}.search_threshold;
   double new_plane_offset = reusex::geometry::MeshOptions{}.new_plane_offset;

@@ -7,6 +7,7 @@
 #include "global-params.hpp"
 
 #include <reusex/core/ProjectDB.hpp>
+#include <reusex/core/label_encoding.hpp>
 #include <reusex/core/materialepas_json_export.hpp>
 #include <reusex/core/materialepas_json_import.hpp>
 
@@ -120,6 +121,8 @@ int run_subcommand_create_materials(SubcommandCreateMaterialsOptions const &opt,
     std::map<int, std::string> semantic_names;
     try {
       semantic_names = db.label_definitions(opt.semantic_cloud_name);
+      reusex::core::warn_if_unstamped_semantic_cloud(db,
+                                                     opt.semantic_cloud_name);
     } catch (const std::exception &) {
       // Semantic cloud may not carry label definitions; that's fine.
     }

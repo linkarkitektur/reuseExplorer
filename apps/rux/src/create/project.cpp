@@ -13,6 +13,7 @@
 #include <fmt/std.h>
 
 #include <reusex/core/ProjectDB.hpp>
+#include <reusex/core/label_semantics.hpp>
 #include <reusex/vision/project.hpp>
 
 #include <pcl/common/common.h>
@@ -88,7 +89,12 @@ int run_subcommand_project([[maybe_unused]] SubcommandProjectOptions const &opt,
     CloudLPtr labels = reusex::vision::project(db, cloud);
 
     spdlog::trace("Saving projected labels to ProjectDB");
-    db.save_point_cloud("labels", *labels, "project_labels");
+    // Point label = API class + 1 (STANDARDS §3.1); recorded so the schema
+    // v29 migration never re-encodes this cloud.
+    db.save_point_cloud("labels", *labels, "project_labels",
+                        fmt::format(R"({{"{}":"{}"}})",
+                                    reusex::core::kLabelEncodingKey,
+                                    reusex::core::kLabelEncodingApiPlusOne));
 
     spdlog::info("Label projection complete");
 

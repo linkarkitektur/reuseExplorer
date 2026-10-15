@@ -1,11 +1,11 @@
 ---
 name: todo-comments
-description: Write or review structured TODO/FIXME/BUG/HACK comments in ReUseX C++ code. Use whenever adding, editing, or auditing an in-code TODO-style marker, or when asked about the project's TODO/tdg conventions (required category=/estimate= metadata, markers, categories, time estimates). These comments are parsed by the tdg GitHub Action and synced to issues, so format matters.
+description: Write or review structured TODO/FIXME/BUG/HACK comments in ReUseX C++ code. Use whenever adding, editing, or auditing an in-code TODO-style marker, or when asked about the project's TODO/tdg conventions (required category=/estimate= metadata, markers, categories, time estimates). The structured format is kept (tdg-compatible, greppable), and TODO comments are tracked in beads, so format matters.
 ---
 
 # TODO Comment Conventions
 
-This project uses structured TODO comments compatible with the [tdg (TODO Generator)](https://gitlab.com/ribtoks/tdg) tool. `.github/workflows/todo-action.yml` still runs the tdg GitHub Action on every push, but GitHub issues are disabled on ReUse-X/ReUseX (2026-10-14), so its issue create/update/close calls now fail — beads is the tracker (`bead=reusex-xxx`, see Optional Metadata). The structured format is still mandatory for readability and consistency, even though the sync it was built for no longer runs; the workflow itself should probably be removed or repointed, separately from this convention.
+This project uses structured TODO comments compatible with the [tdg (TODO Generator)](https://gitlab.com/ribtoks/tdg) tool. The structured format is kept (tdg-compatible, greppable), and TODO comments are tracked in beads (`bead=reusex-xxx`, see Optional Metadata). There is no automatic GitHub issue sync; GitHub issues are disabled on ReUse-X/ReUseX.
 
 ## Format Specification
 
@@ -46,7 +46,7 @@ Every comment **must** include:
 
 ## Optional Metadata
 
-- **`bead=reusex-xxx`** — the beads issue tracking this comment's removal, when one exists (2026-10-14: GitHub issues are disabled on ReUse-X/ReUseX, so `.github/workflows/todo-action.yml`'s tdg sync no longer has anywhere to create/update an issue — beads is the tracker now). Example: `bead=reusex-hbi`
+- **`bead=reusex-xxx`** — the beads issue tracking this comment's removal, when one exists. Example: `bead=reusex-hbi`
 - **`issue=N`** — a GitHub issue number from before the switch to beads (pfmephisto/ReUseX or an older point in this repo's history). Do not add new ones; `bead=` replaces it going forward.
 - **`author=alias`** — Creator's alias, for handoffs (git blame is preferred otherwise). Example: `author=pfils`
 
