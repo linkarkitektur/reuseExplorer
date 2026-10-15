@@ -399,3 +399,168 @@ TEST_CASE("FrameWorldColoredPoints_NoColourImage_KeepsPointsWithoutColours",
   CHECK(cloud.points.size() == 1200);
   CHECK(cloud.colors.empty()); // the caller falls back to a tint
 }
+
+// ---------------------------------------------------------------------------
+// Low-structure pairs (reusex-xlg.12): a wall with one small box on it, seen
+// by two cameras whose stored poses are CORRECT but whose views only partly
+// overlap. Point-to-point ICP with the 0.5 m window paired B's points past
+// the overlap with A's border points and dragged B along the wall (NewOffice
+// 2240/2241: 22 cm / 5 deg off a 1.6 cm match fit). ICP must stay put here.
+
+namespace {
+
+enum class Feature { none, small_box, large_box };
+
+/// Depth (mm) a camera at world x = @p cam_x (looking down +z, identity
+/// rotation) sees of the plane z = 2 m with an axis-aligned box standing on
+/// it: small x in [0.45, 0.9], y in [-0.3, 0.3], z in [1.8, 2.0] (~2% of
+/// the view, its side faces nearly edge-on), or large x in [0.5, 1.3],
+/// y in [0.3, 1.0], z in [1.2, 2.0], off-axis so that both cameras see its
+/// x = 0.5 and y = 0.3 faces.
+cv::Mat wall_with_box_depth(double cam_x, Feature feature) {
+  cv::Mat d(kH, kW, CV_16UC1);
+  const double f = kW / 2.0, cx = kW / 2.0, cy = kH / 2.0;
+  const bool with_box = feature != Feature::none;
+  const bool large = feature == Feature::large_box;
+  const Eigen::Vector3d lo =
+      large ? Eigen::Vector3d(0.5, 0.3, 1.2) : Eigen::Vector3d(0.45, -0.3, 1.8);
+  const Eigen::Vector3d hi =
+      large ? Eigen::Vector3d(1.3, 1.0, 2.0) : Eigen::Vector3d(0.9, 0.3, 2.0);
+  for (int v = 0; v < kH; ++v)
+    for (int u = 0; u < kW; ++u) {
+      const Eigen::Vector3d o(cam_x, 0, 0);
+      const Eigen::Vector3d dir((u - cx) / f, (v - cy) / f, 1.0);
+      double z = 2.0; // the wall: dir.z == 1, so t == depth
+      if (with_box) {
+        double t0 = 0, t1 = 1e9;
+        bool hit = true;
+        for (int k = 0; k < 3 && hit; ++k) {
+          if (std::abs(dir[k]) < 1e-12) {
+            hit = o[k] >= lo[k] && o[k] <= hi[k];
+            continue;
+          }
+          double a = (lo[k] - o[k]) / dir[k], b = (hi[k] - o[k]) / dir[k];
+          if (a > b)
+            std::swap(a, b);
+          t0 = std::max(t0, a);
+          t1 = std::min(t1, b);
+          hit = t0 <= t1;
+        }
+        if (hit)
+          z = std::min(z, t0);
+      }
+      d.at<uint16_t>(v, u) = static_cast<uint16_t>(std::lround(z * 1000.0));
+    }
+  return d;
+}
+
+/// Frames 1 (camera at x = 0) and 2 (camera at x = @p b_x), poses stored
+/// exactly; frame 2's stored pose may be off by @p b_err in x.
+void save_wall_pair(const TempPath &project, double b_x, double b_err,
+                    Feature feature) {
+  reusex::ProjectDB db(project.path, /*readOnly=*/false);
+  db.save_sensor_frame(1, dummy_color(), wall_with_box_depth(0.0, feature),
+                       full_confidence(), identity_pose(), make_intr(), 0.0);
+  db.save_sensor_frame(2, dummy_color(), wall_with_box_depth(b_x, feature),
+                       full_confidence(), translate_pose(b_x + b_err),
+                       make_intr(), 1.0);
+}
+
+} // namespace
+
+TEST_CASE("FramePairIcp_PartialOverlapWallWithBox_DoesNotSlide",
+          "[slam][icp]") {
+  const TempPath project("frame_pair_icp_wall_box");
+  save_wall_pair(project, 1.0, 0.0, Feature::small_box);
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+
+  // Unseeded and seeded with the (correct) identity: the same answer.
+  for (const bool seeded : {false, true}) {
+    INFO("seeded=" << seeded);
+    reusex::slam::FramePairIcpOptions o;
+    if (seeded)
+      o.initial_guess = identity_pose();
+    const auto r = reusex::slam::refine_frame_pair_icp(db, 2, 1, o);
+    CHECK(r.converged);
+    CHECK(r.source_center_shift_m < 0.01);
+    CHECK(r.rotation_deg < 0.5);
+    CHECK(r.seed_shift_m < 0.01);
+    CHECK_FALSE(r.worse_than_seed);
+    // The seed was already right: ICP does not make the overlap worse.
+    CHECK(r.inlier_fraction >= r.seed_inlier_fraction - 1e-9);
+    CHECK(r.inlier_fraction > 0.6);
+  }
+}
+
+TEST_CASE("FramePairIcp_PureWall_LeavesTheUnobservableDirectionsAlone",
+          "[slam][icp]") {
+  // A bare wall constrains only its normal and the two tilts: B's stored
+  // pose is 8 cm off ALONG the wall, which no depth can see. ICP must not
+  // invent a slide (nor blow up on the singular normal equations), and it
+  // reports the three directions it could not constrain.
+  const TempPath project("frame_pair_icp_pure_wall");
+  save_wall_pair(project, 0.5, 0.08, Feature::none);
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  const auto r = reusex::slam::refine_frame_pair_icp(db, 2, 1);
+  for (double v : r.world_delta)
+    REQUIRE(std::isfinite(v));
+  CHECK(r.converged);
+  CHECK(r.source_center_shift_m < 0.01);
+  CHECK(r.rotation_deg < 0.5);
+  CHECK(r.unconstrained_dofs == 3);
+  // B's view reaches 0.5 m past A's: the rest lies on the wall A sees.
+  CHECK(r.inlier_fraction > 0.8);
+  CHECK(r.inlier_rms_m < 0.005);
+}
+
+TEST_CASE("FramePairIcp_WallWithBox_RecoversAnInPlaneOffset", "[slam][icp]") {
+  // A box that sticks out far enough makes the in-plane directions
+  // observable again: B's stored pose is 6 cm off along the wall and ICP
+  // finds it (world_delta pulls B's cloud back by -6 cm in x). Leaving the
+  // unconstrained directions alone must not freeze the observed ones.
+  const TempPath project("frame_pair_icp_box_offset");
+  save_wall_pair(project, 0.3, 0.06, Feature::large_box);
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  reusex::slam::FramePairIcpOptions o;
+  o.pixel_step = 1; // the box's side faces are seen obliquely: sample them
+  o.max_correspondence_m = 0.1;
+  const auto r = reusex::slam::refine_frame_pair_icp(db, 2, 1, o);
+  CHECK(r.converged);
+  // The slide along the wall is constrained now (the turn about the wall's
+  // normal, pinned only by the box's edges, may still be dropped).
+  CHECK(r.unconstrained_dofs < 3);
+  CHECK(r.world_delta[3] == Catch::Approx(-0.06).margin(0.015));
+  CHECK(r.rotation_deg < 1.0);
+  CHECK(r.inlier_fraction > r.seed_inlier_fraction);
+}
+
+TEST_CASE("FramePairIcp_WorseThanSeed_FlagsAFarMoveThatLosesOverlap",
+          "[slam][icp]") {
+  using reusex::slam::FramePairIcpOptions;
+  using reusex::slam::FramePairIcpResult;
+  using reusex::slam::icp_worse_than_seed;
+  const FramePairIcpOptions o; // inlier gate 5 cm
+  FramePairIcpResult r;
+  r.seed_inlier_fraction = 0.60;
+  r.seed_inlier_rms_m = 0.017;
+  r.inlier_fraction = 0.59;
+  r.inlier_rms_m = 0.024;
+
+  // Moved far (22 cm, 5 deg) and fit the overlap worse: flagged.
+  r.seed_shift_m = 0.22;
+  r.seed_rotation_deg = 5.0;
+  CHECK(icp_worse_than_seed(r, o));
+  // A far move that IMPROVES the overlap is a correction, not a drift.
+  r.inlier_fraction = 0.70;
+  r.inlier_rms_m = 0.015;
+  CHECK_FALSE(icp_worse_than_seed(r, o));
+  // A small move is never flagged, however the numbers wobble.
+  r.inlier_fraction = 0.59;
+  r.inlier_rms_m = 0.024;
+  r.seed_shift_m = 0.01;
+  r.seed_rotation_deg = 0.3;
+  CHECK_FALSE(icp_worse_than_seed(r, o));
+  // A rotation alone can be far.
+  r.seed_rotation_deg = 4.0;
+  CHECK(icp_worse_than_seed(r, o));
+}
