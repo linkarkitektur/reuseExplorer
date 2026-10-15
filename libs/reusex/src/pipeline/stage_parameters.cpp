@@ -6,6 +6,7 @@
 #include <reusex/pipeline/stage_parameters.hpp>
 
 #include <reusex/core/storey_identity.hpp>
+#include <reusex/pipeline/mesh_parameters.hpp>
 #include <reusex/reconstruction/mesh.hpp>
 #include <reusex/segmentation/classify_planes.hpp>
 #include <reusex/segmentation/level.hpp>
@@ -302,6 +303,11 @@ const std::vector<ParameterDescriptor> &mesh_parameters() {
             "Fraction of a horizontal plane's footprint that must lie over "
             "the floor below for the clearance rule to apply.",
             static_cast<float>(d.structural.min_footprint_overlap), 0.0, 1.0),
+        boolean("plane_classes", "Use plane classification",
+                "When `create classify` has run, leave out the planes it "
+                "called furniture or clutter (reusex-z1v.4.3). Off (the "
+                "default) uses every plane.",
+                pipeline::MeshStageOptions{}.use_plane_classes),
         optional_of(ParameterType::string, "filter", "Point filter",
                     "Filter expression restricting which points are meshed. "
                     "Empty means the whole cloud."),

@@ -84,6 +84,7 @@ const std::vector<StageSpec> &stage_specs() {
         {"structural_collinear_offset", "--structural-collinear", {}, {}},
         {"structural_storey_clearance", "--structural-clearance", {}, {}},
         {"structural_footprint_overlap", "--structural-overlap", {}, {}},
+        {"plane_classes", {}, "--plane-classes", {}},
         {"filter", "--filter", {}, {}}}},
       {"optimize",
        {"optimize", {}},

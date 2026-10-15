@@ -12,6 +12,8 @@
 //   - a desk top / desk underside over the floor    -> dropped
 //   - an upper storey floor, a split level          -> kept
 //   - disabled                                      -> unchanged
+// and for drop_planes_by_role() (reusex-z1v.4.3 / reusex-vwa): planes whose
+// plane_classes role is furniture or clutter never reach the cell complex.
 
 #include <reusex/reconstruction/structural_planes.hpp>
 #include <reusex/types.hpp>
@@ -21,6 +23,7 @@
 #include <Eigen/Core>
 
 #include <stdexcept>
+#include <vector>
 
 using namespace reusex;
 using namespace reusex::geometry;
@@ -230,4 +233,85 @@ TEST_CASE("structural planes: mismatched inputs throw",
   CHECK_THROWS_AS(
       select_structural_planes(s.planes, s.inliers, s.centroids, s.cloud),
       std::runtime_error);
+}
+
+// ── drop_planes_by_role (reusex-z1v.4.3) ──────────────────────────────────
+
+TEST_CASE("plane roles: furniture and clutter planes are dropped",
+          "[reconstruction][structural_planes][plane_roles]") {
+  using core::PlaneRole;
+  Scene s;
+  s.slab(0.0, +1, 0.0, 10.0, 0.0, 8.0);  // 0 floor
+  s.slab(2.7, -1, 0.0, 10.0, 0.0, 8.0);  // 1 ceiling
+  s.slab(0.75, +1, 2.0, 4.0, 2.0, 3.0);  // 2 desk top
+  s.x_wall(0.0, +1, 0.0, 8.0, 0.0, 2.7); // 3 wall
+  s.y_wall(4.0, +1, 2.0, 4.0, 0.0, 1.6); // 4 desk screen
+  s.x_wall(9.0, -1, 0.0, 1.0, 0.0, 2.0); // 5 unknown
+  const std::vector<PlaneRole> roles{PlaneRole::floor,     PlaneRole::ceiling,
+                                     PlaneRole::furniture, PlaneRole::wall,
+                                     PlaneRole::clutter,   PlaneRole::unknown};
+  const auto floor_inliers = s.inliers[0];
+  const auto wall_plane = s.planes[3];
+
+  const auto r = drop_planes_by_role(s.planes, s.inliers, s.centroids, roles);
+  CHECK(r.furniture == 1);
+  CHECK(r.clutter == 1);
+  CHECK(r.planes_out == 4);
+  REQUIRE(s.planes.size() == 4);
+  REQUIRE(s.inliers.size() == 4);
+  REQUIRE(s.centroids.size() == 4);
+  // Input order is kept and each survivor keeps its own inliers.
+  CHECK(s.inliers[0] == floor_inliers);
+  CHECK(s.planes[2] == wall_plane);
+  CHECK(has_height(s.planes, 0.0));
+  CHECK(has_height(s.planes, 2.7));
+  CHECK_FALSE(has_height(s.planes, 0.75));
+  CHECK(count_kind(s.planes, true) == 2); // the wall and the unknown plane
+}
+
+TEST_CASE("plane roles: no roles leaves the planes alone",
+          "[reconstruction][structural_planes][plane_roles]") {
+  Scene s;
+  s.slab(0.0, +1, 0.0, 10.0, 0.0, 8.0);
+  s.slab(0.75, +1, 2.0, 4.0, 2.0, 3.0);
+  const auto r = drop_planes_by_role(s.planes, s.inliers, s.centroids, {});
+  CHECK(s.planes.size() == 2);
+  CHECK(r.planes_out == 2);
+  CHECK(r.furniture == 0);
+}
+
+TEST_CASE("plane roles: a role count that disagrees with the planes throws",
+          "[reconstruction][structural_planes][plane_roles]") {
+  Scene s;
+  s.slab(0.0, +1, 0.0, 10.0, 0.0, 8.0);
+  s.slab(0.75, +1, 2.0, 4.0, 2.0, 3.0);
+  CHECK_THROWS_AS(drop_planes_by_role(s.planes, s.inliers, s.centroids,
+                                      {core::PlaneRole::floor}),
+                  std::invalid_argument);
+}
+
+TEST_CASE("plane roles: catch a desk row the clearance rule cannot",
+          "[reconstruction][structural_planes][plane_roles]") {
+  // An open-plan office: a long row of desks hides the floor under it, so
+  // the desk top is larger than the floor seen beside it and hardly lies
+  // over it. The geometric clearance rule needs a larger plane under most
+  // of the footprint, so the desk row survives it and becomes a storey
+  // section at desk height (reusex-vwa). Its classified role removes it.
+  using core::PlaneRole;
+  Scene s;
+  s.slab(0.0, +1, 0.0, 10.0, 0.0, 1.0);  // floor strip left visible
+  s.slab(0.75, +1, 0.0, 10.0, 1.0, 4.0); // desk row
+  s.slab(2.7, -1, 0.0, 10.0, 0.0, 4.0);  // ceiling
+
+  Scene g = s; // the geometry-only path keeps the desk row
+  select_structural_planes(g.planes, g.inliers, g.centroids, g.cloud);
+  CHECK(has_height(g.planes, 0.75));
+
+  drop_planes_by_role(
+      s.planes, s.inliers, s.centroids,
+      {PlaneRole::floor, PlaneRole::furniture, PlaneRole::ceiling});
+  select_structural_planes(s.planes, s.inliers, s.centroids, s.cloud);
+  CHECK_FALSE(has_height(s.planes, 0.75));
+  CHECK(has_height(s.planes, 0.0));
+  CHECK(has_height(s.planes, 2.7));
 }

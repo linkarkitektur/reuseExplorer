@@ -570,6 +570,8 @@ StageResult run_mesh(ProjectDB &db, const StageContext & /*ctx*/,
 
   auto [planes, centroids, inliers] =
       reusex::io::getPlanes(plane_labels, plane_normals, plane_centroids);
+  if (parsed.use_plane_classes)
+    options.plane_roles = mesh_plane_roles(db, inliers);
 
   pcl::PolygonMeshPtr mesh_result = geometry::mesh(
       cloud, normals, planes, centroids, inliers, rooms, options);
@@ -911,6 +913,8 @@ MeshStageOptions mesh_options_from_parameters(std::string_view parameters) {
                                        st.min_storey_clearance_m);
   st.min_footprint_overlap = param_or(params, "structural_footprint_overlap",
                                       st.min_footprint_overlap);
+  out.use_plane_classes =
+      param_or(params, "plane_classes", out.use_plane_classes);
   const auto solver_str = param_or<std::string>(params, "solver", "auto");
   try {
     options.solver = geometry::parse_solver_choice(solver_str);
@@ -919,6 +923,36 @@ MeshStageOptions mesh_options_from_parameters(std::string_view parameters) {
         fmt::format("invalid solver '{}': {}", solver_str, e.what()));
   }
   return out;
+}
+
+std::vector<core::PlaneRole>
+mesh_plane_roles(const ProjectDB &db, const std::vector<IndicesPtr> &inliers) {
+  if (!db.has_plane_classes("planes"))
+    return {};
+  const auto rows = db.plane_classes("planes");
+  std::vector<core::PlaneRole> roles(inliers.size(), core::PlaneRole::unknown);
+  for (const auto &row : rows) {
+    const auto n = inliers.size();
+    if (row.plane_label < 1 || static_cast<size_t>(row.plane_label) > n) {
+      warn("mesh: plane_classes has a row for plane {} but 'planes' has {} "
+           "plane(s); the classification is stale, so every plane is used. "
+           "Re-run `rux create classify`",
+           row.plane_label, n);
+      return {};
+    }
+    const auto idx = static_cast<size_t>(row.plane_label - 1);
+    const auto have = inliers[idx] ? inliers[idx]->size() : 0;
+    if (static_cast<size_t>(row.point_count) != have) {
+      warn("mesh: plane_classes says plane {} has {} point(s) but 'planes' "
+           "gives it {}; the classification is stale, so every plane is "
+           "used. Re-run `rux create classify`",
+           row.plane_label, row.point_count, have);
+      return {};
+    }
+    roles[idx] = core::plane_role_from_string(row.role).value_or(
+        core::PlaneRole::unknown);
+  }
+  return roles;
 }
 
 // --- StageResult ----------------------------------------------------------

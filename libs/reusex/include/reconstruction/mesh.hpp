@@ -11,6 +11,7 @@
 #include <pcl/common/common.h>
 
 #include <memory>
+#include <vector>
 
 namespace reusex::geometry {
 
@@ -51,6 +52,13 @@ struct MeshOptions {
   /// Which planes become arrangement lines and storey sections
   /// (reusex-8l3). See StructuralPlaneOptions.
   StructuralPlaneOptions structural{};
+
+  /// Role of each input plane from the plane classification (the
+  /// plane_classes table, `rux create classify`), index-aligned with the
+  /// `planes` passed to mesh(). Planes whose role is furniture or clutter are
+  /// left out before regularisation (reusex-z1v.4.3, see
+  /// drop_planes_by_role()). Empty: no classification, every plane is used.
+  std::vector<core::PlaneRole> plane_roles{};
 };
 
 /**
