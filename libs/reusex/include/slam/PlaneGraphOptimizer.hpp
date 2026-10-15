@@ -169,6 +169,20 @@ struct PlaneFitSigmas {
 /// always finite and strictly positive.
 PlaneFitSigmas plane_fit_sigmas(const PlaneFitQuality &q);
 
+/// Which world axis is "up" for the Manhattan prior.
+enum class ManhattanUp {
+  /// The world axis along which the camera positions spread LEAST: a capture
+  /// is walked at roughly constant height, so this is the vertical unless the
+  /// trajectory climbs more than it travels. (The frames' mean image-up is
+  /// NOT usable: a phone held in portrait over a landscape sensor puts image
+  /// up horizontal — house1 would get -y.) A heuristic; pass the axis when
+  /// the importer's convention is known.
+  automatic,
+  x,
+  y,
+  z,
+};
+
 /// Parameters for plane-landmark pose-graph optimization. All defaults live
 /// here (STANDARDS.md §4); CLI flags mirror them.
 struct PlaneGraphOptions {
@@ -384,6 +398,41 @@ struct PlaneGraphOptions {
   float loop_default_sigma_rot = 0.05f;   ///< rad
   float loop_default_sigma_trans = 0.10f; ///< m
 
+  // --- Manhattan-world prior (reusex-rqn.1) ---------------------------------
+  /// Constrain structural plane LANDMARKS to a Manhattan grid: every vertical
+  /// landmark's normal to one of the two dominant horizontal axes, every
+  /// horizontal landmark's normal to the up axis. The two horizontal axes are
+  /// one scalar variable (their azimuth) estimated jointly with the poses, so
+  /// the grid follows the gauge frame instead of a pre-fitted direction.
+  ///
+  /// What it buys: rotational drift becomes observable WITHOUT loop closure.
+  /// The plane term only relates frames that share a landmark, so yaw drift
+  /// between rooms the capture never revisits is invisible to it; measured on
+  /// house1 / house2, frame wall-azimuth residuals trend by 7-15 deg over the
+  /// capture (correlation with capture time -0.75 / -0.94). Default off: on a
+  /// capture with little rotational drift (NewOffice, +-1.4 deg) it has
+  /// nothing to correct, and a building that is not Manhattan gets nothing
+  /// from it.
+  bool manhattan = false;
+  /// Std of a Manhattan factor's 2-DoF normal residual (deg).
+  float manhattan_sigma_deg = 1.0f;
+  /// Gate (deg): a vertical landmark more than this off its nearest axis, or a
+  /// landmark tilted more than this from both vertical and horizontal, gets NO
+  /// Manhattan factor (a genuinely off-grid wall, a sloped ceiling). The same
+  /// angle is the factor's GNC-TLS inlier threshold (Huber under --no-gnc), so
+  /// a wall that only drifts out of the gate during the solve is released.
+  /// It must exceed the rotational drift to be corrected, and stay below the
+  /// smallest real off-grid angle the building has.
+  float manhattan_max_angle_deg = 15.0f;
+  /// Gate (deg) for the LEVEL factors: a landmark within this of horizontal
+  /// is tied to up. Much tighter than the wall gate, because tilt drift is
+  /// small (house2's storeys: ~1 deg) while real ceilings slope: house1's
+  /// mono-pitch ceiling (~7 deg) forced level tilted the floors 1 deg.
+  float manhattan_level_max_angle_deg = 4.0f;
+  /// The up axis the prior levels to. z is the pipeline's convention
+  /// (storeys, plan renders, RTABMap / MuSHRoom imports).
+  ManhattanUp manhattan_up = ManhattanUp::z;
+
   /// Memberwise, covering every field above AND every field of `surfel`
   /// (its own defaulted operator==).
   /// Relied on by CliCommandRoundTrip_OptimizeFlagDefaults_MatchTheStageBase
@@ -465,6 +514,14 @@ struct PlaneGraphResult {
   int bridge_edges = 0; ///< connectivity bridges from the initial poses
   bool graph_initialised = false; ///< the run created the odometry edges
   int edges_with_metrics = 0;     ///< stored rows whose metrics were written
+  /// Manhattan prior (zero unless PlaneGraphOptions::manhattan), final round.
+  int manhattan_vertical = 0;   ///< wall landmarks tied to a horizontal axis
+  int manhattan_horizontal = 0; ///< floor/ceiling landmarks tied to up
+  int manhattan_skipped = 0;    ///< landmarks outside the gate (no factor)
+  /// Solved azimuth of the first horizontal axis, wrapped to [-45, 45) deg and
+  /// measured from the world axis after `manhattan_up_axis` (x for z-up).
+  double manhattan_axis_deg = 0.0;
+  int manhattan_up_axis = -1; ///< 0 / 1 / 2 = world x / y / z; -1 = off
 };
 
 /// Plane-landmark pose-graph optimizer operating purely in memory.

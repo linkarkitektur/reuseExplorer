@@ -289,6 +289,38 @@ NOTES:
                   "information matrix")
       ->default_val(opt->loop_default_sigma_trans);
 
+  // --- Manhattan-world prior (reusex-rqn.1) ---
+  sub->add_flag(
+      "--manhattan", opt->manhattan,
+      "Manhattan-world prior: tie every vertical plane landmark to one of two "
+      "dominant horizontal axes (estimated jointly) and every floor/ceiling "
+      "landmark to the up axis. Makes rotational (yaw/tilt) drift between "
+      "rooms observable without loop closure. Walls more than "
+      "--manhattan-max-angle off the grid are left alone");
+  sub->add_option("--manhattan-sigma", opt->manhattan_sigma_deg,
+                  "Std of a Manhattan factor's normal residual (deg)")
+      ->default_val(opt->manhattan_sigma_deg)
+      ->check(CLI::PositiveNumber);
+  sub->add_option("--manhattan-max-angle", opt->manhattan_max_angle_deg,
+                  "Gate and GNC inlier threshold (deg): landmarks further "
+                  "than this from the grid get no Manhattan factor. Must "
+                  "exceed the drift to correct and stay below the building's "
+                  "real off-grid angles")
+      ->default_val(opt->manhattan_max_angle_deg)
+      ->check(CLI::Range(0.5f, 45.0f));
+  sub->add_option("--manhattan-level-max-angle",
+                  opt->manhattan_level_max_angle_deg,
+                  "Gate (deg) for tying floor/ceiling landmarks to up; keep "
+                  "it below real ceiling slopes")
+      ->default_val(opt->manhattan_level_max_angle_deg)
+      ->check(CLI::Range(0.1f, 45.0f));
+  sub->add_option("--manhattan-up", opt->manhattan_up,
+                  "Up axis of the Manhattan grid: z (the pipeline's "
+                  "convention), x, y, or auto (the axis the camera positions "
+                  "spread least along)")
+      ->default_val(opt->manhattan_up)
+      ->check(CLI::IsMember({"auto", "x", "y", "z"}));
+
   // --- Flags that moved to `rux graph discover` (2026-10-13) ---
   // Registered hidden so a stale script gets a pointer instead of
   // "unknown option" (spec D5).
@@ -340,6 +372,10 @@ std::string optimize_stage_parameters(SubcommandOptimizeOptions const &opt) {
       .set("min_observations", opt.min_observations)
       .set("assoc_rounds", opt.assoc_rounds)
       .set("no_gnc", opt.no_gnc)
+      .set("manhattan", opt.manhattan)
+      .set("manhattan_sigma_deg", opt.manhattan_sigma_deg)
+      .set("manhattan_max_angle_deg", opt.manhattan_max_angle_deg)
+      .set("manhattan_level_max_angle_deg", opt.manhattan_level_max_angle_deg)
       .set("dry_run", opt.dry_run)
       .dump();
 }
@@ -399,6 +435,18 @@ plane_graph_options(SubcommandOptimizeOptions const &opt) {
   options.loop_trust_inlier_cost = opt.loop_trust_inlier_cost;
   options.loop_default_sigma_rot = opt.loop_default_sigma_rot;
   options.loop_default_sigma_trans = opt.loop_default_sigma_trans;
+  options.manhattan = opt.manhattan;
+  options.manhattan_sigma_deg = opt.manhattan_sigma_deg;
+  options.manhattan_max_angle_deg = opt.manhattan_max_angle_deg;
+  options.manhattan_level_max_angle_deg = opt.manhattan_level_max_angle_deg;
+  options.manhattan_up =
+      opt.manhattan_up == "x"
+          ? reusex::geometry::ManhattanUp::x
+          : (opt.manhattan_up == "y"
+                 ? reusex::geometry::ManhattanUp::y
+                 : (opt.manhattan_up == "z"
+                        ? reusex::geometry::ManhattanUp::z
+                        : reusex::geometry::ManhattanUp::automatic));
   return options;
 }
 
