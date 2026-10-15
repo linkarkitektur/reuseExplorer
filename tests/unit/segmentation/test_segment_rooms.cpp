@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2025 Povl Filip Sonne-Frederiksen
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "../../support/synthetic_scene.hpp"
+
 #include <reusex/core/label_semantics.hpp>
 #include <reusex/reconstruction/mesh.hpp>
 #include <reusex/segmentation/reconstruct.hpp>
@@ -10,6 +12,10 @@
 #include <reusex/types.hpp>
 
 #include <catch2/catch_test_macros.hpp>
+
+#include <set>
+#include <utility>
+#include <vector>
 
 using namespace reusex;
 using namespace reusex::geometry;
@@ -145,6 +151,165 @@ TEST_CASE(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Small-community dissolution (reusex-3vc).
+//
+// Leiden turns every isolated vertex of the visibility graph into its own
+// community, and segment_rooms used to report each one as a room: NewOffice
+// gave 2334 "rooms" of which 1785 were single sample points. Communities
+// below the minimum room size are dissolved into the community they see most.
+// ─────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("DissolveSmallCommunities_SmallCommunitySeesBigOne_JoinsMostSeen",
+          "[geometry][segment_rooms][dissolve]") {
+  // Community 0: vertices 0..3 (kept, size 4). Community 1: vertices 4..7
+  // (kept). Community 2: vertex 8 alone, with three edges into community 0
+  // and one into community 1.
+  const std::vector<int> membership{0, 0, 0, 0, 1, 1, 1, 1, 2};
+  const std::vector<std::pair<int, int>> edges{{0, 1}, {1, 2}, {2, 3}, {4, 5},
+                                               {5, 6}, {6, 7}, {8, 0}, {8, 1},
+                                               {8, 2}, {8, 4}};
+  const std::vector<double> weights(edges.size(), 1.0);
+
+  const auto out =
+      pcl::dissolveSmallCommunities(9, edges, weights, membership, 2);
+
+  REQUIRE(out.size() == 9);
+  CHECK(out[8] == out[0]);
+  CHECK(out[0] == 0);
+  CHECK(out[4] == 1);
+}
+
+TEST_CASE("DissolveSmallCommunities_ChainOfSmallVertices_ReachesKeptCommunity",
+          "[geometry][segment_rooms][dissolve]") {
+  // Vertex 4 only sees vertex 5, which sees the kept community {0..3}. Both
+  // small singletons must end up in it (two passes).
+  const std::vector<int> membership{0, 0, 0, 0, 1, 2};
+  const std::vector<std::pair<int, int>> edges{
+      {0, 1}, {1, 2}, {2, 3}, {4, 5}, {5, 3}};
+  const std::vector<double> weights(edges.size(), 1.0);
+
+  const auto out =
+      pcl::dissolveSmallCommunities(6, edges, weights, membership, 3);
+
+  CHECK(out[4] == 0);
+  CHECK(out[5] == 0);
+}
+
+TEST_CASE("DissolveSmallCommunities_IsolatedVertex_StaysUnassigned",
+          "[geometry][segment_rooms][dissolve]") {
+  const std::vector<int> membership{0, 0, 0, 1};
+  const std::vector<std::pair<int, int>> edges{{0, 1}, {1, 2}};
+  const std::vector<double> weights(edges.size(), 1.0);
+
+  const auto out =
+      pcl::dissolveSmallCommunities(4, edges, weights, membership, 2);
+
+  CHECK(out[0] == 0);
+  CHECK(out[3] == pcl::kNoCommunity);
+}
+
+TEST_CASE("DissolveSmallCommunities_DroppedIdsInBetween_RenumbersCompactly",
+          "[geometry][segment_rooms][dissolve]") {
+  // Communities 0 and 2 are kept, 1 is dropped: the result uses ids 0 and 1
+  // in the original order, so room labels stay dense.
+  const std::vector<int> membership{0, 0, 1, 2, 2};
+  const std::vector<std::pair<int, int>> edges{{0, 1}, {3, 4}};
+  const std::vector<double> weights(edges.size(), 1.0);
+
+  const auto out =
+      pcl::dissolveSmallCommunities(5, edges, weights, membership, 2);
+
+  CHECK(out == std::vector<int>{0, 0, pcl::kNoCommunity, 1, 1});
+}
+
+TEST_CASE("DissolveSmallCommunities_EqualPull_BreaksTieToSmallestCommunity",
+          "[geometry][segment_rooms][dissolve]") {
+  const std::vector<int> membership{0, 0, 1, 1, 2};
+  const std::vector<std::pair<int, int>> edges{{0, 1}, {2, 3}, {4, 3}, {4, 0}};
+  const std::vector<double> weights(edges.size(), 1.0);
+
+  const auto out =
+      pcl::dissolveSmallCommunities(5, edges, weights, membership, 2);
+
+  CHECK(out[4] == 0);
+}
+
+TEST_CASE("DissolveSmallCommunities_MinSizeOne_KeepsEveryCommunity",
+          "[geometry][segment_rooms][dissolve]") {
+  const std::vector<int> membership{0, 1, 2};
+  const std::vector<std::pair<int, int>> edges{};
+  const std::vector<double> weights{};
+
+  const auto out =
+      pcl::dissolveSmallCommunities(3, edges, weights, membership, 1);
+
+  CHECK(out == membership);
+}
+
+namespace {
+
+// A closed 4 x 3 x 2.5 m room plus a 1 x 1 m patch standing 6 m away and
+// facing away from it, so the patch's samples see only each other.
+test_support::SyntheticScene room_with_stray_patch(uint32_t &patch_label) {
+  auto scene = test_support::make_room();
+  std::mt19937 gen(7);
+  patch_label = 7;
+  test_support::add_patch(scene, {10.0F, 1.0F, 0.5F}, {0.0F, 1.0F, 0.0F},
+                          {0.0F, 0.0F, 1.0F}, {1.0F, 0.0F, 0.0F}, 0.05F, 0.005F,
+                          patch_label, gen);
+  scene.cloud->width = static_cast<uint32_t>(scene.cloud->size());
+  scene.normals->width = static_cast<uint32_t>(scene.normals->size());
+  scene.labels->width = static_cast<uint32_t>(scene.labels->size());
+  return scene;
+}
+
+} // namespace
+
+TEST_CASE("SegmentRooms_StrayPatchSeesNothingElse_DoesNotBecomeARoom",
+          "[geometry][segment_rooms][dissolve]") {
+  uint32_t patch_label = 0;
+  const auto scene = room_with_stray_patch(patch_label);
+
+  const auto rooms = segment_rooms(scene.cloud, scene.normals, scene.labels);
+  REQUIRE(rooms->size() == scene.cloud->size());
+
+  std::set<uint32_t> room_labels;
+  std::set<uint32_t> patch_room_labels;
+  for (size_t i = 0; i < rooms->size(); ++i) {
+    const uint32_t r = rooms->points[i].label;
+    if (scene.labels->points[i].label == patch_label) {
+      if (r != core::kUnlabeled)
+        patch_room_labels.insert(r);
+    } else if (r != core::kUnlabeled) {
+      room_labels.insert(r);
+    }
+  }
+  // The box is a room; the 1 m^2 patch is far below the minimum room size
+  // and sees no room, so its points stay unlabeled instead of forming one.
+  CHECK_FALSE(room_labels.empty());
+  CHECK(patch_room_labels.empty());
+}
+
+TEST_CASE("SegmentRooms_MinRoomAreaZero_KeepsTinyCommunitiesAsRooms",
+          "[geometry][segment_rooms][dissolve]") {
+  uint32_t patch_label = 0;
+  const auto scene = room_with_stray_patch(patch_label);
+
+  SegmentRoomsOptions options;
+  options.min_room_area = 0.0F;
+  const auto rooms =
+      segment_rooms(scene.cloud, scene.normals, scene.labels, options);
+
+  size_t labelled_patch_points = 0;
+  for (size_t i = 0; i < rooms->size(); ++i)
+    if (scene.labels->points[i].label == patch_label &&
+        rooms->points[i].label != core::kUnlabeled)
+      ++labelled_patch_points;
+  // Without a minimum the patch is its own community, as before the fix.
+  CHECK(labelled_patch_points > 0);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Single-source-of-defaults contract (docs/STANDARDS.md §4).
 //
 // The CLI option structs in apps/rux/include/create/*.hpp initialise their
@@ -167,6 +332,7 @@ TEST_CASE("LibraryOptionDefaults_AllPipelineStages_MatchDocumentedValues",
     CHECK(o.grid_size == 0.5F);
     CHECK(o.propagate_k == 5);
     CHECK(o.propagate_max_radius == 0.5F);
+    CHECK(o.min_room_area == 5.0F);
   }
 
   SECTION("SegmentPlanesOptions") {
