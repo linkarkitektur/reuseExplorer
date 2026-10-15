@@ -59,6 +59,7 @@ const std::vector<StageSpec> &stage_specs() {
         {"max_iter", "--max-iter", {}, {}},
         {"propagate_max_radius", "--propagate-radius", {}, {}},
         {"min_room_area", "--min-room-area", {}, {}},
+        {"merge_affinity", "--merge-affinity", {}, {}},
         {"filter", "--filter", {}, {}}}},
       {"instances",
        {"create", "instances"},

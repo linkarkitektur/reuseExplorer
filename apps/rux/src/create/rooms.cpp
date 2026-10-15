@@ -96,6 +96,16 @@ NOTES:
       ->default_val(opt->min_room_area)
       ->check(CLI::Range(0.0, 1000.0));
 
+  sub->add_option("--merge-affinity", opt->merge_affinity,
+                  "Merge rooms that see each other about as well as they see "
+                  "themselves: two communities merge while the density of "
+                  "sight lines between them is at least this fraction of the "
+                  "internal density of the sparser one. Keeps an open office "
+                  "split by desk screens one room; rooms joined by a door "
+                  "score far lower. 0 disables the merge.")
+      ->default_val(opt->merge_affinity)
+      ->check(CLI::Range(0.0, 10.0));
+
   sub->add_option(
          "-f, --filter", opt->filter_expr,
          "Filter expression to limit processing to specific labeled points.\n"
@@ -134,6 +144,7 @@ std::string rooms_stage_parameters(SubcommandSegRoomsOptions const &opt) {
       .set("max_iter", opt.max_iter)
       .set("propagate_max_radius", opt.propagate_max_radius)
       .set("min_room_area", opt.min_room_area)
+      .set("merge_affinity", opt.merge_affinity)
       .set_if(!opt.filter_expr.empty(), "filter", opt.filter_expr)
       .dump();
 }

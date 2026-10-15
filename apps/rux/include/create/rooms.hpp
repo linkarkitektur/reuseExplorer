@@ -33,6 +33,9 @@ struct SubcommandSegRoomsOptions {
   /// Minimum room size [m^2 of sampled plane surface].
   float min_room_area = reusex::geometry::SegmentRoomsOptions{}.min_room_area;
 
+  /// Merge communities that see each other about as well as themselves.
+  float merge_affinity = reusex::geometry::SegmentRoomsOptions{}.merge_affinity;
+
   std::string filter_expr; ///< Filter expression to limit processing
 };
 

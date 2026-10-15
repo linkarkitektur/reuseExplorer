@@ -207,6 +207,11 @@ const std::vector<ParameterDescriptor> &rooms_parameters() {
             "Plane surface a room's sample points must cover; smaller "
             "communities join the room they see most. 0 keeps all.",
             d.min_room_area, 0.0, 1000.0),
+        num("merge_affinity", "Room merge affinity",
+            "Rooms that see each other at least this fraction as densely as "
+            "they see themselves are merged into one; keeps an open office "
+            "one room. 0 disables the merge.",
+            d.merge_affinity, 0.0, 10.0),
         optional_of(ParameterType::string, "filter", "Point filter",
                     "Filter expression restricting which points are "
                     "partitioned. Empty means the whole cloud."),

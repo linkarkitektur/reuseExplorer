@@ -189,6 +189,7 @@ TEST_CASE("StageParameters_Rooms_MirrorSegmentRoomsOptionsDefaults",
   CHECK(float_default(JobStage::rooms, "propagate_max_radius") ==
         d.propagate_max_radius);
   CHECK(float_default(JobStage::rooms, "min_room_area") == d.min_room_area);
+  CHECK(float_default(JobStage::rooms, "merge_affinity") == d.merge_affinity);
 }
 
 TEST_CASE("StageParameters_Instances_MirrorSegmentInstancesRequestDefaults",
