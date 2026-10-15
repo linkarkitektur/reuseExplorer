@@ -9,11 +9,11 @@ One JSON document describes a typed building model: storeys, walls with a
 measured thickness, spaces with polygons, openings in walls. The same format
 holds both sides of the benchmark:
 
-- a **reference plan**, authored by a person or an agent (W0.6) or converted
-  from another tool (a colleague's Rhino script, a local S3DIS area — W0.7);
-- a **detected model**, the pipeline's own output (`io::load_solid_model`,
-  filled by WP1 storeys, WP3 walls, WP4 spaces, WP5 openings as each table
-  lands).
+- a **reference plan**, authored by a person or an agent, or converted from
+  another tool;
+- a **detected model**, the pipeline's own output (`io::load_solid_model`
+  reads it from the project's solid-model tables; a kind whose table does not
+  exist is not provided).
 
 `rux analyze solid --reference plan.json` compares the two, and
 `scripts/bench-solid.sh` runs that over a manifest of fixtures.
@@ -81,15 +81,22 @@ A complete example is `tests/fixtures/solid_model/two_rooms.plan.json`.
   a source that only sees one face). `assumed: true` means the thickness was
   defaulted rather than measured; `seen_share` is the fraction of the wall's
   face with scan evidence (`-1` = not computed).
-- **Spaces** have one `outer` ring and optional `holes`; rings are open (the
-  first point is not repeated), simple, with at least 3 points, either
-  winding.
+- **Spaces** have one `outer` ring and optional `holes`, in either winding.
+  Every ring is simple (it does not touch or cross itself) and has non-zero
+  area (at least 3 non-collinear points); every hole lies strictly inside
+  the outer ring, and holes neither overlap nor touch each other. Rings are
+  stored open: a ring whose last point repeats its first (GeoJSON style) is
+  accepted and the repeated point dropped, so it is never written back.
 - **Openings** sit in their host wall's face: `s_start` < `s_end` measured
   along the host axis from its first endpoint, `z_sill` < `z_head` in the
   level frame. `kind` is `door`, `window` or `opening`.
 - **Provenance** on every element: `source` (`detected`, `manual`,
   `imported`), `locked` (a re-run must not overwrite it), `confidence` (0..1,
-  -1 unknown), `metadata` (any JSON value; evidence without a field yet).
+  -1 unknown), `metadata` (any JSON value; evidence without a field yet). In
+  a record, `metadata` is that value as JSON text; the writer rejects a
+  record whose `metadata` is not JSON text.
+- **Numbers** are finite; integers (`idx`, `storey`, `face_points`,
+  `axis_family`, ...) fit a 32-bit `int`.
 - **Absent vs empty.** An element array that is *absent* means "this model
   says nothing about that kind"; *present and empty* (`"walls": []`) means
   "this model has none". The benchmark reports the first as n/a and scores
@@ -99,12 +106,14 @@ A complete example is `tests/fixtures/solid_model/two_rooms.plan.json`.
 ### Strictness
 
 `io::solid_model_from_json` rejects, with an `std::invalid_argument` naming
-the element (`walls[2] (guid 'w3'): ...`): an unknown key (a typo must not
-silently become a default), a wrong type, a missing `model_version` or a
-version other than 1, a zero-length wall axis, a ring with fewer than 3
-points, an opening with `s_end <= s_start` or `z_head <= z_sill`, a reference
-to a wall, space or storey the document does not contain, and a duplicate
-`guid` or storey `idx`.
+the element (`walls[2] (guid 'w3'): ...`): text that is not JSON (including
+a number that overflows a double), an unknown key (a typo must not silently
+become a default), a wrong type, a non-finite number, an integer outside
+`int`, a missing `model_version` or a version other than 1, a zero-length
+wall axis, a space polygon that breaks the ring and hole rules above, an
+opening with `s_end <= s_start` or `z_head <= z_sill`, a reference to a wall,
+space or storey the document does not contain, and a duplicate `guid` or
+storey `idx`.
 
 `solid_model_to_json` writes keys in a fixed order and every field of every
 element, so `JSON -> records -> JSON` is a fixed point (tested in
@@ -123,18 +132,26 @@ exactly `io::kSolidModelJsonVersion`.
 reference, options)`. Every metric is `null` when either model does not
 provide the element kind it needs.
 
+**Storey coverage.** The reference covers the storeys in its `storeys` plus
+every storey one of its walls or spaces stands on. Detected walls, spaces and
+openings (by their host wall's storey) on any other storey are left out of
+every metric, so a reference that models only the ground floor does not
+charge a multi-storey detection false positives or extra rooms; the number
+left out is `counts.detected_outside_reference`. A reference that names no
+storey at all (no storeys, walls or spaces) covers everything.
+
 | Metric | Definition | Better |
 |---|---|---|
 | `room_count_error` | detected spaces - reference spaces (signed) | 0 |
 | `room_iou_mean` | mean over reference spaces of the 2D IoU with the detected space matched to it; unmatched = 0 | higher |
 | `wall_recall` / `wall_precision` | matched / reference walls, matched / detected walls | higher |
 | `wall_position_rms_m` | RMS of matched detected walls' endpoint distances to the reference axis line | lower |
-| `wall_thickness_err_mean_m` / `_p95_m` | \|detected - reference\| thickness over matched walls with both known; mean and nearest-rank P95 | lower |
+| `wall_thickness_err_mean_m` / `_p95_m` | \|detected - reference\| thickness over matched walls whose thickness is known (> 0) and measured (`assumed` false) on both sides; mean and nearest-rank P95. Pairs left out for `assumed` are counted in `counts.thickness_assumed_excluded`, scored pairs in `counts.thickness_pairs` | lower |
 | `opening_recall` / `opening_precision` | matched / reference, matched / detected openings | higher |
 | `fit_mean_m` | mean distance of the scan cloud's points to the solid mesh | lower |
 | `fit_within_share` | share of those points within `fit_within_m` (2 cm) | higher |
 | `seen_share_mean` | mean `seen_share` of detected walls that report one | higher |
-| `assumed_share` | share of detected walls with `assumed: true` | lower |
+| `assumed_share` | share of detected walls with `assumed: true`. The flag has no "unknown" state, so a detector that never sets it reports 0 | lower |
 
 Matching is one-to-one and greedy, best score first, ties by index, so a
 report is deterministic (STANDARDS §6):
@@ -142,10 +159,14 @@ report is deterministic (STANDARDS §6):
 - **Walls** on the same storey match when their axes differ by at most
   `wall_match_angle_deg` (10°, undirected), the detected axis' midpoint is
   within `wall_match_dist_m` (0.5 m) of the reference axis line, and the two
-  overlap along it. Closest first.
+  extents projected on the reference axis overlap by at least
+  `wall_match_min_overlap` (0.5) of their union (a 1D IoU), so a short
+  fragment lying on the line cannot take the full wall's place. Closest
+  midpoint first.
 - **Spaces** on the same storey: exact 2D IoU (CGAL boolean set operations
   on polygons with holes), highest first.
-- **Openings**: the detected opening is placed in plan through its host wall,
+- **Openings** on the same storey (their host walls' storeys): the detected
+  opening is placed in plan through its host wall,
   then re-expressed in the reference opening's host-wall coordinates (s
   along that axis, z); a match needs near-parallel host walls, the detected
   opening within `wall_match_dist_m` of the reference wall line, and a face
@@ -153,8 +174,11 @@ report is deterministic (STANDARDS §6):
 - **Fit** (`fit_report`): point-to-triangle distance through a CGAL AABB tree
   over the mesh's faces.
 
-`SolidModelReport::to_json()` adds a `counts` object (reference, detected
-and matched walls / spaces / openings, fit points) behind the ratios.
+`SolidModelReport::to_json()` adds `fit_source` (the project, cloud and mesh
+the fit came from, `null` when there is no fit) and a `counts` object
+(reference, detected and matched walls / spaces / openings, fit points,
+thickness pairs, elements outside the reference's storeys) behind the
+ratios.
 
 ## `rux analyze solid`
 
@@ -166,10 +190,18 @@ rux analyze solid --reference plan.json --model baseline.json --json
 
 The detected model is `io::load_solid_model(project)`, or `--model` for a
 model file (a baseline). The fit metrics read `--cloud` (default `cloud`)
-and `--mesh` (default `mesh`) from the project when both exist. Each block
-of n/a metrics is explained by a warning. Tolerances: `--wall-angle`,
-`--wall-dist`, `--opening-iou`, `--fit-within` (defaults from
-`SolidMetricsOptions`).
+and `--mesh` (default `mesh`) from the project when both exist; with
+`--model` they are computed only when `--cloud` or `--mesh` is passed
+explicitly, since they measure the project's mesh, not the model file. A fit
+that cannot be computed (a mesh without a usable triangle, a cloud without a
+finite point) leaves the fit metrics n/a with a warning; the rest of the
+report is still written. Each block of n/a metrics is explained by a
+warning. Tolerances: `--wall-angle`, `--wall-dist`, `--wall-overlap`,
+`--opening-iou`, `--fit-within` (defaults from `SolidMetricsOptions`).
+
+Exit status: 0 on success; 3 (`INVALID_ARGUMENT`) for an invalid reference,
+model file or model; 2 (`IO`) when the report cannot be written; 1 for any
+other failure.
 
 ## `scripts/bench-solid.sh`
 
@@ -183,20 +215,22 @@ two_rooms_synth  synthetic tests/fixtures/solid_model/two_rooms.plan.json tests/
 
 - `model` is a solid-model JSON scored with `--model`, or `-` to score the
   project's own model.
+- `name` must be unique in the manifest (the comparison keys rows by it).
 - `project` is a `.rux`; it is **copied** to a scratch directory before
-  anything runs (opening a project can migrate it). Paths may use
+  anything runs (opening a project can migrate it), together with its
+  `-wal`/`-shm` files so un-checkpointed changes are not lost; the source is
+  never opened. Paths may use
   `$VARIABLES`; a row whose variable is unset or whose files are missing is
   reported as skipped, so local-only rows (`kind` `local`, e.g. S3DIS via
   `$REUSEX_S3DIS_DIR`) cost nothing elsewhere.
 - `stages` is a comma-separated list of `rux create` subcommands run on the
-  copy first (the solid-model stage DAG as it lands: `storeys`, `walls`,
-  `spaces`, `openings`), or `-`.
+  copy first, or `-`.
 - `kind` labels the row: `synthetic`, `fixture`, `baseline` (a third-party
   model scored as a row, never a reference) or `local`.
 
 Compare two reports with `scripts/bench-solid-compare.py baseline.json
 candidate.json [--threshold 5]`: per row and metric it prints both values and
 the change, knows which direction is better for each metric, and exits 1 when
-a metric got worse by more than `--threshold` percent, or went from a number
-to n/a. Each work package records its bench line in its epic's notes (W3.7,
-W4.4, W5.5).
+a metric got worse by more than `--threshold` percent, went from a number to
+n/a, a row that ran in the baseline failed in the candidate, or no row could
+be compared at all.

@@ -21,7 +21,8 @@ skipped rows, are reported but never fail the comparison.
 
 Exit status:
     0  nothing regressed beyond --threshold
-    1  at least one regression, or an input could not be read
+    1  at least one regression, no row both reports ran (all skipped, failed
+       or unmatched: nothing was compared), or an input could not be read
 
 Python 3 stdlib only.
 """
@@ -212,6 +213,11 @@ def main(argv: "list[str] | None" = None) -> int:
     lines = compare(load_report(args.baseline), load_report(args.candidate),
                     args.threshold, args.abs_tolerance)
     print_table(lines)
+    compared = {ln.row for ln in lines if ln.metric != "*"}
+    if not compared:
+        print("\nerror: no row could be compared (every row is skipped, "
+              "failed, or present in one report only)", file=sys.stderr)
+        return 1
     regressions = [ln for ln in lines if ln.regression]
     if regressions:
         print(

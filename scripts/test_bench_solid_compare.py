@@ -143,6 +143,13 @@ def main() -> int:
         r = run_cli(tmp, report(row("a")), report(row("a", wall_recall=0.5)),
                     "--threshold", "50")
         check("CLI --threshold widens the gate", r.returncode == 0, r.stderr)
+        r = run_cli(tmp, report(row("a")), report(row("a", status="skipped")))
+        check("CLI exits 1 when no row could be compared",
+              r.returncode == 1 and "no row" in r.stderr, r.stderr)
+        r = run_cli(tmp, report(row("a")),
+                    report(row("a"), row("b", status="skipped")))
+        check("CLI exits 0 when some rows were compared", r.returncode == 0,
+              r.stderr)
         (tmp / "bad.json").write_text("{nope")
         r = subprocess.run([sys.executable, str(COMPARE),
                             str(tmp / "bad.json"), str(tmp / "bad.json")],

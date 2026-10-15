@@ -54,6 +54,25 @@ expand() {
   echo "$s"
 }
 
+# Row names key the comparison (bench-solid-compare.py): they must be unique.
+dupes="$(awk '!/^[[:space:]]*(#|$)/ {print $1}' "$manifest" | sort | uniq -d)"
+if [[ -n "$dupes" ]]; then
+  echo "error: duplicate row name(s) in $manifest: $(echo $dupes)" >&2
+  exit 2
+fi
+
+# Copy a project without losing un-checkpointed changes: the database file
+# goes together with its -wal (and -shm) sidecars, and only the copy is ever
+# opened. Opening the source itself, even read-only through sqlite3, would
+# create sidecars next to a reference dataset.
+copy_project() {
+  local src="$1" dst="$2" ext
+  cp "$src" "$dst" || return 1
+  for ext in -wal -shm; do
+    if [[ -f "$src$ext" ]]; then cp "$src$ext" "$dst$ext" || return 1; fi
+  done
+}
+
 rows_file="$work/rows.jsonl"
 : >"$rows_file"
 
@@ -109,7 +128,12 @@ while read -r name kind reference model project stages _rest; do
   proj_copy="$row_dir/absent.rux"
   if [[ "$proj_path" != "-" ]]; then
     proj_copy="$row_dir/$(basename "$proj_path")"
-    cp "$proj_path" "$proj_copy"
+    if ! copy_project "$proj_path" "$proj_copy"; then
+      echo "    FAILED: cannot copy $proj_path"
+      row_json "$name" "$kind" failed "cannot copy $proj_path" -
+      n_fail=$((n_fail + 1))
+      continue
+    fi
   fi
 
   failed=""
@@ -117,7 +141,7 @@ while read -r name kind reference model project stages _rest; do
     IFS=',' read -r -a stage_list <<<"$stages"
     for stage in "${stage_list[@]}"; do
       echo "    rux create $stage"
-      if ! "$rux" -p "$proj_copy" create "$stage" >"$row_dir/$stage.log" 2>&1; then
+      if ! "$rux" -p "$proj_copy" create "$stage" </dev/null >"$row_dir/$stage.log" 2>&1; then
         failed="rux create $stage failed (log: $row_dir/$stage.log)"
         tail -n 20 "$row_dir/$stage.log" >&2 || true
         break
@@ -125,7 +149,7 @@ while read -r name kind reference model project stages _rest; do
     done
   fi
   if [[ -z "$failed" ]] &&
-    ! "$rux" -p "$proj_copy" analyze solid "${args[@]}" >"$row_dir/analyze.log" 2>&1; then
+    ! "$rux" -p "$proj_copy" analyze solid "${args[@]}" </dev/null >"$row_dir/analyze.log" 2>&1; then
     failed="rux analyze solid failed"
     tail -n 20 "$row_dir/analyze.log" >&2 || true
   fi
