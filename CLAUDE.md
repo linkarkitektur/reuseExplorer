@@ -463,6 +463,12 @@ and deleted the shims. `include/geometry/` now holds only the real
   vertical (bisector of their normals) and storeys from a height histogram,
   as `core::StoreyRecord`s sharing one level frame
   (`geometry/level_frame.hpp`, header-only like `component_persistence.hpp`)
+- `classify_planes.hpp`: `classify_planes()` — per plane: orientation,
+  majority semantic class + vote share, role (wall/floor/ceiling/furniture/
+  clutter/...) via the class -> role map `core/class_role_map.json`
+  (`core/class_role_map.hpp`, embedded at build time) or geometric rules when
+  the class is missing or contradicted, storey, area, z-range
+  (`core::PlaneClassRecord`)
 
 **reconstruction** (`include/reconstruction/`):
 - `CellComplex.hpp`: Boost.Graph-based 3D spatial representation
