@@ -25,7 +25,9 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <set>
 #include <stdexcept>
+#include <string>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
@@ -106,7 +108,8 @@ double angle_deg(const Axis &a, const Axis &b) {
 }
 
 /// Whether detected axis @p d can be reference axis @p r: near-parallel, its
-/// midpoint close to r's line, and overlapping r's extent along r.
+/// midpoint close to r's line, and covering enough of r along r (1D IoU of
+/// the two extents projected on r >= wall_match_min_overlap).
 bool walls_compatible(const Axis &r, const Axis &d,
                       const SolidMetricsOptions &opt, double &mid_dist) {
   if (angle_deg(r, d) > opt.wall_match_angle_deg)
@@ -117,9 +120,12 @@ bool walls_compatible(const Axis &r, const Axis &d,
   if (mid_dist > opt.wall_match_dist_m)
     return false;
   const double s0 = along(r, d.ax, d.ay), s1 = along(r, ex, ey);
-  const double overlap =
-      std::min(std::max(s0, s1), r.length) - std::max(std::min(s0, s1), 0.0);
-  return overlap > 0.0;
+  const double lo = std::min(s0, s1), hi = std::max(s0, s1);
+  const double overlap = std::min(hi, r.length) - std::max(lo, 0.0);
+  if (overlap <= 0.0)
+    return false;
+  const double extent = std::max(hi, r.length) - std::min(lo, 0.0);
+  return overlap / extent >= opt.wall_match_min_overlap;
 }
 
 /// Nearest-rank percentile of @p v (sorted in place), 0 < p <= 100.
@@ -165,12 +171,17 @@ void compare_walls(const core::SolidModel &det, const core::SolidModel &ref,
     const double d0 = off_line(ra[m.ref], dw.x0, dw.y0);
     const double d1 = off_line(ra[m.ref], dw.x1, dw.y1);
     sq += d0 * d0 + d1 * d1;
-    const double tr = ref.walls[m.ref].thickness, td = dw.thickness;
-    if (tr > 0.0 && td > 0.0)
-      thick_err.push_back(std::abs(td - tr));
+    const auto &rw = ref.walls[m.ref];
+    if (rw.thickness > 0.0 && dw.thickness > 0.0) {
+      if (rw.assumed || dw.assumed)
+        ++r.thickness_assumed_excluded;
+      else
+        thick_err.push_back(std::abs(dw.thickness - rw.thickness));
+    }
   }
   r.wall_position_rms_m =
       std::sqrt(sq / (2.0 * static_cast<double>(matches.size())));
+  r.thickness_pairs = thick_err.size();
   if (!thick_err.empty()) {
     double sum = 0.0;
     for (double e : thick_err)
@@ -274,6 +285,7 @@ void compare_spaces(const core::SolidModel &det, const core::SolidModel &ref,
 /// and the host axis it lies on.
 struct PlacedOpening {
   Axis host;
+  int storey; ///< the host wall's storey
   double x0, y0, x1, y1;
   double z0, z1;
 };
@@ -291,10 +303,11 @@ std::vector<PlacedOpening> place_openings(const core::SolidModel &m,
           "solid metrics: {} opening '{}' names host wall '{}', which the "
           "model does not contain",
           which, o.guid, o.wall));
-    const Axis a = axis_of(m.walls[it->second]);
-    out.push_back({a, a.ax + a.dx * o.s_start, a.ay + a.dy * o.s_start,
-                   a.ax + a.dx * o.s_end, a.ay + a.dy * o.s_end, o.z_sill,
-                   o.z_head});
+    const auto &host = m.walls[it->second];
+    const Axis a = axis_of(host);
+    out.push_back({a, host.storey, a.ax + a.dx * o.s_start,
+                   a.ay + a.dy * o.s_start, a.ax + a.dx * o.s_end,
+                   a.ay + a.dy * o.s_end, o.z_sill, o.z_head});
   }
   return out;
 }
@@ -303,6 +316,8 @@ std::vector<PlacedOpening> place_openings(const core::SolidModel &m,
 /// wall face coordinates (s along r's axis, z); 0 when d is not on r's wall.
 double opening_iou(const PlacedOpening &r, const PlacedOpening &d,
                    const SolidMetricsOptions &opt) {
+  if (r.storey != d.storey)
+    return 0.0;
   if (angle_deg(r.host, d.host) > opt.wall_match_angle_deg)
     return 0.0;
   const double mx = 0.5 * (d.x0 + d.x1), my = 0.5 * (d.y0 + d.y1);
@@ -359,6 +374,53 @@ void evidence_shares(const core::SolidModel &det, SolidModelReport &r) {
   r.assumed_share = ratio(assumed, det.walls.size());
 }
 
+/// The storeys @p ref covers: its `storeys` plus every storey its walls and
+/// spaces stand on. Empty when it names none.
+std::set<int> covered_storeys(const core::SolidModel &ref) {
+  std::set<int> out;
+  for (const auto &s : ref.storeys)
+    out.insert(s.idx);
+  for (const auto &w : ref.walls)
+    out.insert(w.storey);
+  for (const auto &s : ref.spaces)
+    out.insert(s.storey);
+  return out;
+}
+
+/// @p det without the walls, spaces and openings (by host wall) that stand on
+/// a storey outside @p covered; the number left out goes to @p dropped.
+core::SolidModel restrict_to_storeys(const core::SolidModel &det,
+                                     const std::set<int> &covered,
+                                     std::size_t &dropped) {
+  core::SolidModel out = det;
+  out.walls.clear();
+  out.spaces.clear();
+  out.openings.clear();
+  std::unordered_map<std::string, int> host_storey;
+  for (const auto &w : det.walls) {
+    host_storey.emplace(w.guid, w.storey);
+    if (covered.count(w.storey))
+      out.walls.push_back(w);
+    else
+      ++dropped;
+  }
+  for (const auto &sp : det.spaces) {
+    if (covered.count(sp.storey))
+      out.spaces.push_back(sp);
+    else
+      ++dropped;
+  }
+  for (const auto &o : det.openings) {
+    const auto it = host_storey.find(o.wall);
+    // An opening with an unknown host is kept: place_openings reports it.
+    if (it == host_storey.end() || covered.count(it->second))
+      out.openings.push_back(o);
+    else
+      ++dropped;
+  }
+  return out;
+}
+
 nlohmann::ordered_json opt_json(const std::optional<double> &v) {
   return v ? nlohmann::ordered_json(*v) : nlohmann::ordered_json(nullptr);
 }
@@ -382,6 +444,8 @@ std::string SolidModelReport::to_json(int indent) const {
   j["fit_within_share"] = opt_json(fit_within_share);
   j["seen_share_mean"] = opt_json(seen_share_mean);
   j["assumed_share"] = opt_json(assumed_share);
+  j["fit_source"] = fit_source.empty() ? nlohmann::ordered_json(nullptr)
+                                       : nlohmann::ordered_json(fit_source);
   j["counts"] = {{"reference_walls", reference_walls},
                  {"detected_walls", detected_walls},
                  {"matched_walls", matched_walls},
@@ -391,14 +455,26 @@ std::string SolidModelReport::to_json(int indent) const {
                  {"reference_openings", reference_openings},
                  {"detected_openings", detected_openings},
                  {"matched_openings", matched_openings},
-                 {"fit_points", fit_points}};
+                 {"fit_points", fit_points},
+                 {"thickness_pairs", thickness_pairs},
+                 {"thickness_assumed_excluded", thickness_assumed_excluded},
+                 {"detected_outside_reference", detected_outside_reference}};
   return j.dump(indent);
 }
 
-SolidModelReport compare_solid_models(const core::SolidModel &detected,
+SolidModelReport compare_solid_models(const core::SolidModel &detected_in,
                                       const core::SolidModel &reference,
                                       const SolidMetricsOptions &opt) {
   SolidModelReport r;
+  const std::set<int> covered = covered_storeys(reference);
+  const core::SolidModel detected =
+      covered.empty() ? detected_in
+                      : restrict_to_storeys(detected_in, covered,
+                                            r.detected_outside_reference);
+  if (r.detected_outside_reference > 0)
+    reusex::debug("solid metrics: {} detected elements stand on storeys the "
+                  "reference does not cover and are not scored",
+                  r.detected_outside_reference);
   if (detected.has_walls() && reference.has_walls())
     compare_walls(detected, reference, opt, r);
   if (detected.has_spaces() && reference.has_spaces())

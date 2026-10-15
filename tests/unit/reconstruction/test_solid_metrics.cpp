@@ -349,3 +349,85 @@ TEST_CASE("FitReport_MeshWithoutTriangles_Throws",
   CHECK_THROWS_AS(fit_report(cloud, mesh, SolidMetricsOptions{}, r),
                   std::invalid_argument);
 }
+
+TEST_CASE("CompareSolidModels_OpeningOnAnotherStorey_IsNotAMatch",
+          "[reconstruction][solid_metrics]") {
+  // The same window position one storey up: walls on different storeys
+  // never match, and neither may their openings. The reference covers both
+  // storeys, so nothing is filtered out before matching.
+  SolidModel ref = box_reference();
+  ref.storeys.resize(2);
+  ref.storeys[1].idx = 1;
+  SolidModel det = box_reference();
+  for (auto &w : det.walls)
+    w.storey = 1;
+  const auto r = compare_solid_models(det, ref);
+  CHECK(r.detected_openings == 1);
+  CHECK(r.matched_openings == 0);
+}
+
+TEST_CASE("CompareSolidModels_ShortFragmentOnTheLine_DoesNotStealTheWall",
+          "[reconstruction][solid_metrics]") {
+  SolidModel ref;
+  ref.walls = {wall("r", 0, 0, 4, 0, 0.2)};
+  SolidModel det;
+  det.walls = {wall("fragment", 1.8, 0.0, 2.2, 0.0, 0.2), // exactly on the line
+               wall("full", 0, 0.05, 4, 0.05, 0.2)};      // the real wall
+  const auto r = compare_solid_models(det, ref);
+  CHECK(r.matched_walls == 1);
+  CHECK_THAT(r.wall_position_rms_m.value(), WithinAbs(0.05, 1e-9));
+  CHECK_THAT(r.wall_precision.value(), WithinAbs(0.5, 1e-12));
+}
+
+TEST_CASE("CompareSolidModels_MinOverlapOption_ControlsFragments",
+          "[reconstruction][solid_metrics]") {
+  SolidModel ref;
+  ref.walls = {wall("r", 0, 0, 4, 0, 0.2)};
+  SolidModel det;
+  det.walls = {wall("half", 0, 0, 2, 0, 0.2)}; // covers 50 % of the wall
+  SolidMetricsOptions opt;
+  opt.wall_match_min_overlap = 0.6;
+  CHECK(compare_solid_models(det, ref, opt).matched_walls == 0);
+  opt.wall_match_min_overlap = 0.4;
+  CHECK(compare_solid_models(det, ref, opt).matched_walls == 1);
+}
+
+TEST_CASE(
+    "CompareSolidModels_DetectionsOnStoreysOutsideTheReference_AreIgnored",
+    "[reconstruction][solid_metrics]") {
+  // The reference covers storey 0 only; a detector that also models storey 1
+  // must not be charged false positives (or extra rooms) for it.
+  SolidModel ref = box_reference();
+  ref.storeys.resize(1); // storey idx 0
+  SolidModel det = box_reference();
+  for (auto w : box_reference().walls) {
+    w.guid += "-up";
+    w.storey = 1;
+    det.walls.push_back(w);
+  }
+  auto upper_room = rect_space("r-up", 0.15, 0.15, 5.85, 3.85);
+  upper_room.storey = 1;
+  det.spaces.push_back(upper_room);
+  auto upper_window = opening("o-up", "s-up", 2.0, 3.0, 1.0, 2.0);
+  det.openings.push_back(upper_window);
+
+  const auto r = compare_solid_models(det, ref);
+  CHECK(r.wall_precision.value() == 1.0);
+  CHECK(r.detected_walls == 4);
+  CHECK(r.room_count_error.value() == 0);
+  CHECK(r.opening_precision.value() == 1.0);
+  CHECK(r.detected_outside_reference == 6); // 4 walls, 1 space, 1 opening
+}
+
+TEST_CASE("CompareSolidModels_AssumedThickness_IsNotScored",
+          "[reconstruction][solid_metrics]") {
+  const SolidModel ref = box_reference();
+  SolidModel det = ref;
+  det.walls[0].thickness = 0.5; // a defaulted guess, 0.2 off
+  det.walls[0].assumed = true;
+  det.walls[1].thickness = 0.32;
+  const auto r = compare_solid_models(det, ref);
+  CHECK(r.thickness_pairs == 3);
+  CHECK(r.thickness_assumed_excluded == 1);
+  CHECK_THAT(r.wall_thickness_err_mean_m.value(), WithinAbs(0.02 / 3.0, 1e-9));
+}

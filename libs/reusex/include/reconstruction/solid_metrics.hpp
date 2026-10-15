@@ -37,6 +37,11 @@ struct SolidMetricsOptions {
   /// reference axis line [m]. Also bounds how far a detected opening may sit
   /// from the reference opening's host wall.
   double wall_match_dist_m = 0.5;
+  /// ... and the two axes overlap along the reference axis by at least this
+  /// fraction of their combined extent (1D IoU along the reference axis), so
+  /// a short fragment lying on the line cannot take the place of the full
+  /// wall. Candidates that pass are ranked by midpoint distance.
+  double wall_match_min_overlap = 0.5;
   /// A detected opening matches a reference opening when their rectangles in
   /// the reference wall's (s, z) face coordinates have at least this IoU.
   double opening_match_iou = 0.5;
@@ -57,7 +62,8 @@ struct SolidModelReport {
   /// wall's axis line [m].
   std::optional<double> wall_position_rms_m;
   /// |detected - reference| thickness over matched walls whose thickness is
-  /// known on both sides: mean and nearest-rank P95 [m].
+  /// known (> 0) and measured (not WallRecord::assumed) on both sides: mean
+  /// and nearest-rank P95 [m].
   std::optional<double> wall_thickness_err_mean_m;
   std::optional<double> wall_thickness_err_p95_m;
   std::optional<double> wall_recall;    ///< matched / reference walls
@@ -70,8 +76,14 @@ struct SolidModelReport {
   std::optional<double> fit_within_share;
   /// Mean WallRecord::seen_share over detected walls that report one.
   std::optional<double> seen_share_mean;
-  /// Share of detected walls whose thickness was assumed, not measured.
+  /// Share of detected walls flagged WallRecord::assumed (thickness
+  /// defaulted, not measured). The record has no "unknown" state, so a
+  /// detector that never sets the flag reports 0, not n/a.
   std::optional<double> assumed_share;
+
+  /// Where the fit metrics came from ("project '<path>': cloud 'c' vs mesh
+  /// 'm'"), empty when they were not computed. Set by the caller.
+  std::string fit_source;
 
   /// Element counts behind the ratios (0 when the kind is not provided).
   std::size_t reference_walls = 0, detected_walls = 0, matched_walls = 0;
@@ -79,20 +91,34 @@ struct SolidModelReport {
   std::size_t reference_openings = 0, detected_openings = 0,
               matched_openings = 0;
   std::size_t fit_points = 0;
+  /// Matched wall pairs scored for thickness, and pairs left out because one
+  /// side's thickness was assumed.
+  std::size_t thickness_pairs = 0, thickness_assumed_excluded = 0;
+  /// Detected walls, spaces and openings on storeys the reference does not
+  /// cover, left out of every metric (precision, room count, ...).
+  std::size_t detected_outside_reference = 0;
 
-  /// Every metric as a key; null for each nullopt. Counts under "counts".
+  /// Every metric as a key; null for each nullopt; "fit_source" (null when
+  /// empty). Counts under "counts".
   [[nodiscard]] std::string to_json(int indent = 2) const;
 };
 
 /// Score @p detected against @p reference.
 ///
-/// Walls are compared storey by storey (WallRecord::storey), in the level
-/// frame both models are expressed in. Matching is one-to-one and greedy in a
+/// Walls, spaces and openings (through their host wall) are compared storey
+/// by storey, in the level frame both models are expressed in. Detected
+/// elements on a storey the reference does not cover (neither in its
+/// `storeys` nor on any of its walls or spaces) are left out and counted in
+/// SolidModelReport::detected_outside_reference; when the reference names no
+/// storey at all, nothing is left out. Matching is one-to-one and greedy in a
 /// fixed order (best score first, ties by index), so the report is
 /// deterministic.
 ///
-/// @throws std::invalid_argument when a space polygon is not simple, or an
-///         opening names a host wall its model does not contain.
+/// @throws std::invalid_argument when a wall axis has zero length, a space
+///         polygon is not a valid polygon with holes (non-simple or
+///         zero-area ring), or an opening names a host wall its model does
+///         not contain. io::solid_model_from_json already rejects all of
+///         these; the checks guard models built in memory.
 SolidModelReport compare_solid_models(const core::SolidModel &detected,
                                       const core::SolidModel &reference,
                                       const SolidMetricsOptions &opt = {});
@@ -102,8 +128,9 @@ SolidModelReport compare_solid_models(const core::SolidModel &detected,
 /// mesh's faces; polygons with more than three vertices are fanned). The
 /// cloud and the mesh must share a frame.
 ///
-/// @throws std::invalid_argument when the mesh has no usable triangle or the
-///         cloud no finite point.
+/// @throws std::invalid_argument when the mesh has no usable (non-degenerate)
+///         triangle, a face references a vertex the mesh does not have, or
+///         the cloud has no finite point. @p report is left unchanged then.
 void fit_report(const Cloud &cloud, const pcl::PolygonMesh &mesh,
                 const SolidMetricsOptions &opt, SolidModelReport &report);
 
