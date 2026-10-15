@@ -134,6 +134,8 @@ TEST_CASE("PanoramaAlignmentOutcome_ToString_NamesEveryOutcome",
   CHECK(std::string(to_string(PanoramaAlignmentOutcome::aligned)) == "aligned");
   CHECK(std::string(to_string(PanoramaAlignmentOutcome::no_slice_pnp)) ==
         "no_slice_pnp");
+  CHECK(std::string(to_string(PanoramaAlignmentOutcome::below_noise_floor)) ==
+        "below_noise_floor");
   CHECK(std::string(to_string(PanoramaAlignmentOutcome::upside_down)) ==
         "upside_down");
   CHECK(std::string(

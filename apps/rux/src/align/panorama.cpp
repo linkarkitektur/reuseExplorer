@@ -49,9 +49,16 @@ WORKFLOW:
 NOTES:
   - Requires panoramas linked to a sensor frame (node_id) with depth.
   - A panorama that fails to align keeps its timestamp placement; the log
-    names the gate that rejected it (no_slice_pnp, upside_down,
-    too_few_pooled_inliers, refinement_collapsed, correction_gate, ...).
+    names the gate that rejected it and its numbers (no_slice_pnp,
+    below_noise_floor, upside_down, too_few_pooled_inliers,
+    refinement_collapsed, correction_gate, ...).
     -vv logs the matching funnel per panorama, -vvv per slice and frame.
+  - Acceptance is evidence-based: the best slice's PnP support must beat the
+    same panorama's shuffled-correspondence null by --null-margin
+    (below_noise_floor otherwise), and the centre must stay within
+    --max-correction of the seed frame, the hand-held position prior for a
+    360 camera carried next to the scanner. Raise or disable (0) it for a
+    camera that was placed elsewhere.
   - --fix-translation is recommended when EXIF timestamps are reliable.
     The panorama centre is fixed to the seed frame position; only the 3-DOF
     rotation is solved. This avoids ill-conditioned translation drift when
@@ -62,28 +69,60 @@ NOTES:
                 "Compute and report only; do not write poses");
   sub->add_flag("--overwrite", opt->overwrite,
                 "Re-align panoramas that are already aligned");
+  auto &ao = opt->align; // flags bind to the library struct (STANDARDS §4)
   sub->add_flag(
-      "--fix-translation", opt->fix_translation,
+      "--fix-translation", ao.fix_translation,
       "Fix the panorama centre to the seed frame's stored position and solve "
       "for rotation only. Recommended when EXIF timestamps are reliable.");
-  sub->add_option("--min-inliers", opt->min_inliers,
+  sub->add_option("--min-inliers", ao.min_inliers,
                   "Accept an alignment above this many pooled inliers")
+      ->check(CLI::NonNegativeNumber)
       ->capture_default_str();
-  sub->add_option("--window", opt->window,
+  sub->add_option("--window", ao.candidate_window,
                   "Candidate sensor frames on each side of the seed")
+      ->check(CLI::NonNegativeNumber)
       ->capture_default_str();
-  sub->add_option("--max-candidates", opt->max_candidates,
+  sub->add_option("--max-candidates", ao.max_candidates,
                   "Cap candidate frames matched per panorama")
+      ->check(CLI::PositiveNumber)
       ->capture_default_str();
-  sub->add_option("--n-yaw", opt->n_yaw,
-                  "Perspective slices around the equator")
+  sub->add_option("--n-yaw", ao.n_yaw, "Perspective slices around the equator")
       ->check(CLI::Range(1, 64))
       ->capture_default_str();
-  sub->add_option("--fov", opt->fov, "Per-slice horizontal FOV (deg)")
+  sub->add_option("--fov", ao.fov_deg, "Per-slice horizontal FOV (deg)")
       ->check(CLI::Range(1.0, 179.0))
       ->capture_default_str();
-  sub->add_option("--max-correction", opt->max_correction,
-                  "Reject corrections beyond this distance in m (0 disables)")
+  sub->add_option("--slice", ao.slice, "Perspective slice size (px, square)")
+      ->check(CLI::Range(64, 8192))
+      ->capture_default_str();
+  sub->add_option("--max-features", ao.max_features, "ORB features per image")
+      ->check(CLI::PositiveNumber)
+      ->capture_default_str();
+  sub->add_option("--ratio-test", ao.ratio_test, "Lowe ratio threshold")
+      ->check(CLI::Range(0.0f, 1.0f))
+      ->capture_default_str();
+  sub->add_option("--max-depth", ao.max_depth,
+                  "Ignore frame keypoints deeper than this (m)")
+      ->check(CLI::PositiveNumber)
+      ->capture_default_str();
+  sub->add_option("--ransac-iterations", ao.ransac_iterations,
+                  "solvePnPRansac iterations per slice")
+      ->check(CLI::PositiveNumber)
+      ->capture_default_str();
+  sub->add_option("--null-trials", ao.null_trials,
+                  "Shuffled-correspondence trials that measure each "
+                  "panorama's noise floor (0 disables the gate)")
+      ->check(CLI::NonNegativeNumber)
+      ->capture_default_str();
+  sub->add_option("--null-margin", ao.null_margin,
+                  "The best slice must beat the noise floor by this factor")
+      ->check(CLI::Range(1.0, 100.0))
+      ->capture_default_str();
+  sub->add_option("--max-correction", ao.max_correction_m,
+                  "Hand-held position prior: reject a centre further than "
+                  "this from the seed frame, in m (0 disables)")
+      ->capture_default_str();
+  sub->add_option("--seed", ao.seed, "Seed of the noise-floor permutations")
       ->capture_default_str();
   sub->add_option("--figures", opt->figures_dir,
                   "Dump alignment comparison figures to this directory");
@@ -113,14 +152,7 @@ int run_subcommand_align_panorama(SubcommandAlignPanoramaOptions const &opt,
 
     reusex::ProjectDB db(project_path);
 
-    reusex::geometry::PanoramaAlignmentOptions ao;
-    ao.candidate_window = opt.window;
-    ao.max_candidates = opt.max_candidates;
-    ao.n_yaw = opt.n_yaw;
-    ao.fov_deg = opt.fov;
-    ao.min_inliers = opt.min_inliers;
-    ao.max_correction_m = opt.max_correction;
-    ao.fix_translation = opt.fix_translation;
+    reusex::geometry::PanoramaAlignmentOptions ao = opt.align;
     ao.collect_correspondences =
         !opt.diagnostics_path.empty() && opt.diagnostics_correspondences;
     if (opt.diagnostics_correspondences && opt.diagnostics_path.empty())
@@ -129,10 +161,10 @@ int run_subcommand_align_panorama(SubcommandAlignPanoramaOptions const &opt,
 
     // Slices are spread evenly over 360 deg; if their FOVs do not add up the
     // equator is sampled with gaps and matchable features get dropped.
-    if (opt.n_yaw * opt.fov < 360.0)
+    if (ao.n_yaw * ao.fov_deg < 360.0)
       spdlog::warn("--n-yaw {} x --fov {} deg covers only {:.0f} deg of the "
                    "equator; slices leave gaps and matches will be missed",
-                   opt.n_yaw, opt.fov, opt.n_yaw * opt.fov);
+                   ao.n_yaw, ao.fov_deg, ao.n_yaw * ao.fov_deg);
 
     auto panos = db.list_panoramic_images();
     if (panos.empty()) {
@@ -177,13 +209,10 @@ int run_subcommand_align_panorama(SubcommandAlignPanoramaOptions const &opt,
           diagnostics.push_back(
               reusex::geometry::panorama_alignment_diagnostics_json(r));
         if (!r.aligned) {
-          const auto &d = r.diagnostics;
-          spdlog::warn("{}: alignment failed ({}): {} depth-backed matches, "
-                       "best slice {} PnP inliers, pooled {} -> final {}, "
-                       "{:.2f} m from seed",
-                       pano.filename, reusex::geometry::to_string(r.outcome),
-                       d.correspondences_total, d.best_slice_inliers,
-                       d.initial_inliers, d.final_inliers, d.delta_from_seed_m);
+          // names the gate and the numbers that decided it (STANDARDS §5)
+          spdlog::warn("{}: not aligned, keeps its timestamp placement — {}",
+                       pano.filename,
+                       reusex::geometry::panorama_alignment_summary(r));
           ++failed;
           continue;
         }
@@ -221,6 +250,10 @@ int run_subcommand_align_panorama(SubcommandAlignPanoramaOptions const &opt,
                  aligned > 0 ? sum_delta / aligned : 0.0);
     for (const auto &[outcome, n] : by_outcome)
       spdlog::info("  {}: {}", outcome, n);
+    if (aligned == 0 && failed > 0)
+      spdlog::warn("No panorama aligned: all {} attempted kept their "
+                   "timestamp placement (gates per panorama above)",
+                   failed);
 
     if (!opt.diagnostics_path.empty()) {
       std::ofstream out(opt.diagnostics_path);

@@ -248,6 +248,58 @@ an uncertainty model. (4, **reusex-bx2.7**) A bug: the `rux align 360` CLI defau
 `PanoramaAlignmentOptions` (STANDARDS §4). Evaluate a learned matcher only
 after (1)–(3), so that it is measured against calibrated gates.
 
+## Follow-up: calibrated acceptance (reusex-bx2.4, 2026-10-15)
+
+Two gates were changed in response to this write-up:
+
+- **Noise floor (`below_noise_floor`).** For each panorama, the per-slice PnP
+  is re-run 5 times on the panorama's own correspondences, with each slice's
+  2 px location groups permuted. The real best slice must then beat 1.5× the
+  best null count. Permuting single pairs is not enough: the pool holds runs
+  of near-identical pairs, and a per-pair shuffle underestimates the floor.
+  On `003` the per-pair null gave 7 and the grouped null 14.
+- **Hand-held prior.** `max_correction_m` goes from 5 m to 1.5 m.
+
+The library and CLI defaults are now one set, window 12 and 8 candidates
+(reusex-bx2.7). Same NewOffice copy, `--dry-run`:
+
+| pano | before (CLI defaults) | after | best / needed | delta m |
+|---|---|---|---:|---:|
+| 003 | aligned (2.49 m) | below_noise_floor | 13 / 22 | – |
+| 004 | too_few_pooled_inliers | below_noise_floor | 6 / 14 | – |
+| 005 | no_slice_pnp | no_slice_pnp | 0 / – | – |
+| 006 | too_few_pooled_inliers | too_few_pooled_inliers | 15 / 10 | – |
+| 007 | upside_down | below_noise_floor | 15 / 26 | – |
+| 008 | upside_down | below_noise_floor | 15 / 22 | – |
+| 009 | correction_gate | below_noise_floor | 14 / 16 | – |
+| 010 | **aligned** | **aligned** | 62 / 35 | 0.58 |
+| 011 | correction_gate | correction_gate | 36 / 11 | 7.57 |
+| 012 | upside_down | below_noise_floor | 9 / 20 | – |
+| 013 | aligned (4.16 m) | below_noise_floor | 9 / 17 | – |
+| 014 | correction_gate | below_noise_floor | 8 / 23 | – |
+| 015 | too_few_pooled_inliers | too_few_pooled_inliers | 14 / 14 | – |
+| 016 | upside_down | below_noise_floor | 12 / 22 | – |
+| 017 | refinement_collapsed | below_noise_floor | 11 / 23 | – |
+| 018 | **aligned** | **aligned** | 28 / 19 | 1.00 |
+| 019 | upside_down | below_noise_floor | 14 / 16 | – |
+| 020 | upside_down | below_noise_floor | 14 / 32 | – |
+
+- **After:** 2 aligned, both credible, against 4 aligned / 2 credible before.
+  The two false positives, `003` and `013`, now fail the noise floor.
+- **Prior off** (`--max-correction 0`): `011` is the only addition, at
+  7.6 m. It is genuine signal with ill-conditioned translation (failure
+  mode 2).
+- **Window 25 / 20 candidates:** 1 aligned (`010`). More frames raise the
+  noise floor (null up to 30) faster than they raise the real support.
+- **Research null re-run** (pairings shuffled, the original patch): 0 accepted
+  at both window settings, also with the prior off. 14 to 17 of 18 stop at
+  `below_noise_floor`; the rest have no PnP at all.
+- **Determinism:** two runs give byte-identical diagnostics.
+
+`upside_down` no longer fires at the defaults. All six panoramas it used to
+stop are now rejected earlier, as noise. This supports the reading above
+that it was a coin flip on random poses.
+
 ## Reproduce
 
 ```bash

@@ -22,6 +22,7 @@
 
 #include <Eigen/Geometry>
 
+#include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -185,6 +186,8 @@ const char *to_string(PanoramaAlignmentOutcome o) {
     return "seed_not_found";
   case PanoramaAlignmentOutcome::no_slice_pnp:
     return "no_slice_pnp";
+  case PanoramaAlignmentOutcome::below_noise_floor:
+    return "below_noise_floor";
   case PanoramaAlignmentOutcome::upside_down:
     return "upside_down";
   case PanoramaAlignmentOutcome::too_few_pooled_inliers:
@@ -216,6 +219,9 @@ panorama_alignment_diagnostics_json(const PanoramaAlignmentResult &r) {
   j["correspondences_total"] = d.correspondences_total;
   j["best_slice"] = d.best_slice;
   j["best_slice_inliers"] = d.best_slice_inliers;
+  j["null_best_slice_inliers"] = d.null_best_slice_inliers;
+  j["noise_floor_threshold"] = d.noise_floor_threshold;
+  j["max_correction_m"] = d.max_correction_m;
   j["down_dot"] = num(d.down_dot);
   j["initial_inliers"] = d.initial_inliers;
   j["final_inliers"] = d.final_inliers;
@@ -257,6 +263,48 @@ panorama_alignment_diagnostics_json(const PanoramaAlignmentResult &r) {
     j["correspondences"] = std::move(corr);
   }
   return j.dump();
+}
+
+std::string panorama_alignment_summary(const PanoramaAlignmentResult &r) {
+  const auto &d = r.diagnostics;
+  const std::string name = to_string(r.outcome);
+  switch (r.outcome) {
+  case PanoramaAlignmentOutcome::aligned:
+    return fmt::format("aligned: {} inliers, {:.3f} deg RMS, centre {:.2f} m "
+                       "from seed (best slice {} PnP inliers, noise floor {})",
+                       r.inliers, r.rms_deg, r.delta_from_seed_m,
+                       d.best_slice_inliers, d.noise_floor_threshold);
+  case PanoramaAlignmentOutcome::no_slice_pnp:
+    return fmt::format("{}: {} depth-backed correspondences, best slice {} PnP "
+                       "inliers",
+                       name, d.correspondences_total, d.best_slice_inliers);
+  case PanoramaAlignmentOutcome::below_noise_floor:
+    return fmt::format("{}: best slice {} PnP inliers, needs >= {} (shuffled "
+                       "null {}; {} depth-backed correspondences)",
+                       name, d.best_slice_inliers, d.noise_floor_threshold,
+                       d.null_best_slice_inliers, d.correspondences_total);
+  case PanoramaAlignmentOutcome::upside_down:
+    return fmt::format("{}: PnP seed down . seed-frame down = {:.2f} < 0 (best "
+                       "slice {} PnP inliers, noise floor {})",
+                       name, d.down_dot, d.best_slice_inliers,
+                       d.noise_floor_threshold);
+  case PanoramaAlignmentOutcome::too_few_pooled_inliers:
+  case PanoramaAlignmentOutcome::refinement_collapsed:
+    return fmt::format("{}: pooled {} -> final {} inliers (best slice {} PnP "
+                       "inliers)",
+                       name, d.initial_inliers, d.final_inliers,
+                       d.best_slice_inliers);
+  case PanoramaAlignmentOutcome::correction_gate:
+    return fmt::format("{}: centre {:.2f} m from seed > {:.2f} m ({} inliers, "
+                       "{:.3f} deg RMS, best slice {} PnP inliers)",
+                       name, d.delta_from_seed_m, d.max_correction_m,
+                       d.final_inliers, d.rms_deg, d.best_slice_inliers);
+  case PanoramaAlignmentOutcome::no_image:
+  case PanoramaAlignmentOutcome::seed_not_found:
+  case PanoramaAlignmentOutcome::no_seed_pose:
+    break;
+  }
+  return fmt::format("{} (seed node {})", name, r.seed_node);
 }
 
 PanoramaAlignmentResult align_panorama(ProjectDB &db, int pano_id,
@@ -427,61 +475,58 @@ PanoramaAlignmentResult align_panorama(ProjectDB &db, int pano_id,
   }
 
   // --- per-slice PnP; keep the strongest as the initial pose ----------------
-  Eigen::Matrix3d Q_best = Eigen::Matrix3d::Identity(); // pano_from_world
-  Eigen::Vector3d t_best = Eigen::Vector3d::Zero();
-  int best_inliers = 0;
-
+  std::vector<pano_detail::SlicePnPInput> pnp_in(slices.size());
   for (size_t si = 0; si < slices.size(); ++si) {
-    const auto &cs = slice_corr[si];
-    if (static_cast<int>(cs.size()) < opt.min_slice_correspondences)
-      continue;
-    std::vector<cv::Point3f> obj;
-    std::vector<cv::Point2f> img;
-    obj.reserve(cs.size());
-    img.reserve(cs.size());
-    for (const auto &c : cs) {
-      obj.emplace_back(static_cast<float>(c.world.x()),
-                       static_cast<float>(c.world.y()),
-                       static_cast<float>(c.world.z()));
-      img.push_back(c.slice_px);
+    pnp_in[si].K = slices[si].K;
+    pnp_in[si].R_pano_from_view = slices[si].R_pano_from_view;
+    pnp_in[si].pixels.reserve(slice_corr[si].size());
+    pnp_in[si].world.reserve(slice_corr[si].size());
+    for (const auto &c : slice_corr[si]) {
+      pnp_in[si].pixels.push_back(c.slice_px);
+      pnp_in[si].world.push_back(c.world);
     }
-    cv::Mat Kcv =
-        (cv::Mat_<double>(3, 3) << slices[si].K(0, 0), 0, slices[si].K(0, 2), 0,
-         slices[si].K(1, 1), slices[si].K(1, 2), 0, 0, 1);
-    cv::Mat rvec, tvec, inliers;
-    const bool ok = cv::solvePnPRansac(
-        obj, img, Kcv, cv::noArray(), rvec, tvec, /*useExtrinsicGuess=*/false,
-        opt.ransac_iterations, opt.ransac_reproj_px, 0.99, inliers,
-        cv::SOLVEPNP_EPNP);
-    diag.slices[si].pnp_inliers = ok ? inliers.rows : 0;
-    if (!ok || inliers.rows < opt.min_slice_correspondences)
-      continue;
-    if (inliers.rows <= best_inliers)
-      continue;
-    diag.best_slice = static_cast<int>(si);
-
-    cv::Mat Rcv;
-    cv::Rodrigues(rvec, Rcv);
-    Eigen::Matrix3d R_ws; // world -> slice-cam
-    Eigen::Vector3d t_ws;
-    for (int r = 0; r < 3; ++r) {
-      for (int c = 0; c < 3; ++c)
-        R_ws(r, c) = Rcv.at<double>(r, c);
-      t_ws(r) = tvec.at<double>(r);
-    }
-    // pano_from_world = R_pano_from_view * (world -> slice-cam)
-    const Eigen::Matrix3d R_pfv = slices[si].R_pano_from_view;
-    Q_best = R_pfv * R_ws;
-    t_best = R_pfv * t_ws;
-    best_inliers = inliers.rows;
   }
-  diag.best_slice_inliers = best_inliers;
+  pano_detail::SlicePnPOptions popt;
+  popt.min_correspondences = opt.min_slice_correspondences;
+  popt.ransac_iterations = opt.ransac_iterations;
+  popt.ransac_reproj_px = opt.ransac_reproj_px;
+  const pano_detail::SliceResection best =
+      pano_detail::resect_best_slice(pnp_in, popt);
+  for (size_t si = 0; si < slices.size(); ++si)
+    diag.slices[si].pnp_inliers = best.slice_inliers[si];
+  diag.best_slice = best.best_slice;
+  diag.best_slice_inliers = best.best_inliers;
+  const Eigen::Matrix3d Q_best = best.Q; // pano_from_world
+  const Eigen::Vector3d t_best = best.t;
+  const int best_inliers = best.best_inliers;
 
-  if (best_inliers < opt.min_slice_correspondences || pool.empty()) {
+  if (best.best_slice < 0 || pool.empty()) {
     core::debug("PanoramaAlignment: panorama {} — insufficient PnP support "
-                "(best slice inliers {})",
-                pano_id, best_inliers);
+                "(best slice inliers {} < {})",
+                pano_id, best_inliers, opt.min_slice_correspondences);
     return finish(PanoramaAlignmentOutcome::no_slice_pnp);
+  }
+
+  // --- noise floor (reusex-bx2.4) --------------------------------------------
+  // With the pool ~95 % junk, solvePnPRansac returns a "pose" with a dozen
+  // inliers on pure noise; the shuffled-correspondence null measured on THIS
+  // panorama's slices says how many. A best slice that does not clear it by
+  // `null_margin` carries no detectable geometry: every later gate would only
+  // report how a random pose happened to fail (or, worse, accept it).
+  if (opt.null_trials > 0) {
+    diag.null_best_slice_inliers = pano_detail::shuffled_best_slice_inliers(
+        pnp_in, popt, opt.null_trials, opt.seed);
+    diag.noise_floor_threshold = pano_detail::noise_floor_threshold(
+        diag.null_best_slice_inliers, opt.null_margin,
+        opt.min_slice_correspondences);
+    if (best_inliers < diag.noise_floor_threshold) {
+      core::debug("PanoramaAlignment: panorama {} rejected — best slice {} "
+                  "PnP inliers < {} (shuffled null {} over {} trials x {:.2f})",
+                  pano_id, best_inliers, diag.noise_floor_threshold,
+                  diag.null_best_slice_inliers, opt.null_trials,
+                  opt.null_margin);
+      return finish(PanoramaAlignmentOutcome::below_noise_floor);
+    }
   }
 
   // --- gravity-alignment check on the PnP seed rotation --------------------
@@ -717,6 +762,7 @@ PanoramaAlignmentResult align_panorama(ProjectDB &db, int pano_id,
   // -1.0 is the field's documented "no seed measurement" sentinel; NaN would
   // poison the caller's running average of the corrections.
   double delta = -1.0;
+  diag.max_correction_m = opt.max_correction_m;
   if (opt.fix_translation) {
     // Centre came from the seed — has_sensor_frame_pose() was already checked
     // above and returned early if missing.

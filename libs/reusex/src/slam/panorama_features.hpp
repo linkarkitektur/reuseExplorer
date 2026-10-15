@@ -169,4 +169,59 @@ std::vector<int> refine_bearing_pose_rotation_only(
     const Eigen::Vector3d &c_world, const BearingRefineOptions &opt,
     Eigen::Matrix3d &Q, int *out_initial_inliers = nullptr);
 
+// --- per-slice PnP and its noise floor (reusex-bx2.4) ----------------------
+
+/// The 2D<->3D correspondences of one perspective slice of a panorama.
+/// `pixels[k]` (slice pixel) and `world[k]` (3D point) are parallel arrays.
+struct SlicePnPInput {
+  Eigen::Matrix3d K = Eigen::Matrix3d::Identity(); ///< slice intrinsics
+  /// maps slice-camera rays into the panorama frame
+  Eigen::Matrix3d R_pano_from_view = Eigen::Matrix3d::Identity();
+  std::vector<cv::Point2f> pixels;
+  std::vector<Eigen::Vector3d> world;
+};
+
+/// solvePnPRansac parameters shared by the real resection and its null.
+struct SlicePnPOptions {
+  int min_correspondences = 6; ///< PnP a slice only with at least this many
+  int ransac_iterations = 500;
+  float ransac_reproj_px = 5.0f;
+};
+
+/// The strongest single-slice resection of a panorama.
+struct SliceResection {
+  int best_slice = -1;  ///< -1: no slice reached `min_correspondences` inliers
+  int best_inliers = 0; ///< solvePnPRansac inliers of the best slice
+  Eigen::Matrix3d Q = Eigen::Matrix3d::Identity(); ///< pano_from_world
+  Eigen::Vector3d t = Eigen::Vector3d::Zero();     ///< pano_from_world
+  /// per slice: PnP inliers, 0 when PnP failed, -1 when not attempted (fewer
+  /// than `min_correspondences` correspondences)
+  std::vector<int> slice_inliers;
+};
+
+/// PnP every slice with solvePnPRansac (EPnP) and keep the one with the most
+/// inliers (at least `min_correspondences`) as the panorama's initial pose.
+SliceResection resect_best_slice(const std::vector<SlicePnPInput> &slices,
+                                 const SlicePnPOptions &opt);
+
+/// Null model of resect_best_slice()'s `best_inliers`: in each of @p trials
+/// trials, every slice's correspondences are grouped by slice location (2 px
+/// cells) and the groups' locations are permuted, so each group's world
+/// points now pair with another group's pixels (same counts, same pixel and
+/// world distributions, the matcher's repeated near-identical pairs kept
+/// together, no geometry). Returns the maximum PnP inlier count over every
+/// slice and trial — the support pure noise reaches on THIS panorama's
+/// correspondences. The permutation is a Fisher-Yates driven by
+/// std::mt19937(@p seed), so the result is reproducible (STANDARDS §6).
+/// 0 when no slice has enough correspondences or @p trials <= 0.
+int shuffled_best_slice_inliers(const std::vector<SlicePnPInput> &slices,
+                                const SlicePnPOptions &opt, int trials,
+                                unsigned seed);
+
+/// The best-slice PnP inlier count a panorama needs to beat the noise floor:
+/// strictly more than @p margin x @p null_best, and never fewer than
+/// @p min_correspondences.
+int noise_floor_threshold(int null_best, double margin,
+                          int min_correspondences);
+
 } // namespace reusex::geometry::pano_detail
