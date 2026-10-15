@@ -3,7 +3,7 @@
   "model_version": 1,
   "units": "m",
   "name": "NewOffice reference (DRAFT)",
-  "description": "DRAFT - needs maintainer review. Authored by an agent from the NewOffice scan (project.rux cloud, 5 cm voxels) with the loop in docs/guides/solid-model-reference-authoring.md: faces measured from plan cuts of the cloud, checked with rux render --plan overlays. Not ground truth (decision D5). x/y are the project's world coordinates; the level frame only shifts z so the floor plane (world z = -1.27) is z = 0. External walls carry the inner face as their axis with unknown thickness (the exterior was not scanned). Window sills/heads are read off elevations of the cloud and are approximate; door heads are assumed 2.05 m.",
+  "description": "DRAFT - needs maintainer review. Authored by an agent from the NewOffice scan (project.rux cloud, 5 cm voxels) with the loop in docs/guides/solid-model-reference-authoring.md: faces measured from plan cuts of the cloud, checked with rux render --plan overlays. Not ground truth (decision D5). The room layout follows the maintainer's description (2026-10-15, bead reusex-z1v.2.6): one large open office with two meeting rooms at its end; on the other side a closed office, next to it a bathroom with 3 stalls, a printer and server room, a large kitchen / assembly space and a meeting room / storage at the end; rooms identified in plan cuts and sensor-frame images. x/y are the project's world coordinates; the level frame only shifts z so the floor plane (world z = -1.27) is z = 0. External walls carry the inner face as their axis with unknown thickness (the exterior was not scanned). Window sills/heads are read off elevations of the cloud and are approximate; door heads are assumed 2.05 m.",
   "storeys": [
     {
       "guid": "storey-0",
@@ -35,7 +35,8 @@
         "status": "draft - needs maintainer review",
         "floor_world_z": -1.27,
         "ceiling_world_z": 1.61,
-        "plan_rotation_deg": 50.864
+        "plan_rotation_deg": 50.864,
+        "room_layout": "follows the maintainer's description (2026-10-15, reusex-z1v.2.6); walls and openings remain agent-measured"
       }
     }
   ],
@@ -233,7 +234,7 @@
       }
     },
     {
-      "guid": "p-alcove",
+      "guid": "p-mr1-office",
       "storey": 0,
       "axis": [
         [
@@ -253,11 +254,35 @@
       "source": "manual",
       "locked": true,
       "metadata": {
-        "note": "faces at a=1.84 and 2.33; may be a duct casing rather than a wall"
+        "note": "Meeting room 1 / open office: faces at a=1.84 and 2.33 (the draft's p-alcove); the 0.49 m may be a glass partition plus a casing behind it"
       }
     },
     {
-      "guid": "p-sw-east",
+      "guid": "p-mr1-glass",
+      "storey": 0,
+      "axis": [
+        [
+          -2.851,
+          -0.658
+        ],
+        [
+          -0.08,
+          2.747
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": -1.0,
+      "is_external": false,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "black-framed glass partition (frames seen in the sensor images): only mullions and the head scan, axis on the mullion line, thickness unknown; posts at a=-1.5 and -0.7..-0.5 at b=1.796 (mode of the 1.0-2.6 m points)"
+      }
+    },
+    {
+      "guid": "p-mr2-east",
       "storey": 0,
       "axis": [
         [
@@ -277,11 +302,11 @@
       "source": "manual",
       "locked": true,
       "metadata": {
-        "note": "faces at a=-0.21 and -0.11 merge at 5 cm resolution; thickness assumed"
+        "note": "Meeting room 2 / open office: faces at a=-0.21 and -0.11 merge at 5 cm resolution; thickness assumed"
       }
     },
     {
-      "guid": "p-sw-north",
+      "guid": "p-mr2-lobby",
       "storey": 0,
       "axis": [
         [
@@ -301,7 +326,7 @@
       "source": "manual",
       "locked": true,
       "metadata": {
-        "note": "one face scanned: axis on that face, thickness unknown"
+        "note": "one face scanned: axis on that face, thickness unknown; glass with black frames toward the entrance lobby"
       }
     },
     {
@@ -309,8 +334,8 @@
       "storey": 0,
       "axis": [
         [
-          18.313,
-          13.681
+          17.6,
+          14.261
         ],
         [
           9.896,
@@ -329,7 +354,7 @@
       }
     },
     {
-      "guid": "p-ne-south",
+      "guid": "p-office-south",
       "storey": 0,
       "axis": [
         [
@@ -349,7 +374,7 @@
       "source": "manual",
       "locked": true,
       "metadata": {
-        "note": "faces at b=1.83 and 2.205"
+        "note": "Closed office / bathroom: faces at b=1.83 and 2.205"
       }
     },
     {
@@ -373,7 +398,7 @@
       "source": "manual",
       "locked": true,
       "metadata": {
-        "note": "faces at a=23.46 and 23.59"
+        "note": "stall partition inside the bathroom: faces at a=23.46 and 23.59"
       }
     },
     {
@@ -397,7 +422,7 @@
       "source": "manual",
       "locked": true,
       "metadata": {
-        "note": "one face scanned: axis on that face, thickness unknown; thickness assumed 0.1"
+        "note": "stall partition inside the bathroom; one face scanned: axis on that face, thickness unknown; thickness assumed 0.1"
       }
     },
     {
@@ -421,7 +446,7 @@
       "source": "manual",
       "locked": true,
       "metadata": {
-        "note": "one face scanned: axis on that face, thickness unknown; thickness assumed 0.1"
+        "note": "one face scanned: axis on that face, thickness unknown; thickness assumed 0.1 (installation wall behind the wall-hung WCs)"
       }
     },
     {
@@ -445,20 +470,44 @@
       "source": "manual",
       "locked": true,
       "metadata": {
-        "note": "faces at b=-0.47 and -0.60"
+        "note": "stall fronts inside the bathroom (stall doors open onto the washbasin area): faces at b=-0.47 and -0.60"
       }
     },
     {
-      "guid": "p-e2-south",
+      "guid": "p-bath-printer",
       "storey": 0,
       "axis": [
         [
-          15.831,
-          15.7
+          15.868,
+          15.67
         ],
         [
-          18.627,
-          19.137
+          18.664,
+          19.106
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": 0.085,
+      "is_external": false,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "Bathroom / printer-server room: faces at b=-2.376 and -2.459, measured in the 1.9-2.7 m cut (below it the vanity and the copier hide the faces)"
+      }
+    },
+    {
+      "guid": "p-printer-east",
+      "storey": 0,
+      "axis": [
+        [
+          20.194,
+          17.449
+        ],
+        [
+          18.462,
+          18.858
         ]
       ],
       "z_base": 0.0,
@@ -473,79 +522,31 @@
       }
     },
     {
-      "guid": "p-e3-east",
+      "guid": "p-kitchen-north",
       "storey": 0,
       "axis": [
         [
-          19.938,
-          17.658
+          17.6,
+          14.261
         ],
         [
-          18.425,
-          18.888
+          20.593,
+          17.94
         ]
       ],
       "z_base": 0.0,
       "height": 2.88,
-      "thickness": -1.0,
+      "thickness": 0.66,
       "is_external": false,
       "assumed": false,
       "source": "manual",
       "locked": true,
       "metadata": {
-        "note": "one face scanned: axis on that face, thickness unknown"
+        "note": "Printer-server room / kitchen: faces at b=-4.32 (printer room) and -4.98 (kitchen backsplash, between the counter and the upper cabinets, z 1.0-1.5 m). The kitchen's base cabinets (front at b=-5.56) and upper cabinets run along it; the draft's p-hall-north at b=-5.57 was that cabinet front. 0.66 m may include an installation cavity"
       }
     },
     {
-      "guid": "p-e3-south",
-      "storey": 0,
-      "axis": [
-        [
-          17.344,
-          14.47
-        ],
-        [
-          19.938,
-          17.658
-        ]
-      ],
-      "z_base": 0.0,
-      "height": 2.88,
-      "thickness": -1.0,
-      "is_external": false,
-      "assumed": false,
-      "source": "manual",
-      "locked": true,
-      "metadata": {
-        "note": "one face scanned: axis on that face, thickness unknown"
-      }
-    },
-    {
-      "guid": "p-hall-north",
-      "storey": 0,
-      "axis": [
-        [
-          18.313,
-          13.681
-        ],
-        [
-          21.305,
-          17.357
-        ]
-      ],
-      "z_base": 0.0,
-      "height": 2.88,
-      "thickness": -1.0,
-      "is_external": false,
-      "assumed": false,
-      "source": "manual",
-      "locked": true,
-      "metadata": {
-        "note": "one face scanned: axis on that face, thickness unknown"
-      }
-    },
-    {
-      "guid": "p-hall-south",
+      "guid": "p-kitchen-storage",
       "storey": 0,
       "axis": [
         [
@@ -565,7 +566,31 @@
       "source": "manual",
       "locked": true,
       "metadata": {
-        "note": "faces at b=-13.84 and -14.34"
+        "note": "Kitchen / meeting room-storage: faces at b=-13.84 and -14.34; shelving on the kitchen side"
+      }
+    },
+    {
+      "guid": "p-storage-glass",
+      "storey": 0,
+      "axis": [
+        [
+          23.868,
+          7.008
+        ],
+        [
+          25.383,
+          8.869
+        ]
+      ],
+      "z_base": 0.0,
+      "height": 2.88,
+      "thickness": -1.0,
+      "is_external": false,
+      "assumed": false,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "black-framed glass partition (frames seen in the sensor images): only mullions and the head scan, axis on the mullion line, thickness unknown; continues p-kitchen-storage to the facade (frames 2085, 2260 show the glass and its door)"
       }
     }
   ],
@@ -578,12 +603,16 @@
       "polygon": {
         "outer": [
           [
-            -5.475,
-            1.477
+            -0.755,
+            -2.364
           ],
           [
-            -2.867,
-            4.705
+            -2.812,
+            -0.69
+          ],
+          [
+            -0.193,
+            2.529
           ],
           [
             -0.274,
@@ -598,8 +627,16 @@
             5.087
           ],
           [
-            8.859,
-            19.22
+            9.78,
+            20.36
+          ],
+          [
+            17.726,
+            13.894
+          ],
+          [
+            16.802,
+            12.758
           ],
           [
             16.308,
@@ -612,14 +649,6 @@
           [
             0.633,
             -0.657
-          ],
-          [
-            -0.755,
-            -2.364
-          ],
-          [
-            -2.583,
-            -0.877
           ]
         ]
       },
@@ -628,13 +657,46 @@
       "source": "manual",
       "locked": true,
       "metadata": {
-        "note": "the west wing; its east edge at the east-wing facade line is open to the corridor"
+        "note": "the west wing with the entrance lobby (a=-2.3..-0.1, b=-0.9..1.75) and the corridor along the east rooms (a=20.5..21.96). Open boundaries: the entrance (vestibule a<-2.3 left out), and the corridor's south end at b=-4.98 (the kitchen wall face line), where it opens into the kitchen"
       }
     },
     {
-      "guid": "s-sw-room",
+      "guid": "s-meeting-1",
       "storey": 0,
-      "name": "SW room",
+      "name": "Meeting room 1",
+      "kind": "room",
+      "polygon": {
+        "outer": [
+          [
+            -2.89,
+            -0.627
+          ],
+          [
+            -0.271,
+            2.592
+          ],
+          [
+            -2.867,
+            4.705
+          ],
+          [
+            -5.475,
+            1.477
+          ]
+        ]
+      },
+      "z_floor": 0.0,
+      "z_ceiling": 2.88,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "north end room of the open office: large table, wall screen (frames 174-283)"
+      }
+    },
+    {
+      "guid": "s-meeting-2",
+      "storey": 0,
+      "name": "Meeting room 2",
       "kind": "room",
       "polygon": {
         "outer": [
@@ -659,79 +721,15 @@
       "z_floor": 0.0,
       "z_ceiling": 2.88,
       "source": "manual",
-      "locked": true
-    },
-    {
-      "guid": "s-corridor",
-      "storey": 0,
-      "name": "Corridor",
-      "kind": "corridor",
-      "polygon": {
-        "outer": [
-          [
-            17.259,
-            12.385
-          ],
-          [
-            16.308,
-            13.159
-          ],
-          [
-            8.859,
-            19.22
-          ],
-          [
-            9.767,
-            20.371
-          ],
-          [
-            18.184,
-            13.522
-          ]
-        ]
-      },
-      "z_floor": 0.0,
-      "z_ceiling": 2.88,
-      "source": "manual",
       "locked": true,
       "metadata": {
-        "note": "open to the open office (west) and the hall (south)"
+        "note": "south end room of the open office: round table, wall screen (frames 12-102, 3338)"
       }
     },
     {
-      "guid": "s-hall",
+      "guid": "s-closed-office",
       "storey": 0,
-      "name": "Hall",
-      "kind": "open_plan",
-      "polygon": {
-        "outer": [
-          [
-            23.674,
-            7.166
-          ],
-          [
-            27.7,
-            12.114
-          ],
-          [
-            21.305,
-            17.357
-          ],
-          [
-            17.259,
-            12.385
-          ]
-        ]
-      },
-      "z_floor": 0.0,
-      "z_ceiling": 2.88,
-      "source": "manual",
-      "locked": true
-    },
-    {
-      "guid": "s-ne-room",
-      "storey": 0,
-      "name": "NE room",
+      "name": "Closed office",
       "kind": "room",
       "polygon": {
         "outer": [
@@ -756,26 +754,29 @@
       "z_floor": 0.0,
       "z_ceiling": 2.88,
       "source": "manual",
-      "locked": true
+      "locked": true,
+      "metadata": {
+        "note": "desks and a glazed front to the corridor (frames 717-807)"
+      }
     },
     {
-      "guid": "s-wc-1",
+      "guid": "s-bathroom",
       "storey": 0,
-      "name": "WC 1",
+      "name": "Bathroom",
       "kind": "room",
       "polygon": {
         "outer": [
           [
-            14.483,
-            17.062
+            15.965,
+            15.856
           ],
           [
-            15.168,
-            17.903
+            18.6,
+            19.094
           ],
           [
-            13.384,
-            19.355
+            15.334,
+            21.752
           ],
           [
             12.699,
@@ -786,102 +787,15 @@
       "z_floor": 0.0,
       "z_ceiling": 2.88,
       "source": "manual",
-      "locked": true
+      "locked": true,
+      "metadata": {
+        "note": "one space: a shared washbasin area (b=-2.38..-0.6, double vanity, frames 2343, 2407) with three WC stalls along the closed office (b=-0.47..1.83), split by the thin walls p-wc-1-2, p-wc-2-3 and the stall fronts p-wc-south. The stall walls reach the ceiling, so a detector may split the stalls into rooms; this reference counts them as one room per the maintainer's description"
+      }
     },
     {
-      "guid": "s-wc-2",
+      "guid": "s-printer-server",
       "storey": 0,
-      "name": "WC 2",
-      "kind": "room",
-      "polygon": {
-        "outer": [
-          [
-            15.25,
-            18.004
-          ],
-          [
-            15.944,
-            18.857
-          ],
-          [
-            14.16,
-            20.309
-          ],
-          [
-            13.466,
-            19.456
-          ]
-        ]
-      },
-      "z_floor": 0.0,
-      "z_ceiling": 2.88,
-      "source": "manual",
-      "locked": true
-    },
-    {
-      "guid": "s-wc-3",
-      "storey": 0,
-      "name": "WC 3",
-      "kind": "room",
-      "polygon": {
-        "outer": [
-          [
-            16.007,
-            18.935
-          ],
-          [
-            17.118,
-            20.3
-          ],
-          [
-            15.334,
-            21.752
-          ],
-          [
-            14.223,
-            20.387
-          ]
-        ]
-      },
-      "z_floor": 0.0,
-      "z_ceiling": 2.88,
-      "source": "manual",
-      "locked": true
-    },
-    {
-      "guid": "s-e2",
-      "storey": 0,
-      "name": "Room E2",
-      "kind": "room",
-      "polygon": {
-        "outer": [
-          [
-            15.961,
-            15.859
-          ],
-          [
-            18.596,
-            19.098
-          ],
-          [
-            17.219,
-            20.218
-          ],
-          [
-            14.584,
-            16.98
-          ]
-        ]
-      },
-      "z_floor": 0.0,
-      "z_ceiling": 2.88,
-      "source": "manual",
-      "locked": true
-    },
-    {
-      "guid": "s-e3",
-      "storey": 0,
-      "name": "Room E3",
+      "name": "Printer/server room",
       "kind": "room",
       "polygon": {
         "outer": [
@@ -894,25 +808,61 @@
             17.658
           ],
           [
-            18.425,
-            18.888
+            18.494,
+            18.832
           ],
           [
-            15.961,
-            15.859
+            16.03,
+            15.803
           ]
         ]
       },
       "z_floor": 0.0,
       "z_ceiling": 2.88,
       "source": "manual",
-      "locked": true
+      "locked": true,
+      "metadata": {
+        "note": "copier, plotter, network rack and electrical panel (frames 1549-1682, 3118)"
+      }
     },
     {
-      "guid": "s-south",
+      "guid": "s-kitchen",
       "storey": 0,
-      "name": "South rooms (unresolved)",
-      "kind": "unknown",
+      "name": "Kitchen/assembly",
+      "kind": "open_plan",
+      "polygon": {
+        "outer": [
+          [
+            23.674,
+            7.166
+          ],
+          [
+            27.7,
+            12.114
+          ],
+          [
+            20.848,
+            17.731
+          ],
+          [
+            16.802,
+            12.758
+          ]
+        ]
+      },
+      "z_floor": 0.0,
+      "z_ceiling": 2.88,
+      "source": "manual",
+      "locked": true,
+      "metadata": {
+        "note": "kitchen run along the north wall (frames 1758, 1772, 3878, 3936) and long tables; west facade with the courtyard door. Open to the corridor at b=-4.98, a=20.5..21.96"
+      }
+    },
+    {
+      "guid": "s-meeting-storage",
+      "storey": 0,
+      "name": "Meeting room/storage",
+      "kind": "room",
       "polygon": {
         "outer": [
           [
@@ -938,7 +888,7 @@
       "source": "manual",
       "locked": true,
       "metadata": {
-        "note": "several small rooms not resolved in this draft"
+        "note": "behind a glass partition from the kitchen: a table with chairs and a screen plus stored moving boxes (frames 2111-2264)"
       }
     }
   ],
@@ -1274,8 +1224,8 @@
       }
     },
     {
-      "guid": "o-sw-door",
-      "wall": "p-sw-north",
+      "guid": "o-mr2-door",
+      "wall": "p-mr2-lobby",
       "kind": "door",
       "s_start": 0.33,
       "s_end": 1.23,
@@ -1286,30 +1236,46 @@
       "locked": true,
       "state": "unknown",
       "metadata": {
-        "note": "gap in the wall points below 1.9 m; head height assumed"
+        "note": "Meeting room 2 door: gap in the wall points below 1.9 m; head height assumed"
       }
     },
     {
-      "guid": "o-ne-opening",
+      "guid": "o-mr1-door",
+      "wall": "p-mr1-glass",
+      "kind": "door",
+      "s_start": 0.81,
+      "s_end": 1.71,
+      "z_sill": 0.0,
+      "z_head": 2.05,
+      "is_external": false,
+      "source": "manual",
+      "locked": true,
+      "state": "unknown",
+      "metadata": {
+        "note": "Meeting room 1 glass door: between the mullion posts at a=-1.5 and -0.6; approximate, head height assumed"
+      }
+    },
+    {
+      "guid": "o-office-opening",
       "wall": "p-corridor-east",
       "kind": "opening",
-      "s_start": 8.22,
-      "s_end": 9.97,
+      "s_start": 7.3,
+      "s_end": 9.05,
       "z_sill": 0.0,
       "z_head": 2.05,
       "is_external": false,
       "source": "manual",
       "locked": true,
       "metadata": {
-        "note": "no wall points between b=2.65 and 4.4 below 1.9 m: glazed or open; head height assumed"
+        "note": "Closed office: no wall points between b=2.65 and 4.4 below 1.9 m; a glazed front with a door (frame 792); head height assumed"
       }
     },
     {
-      "guid": "o-e3-door",
+      "guid": "o-bath-door",
       "wall": "p-corridor-east",
       "kind": "door",
-      "s_start": 2.12,
-      "s_end": 2.67,
+      "s_start": 2.4,
+      "s_end": 3.2,
       "z_sill": 0.0,
       "z_head": 2.05,
       "is_external": false,
@@ -1317,15 +1283,15 @@
       "locked": true,
       "state": "unknown",
       "metadata": {
-        "note": "head height assumed"
+        "note": "Bathroom door: gaps on the wall axis at b=-2.2..-1.5, the open leaf lies against the room face (frames 870, 3178); approximate, head height assumed"
       }
     },
     {
-      "guid": "o-e4-door",
+      "guid": "o-printer-door",
       "wall": "p-corridor-east",
       "kind": "door",
-      "s_start": 0.72,
-      "s_end": 1.22,
+      "s_start": 1.2,
+      "s_end": 1.75,
       "z_sill": 0.0,
       "z_head": 2.05,
       "is_external": false,
@@ -1333,7 +1299,7 @@
       "locked": true,
       "state": "unknown",
       "metadata": {
-        "note": "head height assumed"
+        "note": "Printer-server room door (frames 873, 1615); head height assumed"
       }
     },
     {
@@ -1349,7 +1315,7 @@
       "locked": true,
       "state": "unknown",
       "metadata": {
-        "note": "door leaf open; head height assumed"
+        "note": "stall door, leaf open; head height assumed"
       }
     },
     {
@@ -1365,7 +1331,23 @@
       "locked": true,
       "state": "unknown",
       "metadata": {
-        "note": "door leaf open; head height assumed"
+        "note": "stall door, leaf open; head height assumed"
+      }
+    },
+    {
+      "guid": "o-storage-door",
+      "wall": "p-storage-glass",
+      "kind": "door",
+      "s_start": 0.7,
+      "s_end": 1.55,
+      "z_sill": 0.0,
+      "z_head": 2.05,
+      "is_external": false,
+      "source": "manual",
+      "locked": true,
+      "state": "unknown",
+      "metadata": {
+        "note": "glass door: the 1.0-1.9 m points are empty between a=21.2 and 22.05 apart from glass; approximate, head height assumed"
       }
     }
   ]

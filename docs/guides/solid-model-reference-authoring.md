@@ -74,6 +74,18 @@ measure the cloud  ->  write / edit plan.json  ->  rux edit plan --dry-run
    - Windows sit in niches behind the inner face. Plot an elevation of the
      points just behind a facade (colour by depth): frames, sills and heads
      are easy to read there, and the niche extents give `s_start` / `s_end`.
+   - Name rooms from the sensor images, not from the plan shape. The pose
+     of each stored frame (`sensor_frames.transform`, row-major, column 0 is
+     the viewing direction) tells which room it was taken in; a contact
+     sheet of the colour images per room shows the WC, the copier, the
+     kitchen run. `rux render --view frame:<id>` gives the same viewpoint
+     over the cloud. Look in a cut near the ceiling (2.2 to 2.7 m) too:
+     furniture is gone there, so wall faces hidden behind cabinets or a
+     vanity show up. Kitchen base cabinets in a low cut look like a wall.
+     The maintainer's own description of the room layout, when there is
+     one, decides the names; say in the plan where the cloud contradicts it.
+   - Glass partitions scan as their frames only: look for full-height
+     mullion posts on a line and put the wall there, with `thickness: -1`.
 
 4. **Write the JSON.** Coordinates are in the storey's level frame:
    z up, the floor at z = 0. The simplest frame for a reference is the
