@@ -463,6 +463,13 @@ and deleted the shims. `include/geometry/` now holds only the real
   vertical (bisector of their normals) and storeys from a height histogram,
   as `core::StoreyRecord`s sharing one level frame
   (`geometry/level_frame.hpp`, header-only like `component_persistence.hpp`)
+- `classify_planes.hpp`: `classify_planes()` — per plane: orientation,
+  majority semantic class + vote share, role (wall/floor/ceiling/furniture/
+  clutter/...) via the class -> role map `core/class_role_map.json`
+  (`core/class_role_map.hpp`, embedded at build time) or geometric rules when
+  the class is missing or contradicted, storey, area, z-range
+  (`core::PlaneClassRecord`); stored by the `classify` stage in the
+  `plane_classes` table
 
 **reconstruction** (`include/reconstruction/`):
 - `CellComplex.hpp`: Boost.Graph-based 3D spatial representation
@@ -590,7 +597,18 @@ tree — if a doc mentions `RTABMapDatabase`, that doc is stale.
   `sensor_frames.initial_transform` and `project_settings` (`setting()` /
   `set_setting()`). Schema v29 makes semantic point label = API class + 1
   (`core::api_to_point_label`, STANDARDS §3.1): stored semantic clouds were
-  shifted and stamped `parameters.label_encoding = "api_plus_one"`
+  shifted and stamped `parameters.label_encoding = "api_plus_one"`.
+  Schema v30 adds the `storeys` table (`core::StoreyRecord`, `save_storeys`
+  / `storeys()`; written by `rux create storeys`, `JobStage::storeys`) and
+  `project_guid()` (project_settings key `project_guid`), the namespace of
+  the solid-model rows' GUIDs (`core::deterministic_guid`; a re-detected
+  storey keeps its stored GUID, `core/storey_identity.hpp`). It is
+  write-once, so a file copy is the same project. Schema v31 adds the
+  `plane_classes` table (`core::PlaneClassRecord`, `save_plane_classes` /
+  `plane_classes()`, keyed by cloud + plane label, rows go with the cloud;
+  written by `rux create classify`, `JobStage::classify`), which
+  reads `oriented_normals` from the clouds'
+  `normal_orientation` marker (`core/normal_orientation.hpp`, reusex-0se)
 - Migrating schema; `LATEST_SCHEMA_VERSION` is defined in
   `src/core/ProjectDB.cpp` — read it there rather than trusting a doc (it moves
   most releases)
@@ -656,7 +674,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | Command | Sub-commands | Source |
 |---|---|---|
 | `import` | `rtabmap`, `mushroom`, `arkitscenes`, `e57`, `ply`, `gsplat`, `materialepas`, `csv`, `360`, `photos` | `src/import/` |
-| `create` | `clouds`, `dense`, `annotate`, `annotate-360`, `material`, `project`, `planes`, `rooms`, `instances`, `materials`, `survey`, `mesh`, `texture`, `windows` | `src/create/` |
+| `create` | `clouds`, `dense`, `annotate`, `annotate-360`, `material`, `project`, `planes`, `rooms`, `instances`, `storeys`, `classify`, `materials`, `survey`, `mesh`, `texture`, `windows` | `src/create/` |
 | `export` | `ply`, `e57`, `materialepas`, `csv`, `rhino`, `semantic-images`, `speckle`, `colmap`, `pdf` | `src/export/` |
 | `align` | `360` (content-based panorama pose refinement) | `src/align/` |
 | `edit` | `downsample`, `perturb-poses` (drift synthesis, #338) | `src/edit/` |
@@ -851,7 +869,7 @@ Anything not found there is not a dependency.
 - OpenNURBS - Rhino 3D (.3dm) files
 - OpenCV (`core`, `imgproc`, `highgui`) - image processing
 - VTK (`CommonCore`, `CommonDataModel`, `CommonExecutionModel`, `RenderingCore`,
-  `RenderingOpenGL2`) - the rendering backend behind `reusex_visualize`'s
+  `RenderingOpenGL2`, `RenderingFreeType` for the plan overlay's labels) - the rendering backend behind `reusex_visualize`'s
   headless `render_view()`. Arrives in the closure via PCL's visualization
   module, but is `find_package`d directly because the module uses the VTK API
   and needs `vtk_module_autoinit`. Headless rendering depends on this VTK being

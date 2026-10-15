@@ -118,7 +118,9 @@ EXAMPLES:
   rux analyze solid --reference plan.json --model baseline.json --json
 
 NOTES:
-  - Both models must be in the same level frame (metres, z up).
+  - Metres, z up. The models may use different level frames: each storey's
+    level_transform takes its elements to world before matching, and when
+    both list storeys, storeys are paired by floor height in world z.
   - --model scores a model file (e.g. a baseline converted from another
     tool) instead of the project's. The fit metrics are then n/a unless
     --cloud or --mesh is passed explicitly (they would measure the

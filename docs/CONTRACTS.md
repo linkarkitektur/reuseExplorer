@@ -44,7 +44,13 @@ subcommand makes, so a stage that validates cannot then be refused when run.
   can declare a per-plane cloud index-aligned with a per-point one.
 - **Tables** are relational rows keyed by cloud name and id — `sensor_frames`,
   `segmentation_images`, `instances`, `instance_materials`,
-  `building_components`, `meshes`.
+  `building_components`, `meshes` — or, for the solid-model tables
+  (`storeys`, `plane_classes`, ...), by a stable GUID with `source` / `locked` columns: a
+  re-run replaces the unlocked rows and keeps the locked ones, and a
+  re-detected element keeps the GUID of the stored element it matches. New
+  GUIDs are deterministic (`core::deterministic_guid` over the project GUID,
+  `ProjectDB::project_guid()`). A file copy of a `.rux` is the **same**
+  project: same project GUID, same row GUIDs.
 - **Options struct** is the single library-side parameter object for the stage;
   CLI flags mirror its defaults (STANDARDS §4).
 - Several commands can be pointed at a differently-named cloud (`rux create
@@ -172,6 +178,13 @@ wall therefore carry opposite normals. `planes` inherits this orientation
 for `plane_normals`, and `mesh`'s face pairing relies on it (reusex-0pi;
 before that fix every stored normal faced the world origin).
 
+The stage records this in the parameters of `cloud` and `normals` as
+`"normal_orientation": "sensor"` (`core/normal_orientation.hpp`), and
+`planes` copies the key onto `plane_normals` when `normals` carries it
+(reusex-0se). A cloud without the key — made before that, or imported (E57) —
+has normals whose sign means nothing a stage may rely on; `classify` then
+ignores which way a plane faces.
+
 ### `annotate` (`rux create annotate`)
 
 Run a semantic segmentation model over the stored frames.
@@ -232,6 +245,103 @@ Separate semantic labels into spatial instances (connected-component clustering)
 `--semantic-cloud <name>` overrides `labels`. An explicit override is an
 instruction, not a preference: the fallback is dropped and the named cloud must
 exist.
+
+### `storeys` (`rux create storeys`)
+
+Group the horizontal planes into surfaces by height, fit each storey's floor
+and ceiling to its surface's own points (iterated least squares) and measure
+the vertical as the bisector of their normals (`segmentation/level.hpp`,
+`detect_storeys`). When `plane_normals` face their sensors (see `clouds`
+above) an up-facing surface is a floor and a down-facing one a ceiling, so
+the floor over a slab is the strongest up-facing surface above the ceiling
+below it however small it is; a cloud whose normals all face the world origin
+(before reusex-0pi) is read by height alone, and the success message says
+which. The scan is never rewritten: each row stores the world → level
+transform (storey-0 floor at z = 0) next to its floor and ceiling height in
+that frame.
+
+| | |
+|---|---|
+| Consumes | `cloud`, `planes`, `plane_centroids`, `plane_normals` |
+| Produces | `storeys` (`storeys` table, schema v30: one row per storey, a stable GUID — see below) |
+| Options  | `LevelOptions` (`libs/reusex/include/segmentation/level.hpp`), parameter keys are its field names; plus `guid_match_m` (`core::StoreyIdentityOptions`, `core/storey_identity.hpp`) |
+| Checks   | `cloud`/`planes` present + aligned; `plane_centroids`/`plane_normals` present + aligned |
+
+Never zero rows: a scan with one level, no ceiling or no horizontal plane is
+one storey whose `metadata` records the reason (logged at `warn`).
+
+Identity: `idx` is the rank from the bottom and moves when a re-run finds a
+storey below the old lowest one; the GUID does not. A re-detected storey takes
+the GUID of the stored storey whose floor lies within `guid_match_m` (default
+0.5 m) of its own, compared in the new run's level frame; only an unmatched
+storey gets a fresh GUID, `uuid5(project_guid, "storeys/z<floor cm>")`,
+suffixed until unique.
+
+Frames: the rows of one run share one `level_transform` unless pose drift
+left a storey rotated against the others. With `per_storey_frame` (default
+on) a storey whose own floor/ceiling bisector is more than
+`storey_frame_tol_deg` (0.25°) off the shared vertical gets its own frame,
+rotated to its own vertical and placed so that its floor centroid keeps its
+shared-frame level coordinates. `z_floor` is that centroid's height above the
+storey-0 floor centroid along the shared vertical, in either kind of frame;
+`z_ceiling` is measured on the row's vertical through it. Level x/y agree with
+the shared frame's at the floor centroid, and level `(0, 0, z_floor)` stays a
+world point at the storey's floor height, which is what GUID matching and the
+solid-model benchmark take to world through each row's own frame
+(reusex-z1v.3.5). Each row's `metadata` records its `frame`
+(`shared`/`storey`), its own `vertical` and `tilt_vs_shared_deg`.
+
+Rows with `locked = 1` survive a re-run unchanged, frame included; a new
+storey whose GUID or `idx` a locked row holds is not written. The stage
+warns, with the angle and shift, when a kept locked row's frame differs from
+that of the new row it stands for (same GUID, else nearest floor), and when
+its height range overlaps a new row's (measured in that row's frame). `rux get storeys` prints the table; `rux del storeys` removes it, and
+needs `--force` when any row is locked.
+
+### `classify` (`rux create classify`)
+
+Classify every plane of the plane segmentation (`segmentation/classify_planes.hpp`,
+`classify_planes`): its orientation against the vertical of its storey's level
+frame, the majority semantic class of its points with the vote share (when a
+`labels` cloud exists), its role — `wall`, `floor`, `ceiling`, `slab`,
+`furniture`, `clutter` or `unknown` — its storey, area and height range. The
+role comes from the class through the class → role map
+(`core/class_role_map.json`, or `--role-map file.json`) when the class is
+trusted and the geometry does not contradict it, otherwise from geometric
+rules.
+
+| | |
+|---|---|
+| Consumes | `cloud`, `planes`, `plane_normals`, `storeys` (plus the semantic labels cloud when present, see below) |
+| Produces | `plane_classes` (table, schema v31: one row per plane label, a stable GUID) |
+| Options  | `ClassifyPlanesOptions` (`libs/reusex/include/segmentation/classify_planes.hpp`), parameter keys are its field names; plus `role_map` (path of a role-map JSON file, `""` = built in) |
+| Checks   | `cloud`/`planes` present + aligned; `plane_normals` present; ≥1 storey |
+
+`oriented_normals` is not a parameter: a floor is told from a ceiling by which
+way its normal faces only when `plane_normals` (or `normals`) carries
+`"normal_orientation": "sensor"` (see `clouds`). Without it the stage warns
+and classifies without the sign; `metadata.oriented_normals` records which.
+The semantic vote uses the `labels` cloud and its label definitions when
+they exist (an optional enrichment, so not a declared input, as for
+`survey`); a `labels` cloud whose size disagrees with `cloud` is ignored with
+a warning.
+
+Each row carries `role_source` — `semantic` (the class map decided),
+`rules` (no usable class), `overruled` (the class's role was contradicted by
+the geometry), `none` (a plane with no points) or `manual` — and
+`storey` = the storey's `idx` (−1 for a plane outside every storey, e.g. a
+roof above the top storey's ceiling). It is the idx, not a foreign key, so a
+storeys re-run does not orphan or block the rows; re-run `classify` after
+`storeys`.
+
+Identity: the rows are keyed by the `planes` cloud row and the plane label,
+and go with the cloud (`rux del clouds.planes`). The GUID is
+`uuid5(project_guid, "plane_classes/planes/<label>")`. A planes re-run keeps
+the cloud row, so the old rows stay until `classify` runs again; rows with
+`locked = 1` survive that re-run unchanged (the stage warns when a locked
+plane's point count no longer matches the new segmentation). `rux get
+plane_classes` (or `rux get clouds.planes.classes`) prints the table; `rux del
+plane_classes` removes it, and needs `--force` when any row is locked.
 
 ### `mesh` (`rux create mesh`)
 
@@ -445,6 +555,7 @@ rasterizer.
 
 ```
 import → [graph_init] → [graph_discover] → (optimize|register) → clouds → planes → rooms → mesh → texture
+                                                                                   ↘ storeys → classify
                                                     ↘ annotate → project → instances → windows
                                                     ↘ gsplat (leaf: produces `splat`)
 ```

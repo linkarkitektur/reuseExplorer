@@ -45,6 +45,8 @@ enum class PipelineStage {
   planes,         ///< detect planar surfaces
   rooms,          ///< partition into rooms
   instances,      ///< separate semantic labels into spatial instances
+  storeys,        ///< storeys and the measured vertical (level frame)
+  classify,       ///< the role of each plane (wall, floor, ceiling, ...)
   mesh,           ///< generate the reconstructed mesh
   texture,        ///< texture-map the reconstructed mesh
   windows,        ///< derive window building components

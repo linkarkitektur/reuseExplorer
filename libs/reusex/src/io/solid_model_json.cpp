@@ -16,9 +16,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <fstream>
 #include <initializer_list>
 #include <limits>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -414,17 +416,28 @@ std::string solid_model_to_json(const core::SolidModel &m, int indent) {
 
   if (!m.plane_classes.empty()) {
     ojson arr = ojson::array();
-    for (const auto &p : m.plane_classes)
-      arr.push_back({{"plane_label", p.plane_label},
-                     {"orientation", p.orientation},
-                     {"semantic_class", p.semantic_class},
-                     {"class_confidence", p.class_confidence},
-                     {"role", p.role},
-                     {"storey", p.storey},
-                     {"point_count", p.point_count},
-                     {"area", p.area},
-                     {"z_min", p.z_min},
-                     {"z_max", p.z_max}});
+    for (const auto &p : m.plane_classes) {
+      ojson o = {{"plane_label", p.plane_label},
+                 {"orientation", p.orientation},
+                 {"semantic_class", p.semantic_class},
+                 {"class_confidence", p.class_confidence},
+                 {"role", p.role},
+                 {"storey", p.storey},
+                 {"point_count", p.point_count},
+                 {"area", p.area},
+                 {"z_min", p.z_min},
+                 {"z_max", p.z_max},
+                 {"role_source", p.role_source}};
+      if (!p.guid.empty())
+        o["guid"] = p.guid;
+      o["source"] = p.source;
+      o["locked"] = p.locked;
+      const auto where =
+          record_name("plane_classes", &p - m.plane_classes.data(), p.guid);
+      if (!p.metadata.empty())
+        o["metadata"] = metadata_value(p.metadata, where);
+      arr.push_back(std::move(o));
+    }
     doc["plane_classes"] = std::move(arr);
   }
 
@@ -661,7 +674,8 @@ core::SolidModel solid_model_from_json(std::string_view text) {
 
   for_each_element(doc, "plane_classes", [&](const Reader &r) {
     r.only({"plane_label", "orientation", "semantic_class", "class_confidence",
-            "role", "storey", "point_count", "area", "z_min", "z_max"});
+            "role", "storey", "point_count", "area", "z_min", "z_max",
+            "role_source", "guid", "source", "locked", "metadata"});
     core::PlaneClassRecord p;
     p.plane_label = r.integer("plane_label", 0);
     p.orientation = r.text("orientation", "");
@@ -673,6 +687,10 @@ core::SolidModel solid_model_from_json(std::string_view text) {
     p.area = r.number("area", p.area);
     p.z_min = r.number("z_min", p.z_min);
     p.z_max = r.number("z_max", p.z_max);
+    p.role_source = r.text("role_source", p.role_source);
+    p.guid = r.text("guid", "");
+    double unused_confidence = -1.0; // plane classes carry class_confidence
+    read_common(r, p.source, p.locked, unused_confidence, p.metadata);
     m.plane_classes.push_back(std::move(p));
   });
 
@@ -690,12 +708,79 @@ core::SolidModel solid_model_from_json(std::string_view text) {
   return m;
 }
 
-core::SolidModel load_solid_model(const ProjectDB & /*db*/) {
-  // No solid-model table exists before WP1. Each table's WP fills its part
-  // here and sets the matching `provided` flag when the table exists, so a
+core::SolidModel load_solid_model(const ProjectDB &db) {
+  // Each table's WP fills its part here and sets the matching `provided`
+  // flag once the project says something about that element kind, so a
   // project that has run the stage and found nothing is scored as a miss,
   // not as n/a.
-  return {};
+  core::SolidModel m;
+  // The storeys stage never writes zero rows (detect_storeys always yields
+  // at least one storey, with the reason logged), so an empty table means
+  // the stage has not run: n/a, not a miss.
+  m.storeys = db.storeys();
+  m.provided.storeys = !m.storeys.empty();
+  // The classify stage writes one row per plane of the "planes" cloud, so
+  // rows mean it ran; none means n/a (or a scan with no plane at all).
+  m.plane_classes = db.plane_classes("planes");
+  m.provided.plane_classes = !m.plane_classes.empty();
+  return m;
+}
+
+core::SolidModel solid_model_from_file(const std::filesystem::path &path) {
+  std::ifstream in(path, std::ios::binary);
+  if (!in)
+    throw std::runtime_error(
+        fmt::format("cannot read solid-model file '{}'", path.string()));
+  std::stringstream ss;
+  ss << in.rdbuf();
+  if (in.bad())
+    throw std::runtime_error(
+        fmt::format("error reading solid-model file '{}'", path.string()));
+  return solid_model_from_json(ss.str());
+}
+
+void solid_model_to_file(const core::SolidModel &model,
+                         const std::filesystem::path &path, int indent) {
+  const std::string text = solid_model_to_json(model, indent);
+  if (path.has_parent_path())
+    std::filesystem::create_directories(path.parent_path());
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  out << text << '\n';
+  out.flush();
+  if (!out)
+    throw std::runtime_error(
+        fmt::format("cannot write solid-model file '{}'", path.string()));
+}
+
+void mark_imported(core::SolidModel &model) {
+  const auto mark = [](auto &records) {
+    for (auto &r : records) {
+      r.source = "imported";
+      r.locked = true;
+    }
+  };
+  mark(model.storeys);
+  mark(model.walls);
+  mark(model.spaces);
+  mark(model.openings);
+}
+
+SolidModelStoreResult store_solid_model(ProjectDB & /*db*/,
+                                        const core::SolidModel &model) {
+  // The table-backed import plugs in here, kind by kind, as each table lands
+  // (WP1 storeys, WP3 walls, WP4 spaces, WP5 openings): write the kind's rows
+  // (replacing the project's imported rows of that kind), count them, and
+  // stop listing the kind in `not_stored`. Until then nothing is written.
+  SolidModelStoreResult r;
+  if (model.has_storeys())
+    r.not_stored.emplace_back("storeys");
+  if (model.has_walls())
+    r.not_stored.emplace_back("walls");
+  if (model.has_spaces())
+    r.not_stored.emplace_back("spaces");
+  if (model.has_openings())
+    r.not_stored.emplace_back("openings");
+  return r;
 }
 
 } // namespace reusex::io

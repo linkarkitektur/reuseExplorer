@@ -32,6 +32,10 @@ QString stage_name_da(pl::JobStage stage) {
     return "Optimér poser";
   case pl::JobStage::graph_discover:
     return "Find kanter";
+  case pl::JobStage::storeys:
+    return "Etager";
+  case pl::JobStage::classify:
+    return "Klassificér planer";
   }
   return {};
 }
@@ -53,6 +57,12 @@ QString stage_blurb_da(pl::JobStage stage) {
   case pl::JobStage::graph_discover:
     return "Find nye løkkekanter (ORB, 360°-panoramaer, kantfil) og gem dem i "
            "posegrafen.";
+  case pl::JobStage::storeys:
+    return "Find etagerne: gulv- og loftshøjder og den målte lodrette "
+           "retning (niveauramme).";
+  case pl::JobStage::classify:
+    return "Giv hver plan en rolle — væg, gulv, loft, møbel — ud fra "
+           "semantik og geometri.";
   }
   return {};
 }
@@ -62,55 +72,95 @@ QString parameter_label_da(pl::JobStage stage,
   static const std::map<std::string, const char *> common = {
       {"filter", "Punktfilter"},
   };
-  static const std::map<std::pair<int, std::string>, const char *> labels = {
-      {{0, "resolution"}, "Voxelstørrelse [m]"},
-      {{0, "min_distance"}, "Mindste dybde [m]"},
-      {{0, "max_distance"}, "Største dybde [m]"},
-      {{0, "sampling_factor"}, "Pixeludtynding"},
-      {{0, "confidence_threshold"}, "Mindste konfidens"},
-      {{1, "angle_threshold"}, "Vinkeltærskel [°]"},
-      {{1, "plane_dist_threshold"}, "Afstandstærskel [m]"},
-      {{1, "min_inliers"}, "Mindste plan [punkter]"},
-      {{1, "radius"}, "Vækstradius [m]"},
-      {{1, "interval_0"}, "Første genberegning"},
-      {{1, "interval_factor"}, "Genberegningsfaktor"},
-      {{1, "adaptive"}, "Tilpas tærskler til støjen"},
-      {{1, "noise_seed"}, "Frø til støjestimat"},
-      {{2, "grid_size"}, "Gitterstørrelse [m]"},
-      {{2, "resolution"}, "Leiden-opløsning"},
-      {{2, "beta"}, "Leiden-beta"},
-      {{2, "max_iter"}, "Højst iterationer"},
-      {{2, "propagate_k"}, "Naboer ved udbredelse"},
-      {{2, "propagate_max_radius"}, "Udbredelsesradius [m]"},
-      {{3, "semantic_cloud"}, "Semantisk sky"},
-      {{3, "output_cloud"}, "Resultatsky"},
-      {{3, "cluster_tolerance"}, "Klyngeafstand [m]"},
-      {{3, "min_cluster_size"}, "Mindste instans [punkter]"},
-      {{3, "max_cluster_size"}, "Største instans [punkter]"},
-      {{3, "labels"}, "Kun disse mærkater"},
-      {{4, "solver"}, "MIP-løser"},
-      {{4, "time_limit_seconds"}, "Tidsgrænse [s]"},
-      {{4, "output_name"}, "Meshets navn"},
-      {{4, "search_threshold"}, "Søgeafstand [m]"},
-      {{4, "new_plane_offset"}, "Afstand til ny plan [m]"},
-      {{4, "alpha"}, "Vægt på vægkompleksitet"},
-      {{4, "max_cells"}, "Højst celler"},
-      {{4, "sectioned"}, "Løs etage for etage"},
-      {{4, "sectioned_threshold"}, "Etagevis fra [celler]"},
-      {{5, "min_observations"}, "Mindst set af [billeder]"},
-      {{5, "assoc_rounds"}, "Tilknytningsrunder"},
-      {{5, "no_gnc"}, "Uden GNC (hurtigere, mindre robust)"},
-      {{5, "dry_run"}, "Prøvekørsel — skriv ikke poserne"},
-      {{7, "loop_closure"}, "ORB-løkkelukning"},
-      {{7, "use_panoramas"}, "Brug 360°-panoramaer"},
-      {{7, "loop_edges_file"}, "Kantfil (JSON)"},
-      {{7, "loop_proposal"}, "Kandidatforslag"},
-      {{7, "loop_min_frame_gap"}, "Mindste billedafstand"},
-      {{7, "loop_min_inliers"}, "Mindste inliers"},
-      {{7, "pcm"}, "Konsistensfilter (PCM)"},
-      {{7, "dry_run"}, "Prøvekørsel — skriv ikke kanterne"},
+  // Keyed by the stage's wire name (pl::to_string), not its enum value.
+  static const std::map<std::pair<std::string, std::string>, const char *>
+      labels = {
+          {{"clouds", "resolution"}, "Voxelstørrelse [m]"},
+          {{"clouds", "min_distance"}, "Mindste dybde [m]"},
+          {{"clouds", "max_distance"}, "Største dybde [m]"},
+          {{"clouds", "sampling_factor"}, "Pixeludtynding"},
+          {{"clouds", "confidence_threshold"}, "Mindste konfidens"},
+          {{"planes", "angle_threshold"}, "Vinkeltærskel [°]"},
+          {{"planes", "plane_dist_threshold"}, "Afstandstærskel [m]"},
+          {{"planes", "min_inliers"}, "Mindste plan [punkter]"},
+          {{"planes", "radius"}, "Vækstradius [m]"},
+          {{"planes", "interval_0"}, "Første genberegning"},
+          {{"planes", "interval_factor"}, "Genberegningsfaktor"},
+          {{"planes", "adaptive"}, "Tilpas tærskler til støjen"},
+          {{"planes", "noise_seed"}, "Frø til støjestimat"},
+          {{"rooms", "grid_size"}, "Gitterstørrelse [m]"},
+          {{"rooms", "resolution"}, "Leiden-opløsning"},
+          {{"rooms", "beta"}, "Leiden-beta"},
+          {{"rooms", "max_iter"}, "Højst iterationer"},
+          {{"rooms", "propagate_k"}, "Naboer ved udbredelse"},
+          {{"rooms", "propagate_max_radius"}, "Udbredelsesradius [m]"},
+          {{"rooms", "min_room_area"}, "Mindste rum [m²]"},
+          {{"instances", "semantic_cloud"}, "Semantisk sky"},
+          {{"instances", "output_cloud"}, "Resultatsky"},
+          {{"instances", "cluster_tolerance"}, "Klyngeafstand [m]"},
+          {{"instances", "min_cluster_size"}, "Mindste instans [punkter]"},
+          {{"instances", "max_cluster_size"}, "Største instans [punkter]"},
+          {{"instances", "labels"}, "Kun disse mærkater"},
+          {{"mesh", "solver"}, "MIP-løser"},
+          {{"mesh", "time_limit_seconds"}, "Tidsgrænse [s]"},
+          {{"mesh", "output_name"}, "Meshets navn"},
+          {{"mesh", "search_threshold"}, "Søgeafstand [m]"},
+          {{"mesh", "new_plane_offset"}, "Afstand til ny plan [m]"},
+          {{"mesh", "alpha"}, "Vægt på vægkompleksitet"},
+          {{"mesh", "max_cells"}, "Højst celler"},
+          {{"mesh", "sectioned"}, "Løs etage for etage"},
+          {{"mesh", "sectioned_threshold"}, "Etagevis fra [celler]"},
+          {{"mesh", "structural_filter"}, "Kun bærende planer (vægge, etager)"},
+          {{"mesh", "structural_min_wall_area"}, "Mindste vægflade [m²]"},
+          {{"mesh", "structural_collinear_offset"},
+           "Saml vægstykker inden for [m]"},
+          {{"mesh", "structural_storey_clearance"},
+           "Møbelhøjde under etage [m]"},
+          {{"mesh", "structural_footprint_overlap"}, "Møbel over gulv, andel"},
+          {{"optimize", "min_observations"}, "Mindst set af [billeder]"},
+          {{"optimize", "assoc_rounds"}, "Tilknytningsrunder"},
+          {{"optimize", "no_gnc"}, "Uden GNC (hurtigere, mindre robust)"},
+          {{"optimize", "dry_run"}, "Prøvekørsel — skriv ikke poserne"},
+          {{"graph_discover", "loop_closure"}, "ORB-løkkelukning"},
+          {{"graph_discover", "use_panoramas"}, "Brug 360°-panoramaer"},
+          {{"graph_discover", "loop_edges_file"}, "Kantfil (JSON)"},
+          {{"graph_discover", "loop_proposal"}, "Kandidatforslag"},
+          {{"graph_discover", "loop_min_frame_gap"}, "Mindste billedafstand"},
+          {{"graph_discover", "loop_min_inliers"}, "Mindste inliers"},
+          {{"graph_discover", "pcm"}, "Konsistensfilter (PCM)"},
+          {{"graph_discover", "dry_run"}, "Prøvekørsel — skriv ikke kanterne"},
+          {{"storeys", "horizontal_cos"}, "Vandret når |n·z| over"},
+          {{"storeys", "surface_max_tilt_deg"}, "Gulv/loft højst hældning [°]"},
+          {{"storeys", "inlier_m"}, "Inlierbånd ved tilpasning [m]"},
+          {{"storeys", "max_fit_iterations"}, "Højst gentilpasninger"},
+          {{"storeys", "hist_bin_m"}, "Højdeinterval [m]"},
+          {{"storeys", "peak_min_share"}, "Mindste andel for et niveau"},
+          {{"storeys", "slab_merge_m"}, "Dæk: slå niveauer sammen under [m]"},
+          {{"storeys", "min_storey_height_m"}, "Mindste etagehøjde [m]"},
+          {{"storeys", "default_height_m"}, "Etagehøjde uden loft [m]"},
+          {{"storeys", "use_normal_sign"},
+           "Gulv/loft ud fra normalens retning"},
+          {{"storeys", "per_storey_frame"}, "Egen lodret for hver etage"},
+          {{"storeys", "storey_frame_tol_deg"},
+           "Egen lodret over afvigelse [°]"},
+          {{"storeys", "guid_match_m"}, "Samme etage inden for [m]"},
+          {{"classify", "horizontal_cos"}, "Vandret når |n·op| over"},
+          {{"classify", "vertical_cos"}, "Lodret når |n·op| under"},
+          {{"classify", "min_large_area_m2"}, "Mindste gulv/loft [m²]"},
+          {{"classify", "band_m"}, "Bånd om gulv og loft [m]"},
+          {{"classify", "min_wall_height_m"}, "Mindste væghøjde [m]"},
+          {{"classify", "min_wall_height_share"}, "… eller andel af etagen"},
+          {{"classify", "max_furniture_area_m2"}, "Største møbelflade [m²]"},
+          {{"classify", "table_min_m"}, "Laveste bordplade [m]"},
+          {{"classify", "table_max_m"}, "Højeste bordplade [m]"},
+          {{"classify", "min_storey_height_m"}, "Mindste etagehøjde [m]"},
+          {{"classify", "area_cell_m"}, "Arealgitter [m]"},
+          {{"classify", "extent_quantile"}, "Højdekvantil"},
+          {{"classify", "min_labelled_share"}, "Mindste mærkede andel"},
+          {{"classify", "min_class_share"}, "Mindste klasseandel"},
+          {{"classify", "role_map"}, "Klasse → rolle (JSON-fil)"},
   };
-  if (auto it = labels.find({static_cast<int>(stage), d.key});
+  if (auto it = labels.find({std::string(pl::to_string(stage)), d.key});
       it != labels.end())
     return it->second;
   if (auto it = common.find(d.key); it != common.end())
@@ -144,6 +194,10 @@ reusex::core::PipelineStage contract_stage(pl::JobStage stage) {
     return P::optimize;
   case pl::JobStage::graph_discover:
     return P::graph_discover;
+  case pl::JobStage::storeys:
+    return P::storeys;
+  case pl::JobStage::classify:
+    return P::classify;
   }
   return P::clouds;
 }

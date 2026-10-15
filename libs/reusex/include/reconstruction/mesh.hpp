@@ -4,6 +4,7 @@
 
 #pragma once
 #include "reusex/reconstruction/Solidifier.hpp"
+#include "reusex/reconstruction/structural_planes.hpp"
 #include "reusex/types.hpp"
 
 #include <pcl/PolygonMesh.h>
@@ -46,6 +47,10 @@ struct MeshOptions {
   /// MIP backend + fallback policy: auto (primary with HiGHS fallback), cuopt,
   /// or highs (issue #226).
   SolverChoice solver = SolverChoice::automatic;
+
+  /// Which planes become arrangement lines and storey sections
+  /// (reusex-8l3). See StructuralPlaneOptions.
+  StructuralPlaneOptions structural{};
 };
 
 /**

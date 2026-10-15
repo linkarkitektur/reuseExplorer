@@ -36,6 +36,16 @@ struct SegmentRoomsOptions {
   // point where Leiden modularity plateaus for room-scale graphs.
   int max_iter = 100;
 
+  /// Minimum room size, as the plane surface [m^2] its sample points cover
+  /// (one sample per grid_size^2). Leiden makes every visibility-graph vertex
+  /// that sees nothing — a point under a desk, on an exterior face — a
+  /// community of its own; communities below this size are not rooms. Their
+  /// samples join the room they see most, or, seeing none, take their label
+  /// from nearby points like the unsampled ones (reusex-3vc). The default,
+  /// 5 m^2, is a third of the floor, ceiling and walls of a 1 x 1.5 m WC; 0
+  /// keeps every community.
+  float min_room_area = 5.0F;
+
   // --- Label propagation to non-sampled points (distance-bounded k-NN) ---
   // Room clustering runs on a uniformly sampled subset; the remaining points
   // inherit a room label from their sampled neighbours. A distance-bounded

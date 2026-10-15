@@ -47,6 +47,7 @@ const std::vector<PipelineStage> &all_stages() {
       PipelineStage::clouds,         PipelineStage::annotate,
       PipelineStage::project,        PipelineStage::planes,
       PipelineStage::rooms,          PipelineStage::instances,
+      PipelineStage::storeys,        PipelineStage::classify,
       PipelineStage::mesh,           PipelineStage::texture,
       PipelineStage::windows,        PipelineStage::materials,
       PipelineStage::survey,         PipelineStage::attributes,

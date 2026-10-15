@@ -9,6 +9,7 @@
 #include "reconstruction/CellComplex.hpp"
 #include "reconstruction/Solidifier.hpp"
 #include "reconstruction/regularization.hpp"
+#include "reconstruction/structural_planes.hpp"
 // #include "geometry/utils.hpp"
 // #include "io/reusex.hpp"
 
@@ -107,6 +108,14 @@ pcl::PolygonMeshPtr mesh(CloudConstPtr cloud, CloudNConstPtr normals,
   planes = force_orthogonal_planes(planes);
   reusex::debug("Number of planes after forcing orthogonality: {}",
                 planes.size());
+
+  // Only wall lines and storey floors/ceilings become arrangement lines and
+  // sections; jambs, reveals and furniture tops stay in the `planes` cloud
+  // but would each cut the whole building (reusex-8l3). A wall's two faces
+  // are the ones make_pairs pairs, so use its pairing distance.
+  auto structural = opt.structural;
+  structural.wall_pair_max_m = opt.search_threshold;
+  select_structural_planes(planes, inliers, centroids, cloud, structural);
 
   auto pairs = make_pairs(planes, inliers, centroids, opt.search_threshold,
                           opt.new_plane_offset);

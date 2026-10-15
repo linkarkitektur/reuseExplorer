@@ -10,6 +10,7 @@
 // std::shared_ptr) to keep DB clients from transitively compiling them.
 #include "reusex/core/component_record.hpp"
 #include "reusex/core/resource_view.hpp"
+#include "reusex/core/solid_model.hpp"
 #include "reusex/core/survey.hpp"
 #include "reusex/types/point_types.hpp"
 
@@ -732,8 +733,73 @@ class ProjectDB {
 
   /// nullopt for an unknown key or a pre-v28 project.
   std::optional<std::string> setting(std::string_view key) const;
-  /// Insert or replace. @throws std::runtime_error on a read-only project.
+  /// Insert or replace. @throws std::runtime_error on a read-only project;
+  /// std::invalid_argument for "project_guid", which is write-once.
   void set_setting(std::string_view key, std::string_view value);
+
+  /// This project's own GUID: the namespace of every deterministic row GUID
+  /// (`core::deterministic_guid(project_guid(), "storeys/z<cm>")`, ...).
+  /// Minted once by the v30 migration and kept in project_settings under
+  /// "project_guid"; write-once (set_setting refuses the key).
+  ///
+  /// A file copy is the SAME project: it keeps this GUID, so its rows keep
+  /// the same GUIDs as the original's. Duplicating a case into an
+  /// independent project needs a remint (not provided yet).
+  /// @throws std::runtime_error on a pre-v30 project opened read-only, or
+  ///         when the stored value is not a UUID.
+  std::string project_guid() const;
+
+  // --- Storeys (schema v30, solid-model WP1) ---
+
+  /// Store the storeys of one detection run. Replaces every row whose
+  /// `locked` is 0 by @p storeys. A locked row is never touched: a record
+  /// whose guid matches a locked row is skipped (the locked row wins), and so
+  /// is a record whose idx a locked row already holds (idx is the key other
+  /// records refer to a storey by, so it stays unique); a locked row with no
+  /// match is kept. One SAVEPOINT, so a refused record leaves the table as it
+  /// was. @p run_id is the pipeline_log row that produced them (-1 = none).
+  /// @returns the number of rows written.
+  /// @throws std::invalid_argument for an empty guid, a source other than
+  ///         detected | manual | imported, or two records sharing a guid or
+  ///         an idx; std::runtime_error on a read-only project.
+  size_t save_storeys(const std::vector<core::StoreyRecord> &storeys,
+                      int run_id = -1);
+  /// Every stored storey, idx ascending. Empty for a pre-v30 project.
+  std::vector<core::StoreyRecord> storeys() const;
+  std::optional<core::StoreyRecord> storey_by_guid(std::string_view guid) const;
+  bool has_storeys() const;
+  /// Delete every storey, locked ones included (an explicit user action).
+  void delete_storeys();
+
+  // --- Plane classes (schema v31, solid-model WP2) ---
+
+  /// Store the classification of the planes of the label cloud @p cloud
+  /// (normally "planes"): one row per plane label. Replaces every row of
+  /// that cloud whose `locked` is 0 by @p classes. A locked row is never
+  /// touched: a record for a plane_label or guid a locked row holds is
+  /// skipped (the locked row wins); a locked row with no match is kept. One
+  /// SAVEPOINT. The rows belong to the cloud's row and go with it
+  /// (`rux del clouds.planes`); a planes re-run keeps them (same cloud row),
+  /// so the classify stage replaces them. @p run_id is the pipeline_log row
+  /// that produced them (-1 = none).
+  /// @returns the number of rows written.
+  /// @throws std::invalid_argument for an empty guid, a plane_label < 1, a
+  ///         source other than detected | manual | imported, an orientation,
+  ///         role or role_source outside its vocabulary
+  ///         (core::PlaneClassRecord), or two records sharing a plane_label
+  ///         or guid; std::runtime_error when @p cloud is not a stored cloud,
+  ///         or on a read-only or pre-v31 project.
+  size_t save_plane_classes(std::string_view cloud,
+                            const std::vector<core::PlaneClassRecord> &classes,
+                            int run_id = -1);
+  /// The plane classes of @p cloud, plane_label ascending. Empty for a
+  /// pre-v31 project or a cloud that has none (or does not exist).
+  std::vector<core::PlaneClassRecord>
+  plane_classes(std::string_view cloud = "planes") const;
+  bool has_plane_classes(std::string_view cloud = "planes") const;
+  /// Delete the plane classes of @p cloud, locked ones included (an explicit
+  /// user action).
+  void delete_plane_classes(std::string_view cloud = "planes");
 
   // --- Scans (multi-session import, #129) ---
 

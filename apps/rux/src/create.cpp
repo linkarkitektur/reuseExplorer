@@ -6,6 +6,7 @@
 #include "create/annotate.hpp"
 #include "create/annotate_panorama.hpp"
 #include "create/attributes.hpp"
+#include "create/classify.hpp"
 #include "create/clouds.hpp"
 #include "create/dense.hpp"
 #include "create/gsplat.hpp"
@@ -17,6 +18,7 @@
 #include "create/project.hpp"
 #include "create/rooms.hpp"
 #include "create/segment_frame.hpp"
+#include "create/storeys.hpp"
 #include "create/survey.hpp"
 #include "create/texture.hpp"
 #include "create/windows.hpp"
@@ -38,6 +40,8 @@ SUBCOMMANDS:
   planes       Detect and segment planar surfaces
   rooms        Segment rooms using Leiden clustering
   instances    Separate labels into spatial instances
+  storeys      Detect storeys and the measured vertical
+  classify     Classify planes: wall, floor, ceiling, furniture, ...
   materials    Create a material passport per instance
   survey       Fill the Ressourcekortlægning from instances
   mesh         Generate watertight mesh from planes
@@ -71,6 +75,8 @@ NOTES:
   setup_subcommand_create_planes(*sub, global_opt);
   setup_subcommand_create_rooms(*sub, global_opt);
   setup_subcommand_create_instances(*sub, global_opt);
+  setup_subcommand_create_storeys(*sub, global_opt);
+  setup_subcommand_create_classify(*sub, global_opt);
   setup_subcommand_create_materials(*sub, global_opt);
   setup_subcommand_create_survey(*sub, global_opt);
   setup_subcommand_create_mesh(*sub, global_opt);

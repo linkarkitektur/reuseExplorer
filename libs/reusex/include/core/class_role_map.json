@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "description": "Semantic class name -> structural role of a plane (rux create classify --role-map). Names match case-insensitively. A class not listed here gives no role; the geometric rules decide. Roles: wall, floor, ceiling, slab, furniture, clutter, unknown.",
+  "classes": {
+    "wall": "wall",
+    "floor": "floor",
+    "ceiling": "ceiling",
+    "slab": "slab",
+    "window": "wall",
+    "door frame": "wall",
+    "door": "clutter",
+    "railing": "clutter",
+    "radiator": "clutter",
+    "pipe": "clutter",
+    "duct": "clutter",
+    "electrical outlet": "clutter",
+    "ceiling light": "clutter",
+    "ceiling lamp": "clutter",
+    "desk lamp": "clutter",
+    "sink": "furniture",
+    "cabinet": "furniture",
+    "shelf": "furniture",
+    "table": "furniture",
+    "desk": "furniture",
+    "chair": "furniture",
+    "bench": "furniture",
+    "sofa": "furniture",
+    "bed": "furniture"
+  }
+}

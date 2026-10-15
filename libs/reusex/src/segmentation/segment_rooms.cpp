@@ -8,11 +8,27 @@
 #include "core/visual_observer.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <stdexcept>
 #include <unordered_set>
 
 namespace reusex::geometry {
+
+namespace {
+
+/// options.min_room_area as a sample count: one sample per grid cell.
+std::size_t min_room_samples(const SegmentRoomsOptions &options) {
+  if (options.min_room_area <= 0.0F || options.grid_size <= 0.0F)
+    return 1;
+  const double cell =
+      static_cast<double>(options.grid_size) * options.grid_size;
+  return std::max<std::size_t>(
+      1, static_cast<std::size_t>(
+             std::ceil(static_cast<double>(options.min_room_area) / cell)));
+}
+
+} // namespace
 
 auto propagate_room_labels(CloudConstPtr cloud, CloudLPtr labels,
                            IndicesConstPtr sampled_indices,
@@ -146,6 +162,7 @@ auto segment_rooms_impl(CloudConstPtr cloud, CloudNConstPtr normals,
   cc.setMaxIterations(options.max_iter);
 
   cc.setGridSize(options.grid_size);
+  cc.setMinClusterSize(min_room_samples(options));
   cc.setInputCloud(cloud);
   cc.setInputNormals(normals);
   cc.setIndices(indices);
@@ -187,8 +204,30 @@ auto segment_rooms_impl(CloudConstPtr cloud, CloudNConstPtr normals,
 
   // CommunityClustering assigns 0-based cluster ids to the sampled points.
   // Shift them to the 1-based room convention so that 0 remains "unlabeled".
-  for (const int idx : *indices)
-    labels->points[idx].label += 1;
+  // A sample whose community was too small and that sees no room is not a
+  // seed: it stays unlabeled and is propagated to like an unsampled point.
+  {
+    const std::size_t sampled = indices->size();
+    IndicesPtr seeds(new Indices);
+    seeds->reserve(indices->size());
+    for (const int idx : *indices) {
+      auto &label = labels->points[idx].label;
+      if (label == decltype(cc)::kUnassigned) {
+        label = core::kUnlabeled;
+      } else {
+        label += 1;
+        seeds->push_back(idx);
+      }
+    }
+    if (seeds->empty() && sampled > 0)
+      reusex::warn("segment_rooms: no community of the {} sampled points "
+                   "reaches min_room_area={:.2f} m^2 ({} samples at grid "
+                   "{:.2f} m); every point stays unlabeled. Lower "
+                   "--min-room-area for a scan this small.",
+                   sampled, options.min_room_area, min_room_samples(options),
+                   options.grid_size);
+    indices = seeds;
+  }
 
   if (auto *obs = reusex::core::get_visual_observer()) {
     CloudPtr sampled(new Cloud);
@@ -243,9 +282,14 @@ auto segment_rooms_impl(CloudConstPtr cloud, CloudNConstPtr normals,
                   indices->size());
   }
 
+  // No seed at all (nothing reached min_room_area, warned above): there is
+  // nothing to propagate, and a k-d tree over zero points cannot be searched.
   const size_t unpropagated =
-      propagate_room_labels(cloud, labels, indices, missing_indices,
-                            options.propagate_k, options.propagate_max_radius);
+      indices->empty()
+          ? missing_indices->size()
+          : propagate_room_labels(cloud, labels, indices, missing_indices,
+                                  options.propagate_k,
+                                  options.propagate_max_radius);
 
   if (!missing_indices->empty()) {
     const double pct = 100.0 * static_cast<double>(unpropagated) /

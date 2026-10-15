@@ -30,6 +30,9 @@ struct SubcommandSegRoomsOptions {
   float propagate_max_radius =
       reusex::geometry::SegmentRoomsOptions{}.propagate_max_radius;
 
+  /// Minimum room size [m^2 of sampled plane surface].
+  float min_room_area = reusex::geometry::SegmentRoomsOptions{}.min_room_area;
+
   std::string filter_expr; ///< Filter expression to limit processing
 };
 
