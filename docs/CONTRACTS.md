@@ -226,13 +226,20 @@ exist.
 
 ### `mesh` (`rux create mesh`)
 
-Solidify the cell complex into a room-partitioned mesh.
+Solidify the cell complex into **one watertight envelope mesh** covering every
+room whose solver-selected cells have `room_label > 0` — `rooms` only weights
+which cells are "inside" during the MIP solve; the output is not split back
+into per-room meshes, and the solver's per-cell room/wall labels
+(`Solidifier::solve()`'s `room_labels`/`wall_labels`) are discarded rather than
+carried onto the mesh (`libs/reusex/src/reconstruction/mesh.cpp`). Keeping
+those labels for a room-partitioned output is tracked under WP9
+(`reusex-z1v.11.2`).
 
 | | |
 |---|---|
 | Consumes | `cloud`, `normals`, `rooms`, `planes`, `plane_centroids`, `plane_normals` |
-| Produces | `mesh` (`meshes` table) |
-| Options  | `SolidifierOptions` → `Solidifier` / `mesh()` (`libs/reusex/include/reconstruction/`) |
+| Produces | `mesh` (`meshes` table) — one envelope mesh, not room-partitioned |
+| Options  | `MeshOptions` → `mesh()` (`libs/reusex/include/reconstruction/mesh.hpp`); builds a `SolidifierOptions` subset for `Solidifier` internally |
 | Checks   | `cloud`/`normals`/`rooms`/`planes` present + aligned; `plane_centroids`/`plane_normals` present + aligned |
 
 ### `texture` (`rux create texture`)
