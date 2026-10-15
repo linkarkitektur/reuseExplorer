@@ -5,6 +5,7 @@
 #include "analyze.hpp"
 #include "analyze/accuracy.hpp"
 #include "analyze/quality.hpp"
+#include "analyze/solid.hpp"
 
 void setup_subcommand_analyze(CLI::App &app,
                               std::shared_ptr<RuxOptions> global_opt) {
@@ -22,6 +23,8 @@ DESCRIPTION:
 SUBCOMMANDS:
   quality      Plane flatness / surface thickness report (JSON)
   accuracy     Ground-truth accuracy / completeness / F-score (JSON)
+  solid        Typed building model vs a reference plan (walls, spaces,
+               openings, point-to-solid fit)
 
 TYPICAL WORKFLOW:
   1. rux import rtabmap scan.db        # Import sensor data
@@ -37,6 +40,7 @@ NOTES:
 
   setup_subcommand_analyze_quality(*sub, global_opt);
   setup_subcommand_analyze_accuracy(*sub, global_opt);
+  setup_subcommand_analyze_solid(*sub, global_opt);
 
   sub->require_subcommand(1);
 }
