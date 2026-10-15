@@ -163,6 +163,181 @@ inline std::vector<int> dissolveSmallCommunities(
   return out;
 }
 
+/** \brief One candidate merge of mergeCommunitiesByVisibility(), for logging.
+ */
+struct CommunityMerge {
+  int a = 0;              ///< community id (input numbering)
+  int b = 0;              ///< community id (input numbering), a < b
+  std::size_t size_a = 0; ///< vertices of a when the pair was scored
+  std::size_t size_b = 0; ///< vertices of b when the pair was scored
+  double cross = 0.0;     ///< edge weight between a and b / (|a| |b|)
+  double density_a = 0.0; ///< internal edge weight of a / (|a| (|a|-1) / 2)
+  double density_b = 0.0; ///< same for b
+  double affinity = 0.0;  ///< cross / min(density_a, density_b)
+  bool merged = false;    ///< affinity reached the threshold
+};
+
+/** \brief Merge communities that see each other about as well as they see
+ * themselves.
+ *
+ * Modularity splits a long or L-shaped open space whose far ends do not see
+ * each other into several communities, although every part sees the next one
+ * almost as well as it sees itself: the ceiling and the upper walls are seen
+ * from everywhere, only desk screens and furniture cut the lower rays. Two
+ * rooms joined by a door are different: only the few samples in line with
+ * the door see across. This pass scores every pair of communities by
+ *
+ *   affinity(a, b) = (W(a, b) / (|a| |b|)) / min(rho(a), rho(b)),
+ *   rho(c)         = W(c, c) / (|c| (|c| - 1) / 2),
+ *
+ * the density of visibility edges between them relative to the internal edge
+ * density of the sparser of the two, and merges the pair with the highest
+ * affinity while it reaches \p min_affinity, rescoring after every merge
+ * (average linkage). Communities of fewer than two vertices have no density
+ * and are never merged. Ties go to the smallest (a, b); the result does not
+ * depend on edge order.
+ *
+ * Merged communities take the smaller id; ids are renumbered 0..k-1 in their
+ * original order. \ref kNoCommunity vertices are left alone.
+ *
+ * \param[in] n            number of vertices
+ * \param[in] edges        undirected edges (vertex index pairs)
+ * \param[in] weights      one weight per edge
+ * \param[in] membership   community id per vertex, or \ref kNoCommunity
+ * \param[in] min_affinity merge threshold; <= 0 disables the pass
+ * \param[out] log         if not null, every scored pair of the first round
+ *                         plus each merge made, in order
+ * \return the new membership
+ */
+inline std::vector<int> mergeCommunitiesByVisibility(
+    std::size_t n, const std::vector<std::pair<int, int>> &edges,
+    const std::vector<double> &weights, const std::vector<int> &membership,
+    double min_affinity, std::vector<CommunityMerge> *log = nullptr) {
+  if (membership.size() != n || weights.size() != edges.size())
+    throw std::invalid_argument(
+        "mergeCommunitiesByVisibility: membership/weights size mismatch");
+  if (min_affinity <= 0.0)
+    return membership;
+
+  int k = 0;
+  for (const int c : membership)
+    k = std::max(k, c + 1);
+  if (k < 2)
+    return membership;
+  const auto K = static_cast<std::size_t>(k);
+
+  std::vector<std::size_t> size(K, 0);
+  for (const int c : membership)
+    if (c != kNoCommunity)
+      ++size[static_cast<std::size_t>(c)];
+
+  // Edge weight between (and within) communities, dense k x k: k is the
+  // number of communities left after dissolveSmallCommunities(), tens to a
+  // few hundred.
+  std::vector<double> w(K * K, 0.0);
+  for (std::size_t e = 0; e < edges.size(); ++e) {
+    const int ca = membership[static_cast<std::size_t>(edges[e].first)];
+    const int cb = membership[static_cast<std::size_t>(edges[e].second)];
+    if (ca == kNoCommunity || cb == kNoCommunity)
+      continue;
+    const auto a = static_cast<std::size_t>(std::min(ca, cb));
+    const auto b = static_cast<std::size_t>(std::max(ca, cb));
+    w[a * K + b] += weights[e];
+  }
+
+  std::vector<int> parent(K);
+  for (std::size_t c = 0; c < K; ++c)
+    parent[c] = static_cast<int>(c);
+  std::vector<char> alive(K, 1);
+
+  const auto density = [&](std::size_t c) {
+    const double s = static_cast<double>(size[c]);
+    return w[c * K + c] / (s * (s - 1.0) / 2.0);
+  };
+  const auto score = [&](std::size_t a, std::size_t b) {
+    CommunityMerge m;
+    m.a = static_cast<int>(a);
+    m.b = static_cast<int>(b);
+    m.size_a = size[a];
+    m.size_b = size[b];
+    m.cross = w[a * K + b] /
+              (static_cast<double>(size[a]) * static_cast<double>(size[b]));
+    m.density_a = density(a);
+    m.density_b = density(b);
+    const double rho = std::min(m.density_a, m.density_b);
+    m.affinity = rho > 0.0 ? m.cross / rho : 0.0;
+    return m;
+  };
+
+  // Every merge removes one community, so k rounds bound the loop
+  // (STANDARDS §5).
+  for (std::size_t round = 0; round < K; ++round) {
+    CommunityMerge best;
+    bool found = false;
+    for (std::size_t a = 0; a < K; ++a) {
+      if (alive[a] == 0 || size[a] < 2)
+        continue;
+      for (std::size_t b = a + 1; b < K; ++b) {
+        if (alive[b] == 0 || size[b] < 2 || w[a * K + b] <= 0.0)
+          continue;
+        const CommunityMerge m = score(a, b);
+        if (round == 0 && log != nullptr)
+          log->push_back(m);
+        if (!found || m.affinity > best.affinity) {
+          best = m;
+          found = true;
+        }
+      }
+    }
+    if (!found || best.affinity < min_affinity)
+      break;
+    best.merged = true;
+    if (log != nullptr)
+      log->push_back(best);
+
+    // Fold b into a.
+    const auto a = static_cast<std::size_t>(best.a);
+    const auto b = static_cast<std::size_t>(best.b);
+    w[a * K + a] += w[b * K + b] + w[a * K + b];
+    w[a * K + b] = 0.0;
+    w[b * K + b] = 0.0;
+    for (std::size_t c = 0; c < K; ++c) {
+      if (c == a || c == b)
+        continue;
+      const double wbc = b < c ? w[b * K + c] : w[c * K + b];
+      if (b < c)
+        w[b * K + c] = 0.0;
+      else
+        w[c * K + b] = 0.0;
+      if (a < c)
+        w[a * K + c] += wbc;
+      else
+        w[c * K + a] += wbc;
+    }
+    size[a] += size[b];
+    size[b] = 0;
+    alive[b] = 0;
+    parent[b] = static_cast<int>(a);
+  }
+
+  // Resolve merge chains and renumber the survivors densely.
+  const auto root = [&](int c) {
+    while (parent[static_cast<std::size_t>(c)] != c)
+      c = parent[static_cast<std::size_t>(c)];
+    return c;
+  };
+  std::vector<int> new_id(K, kNoCommunity);
+  int next_id = 0;
+  for (std::size_t c = 0; c < K; ++c)
+    if (alive[c] != 0)
+      new_id[c] = next_id++;
+  std::vector<int> out(n, kNoCommunity);
+  for (std::size_t v = 0; v < n; ++v)
+    if (membership[v] != kNoCommunity)
+      out[v] = new_id[static_cast<std::size_t>(root(membership[v]))];
+  return out;
+}
+
 /** \brief Community-based point cloud clustering using Leiden algorithm.
  *
  * Builds a visibility graph between point cloud centroids using Embree ray
@@ -254,6 +429,15 @@ class PCL_EXPORTS CommunityClustering : public PCLBase<PointT> {
   }
 
   inline std::size_t getMinClusterSize() const { return min_cluster_size_; }
+
+  /** \brief Communities whose cross-visibility density reaches this fraction
+   * of their internal density are merged (see
+   * mergeCommunitiesByVisibility()); <= 0 disables the pass. */
+  inline void setMinMergeAffinity(double affinity) {
+    min_merge_affinity_ = affinity;
+  }
+
+  inline double getMinMergeAffinity() const { return min_merge_affinity_; }
 
   inline void registerVisualizationCallback(VisualizationCallback callback) {
     visualization_callback_ = callback;
@@ -387,9 +571,18 @@ class PCL_EXPORTS CommunityClustering : public PCLBase<PointT> {
       leiden_membership[static_cast<std::size_t>(i)] =
           static_cast<int>(VECTOR(membership)[i]);
 
-    const std::vector<int> kept = dissolveSmallCommunities(
+    const std::vector<int> dissolved_membership = dissolveSmallCommunities(
         static_cast<std::size_t>(n), edge_list, weight_list, leiden_membership,
         min_cluster_size_);
+
+    // Modularity splits one open space whose ends do not see each other;
+    // merge communities that see each other about as well as themselves
+    // (reusex-5l7).
+    std::vector<CommunityMerge> merge_log;
+    const std::vector<int> kept = mergeCommunitiesByVisibility(
+        static_cast<std::size_t>(n), edge_list, weight_list,
+        dissolved_membership, min_merge_affinity_, &merge_log);
+    logMerges(merge_log);
 
     int n_kept = 0;
     std::size_t unassigned = 0;
@@ -409,12 +602,12 @@ class PCL_EXPORTS CommunityClustering : public PCLBase<PointT> {
       }
     }
     reusex::core::info(
-        "Visibility graph: {} vertices, {} edges, {} isolated. {} of {} "
-        "communities have >= {} vertices; of the {} vertices in smaller "
-        "ones, {} joined the community they see most and {} see none and "
+        "Visibility graph: {} vertices, {} edges, {} isolated. {} Leiden "
+        "communities -> {} rooms; of the {} vertices in communities below {} "
+        "vertices, {} joined the community they see most and {} see none and "
         "stay unassigned",
-        n, edge_list.size(), isolated, n_kept, nb_clusters, min_cluster_size_,
-        dissolved, dissolved - unassigned, unassigned);
+        n, edge_list.size(), isolated, nb_clusters, n_kept, dissolved,
+        min_cluster_size_, dissolved - unassigned, unassigned);
 
     // Extract membership into labels
     labels.resize(input_->size());
@@ -431,6 +624,43 @@ class PCL_EXPORTS CommunityClustering : public PCLBase<PointT> {
     igraph_destroy(&graph);
 
     deinitCompute();
+  }
+
+  /// Log the merge pass: the strongest candidate pairs at debug level, the
+  /// merges made at info level.
+  void logMerges(std::vector<CommunityMerge> log) const {
+    if (min_merge_affinity_ <= 0.0)
+      return;
+    std::size_t merges = 0;
+    for (const auto &m : log) {
+      if (!m.merged)
+        continue;
+      ++merges;
+      reusex::core::debug(
+          "Room merge: communities {} ({} samples) + {} ({} samples), "
+          "affinity {:.3f} >= {:.3f} (cross density {:.4f}, internal {:.4f} / "
+          "{:.4f})",
+          m.a, m.size_a, m.b, m.size_b, m.affinity, min_merge_affinity_,
+          m.cross, m.density_a, m.density_b);
+    }
+    std::vector<CommunityMerge> pairs;
+    for (const auto &m : log)
+      if (!m.merged)
+        pairs.push_back(m);
+    std::sort(pairs.begin(), pairs.end(),
+              [](const CommunityMerge &x, const CommunityMerge &y) {
+                return x.affinity > y.affinity;
+              });
+    for (std::size_t i = 0; i < std::min<std::size_t>(pairs.size(), 40); ++i)
+      reusex::core::trace(
+          "Room merge candidate {} ({}) - {} ({}): affinity {:.3f} (cross "
+          "{:.4f}, internal {:.4f} / {:.4f})",
+          pairs[i].a, pairs[i].size_a, pairs[i].b, pairs[i].size_b,
+          pairs[i].affinity, pairs[i].cross, pairs[i].density_a,
+          pairs[i].density_b);
+    reusex::core::info("Room merge: {} pairs of communities scored, {} merged "
+                       "at affinity >= {:.2f}",
+                       pairs.size(), merges, min_merge_affinity_);
   }
 
   void rayTracing(std::vector<std::tuple<IT, IT, NT>> &triplets) {
@@ -719,6 +949,7 @@ class PCL_EXPORTS CommunityClustering : public PCLBase<PointT> {
   double beta_{0.01};
   int max_iter_{-1};                // negative = iterate until convergence
   std::size_t min_cluster_size_{1}; // 1 = keep every community
+  double min_merge_affinity_{0.0};  // <= 0 = no merge pass
 
   VisualizationCallback visualization_callback_{nullptr};
   static constexpr unsigned int N_ =

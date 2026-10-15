@@ -46,6 +46,20 @@ struct SegmentRoomsOptions {
   /// keeps every community.
   float min_room_area = 5.0F;
 
+  /// Merge communities that see each other about as well as they see
+  /// themselves. Modularity splits one open space whose ends do not see each
+  /// other — an open office with desk screens, an L-shaped room — into
+  /// several "rooms"; the mesh stage then puts a wall between them
+  /// (reusex-5l7). Two communities merge while the density of visibility
+  /// edges between them is at least this fraction of the internal edge
+  /// density of the sparser one (pcl::mergeCommunitiesByVisibility). Rooms
+  /// joined by a door score far below it: only samples in line with the door
+  /// see across. 0 disables the merge. The default, 0.08, sits between the
+  /// parts of NewOffice's open office (merged at 0.10-0.22) and rooms joined
+  /// by a door there and in house1/house2 (at most 0.056). A glass partition
+  /// is seen through, so it scores like an open space and is merged.
+  float merge_affinity = 0.08F;
+
   // --- Label propagation to non-sampled points (distance-bounded k-NN) ---
   // Room clustering runs on a uniformly sampled subset; the remaining points
   // inherit a room label from their sampled neighbours. A distance-bounded
