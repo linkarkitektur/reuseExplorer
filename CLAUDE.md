@@ -584,7 +584,9 @@ tree — if a doc mentions `RTABMapDatabase`, that doc is stale.
   `UNIQUE(from, to, type)`; `upsert_pose_graph_edge` /
   `set_pose_graph_edge_status` / `update_pose_graph_edge_metrics`), adds
   `sensor_frames.initial_transform` and `project_settings` (`setting()` /
-  `set_setting()`)
+  `set_setting()`). Schema v29 makes semantic point label = API class + 1
+  (`core::api_to_point_label`, STANDARDS §3.1): stored semantic clouds were
+  shifted and stamped `parameters.label_encoding = "api_plus_one"`
 - Migrating schema; `LATEST_SCHEMA_VERSION` is defined in
   `src/core/ProjectDB.cpp` — read it there rather than trusting a doc (it moves
   most releases)

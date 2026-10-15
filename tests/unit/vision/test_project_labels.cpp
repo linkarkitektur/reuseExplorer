@@ -162,8 +162,8 @@ TEST_CASE("Project_PointsInsideLabelledSquare_GetSquareClassLabel",
     const uint32_t got = labels->points[i].label;
 
     if (inside_patch(px, py)) {
-      // api_to_point_label passes non-background class ids through unchanged.
-      REQUIRE(got == static_cast<uint32_t>(kPatchClass));
+      // Point label = API class + 1 (STANDARDS §3.1).
+      REQUIRE(got == static_cast<uint32_t>(kPatchClass) + 1u);
       ++labelled;
     } else {
       // Background (-1) and anything the projection skipped are both
@@ -195,11 +195,10 @@ TEST_CASE("Project_AllBackgroundLabelImage_LeavesAllPointsUnlabeled",
     REQUIRE(pt.label == reusex::core::kUnlabeled);
 }
 
-TEST_CASE("Project_ClassIdZero_MapsToUnlabeledPointLabel",
-          "[vision][project]") {
-  // 0 is a valid API class id (only -1 is background), and it maps to point
-  // label 0 — i.e. indistinguishable from unlabeled in a CloudL. Pinning the
-  // behaviour so a future change to the encoding is caught here.
+TEST_CASE("Project_ClassIdZero_MapsToPointLabelOne", "[vision][project]") {
+  // 0 is a valid API class id (only -1 is background): the first prompt
+  // class. It must become point label 1, not 0 == kUnlabeled, or every point
+  // of that class is silently dropped by segment_instances (reusex-z1v.2.1).
   cv::Mat all_zero(kHeight, kWidth, CV_32S, cv::Scalar(0));
   auto db = make_project(all_zero);
   auto cloud = make_wall();
@@ -207,8 +206,13 @@ TEST_CASE("Project_ClassIdZero_MapsToUnlabeledPointLabel",
   auto labels = project(*db, cloud);
 
   REQUIRE(labels->size() == cloud->size());
-  for (const auto &pt : labels->points)
-    REQUIRE(pt.label == reusex::core::kUnlabeled);
+  size_t first_class = 0;
+  for (const auto &pt : labels->points) {
+    REQUIRE((pt.label == 1u || pt.label == reusex::core::kUnlabeled));
+    if (pt.label == 1u)
+      ++first_class;
+  }
+  REQUIRE(first_class > 100);
 }
 
 TEST_CASE("Project_FrameWithoutSegmentationImage_LeavesPointsUnlabeled",

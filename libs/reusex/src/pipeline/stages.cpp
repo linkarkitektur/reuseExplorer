@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "reusex/pipeline/stages.hpp"
+#include "reusex/core/label_encoding.hpp"
 #include "reusex/pipeline/mesh_parameters.hpp"
 #include "reusex/pipeline/stage_parameters.hpp"
 #include "reusex/pipeline/tile_index.hpp"
@@ -369,6 +370,7 @@ StageResult run_instances(ProjectDB &db, const StageContext &ctx,
   geometry::SegmentInstancesRequest request;
   request.cloud = db.point_cloud_xyzrgb("cloud");
   request.semantic_labels = db.point_cloud_label(semantic_cloud);
+  core::warn_if_unstamped_semantic_cloud(db, semantic_cloud);
   request.cluster_tolerance =
       param_or(params, "cluster_tolerance", request.cluster_tolerance);
   request.min_cluster_size =

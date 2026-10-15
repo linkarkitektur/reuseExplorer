@@ -349,11 +349,13 @@ PYBIND11_MODULE(_reusex, m) {
           py::arg("name"),
           "Load a Label cloud as numpy arrays.\n\n"
           "Returns dict with:\n"
-          "    'labels': (N,) int32 (label IDs per point)")
+          "    'labels': (N,) int32 (point label per point; 0 = unlabeled;\n"
+          "    for a semantic cloud, point label = API class + 1)")
 
       .def("label_definitions", &PDB::label_definitions, py::arg("name"),
            "Get label ID → name definitions for a cloud.\n\n"
-           "Returns dict mapping int label_id to str label_name.")
+           "Returns dict mapping int label_id to str label_name; label_id is\n"
+           "the point label (1-based), as in point_cloud_label().")
 
       .def("sensor_frame_ids", &PDB::sensor_frame_ids,
            "Return list of all stored sensor frame IDs.")

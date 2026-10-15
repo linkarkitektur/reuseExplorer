@@ -15,13 +15,14 @@
 ///
 /// Three layers encode labels differently (see docs/STANDARDS.md §3.1):
 ///
-/// | Layer                              | Type       | Unlabeled/bg          |
-/// Valid    |
-/// |------------------------------------|------------|-----------------------|----------|
-/// | segmentation_images storage (PNG)  | `CV_16U`   | `0` (stored label+1)  |
-/// `1..65535` (label ≤ 65534) | | ProjectDB segmentation API         | `CV_32S`
-/// | `-1`                  | `0..N`   | | In-memory point labels (pcl::Label)|
-/// `uint32_t` | `0`                   | `1..N`   |
+/// - segmentation_images storage (PNG): `CV_16U`, `0` = background, a class
+///   is stored as `api + 1` (`1..65535`, so API class <= 65534).
+/// - ProjectDB segmentation API: `CV_32S`, `-1` = background, classes
+///   `0..N-1` (the annotate prompt order).
+/// - In-memory point labels (pcl::Label / CloudL): `uint32_t`, `0` =
+///   unlabeled, classes `1..N` (= API class + 1). Semantic label clouds carry
+///   `"label_encoding": "api_plus_one"` in their parameters JSON and key their
+///   label_definitions by point label.
 ///
 /// Conversions between layers MUST go through the helpers here; no inline
 /// offset arithmetic (`label + 1`, `label - 1`) or raw casts are allowed at
@@ -72,9 +73,9 @@ inline size_t label_to_index(uint32_t label) {
 
 /// API (CV_32S, -1 = background) → point label (uint32_t, 0 = unlabeled).
 ///
-/// Background (`kBackgroundApi`) maps to `kUnlabeled`. Valid class ids pass
-/// through unchanged (the semantic-class layer keeps its own numbering; only
-/// the background sentinel is translated).
+/// Background (`kBackgroundApi`) maps to `kUnlabeled`; a class id `c >= 0`
+/// maps to `c + 1`. API class 0 (the first prompt class) is a real class and
+/// must not collide with `kUnlabeled` (STANDARDS §3.1, decision D8).
 ///
 /// @throws std::out_of_range if @p api_label is negative but not the
 /// background sentinel.
@@ -85,16 +86,36 @@ inline uint32_t api_to_point_label(int api_label) {
     throw std::out_of_range("api_to_point_label: negative label " +
                             std::to_string(api_label) +
                             " is not the background sentinel (-1)");
-  return static_cast<uint32_t>(api_label);
+  return static_cast<uint32_t>(api_label) + 1u;
 }
 
 /// Point label (uint32_t, 0 = unlabeled) → API (CV_32S, -1 = background).
-/// Inverse of api_to_point_label(): `kUnlabeled` maps to `kBackgroundApi`.
+/// Inverse of api_to_point_label(): `kUnlabeled` maps to `kBackgroundApi`,
+/// point label `p >= 1` to API class `p - 1`.
+///
+/// @throws std::out_of_range if @p point_label is out of contract
+/// (is_out_of_contract_label(), e.g. a wrapped -1).
 inline int point_label_to_api(uint32_t point_label) {
   if (point_label == kUnlabeled)
     return kBackgroundApi;
-  return static_cast<int>(point_label);
+  if (is_out_of_contract_label(point_label))
+    throw std::out_of_range("point_label_to_api: label " +
+                            std::to_string(point_label) +
+                            " is outside the point-label contract");
+  return static_cast<int>(point_label - 1u);
 }
+
+/// Key in a semantic label cloud's `parameters` JSON that records how its
+/// point labels relate to API class ids. Every writer of a semantic CloudL
+/// (one whose labels come from segmentation images / annotate classes) sets
+/// it to kLabelEncodingApiPlusOne; the schema v29 migration shifts stored
+/// semantic clouds lacking it. Structural label clouds (planes, rooms,
+/// instances) carry their own 1-based ids and never set it.
+inline constexpr const char *kLabelEncodingKey = "label_encoding";
+
+/// Value of kLabelEncodingKey: point label = API class + 1, label
+/// definitions keyed by point label.
+inline constexpr const char *kLabelEncodingApiPlusOne = "api_plus_one";
 
 /// API label (CV_32S, -1 = background) → storage value (CV_16U, 0 = bg,
 /// `label + 1`).

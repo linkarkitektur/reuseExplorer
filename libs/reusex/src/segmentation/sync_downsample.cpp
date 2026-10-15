@@ -4,11 +4,13 @@
 
 #include "segmentation/sync_downsample.hpp"
 
+#include "core/label_semantics.hpp"
 #include "core/logging.hpp"
 #include "segmentation/downsample.hpp"
 
 #include <fmt/format.h>
 #include <fmt/ranges.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <stdexcept>
@@ -18,6 +20,24 @@
 namespace reusex::geometry {
 
 namespace {
+
+// `params_json` plus the label-encoding marker when the cloud being replaced
+// carried it, so a downsampled semantic cloud is not re-encoded by a later
+// migration (STANDARDS §3.1).
+std::string with_label_encoding(ProjectDB &db, const std::string &name,
+                                const std::string &params_json) {
+  nlohmann::json old;
+  try {
+    old = nlohmann::json::parse(db.point_cloud_provenance(name).second);
+  } catch (const std::exception &) {
+    return params_json;
+  }
+  if (!old.is_object() || !old.contains(core::kLabelEncodingKey))
+    return params_json;
+  auto out = nlohmann::json::parse(params_json);
+  out[core::kLabelEncodingKey] = old[core::kLabelEncodingKey];
+  return out.dump();
+}
 
 // A sibling cloud discovered by point-count match.
 struct Sibling {
@@ -159,9 +179,11 @@ SyncDownsampleResult sync_downsample(ProjectDB &db, const std::string &primary,
           core::info("sync_downsample: sibling '{}' (Label) -> {} entries "
                      "(majority vote)",
                      s.name, ds->size());
-          // Preserve semantic label definitions across the operation.
+          // Preserve semantic label definitions and the label encoding
+          // marker (STANDARDS §3.1) across the operation.
           auto defs = db.label_definitions(s.name);
-          db.save_point_cloud(s.name, *ds, "sync_downsample", params_json);
+          db.save_point_cloud(s.name, *ds, "sync_downsample",
+                              with_label_encoding(db, s.name, params_json));
           if (!defs.empty())
             db.save_label_definitions(s.name, defs);
         } else {

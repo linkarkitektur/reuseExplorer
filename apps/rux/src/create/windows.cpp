@@ -94,7 +94,8 @@ NOTES:
       ->check(CLI::Range(0.0f, reusex::geometry::kWallVerticalityGateOff));
 
   sub->add_option("-l,--labels", opt->labels_to_process,
-                  "Semantic labels to treat as windows (comma-separated)")
+                  "Semantic point labels to treat as windows (comma-separated; "
+                  "point label = API class + 1)")
       ->delimiter(',');
 
   sub->add_flag(

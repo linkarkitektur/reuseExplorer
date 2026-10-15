@@ -8,6 +8,7 @@
 #include <reusex/core/MaterialPassport.hpp>
 #include <reusex/core/ProjectDB.hpp>
 #include <reusex/core/SensorIntrinsics.hpp>
+#include <reusex/core/label_encoding.hpp>
 #include <reusex/geometry/BuildingComponent.hpp>
 #include <reusex/geometry/cgal_utils.hpp>
 #include <reusex/geometry/component_persistence.hpp>
@@ -93,8 +94,10 @@ ExportScene gather_export_scene(const ProjectDB &db) {
 
     // Get semantic name mapping from "labels" definitions
     std::map<int, std::string> semantic_names;
-    if (db.has_point_cloud("labels"))
+    if (db.has_point_cloud("labels")) {
+      core::warn_if_unstamped_semantic_cloud(db, "labels");
       semantic_names = db.label_definitions("labels");
+    }
 
     auto cloud = db.point_cloud_xyzrgb("cloud");
 
@@ -164,6 +167,7 @@ ExportScene gather_export_scene(const ProjectDB &db) {
     reusex::debug("ExportScene: loading label-based semantic data");
 
     auto labels = db.point_cloud_label("labels");
+    core::warn_if_unstamped_semantic_cloud(db, "labels");
     auto label_defs = db.label_definitions("labels");
     auto cloud = db.point_cloud_xyzrgb("cloud");
 
