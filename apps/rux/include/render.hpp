@@ -31,6 +31,10 @@ struct SubcommandRenderOptions {
   /// Cut height in metres above the floor; <= 0 means "let the library derive
   /// it", which is how `--view plan` with no suffix behaves (#306).
   double cut_height = 0.0;
+  /// Solid-model plan JSON to draw over the layers; empty = none.
+  fs::path plan;
+  /// Leave the plan overlay's space-name and wall-guid labels out.
+  bool no_plan_labels = false;
 };
 
 // Function declarations

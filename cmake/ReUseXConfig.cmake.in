@@ -155,7 +155,8 @@ endif()
 # reusex_visualize: VTK backs the headless render_view().
 if(ReUseX_HAVE_VISUALIZE)
     find_dependency(VTK COMPONENTS CommonCore CommonDataModel
-                    CommonExecutionModel RenderingCore RenderingOpenGL2)
+                    CommonExecutionModel RenderingCore RenderingOpenGL2
+                    RenderingFreeType)
 endif()
 
 # reusex_gsplat: vendored gsplat CUDA rasterizer (LibTorch-linked).
