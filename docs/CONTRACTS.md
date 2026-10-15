@@ -45,7 +45,7 @@ subcommand makes, so a stage that validates cannot then be refused when run.
 - **Tables** are relational rows keyed by cloud name and id — `sensor_frames`,
   `segmentation_images`, `instances`, `instance_materials`,
   `building_components`, `meshes` — or, for the solid-model tables
-  (`storeys`, ...), by a stable GUID with `source` / `locked` columns: a
+  (`storeys`, `plane_classes`, ...), by a stable GUID with `source` / `locked` columns: a
   re-run replaces the unlocked rows and keeps the locked ones, and a
   re-detected element keeps the GUID of the stored element it matches. New
   GUIDs are deterministic (`core::deterministic_guid` over the project GUID,
@@ -178,6 +178,13 @@ wall therefore carry opposite normals. `planes` inherits this orientation
 for `plane_normals`, and `mesh`'s face pairing relies on it (reusex-0pi;
 before that fix every stored normal faced the world origin).
 
+The stage records this in the parameters of `cloud` and `normals` as
+`"normal_orientation": "sensor"` (`core/normal_orientation.hpp`), and
+`planes` copies the key onto `plane_normals` when `normals` carries it
+(reusex-0se). A cloud without the key — made before that, or imported (E57) —
+has normals whose sign means nothing a stage may rely on; `classify` then
+ignores which way a plane faces.
+
 ### `annotate` (`rux create annotate`)
 
 Run a semantic segmentation model over the stored frames.
@@ -290,6 +297,51 @@ warns, with the angle and shift, when a kept locked row's frame differs from
 that of the new row it stands for (same GUID, else nearest floor), and when
 its height range overlaps a new row's (measured in that row's frame). `rux get storeys` prints the table; `rux del storeys` removes it, and
 needs `--force` when any row is locked.
+
+### `classify` (`rux create classify`)
+
+Classify every plane of the plane segmentation (`segmentation/classify_planes.hpp`,
+`classify_planes`): its orientation against the vertical of its storey's level
+frame, the majority semantic class of its points with the vote share (when a
+`labels` cloud exists), its role — `wall`, `floor`, `ceiling`, `slab`,
+`furniture`, `clutter` or `unknown` — its storey, area and height range. The
+role comes from the class through the class → role map
+(`core/class_role_map.json`, or `--role-map file.json`) when the class is
+trusted and the geometry does not contradict it, otherwise from geometric
+rules.
+
+| | |
+|---|---|
+| Consumes | `cloud`, `planes`, `plane_normals`, `storeys` (plus the semantic labels cloud when present, see below) |
+| Produces | `plane_classes` (table, schema v31: one row per plane label, a stable GUID) |
+| Options  | `ClassifyPlanesOptions` (`libs/reusex/include/segmentation/classify_planes.hpp`), parameter keys are its field names; plus `role_map` (path of a role-map JSON file, `""` = built in) |
+| Checks   | `cloud`/`planes` present + aligned; `plane_normals` present; ≥1 storey |
+
+`oriented_normals` is not a parameter: a floor is told from a ceiling by which
+way its normal faces only when `plane_normals` (or `normals`) carries
+`"normal_orientation": "sensor"` (see `clouds`). Without it the stage warns
+and classifies without the sign; `metadata.oriented_normals` records which.
+The semantic vote uses the `labels` cloud and its label definitions when
+they exist (an optional enrichment, so not a declared input, as for
+`survey`); a `labels` cloud whose size disagrees with `cloud` is ignored with
+a warning.
+
+Each row carries `role_source` — `semantic` (the class map decided),
+`rules` (no usable class), `overruled` (the class's role was contradicted by
+the geometry), `none` (a plane with no points) or `manual` — and
+`storey` = the storey's `idx` (−1 for a plane outside every storey, e.g. a
+roof above the top storey's ceiling). It is the idx, not a foreign key, so a
+storeys re-run does not orphan or block the rows; re-run `classify` after
+`storeys`.
+
+Identity: the rows are keyed by the `planes` cloud row and the plane label,
+and go with the cloud (`rux del clouds.planes`). The GUID is
+`uuid5(project_guid, "plane_classes/planes/<label>")`. A planes re-run keeps
+the cloud row, so the old rows stay until `classify` runs again; rows with
+`locked = 1` survive that re-run unchanged (the stage warns when a locked
+plane's point count no longer matches the new segmentation). `rux get
+plane_classes` (or `rux get clouds.planes.classes`) prints the table; `rux del
+plane_classes` removes it, and needs `--force` when any row is locked.
 
 ### `mesh` (`rux create mesh`)
 
@@ -503,7 +555,7 @@ rasterizer.
 
 ```
 import → [graph_init] → [graph_discover] → (optimize|register) → clouds → planes → rooms → mesh → texture
-                                                                                   ↘ storeys
+                                                                                   ↘ storeys → classify
                                                     ↘ annotate → project → instances → windows
                                                     ↘ gsplat (leaf: produces `splat`)
 ```
