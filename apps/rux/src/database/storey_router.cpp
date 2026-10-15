@@ -105,6 +105,17 @@ void StoreyRouter::set(const std::vector<PathComponent> & /*components*/,
                            "written by 'rux create storeys'.");
 }
 
+std::optional<std::string> StoreyRouter::del_requires_force(
+    const std::vector<PathComponent> & /*components*/) const {
+  const auto rows = db_->storeys();
+  const auto locked = std::count_if(rows.begin(), rows.end(),
+                                    [](const auto &s) { return s.locked; });
+  if (locked == 0)
+    return std::nullopt;
+  return std::to_string(locked) + " of " + std::to_string(rows.size()) +
+         " storey(s) are locked (edited by hand); deleting them needs --force";
+}
+
 void StoreyRouter::del(const std::vector<PathComponent> &components) {
   if (!components.empty())
     throw std::runtime_error("Storeys are deleted all at once: "

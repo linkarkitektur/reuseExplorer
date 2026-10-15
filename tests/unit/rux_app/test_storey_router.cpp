@@ -86,3 +86,20 @@ TEST_CASE("StoreyRouter_Del_RemovesAllAndSetIsRefused",
   router.del({});
   CHECK_FALSE(db->has_storeys());
 }
+
+TEST_CASE("StoreyRouter_Del_LockedRowsNeedForce",
+          "[rux_app][router][storeys]") {
+  reusex::test_support::TempPath tmp("test_storey_router_locked");
+  auto db = seeded(tmp);
+  RouterRegistry registry(db);
+  auto &router = registry.get_router("storeys");
+  CHECK_FALSE(router.del_requires_force({}).has_value());
+
+  auto rows = db->storeys();
+  rows[0].locked = true;
+  rows[0].source = "manual";
+  db->save_storeys(rows);
+  const auto reason = router.del_requires_force({});
+  REQUIRE(reason.has_value());
+  CHECK(reason->find("1 of 2") != std::string::npos);
+}

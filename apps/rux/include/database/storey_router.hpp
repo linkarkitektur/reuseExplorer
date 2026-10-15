@@ -20,8 +20,9 @@ namespace rux::database {
  *                           level_transform, source, locked, confidence,
  *                           metadata
  *
- * `rux del storeys` deletes every storey, locked ones included; the rows are
- * written by `rux create storeys`, not by `rux set`.
+ * `rux del storeys` deletes every storey; when some are locked (hand-made
+ * or hand-fixed) it needs --force. The rows are written by
+ * `rux create storeys`, not by `rux set`.
  */
 class StoreyRouter : public ResourceRouter {
     public:
@@ -31,6 +32,8 @@ class StoreyRouter : public ResourceRouter {
   void set(const std::vector<PathComponent> &components,
            const DataPayload &data) override;
   void del(const std::vector<PathComponent> &components) override;
+  std::optional<std::string> del_requires_force(
+      const std::vector<PathComponent> &components) const override;
   std::vector<std::string> list() const override;
 };
 
