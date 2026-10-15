@@ -79,13 +79,23 @@ namespace rux {
 
 namespace {
 bool g_logging_left_up = false;
+
+/// Tear down the logging run() set up. The ReUseX log handler forwards into
+/// spdlog's default logger, which spdlog::shutdown() drops (it becomes null),
+/// so the handler goes first: a library log after this point — a lingering
+/// thread, a static destructor, or a second run() in a test binary — would
+/// otherwise call into a null logger and crash (reusex-m8o).
+void shutdown_logging() {
+  reusex::core::reset_log_handler();
+  spdlog::shutdown();
+}
 } // namespace
 
 bool logging_left_up() { return g_logging_left_up; }
 
 void finish_logging() {
   g_logging_left_up = false;
-  spdlog::shutdown();
+  shutdown_logging();
 }
 
 int run(int argc, char **argv, GuiLauncher launch_gui) {
@@ -230,7 +240,7 @@ int run(int argc, char **argv, GuiLauncher launch_gui) {
     // g_processing_observer.stop();
 
     // Flush async queue to ensure all logs are written before exit
-    spdlog::shutdown();
+    shutdown_logging();
   };
 
   try {
@@ -245,7 +255,7 @@ int run(int argc, char **argv, GuiLauncher launch_gui) {
   } catch (const CLI::ParseError &e) {
     // Argument parsing failed before any subcommand body ran, so there is no
     // viewer to wind down — keep the original early-out.
-    spdlog::shutdown(); // Flush async queue before exit
+    shutdown_logging(); // Flush async queue before exit
     return app.exit(e);
   }
 
