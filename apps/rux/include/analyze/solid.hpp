@@ -27,6 +27,10 @@ struct SubcommandAnalyzeSolidOptions {
   reusex::geometry::SolidMetricsOptions metrics; ///< matching tolerances
 };
 
+/// The human-readable summary `rux analyze solid` prints (one metric per
+/// line, n/a for a missing one); also printed by `rux render --watch`.
+std::string format_solid_summary(const reusex::geometry::SolidModelReport &r);
+
 /// Register `rux analyze solid` under @p app.
 void setup_subcommand_analyze_solid(CLI::App &app,
                                     std::shared_ptr<RuxOptions> global_opt);

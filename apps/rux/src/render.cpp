@@ -4,6 +4,7 @@
 
 #include "render.hpp"
 #include "exit_status.hpp"
+#include "render_watch.hpp"
 
 #include <reusex/core/ProjectDB.hpp>
 #include <reusex/io/solid_model_json.hpp>
@@ -265,6 +266,18 @@ NOTES:
     layers: walls as footprints with their axis, spaces as outlines,
     openings as bars with end ticks; labelled by space name and wall guid.
     In top/plan views it lies on top of everything and is not cut.
+
+WATCH (ground-truth authoring loop, reusex-yf4.2):
+  rux -p scan.rux render --plan gt.yaml --watch --qa -o /tmp/gt/qa.png
+  rux -p scan.rux render --plan gt.yaml --watch --view plan:1.2 -o plan.png
+
+  Renders once, then again every time the --plan file is saved (and, with
+  --watch-project, when the project changes), until Ctrl-C or SIGTERM. Each
+  pass prints a block to stdout: the plan's element counts, how well its
+  walls follow the cloud (support share per wall, face offset; weak walls
+  named), and the `rux analyze solid` summary of the project's model
+  against the plan. A file that does not parse keeps the last good plan on
+  screen and prints the reader's error, which names the element.
 )");
 
   sub->add_option("-o,--output", opt->output, "Output image path")
@@ -330,6 +343,24 @@ NOTES:
   sub->add_flag("--qa", opt->qa,
                 "Write the mesh-QA contact sheet to --output (and each panel "
                 "next to it)");
+  auto *watch = sub->add_flag(
+      "--watch", opt->watch,
+      "Keep running: re-render and re-score whenever the --plan file changes "
+      "(Ctrl-C to stop)");
+  sub->add_flag("--watch-project", opt->watch_project,
+                "With --watch: also re-render when the project file changes")
+      ->needs(watch);
+  sub->add_option("--watch-interval", opt->watch_interval_ms,
+                  "With --watch: poll interval in milliseconds")
+      ->default_val(opt->watch_interval_ms)
+      ->check(CLI::Range(10, 60000))
+      ->needs(watch);
+  // A test / scripting hook: stop after N re-renders (0 = the first pass
+  // only). Hidden: a person stops the watch with Ctrl-C.
+  sub->add_option("--watch-cycles", opt->watch_cycles,
+                  "With --watch: stop after this many re-renders")
+      ->group("")
+      ->needs(watch);
 
   sub->callback([opt, global_opt]() {
     spdlog::trace("Running render subcommand");
@@ -337,9 +368,16 @@ NOTES:
   });
 }
 
-int run_subcommand_render(SubcommandRenderOptions const &opt,
-                          const RuxOptions &global_opt) {
-  try {
+std::vector<fs::path>
+render_to_files(SubcommandRenderOptions const &opt,
+                const RuxOptions &global_opt,
+                const std::optional<reusex::core::SolidModel> &plan) {
+  std::vector<fs::path> written;
+  const auto write = [&written](const cv::Mat &image, const fs::path &path) {
+    write_image(image, path);
+    written.push_back(path);
+  };
+  {
     viz::RenderOptions render_opts;
     render_opts.layers = parse_layers(opt.layers);
     parse_size(opt.size, render_opts.width, render_opts.height);
@@ -371,15 +409,7 @@ int run_subcommand_render(SubcommandRenderOptions const &opt,
     }
     if (!(opt.section_thickness > 0.0))
       throw std::runtime_error("--section-thickness must be positive");
-    if (!opt.plan.empty()) {
-      try {
-        render_opts.plan = reusex::io::solid_model_from_file(opt.plan);
-      } catch (const std::invalid_argument &e) {
-        spdlog::error("Render failed: invalid plan '{}': {}", opt.plan.string(),
-                      e.what());
-        return RuxError::INVALID_ARGUMENT;
-      }
-    }
+    render_opts.plan = plan;
 
     reusex::ProjectDB db(global_opt.project_db, /* readOnly */ true);
 
@@ -406,13 +436,13 @@ int run_subcommand_render(SubcommandRenderOptions const &opt,
       if (opt.frame_quantile >= 0.0)
         qa.frame_quantile = opt.frame_quantile;
       const viz::QaSheet sheet = viz::render_qa_sheet(db, qa);
-      write_image(sheet.sheet, opt.output);
+      write(sheet.sheet, opt.output);
       for (const auto &p : sheet.panels) {
         fs::path out = opt.output;
         out.replace_filename(fmt::format("{}_{}{}", opt.output.stem().string(),
                                          p.name,
                                          opt.output.extension().string()));
-        write_image(p.image, out);
+        write(p.image, out);
       }
       const auto report = [&](const char *what, const viz::DeviationStats &d) {
         spdlog::info("Deviation ({}): {} points, mean {:.3f} m, median {:.3f} "
@@ -426,7 +456,7 @@ int run_subcommand_render(SubcommandRenderOptions const &opt,
         report("all points", *sheet.deviation);
       if (sheet.deviation_planar)
         report("planar points", *sheet.deviation_planar);
-      return RuxError::SUCCESS;
+      return written;
     }
 
     std::optional<int> frame_id;
@@ -474,28 +504,46 @@ int run_subcommand_render(SubcommandRenderOptions const &opt,
     if (render_opts.view == viz::ViewPreset::section) {
       for (std::size_t i = 0; i < sections.size(); ++i) {
         render_opts.section = sections[i];
-        write_image(viz::render_view(db, render_opts),
-                    sections.size() == 1
-                        ? opt.output
-                        : numbered_path(opt.output, static_cast<int>(i)));
+        write(viz::render_view(db, render_opts),
+              sections.size() == 1
+                  ? opt.output
+                  : numbered_path(opt.output, static_cast<int>(i)));
       }
     } else if (render_opts.view == viz::ViewPreset::orbit) {
       for (int i = 0; i < render_opts.orbit_count; ++i) {
         render_opts.orbit_index = i;
-        write_image(viz::render_view(db, render_opts),
-                    numbered_path(opt.output, i));
+        write(viz::render_view(db, render_opts), numbered_path(opt.output, i));
       }
       spdlog::info("Rendered {} orbit views around {}", render_opts.orbit_count,
                    global_opt.project_db.string());
     } else {
-      write_image(viz::render_view(db, render_opts), opt.output);
+      write(viz::render_view(db, render_opts), opt.output);
       if (frame_id)
         spdlog::info("Rendered from the viewpoint of sensor frame {}",
                      *frame_id);
     }
 
-    return RuxError::SUCCESS;
+    return written;
+  }
+}
 
+int run_subcommand_render(SubcommandRenderOptions const &opt,
+                          const RuxOptions &global_opt) {
+  if (opt.watch)
+    return run_render_watch(opt, global_opt);
+  try {
+    std::optional<reusex::core::SolidModel> plan;
+    if (!opt.plan.empty()) {
+      try {
+        plan = reusex::io::solid_model_from_file(opt.plan);
+      } catch (const std::invalid_argument &e) {
+        spdlog::error("Render failed: invalid plan '{}': {}", opt.plan.string(),
+                      e.what());
+        return RuxError::INVALID_ARGUMENT;
+      }
+    }
+    render_to_files(opt, global_opt, plan);
+    return RuxError::SUCCESS;
   } catch (const std::exception &e) {
     spdlog::error("Render failed: {}", e.what());
     return RuxError::IO;

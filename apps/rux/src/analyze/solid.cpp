@@ -28,8 +28,10 @@ std::string show(const std::optional<double> &v, double scale = 1.0,
   return v ? fmt::format("{:.4g}{}", *v * scale, unit) : std::string("n/a");
 }
 
-void print_summary(const reusex::geometry::SolidModelReport &r) {
-  std::cout << fmt::format(
+} // namespace
+
+std::string format_solid_summary(const reusex::geometry::SolidModelReport &r) {
+  return fmt::format(
       "room count error      {}\n"
       "room IoU (mean)       {}\n"
       "wall recall           {}  ({} of {} reference walls)\n"
@@ -57,6 +59,8 @@ void print_summary(const reusex::geometry::SolidModelReport &r) {
       r.fit_source.empty() ? std::string("n/a") : r.fit_source,
       show(r.seen_share_mean), show(r.assumed_share));
 }
+
+namespace {
 
 /// Say why a block of metrics is n/a (STANDARDS §5: no silent n/a).
 void explain_missing(const reusex::core::SolidModel &det,
@@ -238,7 +242,7 @@ int run_subcommand_analyze_solid(SubcommandAnalyzeSolidOptions const &opt,
     if (opt.json)
       std::cout << json << '\n';
     else
-      print_summary(report);
+      std::cout << format_solid_summary(report);
     if (!opt.output_path.empty()) {
       std::ofstream out(opt.output_path);
       if (!out) {
