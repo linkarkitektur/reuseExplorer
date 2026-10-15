@@ -103,6 +103,21 @@ auto make_pairs(EigenVectorContainer<double, 4> &planes,
     }
 
     if (best_j != planes.size()) {
+      // The two faces of one wall bound a slab of constant thickness. Their
+      // fitted normals may differ by up to kOppositeAngleTol, and both planes
+      // become arrangement lines across the whole building: a 4 degree skew
+      // between NewOffice's 27 m facade and a short face of the same wall
+      // widened the slab to ~1 m at the facade's far end, and the mesh
+      // followed the skewed face out past the facade (reusex-bi6). Turn the
+      // face with fewer inliers to be antiparallel to the better-supported
+      // one, keeping it through its own centroid.
+      const size_t keep =
+          inliers[i]->size() >= inliers[best_j]->size() ? i : best_j;
+      const size_t turn = keep == i ? best_j : i;
+      const Vector3 n = -planes[keep].head<3>();
+      planes[turn].head<3>() = n;
+      planes[turn][3] = -n.dot(centroids[turn].head<3>());
+
       pairs.emplace_back(i, best_j);
       paired[best_j] = true;
     } else {

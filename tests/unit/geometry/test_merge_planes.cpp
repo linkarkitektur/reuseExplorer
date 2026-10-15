@@ -294,3 +294,43 @@ TEST_CASE("MergePlanes_TwoFacesOfThinWall_PairWithoutInventedBackFace",
   REQUIRE(pairs.size() == 1);
   REQUIRE(pairs[0] == std::pair<size_t, size_t>{0, 1});
 }
+
+TEST_CASE("MakePairs_SlightlySkewedFaces_PairBecomesParallelSlab",
+          "[geometry][make_pairs]") {
+  // A long, well-sampled wall face (x = 0, normal +x, 27 m) and a short face
+  // of the same wall 0.4 m behind it, measured 4 degrees off (NewOffice: the
+  // long-wing facade, 30k inliers, paired with a 6k-inlier face at the
+  // kitchen). Both are wall-line candidates, so the pair's two planes become
+  // arrangement lines across the whole building: left skewed, the slab
+  // between them widens by 0.07 m per metre, reaching ~1 m at the far end of
+  // the facade, and the mesh overshoots the facade there (reusex-bi6).
+  // make_pairs must turn the weaker face (fewer inliers) to be exactly
+  // antiparallel to the stronger one, keeping it through its own centroid.
+  EigenVectorContainer<double, 4> planes;
+  EigenVectorContainer<double, 3> centroids;
+  std::vector<IndicesPtr> inliers;
+
+  planes.emplace_back(1.0, 0.0, 0.0, 0.0); // x = 0, normal +x
+  centroids.emplace_back(0.0, 13.5, 1.5);
+  inliers.push_back(IndicesPtr(new Indices(3000, 0)));
+
+  const double a = 4.0 * std::numbers::pi / 180.0;
+  const Eigen::Vector3d n_b(-std::cos(a), std::sin(a), 0.0); // ~ -x, skewed
+  const Eigen::Vector3d c_b(-0.4, 17.0, 1.5);
+  planes.emplace_back(n_b.x(), n_b.y(), n_b.z(), -n_b.dot(c_b));
+  centroids.push_back(c_b);
+  inliers.push_back(IndicesPtr(new Indices(600, 0)));
+
+  auto pairs = make_pairs(planes, inliers, centroids, /*threshold=*/0.60,
+                          /*new_plane_offset=*/0.25);
+
+  REQUIRE(planes.size() == 2);
+  REQUIRE(pairs.size() == 1);
+  // The strong face is untouched.
+  CHECK(planes[0].isApprox(Eigen::Vector4d(1.0, 0.0, 0.0, 0.0)));
+  // The weak face is antiparallel to it and still passes through its centroid.
+  CHECK(planes[1].head<3>().dot(planes[0].head<3>()) ==
+        Catch::Approx(-1.0).margin(1e-9));
+  CHECK(planes[1].head<3>().dot(c_b) + planes[1][3] ==
+        Catch::Approx(0.0).margin(1e-9));
+}

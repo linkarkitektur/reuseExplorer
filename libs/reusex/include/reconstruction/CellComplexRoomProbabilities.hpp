@@ -13,7 +13,9 @@
 #include <fmt/ranges.h>
 #include <pcl/filters/uniform_sampling.h>
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 // Spherical Fibonacci
@@ -204,6 +206,11 @@ auto CellComplex::compute_room_probabilities(
   {
     const auto dirs = sampleSphericalFibonacci(100);
 
+    // A hit closer than this to its origin means the origin sits on (or
+    // inside) a scanned surface: the disc radius the points are splatted
+    // with.
+    const float near_distance = static_cast<float>(radius_) * 1.05f;
+
     auto observer = reusex::core::ProgressObserver(
         reusex::core::Stage::computing_room_probabilities, this->num_cells());
 
@@ -211,82 +218,107 @@ auto CellComplex::compute_room_probabilities(
     for (size_t cell_idx = 0; cell_idx < this->num_cells(); ++cell_idx) {
       auto cit = this->cells_begin();
       std::advance(cit, cell_idx);
-      // const size_t idx = (*this)[*cit].id;
-      // For each cell create n random rays
-      // Count the number of intersections per id nad normalize
 
-      std::vector<double> local_accum(c_rp[*cit].size(), 0.0);
-      double *accum_ptr = local_accum.data();
-      // cppcheck-suppress unreadVariable
-      const int N = static_cast<int>(c_rp[*cit].size());
-
-#pragma omp parallel for reduction(+ : accum_ptr[ : N])
-      for (size_t i = 0; i < dirs.size(); ++i) {
-        const auto dir = dirs[i];
-        auto c = (*this)[*cit].pos;
-
-        RTCRayHit rayhit;
-        rayhit.ray.org_x = static_cast<float>(c.x());
-        rayhit.ray.org_y = static_cast<float>(c.y());
-        rayhit.ray.org_z = static_cast<float>(c.z());
-        rayhit.ray.dir_x = static_cast<float>(dir.x());
-        rayhit.ray.dir_y = static_cast<float>(dir.y());
-        rayhit.ray.dir_z = static_cast<float>(dir.z());
-
-        rayhit.ray.tnear = 0.001f; // Start a bit away from the origin
-        rayhit.ray.tfar = std::numeric_limits<float>::infinity();
-        rayhit.hit.geomID = RTC_INVALID_GEOMETRY_ID;
-
-        rayhit.ray.mask = -1;
-        rayhit.ray.flags = 0;
-        rayhit.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
-
-        rtcIntersect1(scene_, &rayhit);
-
-        if (rayhit.hit.geomID == RTC_INVALID_GEOMETRY_ID) { // No hit
-          accum_ptr[0] += 1;
-          // reusex::trace(fmt::format(fmt::fg(fmt::color::red), "No
-          // hit"));
-          continue;
+      // Rays are cast from several origins spread through the cell, not
+      // only from its centroid (reusex-bi6). A cell is a convex prism, so the
+      // centroid and the point halfway from it to each corner all lie inside
+      // it. A single centroid lands inside furniture often enough in a
+      // furnished room (a screen or lamp at mid-storey height on the NewOffice
+      // desk strips): nearly every ray then hits the back of that object
+      // within a few cm and the whole cell — 47 m^3 of open office — read as
+      // "outside".
+      const Eigen::Vector3d centre = (*this)[*cit].pos;
+      std::vector<Eigen::Vector3d> origins{centre};
+      {
+        std::vector<Vertex> corners;
+        for (auto [f, f_end] = boost::adjacent_vertices(*cit, *this);
+             f != f_end; ++f) {
+          if ((*this)[*f].type != CellNodeType::face)
+            continue;
+          for (auto [v, v_end] = boost::adjacent_vertices(*f, *this);
+               v != v_end; ++v)
+            if ((*this)[*v].type == CellNodeType::vertex)
+              corners.push_back(*v);
         }
-
-        // Check if backside
-        const auto normal =
-            Eigen::Vector3f(rayhit.hit.Ng_x, rayhit.hit.Ng_y, rayhit.hit.Ng_z)
-                .normalized();
-        const Eigen::Vector3f dir_vec(dir.x(), dir.y(), dir.z());
-        if (normal.dot(dir_vec) > 0) {
-          accum_ptr[0] += 1;
-          // reusex::trace(
-          //     fmt::format(fmt::fg(fmt::color::yellow), "Backside hit"));
-          continue; // Backside
-        }
-        // reusex::trace(fmt::format(fmt::fg(fmt::color::green),
-        // "Frontside hit"));
-
-        auto geometry = rtcGetGeometry(scene_, rayhit.hit.geomID);
-        auto *data = static_cast<RTCData *>(rtcGetGeometryUserData(geometry));
-
-        // const auto label = labels[data->label_index];
-        // reusex::trace("Cell {:>3} ray {} hit label {} (index {})",
-        //               (*this)[*cit].id, i, label, data->label_index);
-
-        //  #pragma omp critical
-        accum_ptr[data->label_index + 1] += 1;
-        // reusex::trace("Cell {:>3} hit label {} (index {})", idx,
-        //               labels[data->label_index], data->label_index);
+        std::sort(corners.begin(), corners.end());
+        corners.erase(std::unique(corners.begin(), corners.end()),
+                      corners.end());
+        for (auto v : corners)
+          origins.push_back(centre + 0.5 * ((*this)[v].pos - centre));
       }
 
-      // Compute probabilities
-      // double sum = std::accumulate(c_rp[*cit].begin(), c_rp[*cit].end(),
-      // 0.0); reusex::trace("Cell {:>3} sum = {:.3f}", idx, sum); if (sum
-      // > 0)
-      //  for (size_t j = 0; j < c_rp[*cit].size(); ++j)
-      //    c_rp[*cit][j] /= sum;
-      //
-      for (auto &p : local_accum)
-        p /= dirs.size();
-      c_rp[*cit] = std::move(local_accum);
+      // Each origin votes with its ray fractions, weighted by the share of
+      // its rays that travel further than `near_distance`: an origin inside
+      // or against an object (all rays stop at once, half of them on its
+      // back faces) says little about the room around it. When every
+      // origin is boxed in (a thin wall-slab cell between two scanned
+      // faces), they count equally.
+      const size_t n_labels = c_rp[*cit].size();
+      std::vector<double> weighted(n_labels, 0.0);
+      std::vector<double> plain(n_labels, 0.0);
+      double weight_sum = 0.0;
+      std::vector<double> votes(n_labels);
+
+      for (const auto &o : origins) {
+        std::fill(votes.begin(), votes.end(), 0.0);
+        size_t n_far = 0;
+        for (const auto &dir : dirs) {
+          RTCRayHit rayhit;
+          rayhit.ray.org_x = static_cast<float>(o.x());
+          rayhit.ray.org_y = static_cast<float>(o.y());
+          rayhit.ray.org_z = static_cast<float>(o.z());
+          rayhit.ray.dir_x = static_cast<float>(dir.x());
+          rayhit.ray.dir_y = static_cast<float>(dir.y());
+          rayhit.ray.dir_z = static_cast<float>(dir.z());
+
+          rayhit.ray.tnear = 0.001f; // Start a bit away from the origin
+          rayhit.ray.tfar = std::numeric_limits<float>::infinity();
+          rayhit.hit.geomID = RTC_INVALID_GEOMETRY_ID;
+
+          rayhit.ray.mask = -1;
+          rayhit.ray.flags = 0;
+          rayhit.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
+
+          rtcIntersect1(scene_, &rayhit);
+
+          if (rayhit.hit.geomID == RTC_INVALID_GEOMETRY_ID) { // No hit
+            votes[0] += 1;
+            ++n_far;
+            continue;
+          }
+          if (rayhit.ray.tfar >= near_distance)
+            ++n_far;
+
+          // A hit on the back of a surface means the origin is behind it.
+          const auto normal =
+              Eigen::Vector3f(rayhit.hit.Ng_x, rayhit.hit.Ng_y, rayhit.hit.Ng_z)
+                  .normalized();
+          const Eigen::Vector3f dir_vec(dir.x(), dir.y(), dir.z());
+          if (normal.dot(dir_vec) > 0) {
+            votes[0] += 1;
+            continue;
+          }
+
+          auto geometry = rtcGetGeometry(scene_, rayhit.hit.geomID);
+          auto *data = static_cast<RTCData *>(rtcGetGeometryUserData(geometry));
+          votes[data->label_index + 1] += 1;
+        }
+
+        const double n_rays = static_cast<double>(dirs.size());
+        const double w = static_cast<double>(n_far) / n_rays;
+        for (size_t j = 0; j < n_labels; ++j) {
+          plain[j] += votes[j] / n_rays;
+          weighted[j] += w * votes[j] / n_rays;
+        }
+        weight_sum += w;
+      }
+
+      std::vector<double> probs(n_labels, 0.0);
+      for (size_t j = 0; j < n_labels; ++j)
+        probs[j] = weight_sum > 0.0
+                       ? weighted[j] / weight_sum
+                       : plain[j] / static_cast<double>(origins.size());
+      c_rp[*cit] = std::move(probs);
 
       ++observer;
     }
