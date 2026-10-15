@@ -34,6 +34,17 @@ path = "scripts/testdata/*.xml"
 SPDX-FileCopyrightText = "2025 Povl Filip Sonne-Frederiksen"
 SPDX-License-Identifier = "GPL-3.0-or-later"
 
+# Solid-model JSON (reusex-z1v.2.5): the format's JSON Schema and the
+# hand-written synthetic plans the benchmark tests use. JSON has no comment
+# syntax for an inline header.
+[[annotations]]
+path = [
+  "docs/design/*.schema.json",
+  "tests/fixtures/solid_model/*.json",
+]
+SPDX-FileCopyrightText = "2026 Povl Filip Sonne-Frederiksen"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
 [[annotations]]
 path = [
   ".claude/agents/*.md",

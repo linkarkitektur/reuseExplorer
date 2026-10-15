@@ -189,7 +189,7 @@ rux edit downsample                    # Voxel-grid downsample
 rux info                               # Project database summary
 rux log                                # Pipeline execution history
 rux validate [--stage <name>] [--json] # Referential integrity / stage inputs
-rux analyze quality|accuracy           # Reconstruction quality metrics (JSON)
+rux analyze quality|accuracy|solid     # Reconstruction quality metrics (JSON)
 
 # Path-based database access
 rux get <path> | rux set <path> <value> | rux del <path>

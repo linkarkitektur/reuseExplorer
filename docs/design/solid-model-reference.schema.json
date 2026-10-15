@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ReUse-X/ReUseX/docs/design/solid-model-reference.schema.json",
+  "title": "ReUseX solid-model document",
+  "description": "A typed building model (storeys, walls, spaces, openings) in one JSON document, model_version 1. The same format holds an authored reference plan and a model detected by the pipeline. Prose, conventions and examples: docs/design/solid-model-json.md. Reader: io::solid_model_from_json (libs/reusex/src/io/solid_model_json.cpp), which also enforces the cross-references this schema cannot (an opening's wall, a boundary's space, unique guids and storey idx).",
+  "type": "object",
+  "required": ["model_version"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {"type": "string"},
+    "model_version": {"const": 1},
+    "units": {"const": "m"},
+    "name": {"type": "string"},
+    "description": {"type": "string"},
+    "storeys": {"type": "array", "items": {"$ref": "#/$defs/storey"}},
+    "walls": {"type": "array", "items": {"$ref": "#/$defs/wall"}},
+    "wall_joins": {"type": "array", "items": {"$ref": "#/$defs/wall_join"}},
+    "spaces": {"type": "array", "items": {"$ref": "#/$defs/space"}},
+    "space_boundaries": {"type": "array", "items": {"$ref": "#/$defs/space_boundary"}},
+    "openings": {"type": "array", "items": {"$ref": "#/$defs/opening"}},
+    "plane_classes": {"type": "array", "items": {"$ref": "#/$defs/plane_class"}},
+    "scene_relations": {"type": "array", "items": {"$ref": "#/$defs/scene_relation"}}
+  },
+  "$defs": {
+    "point2": {
+      "type": "array",
+      "items": {"type": "number"},
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "ring": {
+      "description": "Simple ring of non-zero area, either winding. Written open; a repeated closing point is accepted on read and dropped. Holes must lie strictly inside the outer ring and not overlap or touch each other (checked by the reader, not by this schema).",
+      "type": "array",
+      "items": {"$ref": "#/$defs/point2"},
+      "minItems": 3
+    },
+    "source": {"enum": ["detected", "manual", "imported"]},
+    "guid": {
+      "description": "Stable key of the element within the document. Any non-empty string; the pipeline writes RFC 4122 v5 UUIDs (core/guid.hpp).",
+      "type": "string",
+      "minLength": 1
+    },
+    "storey_ref": {
+      "description": "The idx of a storey in 'storeys' (checked only when 'storeys' is present).",
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "storey": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "guid": {"$ref": "#/$defs/guid"},
+        "idx": {"type": "integer", "description": "0 = lowest storey; defaults to the array position."},
+        "name": {"type": "string"},
+        "z_floor": {"type": "number"},
+        "z_ceiling": {"type": "number"},
+        "level_transform": {
+          "description": "World -> level frame, 4x4 row-major. Identity when omitted.",
+          "type": "array",
+          "items": {"type": "number"},
+          "minItems": 16,
+          "maxItems": 16
+        },
+        "source": {"$ref": "#/$defs/source"},
+        "locked": {"type": "boolean"},
+        "confidence": {"type": "number"},
+        "metadata": {}
+      }
+    },
+    "wall": {
+      "type": "object",
+      "required": ["axis"],
+      "additionalProperties": false,
+      "properties": {
+        "guid": {"$ref": "#/$defs/guid"},
+        "storey": {"$ref": "#/$defs/storey_ref"},
+        "axis": {
+          "description": "Centre line [[x0, y0], [x1, y1]] in the storey's level frame; non-zero length.",
+          "type": "array",
+          "items": {"$ref": "#/$defs/point2"},
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "z_base": {"type": "number"},
+        "height": {"type": "number"},
+        "thickness": {"type": "number", "description": "Metres; -1 = unknown (a single face)."},
+        "thickness_ci": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+        "lean_deg": {"type": "number"},
+        "is_external": {"type": "boolean"},
+        "assumed": {"type": "boolean", "description": "Thickness defaulted, not measured."},
+        "seen_share": {"type": "number", "description": "0..1, -1 = not computed."},
+        "face_points": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2},
+        "co_visibility": {"type": "number"},
+        "axis_family": {"type": "integer"},
+        "source": {"$ref": "#/$defs/source"},
+        "locked": {"type": "boolean"},
+        "confidence": {"type": "number"},
+        "metadata": {}
+      }
+    },
+    "wall_join": {
+      "type": "object",
+      "required": ["wall_a", "wall_b"],
+      "additionalProperties": false,
+      "properties": {
+        "wall_a": {"$ref": "#/$defs/guid"},
+        "wall_b": {"$ref": "#/$defs/guid"},
+        "kind": {"enum": ["corner", "tee", "collinear"]},
+        "at_a": {"enum": ["start", "end", "path"]},
+        "at_b": {"enum": ["start", "end", "path"]}
+      }
+    },
+    "space": {
+      "type": "object",
+      "required": ["polygon"],
+      "additionalProperties": false,
+      "properties": {
+        "guid": {"$ref": "#/$defs/guid"},
+        "storey": {"$ref": "#/$defs/storey_ref"},
+        "name": {"type": "string"},
+        "kind": {"type": "string", "description": "room | corridor | open_plan | unknown"},
+        "polygon": {
+          "type": "object",
+          "required": ["outer"],
+          "additionalProperties": false,
+          "properties": {
+            "outer": {"$ref": "#/$defs/ring"},
+            "holes": {"type": "array", "items": {"$ref": "#/$defs/ring"}}
+          }
+        },
+        "z_floor": {"type": "number"},
+        "z_ceiling": {"type": "number"},
+        "area": {"type": "number"},
+        "perimeter": {"type": "number"},
+        "volume": {"type": "number"},
+        "compactness": {"type": "number"},
+        "room_label": {"type": "integer"},
+        "source": {"$ref": "#/$defs/source"},
+        "locked": {"type": "boolean"},
+        "confidence": {"type": "number"},
+        "metadata": {}
+      }
+    },
+    "space_boundary": {
+      "type": "object",
+      "required": ["space", "wall"],
+      "additionalProperties": false,
+      "properties": {
+        "space": {"$ref": "#/$defs/guid"},
+        "wall": {"$ref": "#/$defs/guid"},
+        "side": {"enum": ["a", "b"]},
+        "s_start": {"type": "number"},
+        "s_end": {"type": "number"}
+      }
+    },
+    "opening": {
+      "type": "object",
+      "required": ["wall", "s_start", "s_end", "z_sill", "z_head"],
+      "additionalProperties": false,
+      "properties": {
+        "guid": {"$ref": "#/$defs/guid"},
+        "wall": {"$ref": "#/$defs/guid"},
+        "kind": {"enum": ["door", "window", "opening"]},
+        "s_start": {"type": "number", "description": "Along the host axis from its (x0, y0) [m]."},
+        "s_end": {"type": "number", "description": "> s_start."},
+        "z_sill": {"type": "number", "description": "Level frame [m]."},
+        "z_head": {"type": "number", "description": "> z_sill."},
+        "state": {"enum": ["open", "closed", "unknown"]},
+        "is_external": {"type": "boolean"},
+        "source_instance_guid": {"type": "string"},
+        "source": {"$ref": "#/$defs/source"},
+        "locked": {"type": "boolean"},
+        "confidence": {"type": "number"},
+        "metadata": {}
+      }
+    },
+    "plane_class": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "plane_label": {"type": "integer"},
+        "orientation": {"type": "string"},
+        "semantic_class": {"type": "integer"},
+        "class_confidence": {"type": "number"},
+        "role": {"type": "string"},
+        "storey": {"type": "integer"},
+        "point_count": {"type": "integer"},
+        "area": {"type": "number"},
+        "z_min": {"type": "number"},
+        "z_max": {"type": "number"}
+      }
+    },
+    "scene_relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "from_guid": {"type": "string"},
+        "to_guid": {"type": "string"},
+        "relation_type": {"type": "string"},
+        "weight": {"type": "number"},
+        "metadata": {}
+      }
+    }
+  }
+}

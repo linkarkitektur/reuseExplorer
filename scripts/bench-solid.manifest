@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Povl Filip Sonne-Frederiksen
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Rows for scripts/bench-solid.sh (format: docs/design/solid-model-json.md).
+# Whitespace-separated columns; '-' = none; paths relative to the repo root
+# and may use $VARIABLES (a row whose variable is unset is skipped).
+#
+# name             kind       reference                                      model                                           project  stages
+two_rooms_synth    synthetic  tests/fixtures/solid_model/two_rooms.plan.json tests/fixtures/solid_model/two_rooms.detected.json -        -
+# The office_corridor fixture (sensor frames only) has no authored reference
+# yet (W0.6 authors NewOffice's); until then this row runs the stage DAG on a
+# copy and scores the project's model against the synthetic plan only to
+# prove the project path runs end to end: every metric is n/a until the
+# solid-model stages exist (append them to 'stages' as they land). 'mesh' is
+# left out: its two vertical planes give the MIP 0 cells, so the fit metrics
+# stay n/a on this fixture.
+office_corridor    fixture    tests/fixtures/solid_model/two_rooms.plan.json -                                               tests/fixtures/scans/office_corridor.rux clouds,planes,rooms
+# Local-only rows (never committed data), skipped unless the variable is set:
+# s3dis_area1      local      $REUSEX_S3DIS_DIR/area1.plan.json             -                                               $REUSEX_S3DIS_DIR/area1.rux storeys,walls,spaces,openings

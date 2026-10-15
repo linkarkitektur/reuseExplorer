@@ -1,0 +1,47 @@
+{
+  "$schema": "../../../docs/design/solid-model-reference.schema.json",
+  "model_version": 1,
+  "units": "m",
+  "name": "two_rooms (synthetic reference)",
+  "description": "Hand-written synthetic plan: an 8 x 5 m single storey, 0.3 m external walls, a 0.1 m partition at x = 4 and a closet stub in the west room. Not derived from any scan.",
+  "storeys": [
+    {"guid": "storey-0", "idx": 0, "name": "Ground", "z_floor": 0.0, "z_ceiling": 2.6, "source": "manual", "locked": true}
+  ],
+  "walls": [
+    {"guid": "w1", "storey": 0, "axis": [[0.0, 0.0], [8.0, 0.0]], "z_base": 0.0, "height": 2.6, "thickness": 0.3, "is_external": true, "source": "manual", "locked": true},
+    {"guid": "w2", "storey": 0, "axis": [[8.0, 0.0], [8.0, 5.0]], "z_base": 0.0, "height": 2.6, "thickness": 0.3, "is_external": true, "source": "manual", "locked": true},
+    {"guid": "w3", "storey": 0, "axis": [[8.0, 5.0], [0.0, 5.0]], "z_base": 0.0, "height": 2.6, "thickness": 0.3, "is_external": true, "source": "manual", "locked": true},
+    {"guid": "w4", "storey": 0, "axis": [[0.0, 5.0], [0.0, 0.0]], "z_base": 0.0, "height": 2.6, "thickness": 0.3, "is_external": true, "source": "manual", "locked": true},
+    {"guid": "w5", "storey": 0, "axis": [[4.0, 0.0], [4.0, 5.0]], "z_base": 0.0, "height": 2.6, "thickness": 0.1, "source": "manual", "locked": true},
+    {"guid": "w6", "storey": 0, "axis": [[0.0, 3.5], [1.5, 3.5]], "z_base": 0.0, "height": 2.6, "thickness": 0.1, "source": "manual", "locked": true},
+    {"guid": "w7", "storey": 0, "axis": [[1.5, 3.5], [1.5, 5.0]], "z_base": 0.0, "height": 2.6, "thickness": 0.1, "source": "manual", "locked": true}
+  ],
+  "wall_joins": [
+    {"wall_a": "w1", "wall_b": "w2", "kind": "corner", "at_a": "end", "at_b": "start"},
+    {"wall_a": "w2", "wall_b": "w3", "kind": "corner", "at_a": "end", "at_b": "start"},
+    {"wall_a": "w3", "wall_b": "w4", "kind": "corner", "at_a": "end", "at_b": "start"},
+    {"wall_a": "w1", "wall_b": "w4", "kind": "corner", "at_a": "start", "at_b": "end"},
+    {"wall_a": "w1", "wall_b": "w5", "kind": "tee", "at_a": "path", "at_b": "start"},
+    {"wall_a": "w3", "wall_b": "w5", "kind": "tee", "at_a": "path", "at_b": "end"},
+    {"wall_a": "w4", "wall_b": "w6", "kind": "tee", "at_a": "path", "at_b": "start"},
+    {"wall_a": "w6", "wall_b": "w7", "kind": "corner", "at_a": "end", "at_b": "start"},
+    {"wall_a": "w3", "wall_b": "w7", "kind": "tee", "at_a": "path", "at_b": "end"}
+  ],
+  "spaces": [
+    {"guid": "s-west", "storey": 0, "name": "West room", "kind": "room",
+     "polygon": {"outer": [[0.15, 0.15], [3.95, 0.15], [3.95, 4.85], [1.55, 4.85], [1.55, 3.55], [0.15, 3.55]]},
+     "z_floor": 0.0, "z_ceiling": 2.6, "source": "manual", "locked": true},
+    {"guid": "s-east", "storey": 0, "name": "East room", "kind": "room",
+     "polygon": {"outer": [[4.05, 0.15], [7.85, 0.15], [7.85, 4.85], [4.05, 4.85]]},
+     "z_floor": 0.0, "z_ceiling": 2.6, "source": "manual", "locked": true}
+  ],
+  "space_boundaries": [
+    {"space": "s-west", "wall": "w5", "side": "b", "s_start": 0.15, "s_end": 4.85},
+    {"space": "s-east", "wall": "w5", "side": "a", "s_start": 0.15, "s_end": 4.85}
+  ],
+  "openings": [
+    {"guid": "o-entrance", "wall": "w1", "kind": "door", "s_start": 1.0, "s_end": 2.0, "z_sill": 0.0, "z_head": 2.1, "state": "closed", "is_external": true, "source": "manual", "locked": true},
+    {"guid": "o-window", "wall": "w1", "kind": "window", "s_start": 5.0, "s_end": 6.5, "z_sill": 0.9, "z_head": 2.1, "is_external": true, "source": "manual", "locked": true},
+    {"guid": "o-inner", "wall": "w5", "kind": "door", "s_start": 2.0, "s_end": 2.9, "z_sill": 0.0, "z_head": 2.1, "state": "open", "source": "manual", "locked": true}
+  ]
+}
