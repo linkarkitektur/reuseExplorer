@@ -130,6 +130,40 @@ measure the cloud  ->  write / edit plan.json  ->  rux edit plan --dry-run
    is open-plan with no wall between it and the next, draw the boundary
    where a person would split it and say so in its `metadata`.
 
+   **Hot reload (reusex-yf4.2).** Steps 6 and 7 run as one loop when the
+   renderer or the viewer watches the file. Headless (an agent, SSH):
+
+   ```bash
+   rux -p /tmp/ref/scan.rux render --plan plan.yaml --watch \
+       --view plan:1.2 --layers cloud --size 3200x2400 -o /tmp/ref/check.png
+   # or the whole mesh-QA contact sheet: --watch --qa -o /tmp/ref/qa.png
+   ```
+
+   It renders once, then again on every save, and prints a block per pass
+   to stdout: element counts, **wall support** (per wall, the share of its
+   length the cloud confirms within its footprint + 5 cm, ignoring 30 cm at
+   floor and ceiling) and **face offset** (where the densest sheet of points
+   within 25 cm lies relative to the drawn wall: for an unknown-thickness
+   wall the signed distance from the axis, + = left of the axis seen from
+   its first point; for a wall of known thickness, outward from its faces),
+   listing weak walls (support < 0.5) and supported walls off by 3 cm or
+   more, then the `rux analyze solid` summary of the project's own model
+   against the plan. A save that does not parse keeps the last good plan,
+   leaves the images alone and prints the reader's error, which names the
+   element. Ctrl-C / SIGTERM ends it; `--watch-project` also re-renders when
+   another `rux` writes the project.
+
+   With a display, the same plan over the cloud, interactively:
+
+   ```bash
+   rux -p /tmp/ref/scan.rux view --plan plan.yaml --watch
+   ```
+
+   The plan is drawn as a sheet in the cut plane; `n` / `b` pick a storey,
+   `]` / `[` move the cut by 10 cm (`}` / `{` by 1 m), `v` toggles the cut,
+   `1`-`9` the `--layers`, `0` the plan. The status line at the bottom shows
+   the last reload or the reader's error.
+
 8. **Commit** the plan as `tests/fixtures/solid_model/<scan>.plan.json`
    (JSON only, never the cloud) and add its row to
    `scripts/bench-solid.manifest`. A row whose project is not in the
