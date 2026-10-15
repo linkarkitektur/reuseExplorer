@@ -239,6 +239,7 @@ storey at all (no storeys, walls or spaces) covers everything.
 | `opening_recall` / `opening_precision` | matched / reference, matched / detected openings | higher |
 | `fit_mean_m` | mean distance of the scan cloud's points to the solid mesh | lower |
 | `fit_within_share` | share of those points within `fit_within_m` (2 cm) | higher |
+| `mesh_unsupported_share` | share of the solid mesh's area with no scan point within `support_dist_m` (0.25 m): the reverse direction of the fit, which sees surfaces the scan does not show (fake walls between over-split rooms). `mesh_area_m2` is the area it is a share of, `counts.support_samples` the samples tested | lower |
 | `seen_share_mean` | mean `seen_share` of detected walls that report one | higher |
 | `assumed_share` | share of detected walls with `assumed: true`. The flag has no "unknown" state, so a detector that never sets it reports 0 | lower |
 
@@ -261,7 +262,10 @@ report is deterministic (STANDARDS §6):
   opening within `wall_match_dist_m` of the reference wall line, and a face
   IoU of at least `opening_match_iou` (0.5). Opening kind is not compared.
 - **Fit** (`fit_report`): point-to-triangle distance through a CGAL AABB tree
-  over the mesh's faces.
+  over the mesh's faces. Support: every triangle is sampled about once per
+  `support_spacing_m`² (5 cm) of its area at a fixed R2 low-discrepancy
+  pattern; a sample is unsupported when no scan point lies within
+  `support_dist_m` (a hash grid over the cloud).
 
 `SolidModelReport::to_json()` adds `fit_source` (the project, cloud and mesh
 the fit came from, `null` when there is no fit) and a `counts` object
@@ -286,7 +290,8 @@ that cannot be computed (a mesh without a usable triangle, a cloud without a
 finite point) leaves the fit metrics n/a with a warning; the rest of the
 report is still written. Each block of n/a metrics is explained by a
 warning. Tolerances: `--wall-angle`, `--wall-dist`, `--wall-overlap`,
-`--opening-iou`, `--fit-within` (defaults from `SolidMetricsOptions`).
+`--opening-iou`, `--fit-within`, `--support-dist` (defaults from
+`SolidMetricsOptions`).
 
 Exit status: 0 on success; 3 (`INVALID_ARGUMENT`) for an invalid reference,
 model file or model; 2 (`IO`) when the report cannot be written; 1 for any

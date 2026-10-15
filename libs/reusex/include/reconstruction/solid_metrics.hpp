@@ -51,6 +51,15 @@ struct SolidMetricsOptions {
   double storey_match_dist_m = 1.0;
   /// A scan point "fits" the solid when it is within this distance [m].
   double fit_within_m = 0.02;
+  /// A point of the solid mesh is "supported" when a scan point lies within
+  /// this distance [m]. 0.25 m ignores the few-cm offsets of a fitted plane
+  /// but not a surface the scan never saw (a fake wall between rooms):
+  /// on NewOffice it separates the over-split open office's mesh (0.20
+  /// unsupported) from the one built on merged rooms (0.12) best of
+  /// 0.05-0.5 m (reusex-rqn, docs/research/solid-model-ideas-lab.md).
+  double support_dist_m = 0.25;
+  /// About one support sample per this x this of mesh area [m].
+  double support_spacing_m = 0.05;
 };
 
 /// The benchmark report. Lower is better for errors, RMS and fit distances;
@@ -78,6 +87,11 @@ struct SolidModelReport {
   /// points within SolidMetricsOptions::fit_within_m.
   std::optional<double> fit_mean_m;
   std::optional<double> fit_within_share;
+  /// Solid-to-scan support (fit_report): the mesh's area [m^2], and the share
+  /// of it with no scan point within SolidMetricsOptions::support_dist_m --
+  /// surfaces the scan does not show, which the point-to-solid fit cannot see.
+  std::optional<double> mesh_area_m2;
+  std::optional<double> mesh_unsupported_share;
   /// Mean WallRecord::seen_share over detected walls that report one.
   std::optional<double> seen_share_mean;
   /// Share of detected walls flagged WallRecord::assumed (thickness
@@ -95,6 +109,7 @@ struct SolidModelReport {
   std::size_t reference_openings = 0, detected_openings = 0,
               matched_openings = 0;
   std::size_t fit_points = 0;
+  std::size_t support_samples = 0; ///< mesh samples behind the support share
   /// Matched wall pairs scored for thickness, and pairs left out because one
   /// side's thickness was assumed.
   std::size_t thickness_pairs = 0, thickness_assumed_excluded = 0;
@@ -141,8 +156,10 @@ SolidModelReport compare_solid_models(const core::SolidModel &detected,
 
 /// Fill the fit metrics of @p report: distance from every finite point of
 /// @p cloud to the nearest triangle of @p mesh (a CGAL AABB tree over the
-/// mesh's faces; polygons with more than three vertices are fanned). The
-/// cloud and the mesh must share a frame.
+/// mesh's faces; polygons with more than three vertices are fanned), and the
+/// reverse direction, the share of the mesh's area with no cloud point within
+/// SolidMetricsOptions::support_dist_m (geometry::mesh_support). The cloud
+/// and the mesh must share a frame.
 ///
 /// @throws std::invalid_argument when the mesh has no usable (non-degenerate)
 ///         triangle, a face references a vertex the mesh does not have, or
