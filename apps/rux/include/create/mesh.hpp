@@ -8,7 +8,7 @@
 #include <memory>
 #include <string>
 
-#include <reusex/reconstruction/mesh.hpp>
+#include <reusex/pipeline/mesh_parameters.hpp>
 
 namespace fs = std::filesystem;
 
@@ -38,6 +38,11 @@ struct SubcommandMeshOptions {
   /// MeshOptions::structural.
   reusex::geometry::StructuralPlaneOptions structural =
       reusex::geometry::MeshOptions{}.structural;
+
+  /// Leave out furniture / clutter planes when plane_classes exists
+  /// (reusex-z1v.4.3, opt-in). Default mirrors MeshStageOptions.
+  bool use_plane_classes =
+      reusex::pipeline::MeshStageOptions{}.use_plane_classes;
 
   std::string filter_expr; ///< Filter expression to limit processing
 };

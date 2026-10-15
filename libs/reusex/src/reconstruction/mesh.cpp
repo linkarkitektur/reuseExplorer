@@ -99,6 +99,11 @@ pcl::PolygonMeshPtr mesh(CloudConstPtr cloud, CloudNConstPtr normals,
   if (observer)
     observer->viewer_add_geometry("input_cloud", cloud, stage);
 
+  // Planes the classification calls furniture or clutter never reach the
+  // cell complex (reusex-z1v.4.3): drop them before they can pull a wall or
+  // floor towards them in regularisation and merging.
+  drop_planes_by_role(planes, inliers, centroids, opt.plane_roles);
+
   planes = regularizePlanes<double, PointT>(planes, cloud, inliers, 10.0);
 
   std::tie(planes, inliers, centroids) =

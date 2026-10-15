@@ -303,4 +303,50 @@ auto select_structural_planes(EigenVectorContainer<double, 4> &planes,
   return report;
 }
 
+auto drop_planes_by_role(EigenVectorContainer<double, 4> &planes,
+                         std::vector<IndicesPtr> &inliers,
+                         EigenVectorContainer<double, 3> &centroids,
+                         const std::vector<core::PlaneRole> &roles)
+    -> PlaneRoleReport {
+  if (planes.size() != inliers.size() || planes.size() != centroids.size())
+    throw std::invalid_argument(fmt::format(
+        "drop_planes_by_role: input sizes disagree (planes={}, inliers={}, "
+        "centroids={})",
+        planes.size(), inliers.size(), centroids.size()));
+  PlaneRoleReport report;
+  if (roles.empty()) {
+    report.planes_out = planes.size();
+    return report;
+  }
+  if (roles.size() != planes.size())
+    throw std::invalid_argument(
+        fmt::format("drop_planes_by_role: {} plane roles for {} planes",
+                    roles.size(), planes.size()));
+
+  EigenVectorContainer<double, 4> out_planes;
+  std::vector<IndicesPtr> out_inliers;
+  EigenVectorContainer<double, 3> out_centroids;
+  for (std::size_t i = 0; i < planes.size(); ++i) {
+    if (roles[i] == core::PlaneRole::furniture) {
+      ++report.furniture;
+      continue;
+    }
+    if (roles[i] == core::PlaneRole::clutter) {
+      ++report.clutter;
+      continue;
+    }
+    out_planes.push_back(planes[i]);
+    out_inliers.push_back(inliers[i]);
+    out_centroids.push_back(centroids[i]);
+  }
+  planes = std::move(out_planes);
+  inliers = std::move(out_inliers);
+  centroids = std::move(out_centroids);
+  report.planes_out = planes.size();
+  reusex::info("plane roles: {} furniture and {} clutter plane(s) left out "
+               "of the cell complex, {} plane(s) kept",
+               report.furniture, report.clutter, report.planes_out);
+  return report;
+}
+
 } // namespace reusex::geometry

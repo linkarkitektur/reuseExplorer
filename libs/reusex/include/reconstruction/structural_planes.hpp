@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #pragma once
+#include "reusex/core/class_role_map.hpp"
 #include "reusex/types/eigen_types.hpp"
 #include "reusex/types/point_types.hpp"
 
@@ -110,5 +111,37 @@ auto select_structural_planes(EigenVectorContainer<double, 4> &planes,
                               CloudConstPtr cloud,
                               const StructuralPlaneOptions &opt = {})
     -> StructuralPlaneReport;
+
+/// What drop_planes_by_role() did, for logging and tests.
+struct PlaneRoleReport {
+  std::size_t furniture = 0;  ///< planes dropped as furniture
+  std::size_t clutter = 0;    ///< planes dropped as clutter
+  std::size_t planes_out = 0; ///< planes left
+};
+
+/**
+ * @brief Drop the planes the plane classification says are not part of the
+ * building (reusex-z1v.4.3, W2.3).
+ *
+ * `rux create classify` gives every plane a role (core::PlaneRole). A plane
+ * whose role is furniture or clutter (a desk top, a desk screen, a cabinet
+ * side) is a real surface, but it does not bound a room, and in the cell
+ * complex it would cut the whole building: a horizontal one becomes a storey
+ * section at desk height, a vertical one a wall line. Run it before
+ * regularisation and merging, so such a plane cannot pull a wall or floor
+ * towards it either. Every other role (wall, floor, ceiling, slab, unknown)
+ * passes through to select_structural_planes(), whose geometric rules still
+ * apply.
+ *
+ * @param roles One role per plane, index-aligned with @p planes; empty =
+ *              no classification, nothing is dropped.
+ * @throws std::invalid_argument if @p roles is neither empty nor as long as
+ *         @p planes, or the three plane containers differ in size.
+ */
+auto drop_planes_by_role(EigenVectorContainer<double, 4> &planes,
+                         std::vector<IndicesPtr> &inliers,
+                         EigenVectorContainer<double, 3> &centroids,
+                         const std::vector<core::PlaneRole> &roles)
+    -> PlaneRoleReport;
 
 } // namespace reusex::geometry

@@ -144,6 +144,11 @@ NOTES:
       ->default_val(opt->structural.min_footprint_overlap)
       ->check(CLI::Range(0.0, 1.0));
 
+  sub->add_flag("--plane-classes", opt->use_plane_classes,
+                "Leave the planes `rux create classify` called furniture or "
+                "clutter out of the cell complex (reusex-z1v.4.3). Off by "
+                "default; no effect before `rux create classify` has run.");
+
   sub->add_option("--solver", opt->solver,
                   "MIP backend: 'auto' (primary backend with HiGHS CPU "
                   "fallback on GPU error/OOM), 'cuopt' (force GPU), or 'highs' "
@@ -201,6 +206,7 @@ std::string mesh_stage_parameters(SubcommandMeshOptions const &opt) {
       .set("structural_collinear_offset", opt.structural.collinear_offset_m)
       .set("structural_storey_clearance", opt.structural.min_storey_clearance_m)
       .set("structural_footprint_overlap", opt.structural.min_footprint_overlap)
+      .set("plane_classes", opt.use_plane_classes)
       .set_if(!opt.filter_expr.empty(), "filter", opt.filter_expr)
       .dump();
 }
@@ -245,7 +251,11 @@ int run_subcommand_mesh(SubcommandMeshOptions const &opt,
     // exactly as the GUI's run of the mesh stage reads them.
     reusex::geometry::MeshOptions options;
     try {
-      options = reusex::pipeline::mesh_options_from_parameters(params).options;
+      const auto stage_opts =
+          reusex::pipeline::mesh_options_from_parameters(params);
+      options = stage_opts.options;
+      if (stage_opts.use_plane_classes)
+        options.plane_roles = reusex::pipeline::mesh_plane_roles(db, inliers);
     } catch (const std::invalid_argument &e) {
       spdlog::error("{}", e.what());
       db.log_pipeline_end(logId, false, e.what());
