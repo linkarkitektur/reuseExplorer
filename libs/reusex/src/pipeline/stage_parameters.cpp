@@ -399,18 +399,23 @@ const std::vector<ParameterDescriptor> &storeys_parameters() {
         dnum("horizontal_cos", "Horizontal cosine",
              "A plane is horizontal when |n.z| exceeds this cosine.",
              d.horizontal_cos, 0.5, 1.0),
+        dnum("surface_max_tilt_deg", "Surface maximum tilt [deg]",
+             "A horizontal plane more than this off the measured vertical "
+             "(a sloped ceiling, a ramp) is not a floor/ceiling candidate.",
+             d.surface_max_tilt_deg, 0.1, 30.0),
         dnum("inlier_m", "Fit inlier band [m]",
              "Inlier band of the iterated floor/ceiling least-squares fit.",
              d.inlier_m, 0.001, 0.5),
         integer("max_fit_iterations", "Max fit iterations",
                 "Refits per floor/ceiling surface (bounded).",
                 d.max_fit_iterations, 1.0, 100.0),
-        dnum("hist_bin_m", "Histogram bin [m]",
-             "Bin width of the height histogram of horizontal-plane points.",
+        dnum("hist_bin_m", "Height bin [m]",
+             "Horizontal planes within two bins of a stronger plane's "
+             "height form one surface.",
              d.hist_bin_m, 0.005, 1.0),
-        dnum("peak_min_share", "Peak minimum share",
-             "A histogram bin is a level when it holds at least this share "
-             "of the fullest bin.",
+        dnum("peak_min_share", "Surface minimum share",
+             "A surface is a level when it holds at least this share of "
+             "the strongest surface's points.",
              d.peak_min_share, 0.01, 1.0),
         dnum("slab_merge_m", "Slab merge [m]",
              "Surfaces closer than this along the vertical are one level "
@@ -422,6 +427,18 @@ const std::vector<ParameterDescriptor> &storeys_parameters() {
         dnum("default_height_m", "Default storey height [m]",
              "Storey height used when no ceiling level exists.",
              d.default_height_m, 0.5, 20.0),
+        boolean("use_normal_sign", "Use normal sign",
+                "Tell floors (up-facing) from ceilings (down-facing) by the "
+                "sensor-oriented plane normals when they carry that.",
+                d.use_normal_sign),
+        boolean("per_storey_frame", "Per-storey frame",
+                "Give a storey whose vertical disagrees with the shared one "
+                "its own level frame (drifted multi-storey scans).",
+                d.per_storey_frame),
+        dnum("storey_frame_tol_deg", "Storey frame tolerance [deg]",
+             "A storey gets its own frame when its vertical is more than "
+             "this off the shared one.",
+             d.storey_frame_tol_deg, 0.0, 10.0),
         dnum("guid_match_m", "Identity match [m]",
              "A re-detected storey keeps the GUID of the stored storey whose "
              "floor is within this distance (in the new level frame).",
