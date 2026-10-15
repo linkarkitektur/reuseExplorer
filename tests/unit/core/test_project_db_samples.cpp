@@ -2,11 +2,12 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Schema v22 samples: codes, stage/result storage, link replacement,
-// per-type lookup, and cascade on type deletion.
+// per-type lookup, and cascade on type deletion; schema v31 part links.
 
 #include <catch2/catch_test_macros.hpp>
 #include <core/ProjectDB.hpp>
 
+#include "../../support/survey_fixture.hpp"
 #include "../../support/temp_path.hpp"
 
 #include <sqlite3.h>
@@ -129,4 +130,115 @@ TEST_CASE("Samples_Add_TypesAndStage_NoPartCode", "[ProjectDB][samples]") {
   CHECK(s.type_ids == std::vector<int64_t>{t, u});
   CHECK(s.stage == core::SampleStage::udtaget);
   CHECK(db.samples_for_type(t).size() == 1);
+}
+
+// --- Schema v31: samples linked to specific survey parts -------------------
+
+namespace {
+int64_t count_part_links(const reusex::test_support::TempPath &tmp) {
+  sqlite3 *raw = nullptr;
+  REQUIRE(sqlite3_open(tmp.path.string().c_str(), &raw) == SQLITE_OK);
+  sqlite3_stmt *s = nullptr;
+  REQUIRE(sqlite3_prepare_v2(raw, "SELECT COUNT(*) FROM sample_part_links;", -1,
+                             &s, nullptr) == SQLITE_OK);
+  REQUIRE(sqlite3_step(s) == SQLITE_ROW);
+  const int64_t n = sqlite3_column_int64(s, 0);
+  sqlite3_finalize(s);
+  sqlite3_close(raw);
+  return n;
+}
+} // namespace
+
+TEST_CASE("Samples_PartLinks_AddSetReplaceAndClear",
+          "[ProjectDB][samples][sample_part_links]") {
+  TempDB tmp;
+  ProjectDB db(tmp.path);
+  const auto t = add_type(db, "Vinduespartier");
+  reusex::test_support::make_part(db, "RX-002", t);
+  reusex::test_support::make_part(db, "RX-001", t);
+  const auto s = db.add_sample("PCB", "", {}, core::SampleStage::planlagt,
+                               {"RX-002", "RX-001", "RX-002"});
+  // Collapsed and sorted; no type link was asked for.
+  CHECK(s.part_codes == std::vector<std::string>{"RX-001", "RX-002"});
+  CHECK(s.type_ids.empty());
+
+  db.set_sample_part_links(s.id, {"RX-002"});
+  CHECK(db.sample(s.id)->part_codes == std::vector<std::string>{"RX-002"});
+
+  // set_sample_links without part codes leaves them alone ...
+  db.set_sample_links(s.id, {t});
+  CHECK(db.sample(s.id)->part_codes == std::vector<std::string>{"RX-002"});
+  CHECK(db.sample(s.id)->type_ids == std::vector<int64_t>{t});
+  // ... with them it replaces both sets; set_sample_part_links keeps types.
+  db.set_sample_links(s.id, {}, std::vector<std::string>{"RX-001"});
+  CHECK(db.sample(s.id)->type_ids.empty());
+  CHECK(db.sample(s.id)->part_codes == std::vector<std::string>{"RX-001"});
+  db.set_sample_links(s.id, {t});
+  db.set_sample_part_links(s.id, {});
+  CHECK(db.sample(s.id)->part_codes.empty());
+  CHECK(db.sample(s.id)->type_ids == std::vector<int64_t>{t});
+  CHECK(db.samples().front().type_ids == std::vector<int64_t>{t});
+}
+
+TEST_CASE("Samples_PartLinks_UnknownCode_ThrowsAndWritesNothing",
+          "[ProjectDB][samples][sample_part_links]") {
+  TempDB tmp;
+  ProjectDB db(tmp.path);
+  const auto t = add_type(db, "Fuger");
+  const auto u = add_type(db, "Vægge");
+  reusex::test_support::make_part(db, "RX-001", t);
+  CHECK_THROWS_AS(db.add_sample("x", "", {t}, core::SampleStage::planlagt,
+                                {"RX-001", "RX-999"}),
+                  std::out_of_range);
+  CHECK(db.samples().empty());
+  // The rejected request consumed no P-## code.
+  const auto s =
+      db.add_sample("y", "", {t}, core::SampleStage::planlagt, {"RX-001"});
+  CHECK(s.code == "P-01");
+
+  CHECK_THROWS_AS(db.set_sample_part_links(s.id, {"RX-999"}),
+                  std::out_of_range);
+  // A bad part code leaves the type links untouched too: one transaction.
+  CHECK_THROWS_AS(
+      db.set_sample_links(s.id, {u}, std::vector<std::string>{"nope"}),
+      std::out_of_range);
+  CHECK_THROWS_AS(db.set_sample_part_links(s.id + 50, {"RX-001"}),
+                  std::out_of_range);
+  const auto after = db.sample(s.id);
+  CHECK(after->type_ids == std::vector<int64_t>{t});
+  CHECK(after->part_codes == std::vector<std::string>{"RX-001"});
+  try {
+    db.set_sample_part_links(s.id, {"RX-999"});
+  } catch (const std::out_of_range &e) {
+    CHECK(std::string(e.what()) == "no survey part 'RX-999'");
+  }
+}
+
+TEST_CASE("Samples_PartLinks_CascadeOnPartTypeAndSampleDelete",
+          "[ProjectDB][samples][sample_part_links]") {
+  TempDB tmp;
+  ProjectDB db(tmp.path);
+  const auto t = add_type(db, "Fuger");
+  const auto u = add_type(db, "Vægge");
+  reusex::test_support::make_part(db, "RX-001", t);
+  reusex::test_support::make_part(db, "RX-002", t);
+  reusex::test_support::make_part(db, "RX-003", u);
+  const auto a = db.add_sample("a", "", {}, core::SampleStage::planlagt,
+                               {"RX-001", "RX-002", "RX-003"});
+  const auto b =
+      db.add_sample("b", "", {}, core::SampleStage::planlagt, {"RX-003"});
+  CHECK(count_part_links(tmp) == 4);
+
+  // Deleting a part drops its links, not the sample.
+  db.delete_survey_part("RX-001");
+  CHECK(db.sample(a.id)->part_codes ==
+        std::vector<std::string>{"RX-002", "RX-003"});
+  // Deleting a type cascades to its parts and on to their links.
+  db.delete_survey_type(t);
+  CHECK(db.sample(a.id)->part_codes == std::vector<std::string>{"RX-003"});
+  // Deleting a sample drops its links; the part stays.
+  CHECK(db.delete_sample(a.id));
+  CHECK(count_part_links(tmp) == 1);
+  CHECK(db.sample(b.id)->part_codes == std::vector<std::string>{"RX-003"});
+  CHECK(db.survey_part("RX-003").has_value());
 }

@@ -470,3 +470,81 @@ TEST_CASE("SyncSurvey_MisalignedPositionsCloud_SucceedsWithoutViews",
   CHECK(r.views_unavailable == 2);
   CHECK_FALSE(db.survey_part("RX-001")->view);
 }
+
+TEST_CASE("EnvironmentStatus_RollsUpPartLinkedSamples_ToTheirType",
+          "[survey][service][sample_part_links]") {
+  TempDB tmp;
+  ProjectDB db(tmp.path);
+  const auto walls = type_with_parts(db, {1, 1}); // RX-001, RX-002
+  const auto other = type_with_parts(db, {1});    // RX-003
+  const auto s =
+      db.add_sample("Bly i maling", "", {}, SampleStage::udtaget, {"RX-002"});
+  REQUIRE(s.type_ids.empty());
+
+  // Pending: the part's type awaits the answer; the other type is untouched.
+  CHECK(environment_status_of(db, walls) == EnvironmentStatus::afventer);
+  CHECK(environment_statuses(db).at(walls) == EnvironmentStatus::afventer);
+  CHECK(environment_status_of(db, other) == EnvironmentStatus::ren_screening);
+  CHECK(environment_statuses(db).at(other) == EnvironmentStatus::ren_screening);
+  CHECK(db.samples_for_type(walls).size() == 1);
+  CHECK(db.samples_for_type(other).empty());
+  CHECK_THROWS_AS(set_review_status(db, walls, ReviewStatus::approved),
+                  SamplePendingError);
+
+  // Forurenet.
+  ProjectDB::SamplePatch dirty;
+  dirty.stage = SampleStage::svar;
+  dirty.result = SampleResult::forurenet;
+  update_sample_checked(db, s.id, dirty);
+  CHECK(environment_status_of(db, walls) == EnvironmentStatus::forurenet);
+  CHECK(environment_statuses(db).at(walls) == EnvironmentStatus::forurenet);
+
+  // Ren.
+  ProjectDB::SamplePatch clean;
+  clean.result = SampleResult::ren;
+  update_sample_checked(db, s.id, clean);
+  CHECK(environment_status_of(db, walls) == EnvironmentStatus::ren_proevesvar);
+  CHECK(environment_statuses(db).at(walls) ==
+        EnvironmentStatus::ren_proevesvar);
+  CHECK(set_review_status(db, walls, ReviewStatus::approved).review_status ==
+        ReviewStatus::approved);
+}
+
+TEST_CASE("EnvironmentStatus_DirectAndPartLink_CountOnce",
+          "[survey][service][sample_part_links]") {
+  TempDB tmp;
+  ProjectDB db(tmp.path);
+  const auto walls = type_with_parts(db, {1, 1}); // RX-001, RX-002
+  db.add_sample("PCB", "", {walls}, SampleStage::planlagt,
+                {"RX-001", "RX-002"});
+  CHECK(db.samples_for_type(walls).size() == 1);
+  CHECK(environment_statuses(db).at(walls) == EnvironmentStatus::afventer);
+}
+
+TEST_CASE("EnvironmentStatus_RefiledPart_CarriesItsSample",
+          "[survey][service][sample_part_links]") {
+  TempDB tmp;
+  ProjectDB db(tmp.path);
+  const auto from = type_with_parts(db, {1, 1}); // RX-001, RX-002
+  const auto to = type_with_parts(db, {1});      // RX-003
+  const auto s =
+      db.add_sample("Asbest", "", {}, SampleStage::udtaget, {"RX-001"});
+  REQUIRE(environment_status_of(db, from) == EnvironmentStatus::afventer);
+  REQUIRE(environment_status_of(db, to) == EnvironmentStatus::ren_screening);
+
+  ProjectDB::SurveyPartPatch refile;
+  refile.type_id = to;
+  db.update_survey_part("RX-001", refile);
+  CHECK(db.sample(s.id)->part_codes == std::vector<std::string>{"RX-001"});
+  CHECK(environment_status_of(db, from) == EnvironmentStatus::ren_screening);
+  CHECK(environment_status_of(db, to) == EnvironmentStatus::afventer);
+  const auto all = environment_statuses(db);
+  CHECK(all.at(from) == EnvironmentStatus::ren_screening);
+  CHECK(all.at(to) == EnvironmentStatus::afventer);
+
+  // Deleting the part removes the sample's effect altogether.
+  db.delete_survey_part("RX-001");
+  CHECK(db.sample(s.id)->part_codes.empty());
+  CHECK(environment_status_of(db, to) == EnvironmentStatus::ren_screening);
+  CHECK(environment_statuses(db).at(to) == EnvironmentStatus::ren_screening);
+}

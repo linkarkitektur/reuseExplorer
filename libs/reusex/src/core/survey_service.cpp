@@ -23,10 +23,21 @@
 namespace reusex::core {
 
 std::map<int64_t, EnvironmentStatus> environment_statuses(const ProjectDB &db) {
+  // A sample bears on the types it links directly and on the type each of
+  // its parts is filed under now (same rule as ProjectDB::samples_for_type),
+  // counted once per type.
+  std::map<std::string, int64_t> part_type;
+  for (const auto &p : db.survey_parts())
+    part_type.emplace(p.code, p.type_id);
   std::map<int64_t, std::vector<SampleState>> linked;
-  for (const auto &s : db.samples())
-    for (auto t : s.type_ids)
+  for (const auto &s : db.samples()) {
+    std::set<int64_t> types(s.type_ids.begin(), s.type_ids.end());
+    for (const auto &code : s.part_codes)
+      if (const auto it = part_type.find(code); it != part_type.end())
+        types.insert(it->second);
+    for (auto t : types)
       linked[t].push_back({s.stage, s.result});
+  }
   std::map<int64_t, EnvironmentStatus> out;
   for (const auto &t : db.survey_types())
     out[t.id] = environment_status(linked[t.id]);

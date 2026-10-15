@@ -608,7 +608,11 @@ tree — if a doc mentions `RTABMapDatabase`, that doc is stale.
   `plane_classes()`, keyed by cloud + plane label, rows go with the cloud;
   written by `rux create classify`, `JobStage::classify`), which
   reads `oriented_normals` from the clouds'
-  `normal_orientation` marker (`core/normal_orientation.hpp`, reusex-0se)
+  `normal_orientation` marker (`core/normal_orientation.hpp`, reusex-0se).
+  Schema v32 adds `sample_part_links` (sample ↔ survey part, FK-cascading
+  on both sides; `SampleRecord::part_codes`, `set_sample_part_links`): a
+  part-linked sample bears on the type the part is filed under now, so
+  `samples_for_type` / `core::environment_statuses` roll it up there
 - Migrating schema; `LATEST_SCHEMA_VERSION` is defined in
   `src/core/ProjectDB.cpp` — read it there rather than trusting a doc (it moves
   most releases)
