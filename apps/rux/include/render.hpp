@@ -5,6 +5,8 @@
 #pragma once
 #include "global-params.hpp"
 
+#include <reusex/core/solid_model.hpp>
+
 #include <CLI/CLI.hpp>
 #include <memory>
 #include <optional>
@@ -54,6 +56,18 @@ struct SubcommandRenderOptions {
   double frame_quantile = -1.0;
   /// Render the mesh-QA contact sheet instead of one view.
   bool qa = false;
+
+  // ── --watch (reusex-yf4.2) ────────────────────────────────────────────
+  /// Re-render (and re-score the --plan) whenever the plan file changes,
+  /// until Ctrl-C / SIGTERM.
+  bool watch = false;
+  /// Also re-render when the project file changes (another rux writes it).
+  bool watch_project = false;
+  /// Poll interval of the watch [ms].
+  int watch_interval_ms = 500;
+  /// Stop after this many re-renders; < 0 = never, 0 = only the initial
+  /// render and scores (a `--once` for tests and scripts).
+  int watch_cycles = -1;
 };
 
 // Function declarations
@@ -61,3 +75,12 @@ void setup_subcommand_render(CLI::App &app,
                              std::shared_ptr<RuxOptions> global_opt);
 int run_subcommand_render(SubcommandRenderOptions const &opt,
                           const RuxOptions &global_opt);
+
+/// Render what @p opt asks for with @p plan as the overlay (opt.plan is not
+/// read: the caller has parsed it, or --watch holds its last good version).
+/// @return every image written, in order.
+/// @throws std::exception on any render or argument error.
+std::vector<fs::path>
+render_to_files(SubcommandRenderOptions const &opt,
+                const RuxOptions &global_opt,
+                const std::optional<reusex::core::SolidModel> &plan);
