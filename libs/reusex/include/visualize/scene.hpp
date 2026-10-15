@@ -163,6 +163,11 @@ struct SceneOptions {
   /// draw a plan it is editing; `rux render --plan` reads the file.
   std::optional<core::SolidModel> plan;
   PlanPlacement plan_placement = PlanPlacement::level;
+  /// PlanPlacement::above_scene only: draw the sheet at this world z instead
+  /// of just above the scene -- e.g. in the plane of a cut, so an
+  /// interactive view from above sees the plan over the section while an
+  /// oblique one sees it at the height it describes (`rux view --plan`).
+  std::optional<double> plan_sheet_z;
   /// Label each space with its name (its guid when unnamed) and each wall
   /// with its guid, so a render can be checked against the JSON.
   bool plan_labels = true;
@@ -286,6 +291,20 @@ struct SceneInfo {
 ///         produced no drawable geometry.
 SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
                          const SceneOptions &opts);
+
+/// Add a plan overlay of @p plan to @p renderer on its own, as
+/// populate_scene() does for SceneOptions::plan (@p opts supplies the
+/// placement, labels and colours; its `plan` field is ignored). For a viewer
+/// that reloads the plan while the rest of the scene stays: pair with
+/// remove_plan_overlay(). @p scene_bounds is what PlanPlacement::above_scene
+/// measures its sheet height from; it is not changed.
+PlanOverlayInfo add_plan_overlay(vtkRenderer *renderer,
+                                 const core::SolidModel &plan,
+                                 const SceneOptions &opts,
+                                 const SceneBounds &scene_bounds);
+
+/// Remove every actor of @p overlay from @p renderer and clear @p overlay.
+void remove_plan_overlay(vtkRenderer *renderer, PlanOverlayInfo &overlay);
 
 /// A resolved horizontal cut: where the plane sits and how that was decided.
 struct CutPlane {

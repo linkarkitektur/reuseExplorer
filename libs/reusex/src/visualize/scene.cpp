@@ -673,9 +673,12 @@ struct PlanGeometry {
 class PlanBuilder {
     public:
   PlanBuilder(const core::SolidModel &plan, PlanPlacement placement,
-              const SceneBounds &scene)
+              const SceneBounds &scene,
+              std::optional<double> sheet_z = std::nullopt)
       : plan_(plan), placement_(placement) {
-    if (placement_ == PlanPlacement::above_scene) {
+    if (placement_ == PlanPlacement::above_scene && sheet_z) {
+      sheet_z_ = *sheet_z;
+    } else if (placement_ == PlanPlacement::above_scene) {
       const double gap = scene.valid
                              ? std::max(kPlanAboveGapM, 0.01 * scene.extent(2))
                              : kPlanAboveGapM;
@@ -832,12 +835,12 @@ std::array<double, 2> ring_centroid(const std::vector<core::PlanPoint> &ring) {
   return {cx / (3.0 * a), cy / (3.0 * a)};
 }
 
-PlanOverlayInfo add_plan_overlay(vtkRenderer *renderer,
-                                 const core::SolidModel &plan,
-                                 const SceneOptions &opts,
-                                 SceneBounds &bounds) {
+PlanOverlayInfo add_plan_overlay_to(vtkRenderer *renderer,
+                                    const core::SolidModel &plan,
+                                    const SceneOptions &opts,
+                                    SceneBounds &bounds) {
   PlanOverlayInfo info;
-  PlanBuilder b(plan, opts.plan_placement, bounds);
+  PlanBuilder b(plan, opts.plan_placement, bounds, opts.plan_sheet_z);
   PlanGeometry wall_fill, wall_outline, wall_axis, wall_face, space_fill,
       space_outline, doors, windows, openings;
   struct Label {
@@ -1428,7 +1431,7 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
   }
 
   if (opts.plan)
-    info.plan = add_plan_overlay(renderer, *opts.plan, opts, bounds);
+    info.plan = add_plan_overlay_to(renderer, *opts.plan, opts, bounds);
 
   if (!bounds.valid) {
     throw std::runtime_error(
@@ -1908,6 +1911,24 @@ void place_explicit_camera(vtkRenderer *renderer, const CameraSpec &spec,
   }
 
   renderer->ResetCameraClippingRange();
+}
+
+// ── Plan overlay, standalone (reusex-yf4.2) ─────────────────────────────────
+
+PlanOverlayInfo add_plan_overlay(vtkRenderer *renderer,
+                                 const core::SolidModel &plan,
+                                 const SceneOptions &opts,
+                                 const SceneBounds &scene_bounds) {
+  SceneBounds bounds = scene_bounds; // the overlay must not move the scene's
+  return add_plan_overlay_to(renderer, plan, opts, bounds);
+}
+
+void remove_plan_overlay(vtkRenderer *renderer, PlanOverlayInfo &overlay) {
+  for (auto *list : {&overlay.actors, &overlay.labels})
+    for (vtkActor *actor : *list)
+      if (renderer != nullptr && actor != nullptr)
+        renderer->RemoveActor(actor);
+  overlay = PlanOverlayInfo{};
 }
 
 } // namespace reusex::visualize
