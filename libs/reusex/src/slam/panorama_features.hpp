@@ -258,8 +258,6 @@ struct SpherePoolOptions {
   /// (+y of the panorama frame) — the operator, hand and stick of a hand-held
   /// capture. 0 keeps everything.
   double nadir_mask_deg = 0.0;
-  /// Same, around straight up (-y). 0 keeps everything.
-  double zenith_mask_deg = 0.0;
 };
 
 /// The panorama's keypoints over the whole sphere. Parallel arrays.
@@ -269,7 +267,7 @@ struct SphereKeypoints {
   std::vector<Eigen::Vector3d> bearings; ///< unit bearing, panorama frame
   cv::Mat descriptors;                   ///< one row per keypoint
   int dropped_overlap = 0;               ///< owned by another slice
-  int dropped_pole = 0;                  ///< inside the nadir/zenith mask
+  int dropped_pole = 0;                  ///< inside the nadir mask
 };
 
 /// Unit bearing (panorama frame) of slice pixel @p px.
@@ -282,6 +280,11 @@ Eigen::Vector3d slice_bearing(const Eigen::Matrix3d &K,
 /// to the lower index). -1 when no slice sees it.
 int owning_slice(const std::vector<SliceKeypoints> &slices,
                  const Eigen::Vector3d &bearing);
+
+/// Pixel of panorama @p bearing in slice @p s; false when it falls outside
+/// the slice image (or behind it).
+bool project_to_slice(const SliceKeypoints &s, const Eigen::Vector3d &bearing,
+                      cv::Point2f *px);
 
 /// Pool the slices' keypoints over the sphere (slice order, then keypoint
 /// order — deterministic).

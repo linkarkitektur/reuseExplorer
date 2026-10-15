@@ -423,7 +423,6 @@ PanoramaAlignmentResult align_panorama(ProjectDB &db, int pano_id,
   pano_detail::SpherePoolOptions sopt;
   sopt.dedupe_overlap = opt.dedupe_overlap;
   sopt.nadir_mask_deg = opt.nadir_mask_deg;
-  sopt.zenith_mask_deg = opt.zenith_mask_deg;
   const pano_detail::SphereKeypoints sphere =
       pano_detail::pool_sphere_keypoints(slice_kps, sopt);
   diag.sphere_keypoints = static_cast<int>(sphere.bearings.size());

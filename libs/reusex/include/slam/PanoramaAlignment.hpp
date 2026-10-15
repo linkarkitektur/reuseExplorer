@@ -69,24 +69,28 @@ struct PanoramaAlignmentOptions {
   float max_depth = 6.0f;
 
   // --- correspondence pool (reusex-bx2.5) --------------------------------
+  // Each of these was measured on NewOffice (18 panoramas, 4 seeds, with the
+  // shuffled null): with all five on, 5.0 panoramas per run clear the noise
+  // floor and the 1.5 m prior against 2.0 before, and the null accepts none.
+  // Turning any one off loses accepts or makes them disagree across seeds
+  // (docs/research/panorama-alignment-failure-modes.md).
   /// Keep each panorama keypoint once: only in the slice whose optical axis
   /// is closest to it among the slices that see it. Adjacent slices overlap
   /// 45 deg at 8 x 90 deg, so without this the same keypoint enters the pool
   /// (and every inlier tally) twice.
-  bool dedupe_overlap = false;
+  bool dedupe_overlap = true;
   /// Drop panorama keypoints within this angle (deg) of straight down: the
   /// operator, hand and stick of a hand-held capture, which gave 10 % of the
-  /// NewOffice pool and no inliers. 0 keeps them.
-  double nadir_mask_deg = 0.0;
-  /// Same, around straight up. 0 keeps them.
-  double zenith_mask_deg = 0.0;
+  /// NewOffice pool and no inliers. 45 deg removes the down cap's own region
+  /// (30 and 55 deg both measured worse). 0 keeps them.
+  double nadir_mask_deg = 45.0;
   /// Frame-driven matching: each frame keypoint takes its nearest panorama
   /// keypoint over the whole sphere, Lowe-tested against the nearest one at
   /// a different place (> `distinct_deg` away). When false, each panorama
   /// keypoint takes its nearest keypoint in each frame (the original
   /// slice-driven matching, which passed 40-50 % of the keypoints of slices
   /// no frame sees).
-  bool frame_to_sphere = false;
+  bool frame_to_sphere = true;
   /// Two panorama keypoints closer than this (deg) are the same place (ORB's
   /// duplicate detections across pyramid levels) and never each other's Lowe
   /// competitor.
@@ -94,7 +98,7 @@ struct PanoramaAlignmentOptions {
   /// Keep one correspondence per panorama keypoint (the lowest Hamming
   /// distance over all candidate frames), so a keypoint matched in several
   /// near-identical frames counts once.
-  bool one_per_keypoint = false;
+  bool one_per_keypoint = true;
 
   // --- PnP resection -----------------------------------------------------
   int min_slice_correspondences = 6; ///< need this many to PnP a slice
@@ -104,7 +108,7 @@ struct PanoramaAlignmentOptions {
   /// Resect each slice with OpenCV's USAC (MAGSAC++ scoring, local
   /// optimisation; seeded by `seed`) instead of the classic EPnP RANSAC loop.
   /// The noise-floor null uses the same estimator.
-  bool usac = false;
+  bool usac = true;
   int refine_iterations = 10; ///< bearing-space Gauss-Newton refinement steps
 
   // --- noise-floor gate (reusex-bx2.4) -----------------------------------
@@ -209,7 +213,7 @@ struct PanoramaSliceStats {
   /// [min_depth, max_depth] — the slice's PnP input
   int correspondences = 0;
   /// keypoints of this slice that entered the sphere pool (after the
-  /// overlap dedupe and the nadir/zenith masks)
+  /// overlap dedupe and the nadir mask)
   int pooled_keypoints = 0;
   /// solvePnPRansac inliers of this slice alone; -1 when PnP was not attempted
   /// (fewer than `min_slice_correspondences` correspondences)
@@ -258,7 +262,7 @@ struct PanoramaAlignmentDiagnostics {
   int correspondences_total = 0; ///< pooled depth-backed correspondences
   int sphere_keypoints = 0;      ///< panorama keypoints in the sphere pool
   int dropped_overlap = 0;       ///< keypoints dropped as another slice's
-  int dropped_pole = 0;          ///< keypoints inside the nadir/zenith masks
+  int dropped_pole = 0;          ///< keypoints inside the nadir mask
   /// depth-backed matches dropped as repeats of a panorama keypoint already
   /// matched in another frame (`one_per_keypoint`)
   int dropped_repeats = 0;

@@ -14,7 +14,7 @@
 //
 //   - each direction of the sphere is owned by one slice, so a keypoint seen
 //     by two overlapping slices enters the pool once;
-//   - the nadir/zenith masks drop the bearings around straight down/up;
+//   - the nadir mask drops the bearings around straight down;
 //   - frame-driven matching tests the ratio against a competitor elsewhere on
 //     the sphere (not ORB's duplicate detection of the same corner);
 //   - a panorama keypoint matched by several frames counts once;
@@ -200,7 +200,7 @@ TEST_CASE("PanoramaPool_OverlappingSlices_EnterEachKeypointOnce",
   CHECK(static_cast<int>(ids.size()) == seen);
 }
 
-TEST_CASE("PanoramaPool_NadirAndZenithMasks_DropThePoles",
+TEST_CASE("PanoramaPool_NadirMask_DropsStraightDown",
           "[slam][panorama][align][pool]") {
   std::mt19937 rng(9);
   auto slices = production_slices();
@@ -236,12 +236,6 @@ TEST_CASE("PanoramaPool_NadirAndZenithMasks_DropThePoles",
   wide.nadir_mask_deg = 55.0;
   for (int s : pool_sphere_keypoints(slices, wide).slice)
     CHECK(s != 9);
-
-  SpherePoolOptions zenith;
-  zenith.zenith_mask_deg = 40.0;
-  const SphereKeypoints no_zenith = pool_sphere_keypoints(slices, zenith);
-  for (const auto &b : no_zenith.bearings)
-    CHECK(std::acos(std::clamp(-b.y(), -1.0, 1.0)) >= 40.0 * kDeg);
 }
 
 TEST_CASE("PanoramaPool_FrameToSphere_RatioAgainstADistinctPlace",
@@ -364,4 +358,29 @@ TEST_CASE("PanoramaPool_UsacPnP_FindsAPoseAtAFewPercentInliers",
   CHECK(std::abs(Eigen::AngleAxisd(r.Q * Q.transpose()).angle()) < 0.02);
   // deterministic under the same seed
   CHECK(resect_best_slice({s}, o).best_inliers == r.best_inliers);
+}
+
+TEST_CASE("PanoramaPool_ProjectToSlice_RoundTripsTheSliceBearing",
+          "[slam][panorama][align][pool]") {
+  const auto slices = production_slices();
+  // slice 3's centre pixel is its axis; adjacent slice 4 sees it too (45 deg
+  // off its axis, inside its 90 deg view), slice 7 (180 deg away) does not
+  const Eigen::Vector3d a3 = slices[3].R_pano_from_view.col(2);
+  cv::Point2f px;
+  REQUIRE(project_to_slice(slices[3], a3, &px));
+  CHECK(std::abs(px.x - 100.0f) < 1e-3f);
+  CHECK(std::abs(px.y - 100.0f) < 1e-3f);
+  const Eigen::Vector3d off =
+      Eigen::AngleAxisd(30 * kDeg, Eigen::Vector3d::UnitY()) * a3;
+  int seen = 0;
+  for (const auto &s : slices) {
+    cv::Point2f q;
+    if (!project_to_slice(s, off, &q))
+      continue;
+    ++seen;
+    // the pixel back-projects to the same bearing
+    CHECK((slice_bearing(s.K, s.R_pano_from_view, q) - off).norm() < 1e-6);
+  }
+  CHECK(seen == 2);
+  CHECK_FALSE(project_to_slice(slices[7], a3, nullptr));
 }

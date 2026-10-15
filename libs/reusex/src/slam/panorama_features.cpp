@@ -475,15 +475,6 @@ Eigen::Vector3d slice_bearing(const Eigen::Matrix3d &K,
 
 namespace {
 
-bool slice_sees(const SliceKeypoints &s, const Eigen::Vector3d &bearing) {
-  const Eigen::Vector3d d = s.R_pano_from_view.transpose() * bearing;
-  if (d.z() <= 1e-9)
-    return false;
-  const double u = s.K(0, 0) * d.x() / d.z() + s.K(0, 2);
-  const double v = s.K(1, 1) * d.y() / d.z() + s.K(1, 2);
-  return u >= 0.0 && v >= 0.0 && u < s.size.width && v < s.size.height;
-}
-
 // Angle (rad) between unit vectors.
 double angle_between(const Eigen::Vector3d &a, const Eigen::Vector3d &b) {
   return std::acos(std::clamp(a.dot(b), -1.0, 1.0));
@@ -491,12 +482,26 @@ double angle_between(const Eigen::Vector3d &a, const Eigen::Vector3d &b) {
 
 } // namespace
 
+bool project_to_slice(const SliceKeypoints &s, const Eigen::Vector3d &bearing,
+                      cv::Point2f *px) {
+  const Eigen::Vector3d d = s.R_pano_from_view.transpose() * bearing;
+  if (d.z() <= 1e-9)
+    return false;
+  const double u = s.K(0, 0) * d.x() / d.z() + s.K(0, 2);
+  const double v = s.K(1, 1) * d.y() / d.z() + s.K(1, 2);
+  if (!(u >= 0.0 && v >= 0.0 && u < s.size.width && v < s.size.height))
+    return false;
+  if (px)
+    *px = cv::Point2f(static_cast<float>(u), static_cast<float>(v));
+  return true;
+}
+
 int owning_slice(const std::vector<SliceKeypoints> &slices,
                  const Eigen::Vector3d &bearing) {
   int best = -1;
   double best_cos = -2.0;
   for (size_t i = 0; i < slices.size(); ++i) {
-    if (!slice_sees(slices[i], bearing))
+    if (!project_to_slice(slices[i], bearing, nullptr))
       continue;
     const double c = slices[i].R_pano_from_view.col(2).dot(bearing);
     if (c > best_cos + 1e-12) {
@@ -512,7 +517,6 @@ SphereKeypoints pool_sphere_keypoints(const std::vector<SliceKeypoints> &slices,
   SphereKeypoints out;
   const Eigen::Vector3d down(0.0, 1.0, 0.0); // +y of the panorama frame
   const double nadir = opt.nadir_mask_deg * M_PI / 180.0;
-  const double zenith = opt.zenith_mask_deg * M_PI / 180.0;
   for (size_t si = 0; si < slices.size(); ++si) {
     const auto &s = slices[si];
     for (size_t k = 0; k < s.pixels.size(); ++k) {
@@ -520,8 +524,7 @@ SphereKeypoints pool_sphere_keypoints(const std::vector<SliceKeypoints> &slices,
         break;
       const Eigen::Vector3d b =
           slice_bearing(s.K, s.R_pano_from_view, s.pixels[k]);
-      if ((nadir > 0.0 && angle_between(b, down) < nadir) ||
-          (zenith > 0.0 && angle_between(b, -down) < zenith)) {
+      if (nadir > 0.0 && angle_between(b, down) < nadir) {
         ++out.dropped_pole;
         continue;
       }

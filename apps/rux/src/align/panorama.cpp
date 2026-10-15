@@ -114,11 +114,6 @@ NOTES:
                   "straight down: the operator and the stick (0 keeps them)")
       ->check(CLI::Range(0.0, 90.0))
       ->capture_default_str();
-  sub->add_option("--zenith-mask", ao.zenith_mask_deg,
-                  "Drop panorama keypoints within this angle (deg) of "
-                  "straight up (0 keeps them)")
-      ->check(CLI::Range(0.0, 90.0))
-      ->capture_default_str();
   sub->add_flag("--frame-to-sphere,!--no-frame-to-sphere", ao.frame_to_sphere,
                 "Match each frame keypoint against the whole panorama sphere "
                 "(Lowe ratio against a rival elsewhere on the sphere) instead "
