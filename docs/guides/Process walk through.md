@@ -297,7 +297,7 @@ With planes identified, ReUseX partitions the point cloud into individual rooms 
 rux -p building.rux create rooms
 ```
 
-Raising the Leiden `-r, --resolution` parameter yields more, smaller rooms; lowering it merges rooms together. This room segmentation enables per-room mesh generation and room-level architectural analysis.
+Raising the Leiden `-r, --resolution` parameter yields more, smaller rooms; lowering it merges rooms together. The mesh stage uses this room segmentation to decide which cells are "inside" the building, and it backs room-level architectural analysis; per-room mesh *output* is future work (WP9).
 
 ```bash
 rux -p building.rux create rooms -r 1.5
@@ -318,16 +318,16 @@ rux -p building.rux create instances -t 0.3   # 30cm clustering tolerance
 
 ## Phase 15: Mesh Generation
 
-The mesh generation phase transforms the segmented point cloud into the final simplified, room-based surface mesh. It builds a cell complex from the detected planes and rooms, then solves a mixed-integer program (HiGHS by default, cuOpt optionally on GPU) to pick the best-fit set of cells forming a watertight, manifold mesh per room.
+The mesh generation phase transforms the segmented point cloud into a simplified surface mesh. It builds a cell complex from the detected planes, then solves a mixed-integer program (HiGHS by default, cuOpt optionally on GPU) to pick the best-fit set of cells, using the `rooms` labels only to weight which cells count as "inside" the building during that solve.
 
 ```bash
 rux -p building.rux create mesh
-rux -p building.rux create mesh -a 15 -l 0.3   # custom angle/distance thresholds
+rux -p building.rux create mesh -f 'rooms == 2'   # mesh only room 2
 ```
 
 Large, multi-room buildings are solved section-by-section (per storey) by default to keep the MIP tractable; pass `!--no-sectioned` to force a single monolithic solve.
 
-*Output: a watertight, room-partitioned mesh saved to the project's `meshes` table (default name `mesh`).*
+*Output: one watertight envelope mesh covering every selected cell, saved to the project's `meshes` table (default name `mesh`) — **not** split back into per-room meshes; the solver's per-cell room/wall labels are discarded. Per-room mesh output is tracked under WP9 (`reusex-z1v.11.2`).*
 
 ## Export and Visualization
 

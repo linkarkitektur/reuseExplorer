@@ -165,6 +165,13 @@ Back-project depth frames into a fused point cloud.
 | Options  | `ReconstructionParams` (`libs/reusex/include/segmentation/reconstruct.hpp`) |
 | Checks   | ≥1 stored sensor frame |
 
+Each `normals` entry is a unit normal oriented toward the sensor(s) that
+observed its point: the sign agrees with the per-frame normals inside its
+voxel, each of which faces its own camera's optical centre. The two faces of a
+wall therefore carry opposite normals. `planes` inherits this orientation
+for `plane_normals`, and `mesh`'s face pairing relies on it (reusex-0pi;
+before that fix every stored normal faced the world origin).
+
 ### `annotate` (`rux create annotate`)
 
 Run a semantic segmentation model over the stored frames.
@@ -178,13 +185,15 @@ Run a semantic segmentation model over the stored frames.
 
 ### `project` (`rux create project`)
 
-Project the 2D semantic labels onto the 3D cloud.
+Project the 2D semantic labels onto the 3D cloud by multi-view majority vote:
+each frame that sees a point votes for the class at its pixel, background
+never votes, and an exact tie goes to the lowest class (`core::majority_label`).
 
 | | |
 |---|---|
-| Consumes | `cloud`, `segmentation_images` |
-| Produces | `labels` (`Label`) |
-| Options  | `rux create project` CLI options |
+| Consumes | `cloud`, `segmentation_images`, the latest `annotate_class_map` pipeline-log entry (class names) |
+| Produces | `labels` (`Label`, stamped `label_encoding`, with `label_definitions` keyed by point label) |
+| Options  | `ProjectLabelsOptions` (`libs/reusex/include/vision/project.hpp`): `--max-depth`, `--depth-tolerance` |
 | Checks   | `cloud` present; at least one frame carries a segmentation image |
 
 ### `planes` (`rux create planes`)
@@ -226,13 +235,20 @@ exist.
 
 ### `mesh` (`rux create mesh`)
 
-Solidify the cell complex into a room-partitioned mesh.
+Solidify the cell complex into **one watertight envelope mesh** covering every
+room whose solver-selected cells have `room_label > 0` — `rooms` only weights
+which cells are "inside" during the MIP solve; the output is not split back
+into per-room meshes, and the solver's per-cell room/wall labels
+(`Solidifier::solve()`'s `room_labels`/`wall_labels`) are discarded rather than
+carried onto the mesh (`libs/reusex/src/reconstruction/mesh.cpp`). Keeping
+those labels for a room-partitioned output is tracked under WP9
+(`reusex-z1v.11.2`).
 
 | | |
 |---|---|
 | Consumes | `cloud`, `normals`, `rooms`, `planes`, `plane_centroids`, `plane_normals` |
-| Produces | `mesh` (`meshes` table) |
-| Options  | `SolidifierOptions` → `Solidifier` / `mesh()` (`libs/reusex/include/reconstruction/`) |
+| Produces | `mesh` (`meshes` table) — one envelope mesh, not room-partitioned |
+| Options  | `MeshOptions` → `mesh()` (`libs/reusex/include/reconstruction/mesh.hpp`); builds a `SolidifierOptions` subset for `Solidifier` internally |
 | Checks   | `cloud`/`normals`/`rooms`/`planes` present + aligned; `plane_centroids`/`plane_normals` present + aligned |
 
 ### `texture` (`rux create texture`)

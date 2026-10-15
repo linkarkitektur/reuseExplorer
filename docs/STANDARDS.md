@@ -195,7 +195,7 @@ writes labels MUST follow it; any deviation is a bug.
 | Layer                                   | Type       | Unlabeled/background | Valid labels |
 |-----------------------------------------|------------|----------------------|--------------|
 | `segmentation_images` storage (PNG)     | `CV_16U`   | `0` (stored as label+1) | `1..65535` (i.e. label ≤ 65534) |
-| `ProjectDB` segmentation API            | `CV_32S`   | `-1`                 | `0..N`       |
+| `ProjectDB` segmentation API            | `CV_32S`   | `-1`                 | `0..N-1` (annotate prompt order) |
 | In-memory point labels (`pcl::Label`)   | `uint32_t` | `0` **[target]**     | `1..N`       |
 
 **Rules:**
@@ -203,12 +203,49 @@ writes labels MUST follow it; any deviation is a bug.
 - `0` means "unlabeled" in every `CloudL` point cloud (labels, planes, rooms,
   instances). Valid labels start at `1`. **[target]** — room segmentation
   currently initializes to `-1` (wraps to `0xFFFFFFFF`).
+- **Semantic point label = API class + 1.** `api_to_point_label(c)` is
+  `c + 1` for `c >= 0` (background `-1` → `0`) and `point_label_to_api()` is
+  its inverse, so API class 0 — the first prompt class — is point label 1,
+  never unlabeled (decision D8, schema v29). A semantic label cloud's
+  `label_definitions` are keyed by point label. The `annotate_class_map`
+  pipeline-log entry and `segmentation_images` stay API-keyed. Class numbers
+  stored elsewhere (`instances.semantic_class`, the `SM<cls>-` instance
+  definitions, `survey_types.semantic_class`, `rux create instances -l`,
+  `rux create windows -l`, the `instances` stage's `labels` parameter) are
+  point labels too.
+- **Semantic cloud and its stamp.** A label cloud is semantic when a semantic
+  stage wrote it (`reconstruct`, `project_labels`) or it has the default name
+  `labels`, unless a structural stage (`segment_planes`, `segment_rooms`,
+  `segment_instances`) wrote it (`core::is_semantic_label_cloud()`,
+  `core/label_encoding.hpp`). Every writer of a semantic cloud stamps
+  `"label_encoding": "api_plus_one"` (`core::stamp_label_encoding()`) into the
+  cloud's `parameters`: `reconstruct`, `rux create project`, mask → resource
+  when it creates the cloud, `sync_downsample` (carries it over) and
+  `rux set clouds.labels`. **Exempt:** `import ply`'s `<name>_labels` cloud
+  and `rux set` of any other label cloud — their ids are the source's, in an
+  encoding this project cannot know, so they are not stamped (and not
+  semantic by the rule above). Structural label clouds number their own ids
+  from 1 and carry no stamp.
+- **An unstamped semantic cloud at schema ≥ 29 is loud, not silent:** it was
+  written by a pre-v29 binary (an old `rux` or `ruxd`) after the migration
+  ran, so its class ids are probably one too low. Readers of the semantic
+  cloud log a warning (`core::warn_if_unstamped_semantic_cloud()`) and
+  `rux validate` reports `semantic_cloud_unstamped`.
+- **v29 migration.** Every stored semantic cloud lacking the stamp is shifted
+  by +1 (0 stays 0; values ≥ `0x7FFFFFFF` are left and reported), its
+  definitions re-keyed and the stamp added. The stored class numbers above
+  move by +1 unconditionally (they were always API-numbered), and names
+  generated from them ("Klasse N" survey types, "class N" passport
+  designations) are renamed; user-edited names are left. Points of API
+  class 0 were stored as unlabeled before v29 and stay so until `rux create
+  clouds` / `rux create project` is re-run; the migration warns with the
+  counts.
 - Never index a vector with `label - 1` without first checking `label >= 1`.
 - Conversions between the layers above happen ONLY through the helpers in
-  `core/label_semantics.hpp` (`is_valid_label`, `label_to_index`,
-  `kUnlabeled`, `kBackgroundApi`, `kMaxStorableLabel`, …), never inline
-  `label ± 1` arithmetic or raw casts at call sites. **[target]** — existing
-  call sites are still being migrated.
+  `core/label_semantics.hpp` (`api_to_point_label`, `point_label_to_api`,
+  `is_valid_label`, `label_to_index`, `kUnlabeled`, `kBackgroundApi`,
+  `kMaxStorableLabel`, …), never inline `label ± 1` arithmetic or raw casts
+  at call sites. **[target]** — existing call sites are still being migrated.
 - Writing a label ≥ 65535 to segmentation storage MUST throw, not wrap.
 
 ### 3.2 Identity & referential integrity

@@ -55,9 +55,36 @@ struct FramePairIcpResult {
   double source_center_shift_m = 0.0;
   /// Rotation angle of world_delta (degrees).
   double rotation_deg = 0.0;
-  double fitness = 0.0;         ///< RMS correspondence error after ICP (m)
+  /// RMS nearest-neighbour distance (m) after ICP over ALL "from" points,
+  /// including those outside the two views' overlap, which have no true
+  /// counterpart: a loose measure that grows with the non-overlap.
+  /// inlier_fraction / inlier_rms_m describe the overlap itself.
+  double fitness = 0.0;
   double inlier_fraction = 0.0; ///< share of "from" points within the gate
+  /// RMS point-to-plane distance (m) of the points counted by
+  /// inlier_fraction, to their "to" neighbour's tangent plane: how well the
+  /// overlapping surfaces agree, independent of the sampling spacing.
+  double inlier_rms_m = 0.0;
   bool converged = false;
+  /// Directions (of 6) the point-to-plane normal equations could not
+  /// constrain in the last iteration, e.g. 3 for a bare wall (the slide
+  /// along it and the turn about its normal). ICP leaves B unmoved along
+  /// them rather than letting noise move it.
+  int unconstrained_dofs = 0;
+
+  /// The same overlap measures at the START pose (initial_guess, or the
+  /// stored poses), so a caller can see whether ICP improved on its seed.
+  double seed_inlier_fraction = 0.0;
+  double seed_inlier_rms_m = 0.0;
+  /// How far ICP moved the "from" camera's optical centre away from the
+  /// START pose (m), and the rotation of that move (degrees). Without an
+  /// initial_guess these equal source_center_shift_m / rotation_deg.
+  double seed_shift_m = 0.0;
+  double seed_rotation_deg = 0.0;
+  /// icp_worse_than_seed(): ICP moved B far from its start and fits the
+  /// overlap worse than the start did. A warning is logged; the caller
+  /// should keep the seed rather than apply world_delta.
+  bool worse_than_seed = false;
   int source_points = 0; ///< back-projected points of the "from" frame
   int target_points = 0; ///< back-projected points of the "to" frame
   /// pose_graph_edges.transform for the edge (from_id -> to_id) in the
@@ -68,8 +95,16 @@ struct FramePairIcpResult {
 };
 
 /// Back-project each frame's stored depth into world space (its stored pose
-/// and intrinsics) and run point-to-point ICP of @p from_id onto @p to_id,
-/// seeded by the stored poses. Read-only: nothing is written to @p db.
+/// and intrinsics) and run point-to-plane ICP of @p from_id onto @p to_id,
+/// seeded by the stored poses (and initial_guess). Read-only: nothing is
+/// written to @p db.
+///
+/// Point-to-plane, not point-to-point (reusex-xlg.12): on a low-structure
+/// pair (walls, a floor, a few small objects) whose views only partly
+/// overlap, point-to-point ICP pairs the points past the overlap with the
+/// other cloud's border and drags B along the walls, away from a good seed.
+/// Point-to-plane only pulls along surface normals, and directions no
+/// surface constrains are left unmoved (unconstrained_dofs).
 ///
 /// @throws std::runtime_error when a frame has no depth or no valid pose, or
 ///         its depth has no return inside the range (the message names the
@@ -108,6 +143,22 @@ struct FrameWorldCloud {
 FrameWorldCloud
 frame_world_colored_points(const ProjectDB &db, int node_id,
                            const FramePairIcpOptions &opts = {});
+
+/// Moving the "from" camera centre farther than this from the start pose,
+/// or rotating it more than kIcpSeedDriftDeg, is "far" for
+/// icp_worse_than_seed() (the shift threshold is the inlier gate,
+/// FramePairIcpOptions::inlier_threshold_m).
+inline constexpr double kIcpSeedDriftDeg = 2.0;
+/// A rise of the inlier RMS by more than this share counts as worse.
+inline constexpr double kIcpSeedRmsTolerance = 0.10;
+
+/// True when ICP moved B far from its start (seed_shift_m above the inlier
+/// gate, or seed_rotation_deg above kIcpSeedDriftDeg) AND the overlap got
+/// worse: fewer inliers, or an inlier RMS more than kIcpSeedRmsTolerance
+/// higher. A far move that improves the overlap is a correction and is not
+/// flagged; a small move never is.
+bool icp_worse_than_seed(const FramePairIcpResult &result,
+                         const FramePairIcpOptions &opts);
 
 /// Diagonal 6x6 information (GTSAM order rx, ry, rz, tx, ty, tz, row-major)
 /// for a pose-graph edge measured by ICP: sigma_t = max(fitness, 0.01) m and

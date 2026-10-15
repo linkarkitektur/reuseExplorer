@@ -1,0 +1,30 @@
+{
+  "$schema": "../../../docs/design/solid-model-reference.schema.json",
+  "model_version": 1,
+  "units": "m",
+  "name": "two_rooms (synthetic detection)",
+  "description": "Hand-written stand-in for a detector's output on two_rooms.plan.json: walls displaced by 2-4 cm, thicknesses off, the closet wall w7 missed, one spurious wall, the closet merged into the west room, the inner door missed and one false window. Exercises every metric of rux analyze solid; not derived from any scan.",
+  "storeys": [
+    {"guid": "d-storey-0", "idx": 0, "name": "Ground", "z_floor": 0.0, "z_ceiling": 2.58}
+  ],
+  "walls": [
+    {"guid": "d1", "storey": 0, "axis": [[0.02, 0.03], [7.98, 0.03]], "height": 2.58, "thickness": 0.28, "is_external": true, "seen_share": 0.9},
+    {"guid": "d2", "storey": 0, "axis": [[7.97, 0.0], [7.97, 5.0]], "height": 2.58, "thickness": 0.33, "is_external": true, "seen_share": 0.8},
+    {"guid": "d3", "storey": 0, "axis": [[8.0, 4.98], [0.0, 4.98]], "height": 2.58, "thickness": 0.3, "is_external": true, "seen_share": 0.7, "assumed": true},
+    {"guid": "d4", "storey": 0, "axis": [[0.04, 5.0], [0.04, 0.0]], "height": 2.58, "thickness": 0.3, "is_external": true, "seen_share": 0.6, "assumed": true},
+    {"guid": "d5", "storey": 0, "axis": [[4.03, 0.0], [4.03, 5.0]], "height": 2.58, "thickness": 0.12, "seen_share": 0.95},
+    {"guid": "d6", "storey": 0, "axis": [[0.0, 3.47], [1.5, 3.47]], "height": 2.58, "thickness": 0.1, "seen_share": 0.5},
+    {"guid": "d9", "storey": 0, "axis": [[6.0, 1.0], [6.0, 3.0]], "height": 1.1, "thickness": 0.05, "seen_share": 0.2}
+  ],
+  "spaces": [
+    {"guid": "ds-west", "storey": 0, "name": "Space 1", "kind": "room",
+     "polygon": {"outer": [[0.17, 0.17], [3.95, 0.17], [3.95, 4.83], [0.17, 4.83]]}},
+    {"guid": "ds-east", "storey": 0, "name": "Space 2", "kind": "room",
+     "polygon": {"outer": [[4.1, 0.2], [7.8, 0.2], [7.8, 4.8], [4.1, 4.8]]}}
+  ],
+  "openings": [
+    {"guid": "do-entrance", "wall": "d1", "kind": "door", "s_start": 1.08, "s_end": 2.08, "z_sill": 0.0, "z_head": 2.05},
+    {"guid": "do-window", "wall": "d1", "kind": "window", "s_start": 4.98, "s_end": 6.48, "z_sill": 0.92, "z_head": 2.1},
+    {"guid": "do-false", "wall": "d2", "kind": "window", "s_start": 1.0, "s_end": 2.0, "z_sill": 1.0, "z_head": 2.0}
+  ]
+}

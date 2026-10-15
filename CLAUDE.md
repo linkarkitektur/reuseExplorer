@@ -244,7 +244,11 @@ Benchmarks: `scripts/bench.sh` produces an XML report and
 regression beyond `--threshold` percent. The required before/after workflow is
 [`docs/STANDARDS.md` §8.1](docs/STANDARDS.md#81-baseline-vs-candidate-workflow);
 `scripts/bench-arkitscenes.sh` and `scripts/bench-mushroom.sh` drive
-dataset-level runs.
+dataset-level runs. The solid-model benchmark is its own pair:
+`scripts/bench-solid.sh` runs `rux analyze solid` over the rows of
+`scripts/bench-solid.manifest` into one JSON report, and
+`scripts/bench-solid-compare.py` gates two such reports per metric
+([`docs/design/solid-model-json.md`](docs/design/solid-model-json.md)).
 
 ### Continuous integration
 
@@ -455,6 +459,10 @@ and deleted the shims. `include/geometry/` now holds only the real
 - `segment_instances.hpp` / `reconcile_instances.hpp`: semantic → spatial instances
 - `depth_filters.hpp`, `downsample.hpp`, `sync_downsample.hpp`, `densify.hpp`
 - `Surfel.hpp` / `surfel_extraction.hpp`: surfels shared with `slam`
+- `level.hpp`: `detect_storeys()` — floor/ceiling LSQ fits, the measured
+  vertical (bisector of their normals) and storeys from a height histogram,
+  as `core::StoreyRecord`s sharing one level frame
+  (`geometry/level_frame.hpp`, header-only like `component_persistence.hpp`)
 
 **reconstruction** (`include/reconstruction/`):
 - `CellComplex.hpp`: Boost.Graph-based 3D spatial representation
@@ -464,6 +472,10 @@ and deleted the shims. `include/geometry/` now holds only the real
 - `mesh.hpp`, `texture_mesh.hpp`, `regularization.hpp`, `create_windows.hpp`
 - `SceneGraph.hpp` / `Registry.hpp`: spatial relationships and object hierarchies
 - `quality_metrics.hpp` / `accuracy_metrics.hpp`: backing `rux analyze`
+- `solid_metrics.hpp`: the solid-model benchmark (`rux analyze solid`,
+  `scripts/bench-solid.sh`): a detected `core::SolidModel` vs a reference plan
+  in the solid-model JSON format (`io/solid_model_json.hpp`,
+  [`docs/design/solid-model-json.md`](docs/design/solid-model-json.md))
 
 **slam** (`include/slam/`):
 - `PlaneGraphOptimizer.hpp`: plane-landmark pose graph (GTSAM), `rux optimize`.
@@ -576,7 +588,9 @@ tree — if a doc mentions `RTABMapDatabase`, that doc is stale.
   `UNIQUE(from, to, type)`; `upsert_pose_graph_edge` /
   `set_pose_graph_edge_status` / `update_pose_graph_edge_metrics`), adds
   `sensor_frames.initial_transform` and `project_settings` (`setting()` /
-  `set_setting()`)
+  `set_setting()`). Schema v29 makes semantic point label = API class + 1
+  (`core::api_to_point_label`, STANDARDS §3.1): stored semantic clouds were
+  shifted and stamped `parameters.label_encoding = "api_plus_one"`
 - Migrating schema; `LATEST_SCHEMA_VERSION` is defined in
   `src/core/ProjectDB.cpp` — read it there rather than trusting a doc (it moves
   most releases)
@@ -629,6 +643,8 @@ External-format adapters only — project state itself lives in `core/ProjectDB`
 - `speckle.hpp`: Speckle export
 - `exif.hpp`: photo metadata (exiv2)
 - `export_scene.hpp`: serializes a reconstructed scene
+- `solid_model_json.hpp`: the solid-model JSON document (reference plans and
+  detected models, `core/solid_model.hpp` records)
 - `reusex.hpp`: legacy custom format
 
 There is no HDF5 dependency anywhere in the build.
@@ -644,7 +660,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | `export` | `ply`, `e57`, `materialepas`, `csv`, `rhino`, `semantic-images`, `speckle`, `colmap`, `pdf` | `src/export/` |
 | `align` | `360` (content-based panorama pose refinement) | `src/align/` |
 | `edit` | `downsample`, `perturb-poses` (drift synthesis, #338) | `src/edit/` |
-| `analyze` | `quality`, `accuracy` | `src/analyze/` |
+| `analyze` | `quality`, `accuracy`, `solid` (typed model vs a reference plan) | `src/analyze/` |
 | `optimize` | — (solves the stored pose graph) | `src/optimize.cpp` |
 | `graph` | `init`, `discover`, `prune` (stored pose graph) | `src/graph/` |
 | `register` | — (joint pairwise registration) | `src/register.cpp` |
@@ -776,11 +792,10 @@ RTABMap is now confined to `libs/reusex/src/io/rtabmap.cpp` (import only).
 ## TODO Comment Conventions
 
 This project uses structured TODO/FIXME/BUG/HACK comments compatible with the
-[tdg](https://gitlab.com/ribtoks/tdg) tool; a GitHub Action
-(`.github/workflows/todo-action.yml`) parses them and syncs them to issues, so
-the format is mandatory. The full spec — markers, the required
-`category=`/`estimate=` metadata line, categories, time-estimate bands, and
-worked examples — lives in the **`todo-comments` skill**
+[tdg](https://gitlab.com/ribtoks/tdg) tool; the format is kept (tdg-compatible, greppable),
+and TODO comments are tracked in beads (`bead=reusex-xxx`), with no automatic issue sync.
+The full spec — markers, the required `category=`/`estimate=` metadata line, categories,
+time-estimate bands, and worked examples — lives in the **`todo-comments` skill**
 (`.claude/skills/todo-comments/SKILL.md`), which auto-triggers when you write or
 review one. The short version:
 

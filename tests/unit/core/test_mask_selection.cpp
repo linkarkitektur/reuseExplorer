@@ -200,6 +200,11 @@ TEST_CASE("apply_mask_selection on a project with no label clouds",
   CHECK((*labels)[3].label == 1);
   CHECK(db.label_definitions("labels") ==
         std::map<int, std::string>{{1, "Dør"}});
+  // A semantic cloud created here carries the encoding marker (STANDARDS
+  // §3.1); the instance cloud is structural and does not.
+  CHECK(db.point_cloud_provenance("labels").second ==
+        R"({"label_encoding":"api_plus_one"})");
+  CHECK(db.point_cloud_provenance("instances").second.empty());
 
   const auto inst = db.point_cloud_label("instances");
   REQUIRE(inst->size() == 10);

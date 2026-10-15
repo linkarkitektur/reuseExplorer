@@ -3,6 +3,7 @@
 
 #include "core/validate.hpp"
 #include "core/ProjectDB.hpp"
+#include "core/label_encoding.hpp"
 
 #include <fmt/format.h>
 #include <fmt/ranges.h>
@@ -178,12 +179,39 @@ void check_sibling_cloud_sizes(const ProjectDB &db,
   }
 }
 
+void check_unstamped_semantic_clouds(const ProjectDB &db,
+                                     std::vector<ValidationIssue> &out) {
+  const auto instance_clouds = instance_cloud_names(db);
+  for (const auto &name : db.list_point_clouds()) {
+    if (std::find(instance_clouds.begin(), instance_clouds.end(), name) !=
+        instance_clouds.end())
+      continue;
+    if (!is_unstamped_semantic_cloud(db, name))
+      continue;
+    const auto stage = db.point_cloud_provenance(name).first;
+    if (!is_semantic_label_cloud(name, stage))
+      continue;
+    out.push_back(
+        {"semantic_cloud_unstamped",
+         fmt::format("semantic label cloud '{}' (stage '{}') has no "
+                     "\"label_encoding\": \"api_plus_one\" at schema {} — "
+                     "probably written by a pre-v29 binary, so its class ids "
+                     "may be one too low",
+                     name, stage, db.schema_version()),
+         ValidationSeverity::warning,
+         /*hint=*/"re-run `rux create clouds` or `rux create project`",
+         /*artifact=*/name,
+         /*commands=*/{"rux create clouds", "rux create project"}});
+  }
+}
+
 ValidationReport validate_project(const ProjectDB &db) {
   ValidationReport report;
   check_orphaned_passports(db, report.issues);
   check_dangling_instance_materials(db, report.issues);
   check_instances_without_label_defs(db, report.issues);
   check_sibling_cloud_sizes(db, report.issues);
+  check_unstamped_semantic_clouds(db, report.issues);
   return report;
 }
 

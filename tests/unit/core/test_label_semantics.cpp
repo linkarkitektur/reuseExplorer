@@ -9,6 +9,7 @@
 #include <opencv2/core.hpp>
 
 #include <stdexcept>
+#include <string>
 
 using namespace reusex::core;
 
@@ -43,14 +44,35 @@ TEST_CASE("ApiPointLabelConversion_VariousInputs_RoundTripsCorrectly",
     REQUIRE(point_label_to_api(kUnlabeled) == kBackgroundApi);
   }
 
-  SECTION("valid class ids pass through") {
-    REQUIRE(api_to_point_label(0) == 0u); // API class 0 is a valid class id
-    REQUIRE(api_to_point_label(5) == 5u);
-    REQUIRE(point_label_to_api(5u) == 5);
+  SECTION("API class 0 is a real class, not unlabeled") {
+    // STANDARDS §3.1: point label = API class + 1. API class 0 (the first
+    // prompt class) used to map to 0 == kUnlabeled and was silently dropped.
+    REQUIRE(api_to_point_label(0) == 1u);
+    REQUIRE(is_valid_label(api_to_point_label(0)));
+    REQUIRE(point_label_to_api(1u) == 0);
+  }
+
+  SECTION("valid class ids shift by one") {
+    REQUIRE(api_to_point_label(5) == 6u);
+    REQUIRE(point_label_to_api(6u) == 5);
+  }
+
+  SECTION("round-trip through point labels for valid API classes") {
+    for (int a : {0, 1, 5, 65533, 65534})
+      REQUIRE(point_label_to_api(api_to_point_label(a)) == a);
+  }
+
+  SECTION("label encoding marker") {
+    REQUIRE(std::string(kLabelEncodingKey) == "label_encoding");
+    REQUIRE(std::string(kLabelEncodingApiPlusOne) == "api_plus_one");
   }
 
   SECTION("negative non-sentinel throws") {
     REQUIRE_THROWS_AS(api_to_point_label(-2), std::out_of_range);
+  }
+
+  SECTION("out-of-contract point label throws instead of wrapping") {
+    REQUIRE_THROWS_AS(point_label_to_api(0xFFFFFFFFu), std::out_of_range);
   }
 
   SECTION("round-trip through api for valid labels") {
@@ -136,4 +158,45 @@ TEST_CASE("MatLabelConverters_EmptyOrWrongTypeInput_ThrowsOrReturnsEmpty",
     cv::Mat wrong(2, 2, CV_32FC1, cv::Scalar(0));
     REQUIRE_THROWS_AS(api_mat_to_storage(wrong), std::invalid_argument);
   }
+}
+
+// ── majority_label (reusex-z1v.2.2) ───────────────────────────────────────
+// The one vote rule shared by `rux create project` (votes across frames) and
+// `rux create clouds` (votes inside a voxel): kUnlabeled never votes, the
+// highest count wins, an exact tie goes to the lowest label.
+
+TEST_CASE("MajorityLabel_NoVotes_ReturnsUnlabeled", "[label_semantics]") {
+  REQUIRE(majority_label({}) == kUnlabeled);
+}
+
+TEST_CASE("MajorityLabel_OnlyUnlabeledVotes_ReturnsUnlabeled",
+          "[label_semantics]") {
+  REQUIRE(majority_label({{kUnlabeled, 12}}) == kUnlabeled);
+}
+
+TEST_CASE("MajorityLabel_UnlabeledOutnumbersAClass_ClassWins",
+          "[label_semantics]") {
+  // Background never overwrites a class, however many frames saw background.
+  REQUIRE(majority_label({{kUnlabeled, 9}, {4u, 1}}) == 4u);
+}
+
+TEST_CASE("MajorityLabel_TwoVersusOne_MajorityWins", "[label_semantics]") {
+  REQUIRE(majority_label({{6u, 1}, {4u, 2}}) == 4u);
+  REQUIRE(majority_label({{4u, 1}, {6u, 2}}) == 6u);
+}
+
+TEST_CASE("MajorityLabel_ExactTie_LowestLabelWinsInAnyOrder",
+          "[label_semantics]") {
+  REQUIRE(majority_label({{10u, 3}, {3u, 3}}) == 3u);
+  REQUIRE(majority_label({{3u, 3}, {10u, 3}}) == 3u);
+  REQUIRE(majority_label({{kUnlabeled, 3}, {10u, 3}, {7u, 3}}) == 7u);
+}
+
+TEST_CASE("MajorityLabel_RepeatedLabelEntries_AreSummed", "[label_semantics]") {
+  // Callers may hand in one entry per vote rather than pre-aggregated counts.
+  REQUIRE(majority_label({{5u, 1}, {2u, 1}, {5u, 1}}) == 5u);
+}
+
+TEST_CASE("MajorityLabel_NonPositiveCounts_DoNotVote", "[label_semantics]") {
+  REQUIRE(majority_label({{5u, 0}, {2u, -3}}) == kUnlabeled);
 }

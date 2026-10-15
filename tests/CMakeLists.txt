@@ -364,4 +364,18 @@ if(REUSEX_PACKAGE_TEST)
         RESOURCE_LOCK reusex_package_test)
 endif()
 
+# -----------------------------------------------
+# Bench script self-tests (stdlib-only python)
+# -----------------------------------------------
+# scripts/bench-solid-compare.py gates the solid-model benchmark
+# (reusex-z1v.2.5); its self-test needs only python3, so it is skipped
+# quietly where no interpreter is around (e.g. a minimal nix check build).
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME bench_solid_compare_selftest
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_SOURCE_DIR}/scripts/test_bench_solid_compare.py)
+    set_tests_properties(bench_solid_compare_selftest PROPERTIES LABELS bench)
+endif()
+
 message(STATUS "Unit tests configured successfully")

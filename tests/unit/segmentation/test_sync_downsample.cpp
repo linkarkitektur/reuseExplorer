@@ -139,7 +139,8 @@ TEST_CASE("SyncDownsample_MultipleSiblingClouds_KeepsAllSiblingsIndexAligned",
 
   db.save_point_cloud("cloud", *scene.cloud, "import");
   db.save_point_cloud("normals", *scene.normals, "import");
-  db.save_point_cloud("labels", *scene.labels, "import");
+  db.save_point_cloud("labels", *scene.labels, "import",
+                      R"({"label_encoding":"api_plus_one"})");
   db.save_label_definitions("labels", {{1, "floor"},
                                        {2, "ceiling"},
                                        {3, "wall"},
@@ -180,6 +181,9 @@ TEST_CASE("SyncDownsample_MultipleSiblingClouds_KeepsAllSiblingsIndexAligned",
   auto defs = db.label_definitions("labels");
   REQUIRE(defs.size() == 6);
   REQUIRE(defs.at(1) == "floor");
+  // ...and so does the semantic cloud's label encoding (STANDARDS §3.1).
+  CHECK(db.point_cloud_provenance("labels").second.find(
+            R"("label_encoding":"api_plus_one")") != std::string::npos);
 
   // Lineage recorded.
   auto log = db.pipeline_log();

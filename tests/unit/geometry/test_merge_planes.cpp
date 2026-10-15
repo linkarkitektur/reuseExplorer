@@ -12,6 +12,7 @@
 //   - perpendicular planes                           -> NEVER merge
 //   - parallel-but-offset walls (> tolerance apart)  -> NEVER merge
 //   - coplanar+adjacent pair with low mutual inlier overlap -> MERGES (#325)
+//   - the two faces of one thin wall (opposite normals)   -> NEVER merge
 //   - result ordering is deterministic
 
 #include <reusex/geometry/utils.hpp>
@@ -222,4 +223,74 @@ TEST_CASE("MergePlanes_RepeatedRuns_ProducesDeterministicOrdering",
   REQUIRE(first.size() == 2); // halves merged, distant wall separate
   for (int rep = 0; rep < 3; ++rep)
     REQUIRE(run() == first); // identical output every run
+}
+
+namespace {
+
+/// The two faces of one 0.15 m thick wall occupying x in [0, 0.15], scanned
+/// from both sides. Normals are oriented toward the sensor (segment_planes
+/// flips each plane normal to agree with the viewpoint-oriented point
+/// normals), so they point away from each other: -x on the face at x = 0, +x
+/// on the face at x = 0.15.
+struct WallFaces {
+  CloudPtr cloud = std::make_shared<Cloud>();
+  EigenVectorContainer<double, 4> planes;
+  std::vector<IndicesPtr> inliers;
+  EigenVectorContainer<double, 3> centroids;
+};
+
+WallFaces two_faces_of_one_wall(double thickness = 0.15) {
+  WallFaces w;
+  auto near = add_x_wall_patch(w.cloud, 0.0, 0.0, 3.0, 0.0, 2.5);
+  auto far = add_x_wall_patch(w.cloud, thickness, 0.0, 3.0, 0.0, 2.5);
+  w.cloud->width = static_cast<uint32_t>(w.cloud->size());
+  w.cloud->height = 1;
+  w.planes = {Eigen::Vector4d(-1, 0, 0, 0),
+              Eigen::Vector4d(1, 0, 0, -thickness)};
+  w.inliers = {near, far};
+  w.centroids = {centroid_of(w.cloud, near), centroid_of(w.cloud, far)};
+  return w;
+}
+
+} // namespace
+
+TEST_CASE("MergePlanes_TwoFacesOfThinWall_NeverMerge",
+          "[geometry][merge_planes]") {
+  // reusex-z1v.2.4: plane_distance treats +n and -n as the same direction, and
+  // 0.15 m is well inside the 0.5 m offset tolerance, so the two faces of one
+  // wall used to collapse into a single plane. They are a wall pair, not a
+  // duplicate: opposite-facing planes must never merge.
+  for (const double thickness : {0.10, 0.15, 0.25}) {
+    CAPTURE(thickness);
+    auto w = two_faces_of_one_wall(thickness);
+
+    auto [Pm, Im, Cm] = merge_planes(w.planes, w.inliers, w.centroids, w.cloud);
+
+    REQUIRE(Pm.size() == 2);
+    REQUIRE(Im[0]->size() == w.inliers[0]->size());
+    REQUIRE(Im[1]->size() == w.inliers[1]->size());
+    // Each face keeps its own orientation.
+    REQUIRE(Pm[0].head<3>().dot(w.planes[0].head<3>()) ==
+            Catch::Approx(1.0).margin(1e-6));
+    REQUIRE(Pm[1].head<3>().dot(w.planes[1].head<3>()) ==
+            Catch::Approx(1.0).margin(1e-6));
+  }
+}
+
+TEST_CASE("MergePlanes_TwoFacesOfThinWall_PairWithoutInventedBackFace",
+          "[geometry][merge_planes][make_pairs]") {
+  // Downstream of the merge (reconstruction/mesh.cpp): make_pairs must pair the
+  // two measured faces with each other. Had they been merged, make_pairs would
+  // find no opposite partner and invent a back face at new_plane_offset.
+  auto w = two_faces_of_one_wall(0.15);
+
+  auto [Pm, Im, Cm] = merge_planes(w.planes, w.inliers, w.centroids, w.cloud);
+  REQUIRE(Pm.size() == 2);
+
+  auto pairs = make_pairs(Pm, Im, Cm, /*threshold=*/0.60,
+                          /*new_plane_offset=*/0.25);
+
+  REQUIRE(Pm.size() == 2); // no invented plane appended
+  REQUIRE(pairs.size() == 1);
+  REQUIRE(pairs[0] == std::pair<size_t, size_t>{0, 1});
 }
