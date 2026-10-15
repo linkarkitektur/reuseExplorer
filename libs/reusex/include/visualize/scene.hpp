@@ -27,9 +27,11 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 class vtkActor;
+class vtkPolyData;
 class vtkRenderer;
 
 namespace reusex::visualize {
@@ -171,7 +173,42 @@ struct SceneOptions {
   std::array<std::uint8_t, 3> plan_door_rgb{0xd5, 0x5e, 0x00};
   std::array<std::uint8_t, 3> plan_window_rgb{0x56, 0xb4, 0xe9};
   std::array<std::uint8_t, 3> plan_opening_rgb{0xf0, 0xe4, 0x42};
+
+  /// How a `mesh` layer is drawn. MeshStyle::automatic resolves to
+  /// MeshStyle::overlay when a point layer is drawn too.
+  MeshStyle mesh_style = MeshStyle::automatic;
+  /// Opacity of the MeshStyle::overlay surface.
+  double mesh_overlay_opacity = 0.35;
+  /// Dihedral angle above which a mesh edge counts as a feature edge [deg].
+  double mesh_feature_angle_deg = 30.0;
+  /// Feature-edge and section-line colour (`--label-5`, vermillion).
+  std::array<std::uint8_t, 3> mesh_edge_rgb{0xd5, 0x5e, 0x00};
+
+  /// Thresholds of the `deviation` layer.
+  DeviationOptions deviation;
+
+  /// Frame on the [q, 1 - q] per-axis quantiles of the geometry cloud (plus
+  /// any mesh) instead of the full bounds, so a few stray points far outside
+  /// the building do not shrink it to a speck (SceneInfo::frame_bounds).
+  /// 0 = the full bounds.
+  double frame_quantile = 0.0;
+  /// Measure the framing box in the display frame turned by this yaw [deg]
+  /// (SceneInfo::display_bounds) — the yaw the camera will use.
+  double frame_yaw_deg = 0.0;
 };
+
+/// The `deviation` layer's colour of a point @p d metres from the mesh: the
+/// `--label-2` green at 0, `--label-3` yellow at DeviationOptions::within_m,
+/// `--label-5` vermillion at DeviationOptions::uncovered_m (linear between),
+/// `--label-6` reddish purple beyond it, and the palette's unlabeled grey for
+/// a NaN (a point with no distance).
+std::array<std::uint8_t, 3> deviation_color(double d,
+                                            const DeviationOptions &opts);
+
+/// The colour stops of deviation_color(), for a legend: (distance [m], rgb).
+/// The last stop is the "beyond uncovered_m" colour.
+std::vector<std::pair<double, std::array<std::uint8_t, 3>>>
+deviation_color_stops(const DeviationOptions &opts);
 
 /// What a plan overlay added (SceneOptions::plan).
 struct PlanOverlayInfo {
@@ -189,6 +226,10 @@ struct PlanOverlayInfo {
 /// vtkObject name of every plan-overlay actor.
 inline constexpr const char *kPlanOverlayActorName = "reusex.plan_overlay";
 
+/// vtkObject name of a mesh section line (add_mesh_section_line()); exempt
+/// from the cut and the section slab like the plan overlay.
+inline constexpr const char *kSectionLineActorName = "reusex.section_line";
+
 /// The actors one layer added, so an interactive viewer can toggle it.
 struct SceneLayer {
   Layer layer = Layer::cloud;
@@ -200,11 +241,24 @@ struct SceneLayer {
   std::size_t points = 0; ///< points drawn (per point layer)
   std::size_t faces = 0;  ///< mesh faces drawn
   std::size_t items = 0;  ///< frustums / panoramas / components drawn
+  /// Mesh layer only: the mesh's surface poly-data, the source of
+  /// add_mesh_section_line(). Owned by a surface actor in the renderer (a
+  /// hidden one, not in @ref actors, under MeshStyle::edges).
+  vtkPolyData *mesh_surface = nullptr;
 };
 
 /// What populate_scene() added.
 struct SceneInfo {
   SceneBounds bounds;
+  /// What a camera should frame: @ref bounds, or the quantile box of
+  /// SceneOptions::frame_quantile united with the mesh's bounds.
+  SceneBounds frame_bounds;
+  /// The framing box measured in the display frame (u, v, z) = world turned
+  /// by @ref display_yaw_deg about z (counter-clockwise), when
+  /// SceneOptions::frame_quantile or frame_yaw_deg was set; @ref frame_bounds
+  /// is then its world AABB.
+  std::optional<SceneBounds> display_bounds;
+  double display_yaw_deg = 0.0;
   std::size_t drawn_points = 0;
   std::size_t drawn_faces = 0;
   std::vector<SceneLayer> layers;
@@ -216,6 +270,12 @@ struct SceneInfo {
   std::vector<std::uint32_t> indices;
   /// The plan overlay, when SceneOptions::plan was set (empty otherwise).
   PlanOverlayInfo plan;
+  /// The mesh style a `mesh` layer was drawn in (automatic resolved).
+  MeshStyle mesh_style = MeshStyle::solid;
+  /// The `deviation` layer's summary over every measured point, and over the
+  /// points of a segmented plane (see RenderInfo::deviation_planar).
+  std::optional<DeviationStats> deviation;
+  std::optional<DeviationStats> deviation_planar;
 };
 
 /// Load @p opts' layers from @p db and add them to @p renderer.
@@ -249,6 +309,43 @@ void apply_cut_plane(vtkRenderer *renderer, double z);
 /// Remove every clipping plane from @p renderer's actors.
 void clear_cut_planes(vtkRenderer *renderer);
 
+/// A SectionSpec placed in a scene: the section line in plan and its slab.
+struct ResolvedSection {
+  std::array<double, 2> p0{0, 0}; ///< line start (x, y) [m]
+  std::array<double, 2> p1{1, 0}; ///< line end (x, y) [m]
+  /// Unit direction p0 -> p1 in plan; points right in the section view.
+  std::array<double, 2> dir{1, 0};
+  /// Unit view direction in plan, the left normal of @ref dir: the camera
+  /// stands on the right of the line and looks across it.
+  std::array<double, 2> view{0, 1};
+  double thickness = 0.10; ///< slab thickness [m]
+};
+
+/// Place @p spec in @p bounds: `x=` / `y=` lines run across the bounds' plan
+/// extent (padded by the slab thickness), a segment keeps its ends.
+/// @throws std::invalid_argument on a non-positive thickness, a zero-length
+///         segment, or an x/y position outside the bounds' plan extent.
+ResolvedSection resolve_section(const SectionSpec &spec,
+                                const SceneBounds &bounds);
+
+/// Clip every actor of @p renderer to the slab of @p section: within half the
+/// thickness of the line's vertical plane, and between its ends. The plan
+/// overlay and section lines are exempt, as for apply_cut_plane().
+void apply_section(vtkRenderer *renderer, const ResolvedSection &section);
+
+/// Draw the intersection of the scene's `mesh` layer with a plane (origin
+/// @p origin, normal @p normal) as a heavy line in SceneOptions::mesh_edge_rgb,
+/// shifted by @p shift (e.g. toward the camera, so the slab's points in front
+/// do not hide it). Named kSectionLineActorName.
+/// @return the line actor, or nullptr when @p info has no mesh layer or the
+///         plane misses the mesh.
+vtkActor *add_mesh_section_line(vtkRenderer *renderer, const SceneInfo &info,
+                                const std::array<double, 3> &origin,
+                                const std::array<double, 3> &normal,
+                                const std::array<double, 3> &shift,
+                                const std::array<std::uint8_t, 3> &rgb,
+                                double width = 3.0);
+
 /// How a preset camera frames the scene.
 struct CameraFraming {
   ViewPreset view = ViewPreset::top; ///< never ViewPreset::explicit_camera
@@ -259,8 +356,15 @@ struct CameraFraming {
   double aspect = 4.0 / 3.0; ///< viewport width / height
   /// Display rotation about world z, degrees, counter-clockwise seen from
   /// above (project_settings `view.yaw_deg`). Display only: the scene's
-  /// coordinates are never changed.
+  /// coordinates are never changed. ViewPreset::section looks along its own
+  /// line and uses the yaw only to read @ref display_bounds.
   double yaw_deg = 0.0;
+  /// The geometry's box in the display frame of @ref yaw_deg
+  /// (SceneInfo::display_bounds): frames top, plan and the elevations
+  /// exactly. Must be measured at the same yaw.
+  std::optional<SceneBounds> display_bounds;
+  /// The slab ViewPreset::section looks at (required by that view).
+  std::optional<ResolvedSection> section;
 };
 
 /// Place @p renderer's active camera for a preset view of @p bounds.

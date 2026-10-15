@@ -215,7 +215,10 @@ find_package(VTK REQUIRED COMPONENTS
     RenderingCore
     RenderingOpenGL2
     # vtkVectorText: stroke-font geometry for the plan overlay's labels.
-    RenderingFreeType)
+    RenderingFreeType
+    # vtkCleanPolyData / vtkFeatureEdges / vtkCutter: the mesh-QA overlay's
+    # feature edges and mesh section lines (reusex-8vx).
+    FiltersCore)
 
 # -----------------------------------------------
 # Geometry & Optimization

@@ -10,10 +10,12 @@
 #include "core/logging.hpp"
 #include "geometry/BuildingComponent.hpp"
 #include "geometry/component_persistence.hpp"
+#include "geometry/point_mesh_distance.hpp"
 #include "geometry/transform_utils.hpp"
 #include "reusex/visualize/highlight.hpp"
 #include "types/point_types.hpp"
 
+#include <fmt/format.h>
 #include <pcl/PolygonMesh.h>
 #include <pcl/conversions.h>
 
@@ -21,6 +23,9 @@
 #include <vtkActorCollection.h>
 #include <vtkCamera.h>
 #include <vtkCellArray.h>
+#include <vtkCleanPolyData.h>
+#include <vtkCutter.h>
+#include <vtkFeatureEdges.h>
 #include <vtkLogger.h>
 #include <vtkMapper.h>
 #include <vtkNew.h>
@@ -37,6 +42,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <numbers>
 #include <stdexcept>
 #include <string>
@@ -128,6 +134,8 @@ std::string producing_command(Layer layer) {
     return "rux import rtabmap (or another importer of posed frames)";
   case Layer::panoramas:
     return "rux import 360";
+  case Layer::deviation:
+    return "rux create mesh";
   }
   return "the corresponding rux create subcommand";
 }
@@ -224,9 +232,10 @@ vtkActor *add_points_actor(vtkRenderer *renderer, vtkPolyData *poly,
   return actor; // the renderer holds the reference
 }
 
-/// Convert a stored PolygonMesh into a shaded surface actor.
-vtkActor *add_mesh_actor(vtkRenderer *renderer, const pcl::PolygonMesh &mesh,
-                         SceneBounds &bounds) {
+/// A stored PolygonMesh as VTK poly-data, coincident vertices merged (an
+/// unwelded mesh would otherwise show every triangle edge as a boundary).
+vtkSmartPointer<vtkPolyData> mesh_polydata(const pcl::PolygonMesh &mesh,
+                                           SceneBounds &bounds) {
   pcl::PointCloud<pcl::PointXYZ> vertices;
   pcl::fromPCLPointCloud2(mesh.cloud, vertices);
 
@@ -254,8 +263,26 @@ vtkActor *add_mesh_actor(vtkRenderer *renderer, const pcl::PolygonMesh &mesh,
   poly->SetPoints(points);
   poly->SetPolys(polys);
 
+  vtkNew<vtkCleanPolyData> clean;
+  clean->SetInputData(poly);
+  clean->PointMergingOn();
+  clean->ToleranceIsAbsoluteOn();
+  clean->SetAbsoluteTolerance(0.0);
+  clean->ConvertPolysToLinesOff();
+  clean->ConvertLinesToPointsOff();
+  clean->ConvertStripsToPolysOff();
+  clean->Update();
+  auto out = vtkSmartPointer<vtkPolyData>::New();
+  out->ShallowCopy(clean->GetOutput());
+  return out;
+}
+
+/// The surface actor of a mesh layer.
+vtkActor *add_mesh_surface_actor(vtkRenderer *renderer, vtkPolyData *poly,
+                                 double opacity) {
   vtkNew<vtkPolyDataMapper> mapper;
   mapper->SetInputData(poly);
+  mapper->ScalarVisibilityOff();
 
   vtkNew<vtkActor> actor;
   actor->SetMapper(mapper);
@@ -263,8 +290,91 @@ vtkActor *add_mesh_actor(vtkRenderer *renderer, const pcl::PolygonMesh &mesh,
   actor->GetProperty()->SetAmbient(0.25);
   actor->GetProperty()->SetDiffuse(0.75);
   actor->GetProperty()->SetSpecular(0.05);
+  actor->GetProperty()->SetOpacity(opacity);
+  if (opacity < 1.0) {
+    // Seen from either side: an interior mesh is mostly seen from inside.
+    actor->GetProperty()->BackfaceCullingOff();
+  }
   renderer->AddActor(actor);
   return actor;
+}
+
+/// The feature edges (boundary, non-manifold and crease edges) of a mesh.
+vtkActor *add_mesh_edges_actor(vtkRenderer *renderer, vtkPolyData *poly,
+                               const SceneOptions &opts) {
+  vtkNew<vtkFeatureEdges> edges;
+  edges->SetInputData(poly);
+  edges->BoundaryEdgesOn();
+  edges->FeatureEdgesOn();
+  edges->NonManifoldEdgesOn();
+  edges->ManifoldEdgesOff();
+  edges->ColoringOff();
+  edges->SetFeatureAngle(opts.mesh_feature_angle_deg);
+  edges->Update();
+  vtkNew<vtkPolyData> lines;
+  lines->ShallowCopy(edges->GetOutput());
+
+  vtkNew<vtkPolyDataMapper> mapper;
+  mapper->SetInputData(lines);
+  mapper->ScalarVisibilityOff();
+  vtkNew<vtkActor> actor;
+  actor->SetMapper(mapper);
+  const auto &rgb = opts.mesh_edge_rgb;
+  actor->GetProperty()->SetColor(rgb[0] / 255.0, rgb[1] / 255.0,
+                                 rgb[2] / 255.0);
+  actor->GetProperty()->SetLineWidth(2.0);
+  actor->GetProperty()->SetLighting(false);
+  renderer->AddActor(actor);
+  return actor;
+}
+
+/// Draw a stored mesh in @p style into @p drawn.
+void add_mesh_layer(vtkRenderer *renderer, const pcl::PolygonMesh &mesh,
+                    MeshStyle style, const SceneOptions &opts,
+                    SceneBounds &bounds, SceneLayer &drawn) {
+  const vtkSmartPointer<vtkPolyData> poly = mesh_polydata(mesh, bounds);
+  switch (style) {
+  case MeshStyle::automatic:
+  case MeshStyle::solid:
+    drawn.actors.push_back(add_mesh_surface_actor(renderer, poly, 1.0));
+    break;
+  case MeshStyle::overlay:
+    drawn.actors.push_back(
+        add_mesh_surface_actor(renderer, poly, opts.mesh_overlay_opacity));
+    drawn.actors.push_back(add_mesh_edges_actor(renderer, poly, opts));
+    break;
+  case MeshStyle::edges: {
+    // The surface stays in the renderer, hidden, as the section-line source.
+    vtkActor *hidden = add_mesh_surface_actor(renderer, poly, 1.0);
+    hidden->SetVisibility(false);
+    drawn.actors.push_back(add_mesh_edges_actor(renderer, poly, opts));
+    break;
+  }
+  }
+  drawn.mesh_surface = poly; // kept alive by the surface actor's mapper
+}
+
+/// Squared-free linear blend of two colours.
+std::array<std::uint8_t, 3> lerp_rgb(const std::array<std::uint8_t, 3> &a,
+                                     const std::array<std::uint8_t, 3> &b,
+                                     double t) {
+  std::array<std::uint8_t, 3> out{};
+  for (int k = 0; k < 3; ++k)
+    out[k] = static_cast<std::uint8_t>(
+        std::lround(a[k] + (static_cast<double>(b[k]) - a[k]) * t));
+  return out;
+}
+
+DeviationStats to_stats(const geometry::DistanceSummary &s) {
+  DeviationStats d;
+  d.points = s.points;
+  d.mean_m = s.mean_m;
+  d.median_m = s.median_m;
+  d.p95_m = s.p95_m;
+  d.max_m = s.max_m;
+  d.within_share = s.within_share;
+  d.uncovered_share = s.beyond_share;
+  return d;
 }
 
 /// Draw building-component boundaries as closed polylines.
@@ -915,6 +1025,33 @@ std::array<std::uint8_t, 3> label_palette_color(const LabelPalette &palette,
                   : palette.colors[static_cast<std::size_t>(slot)];
 }
 
+// ── Deviation colours ────────────────────────────────────────────────────────
+
+std::vector<std::pair<double, std::array<std::uint8_t, 3>>>
+deviation_color_stops(const DeviationOptions &opts) {
+  // tokens.css --label-2 (green), --label-3 (yellow), --label-5
+  // (vermillion), --label-6 (reddish purple): Okabe-Ito, colourblind-safe.
+  return {{0.0, {0x00, 0x9e, 0x73}},
+          {opts.within_m, {0xf0, 0xe4, 0x42}},
+          {opts.uncovered_m, {0xd5, 0x5e, 0x00}},
+          {std::numeric_limits<double>::infinity(), {0xcc, 0x79, 0xa7}}};
+}
+
+std::array<std::uint8_t, 3> deviation_color(double d,
+                                            const DeviationOptions &opts) {
+  if (!std::isfinite(d))
+    return default_label_palette().unlabeled;
+  const auto stops = deviation_color_stops(opts);
+  if (d > opts.uncovered_m)
+    return stops[3].second;
+  if (d <= 0.0)
+    return stops[0].second;
+  if (d <= opts.within_m)
+    return lerp_rgb(stops[0].second, stops[1].second, d / opts.within_m);
+  return lerp_rgb(stops[1].second, stops[2].second,
+                  (d - opts.within_m) / (opts.uncovered_m - opts.within_m));
+}
+
 std::string_view to_string(LodMethod method) {
   switch (method) {
   case LodMethod::all:
@@ -998,7 +1135,13 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
     throw std::runtime_error(
         "render: no layers selected — pass at least one of "
         "cloud, labels, planes, rooms, instances, mesh, "
-        "components, frustums, panoramas");
+        "components, frustums, panoramas, deviation");
+  if (!(opts.deviation.within_m > 0.0) ||
+      !(opts.deviation.uncovered_m > opts.deviation.within_m))
+    throw std::runtime_error(
+        "render: deviation thresholds need 0 < within < uncovered (got " +
+        std::to_string(opts.deviation.within_m) + ", " +
+        std::to_string(opts.deviation.uncovered_m) + ")");
   if (opts.point_size <= 0.0)
     throw std::runtime_error("render: point size must be positive (got " +
                              std::to_string(opts.point_size) + ")");
@@ -1080,6 +1223,17 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
           opts.highlight->instance_id, opts.highlight->cloud_name);
   };
 
+  // MeshStyle::automatic: see the cloud through the mesh when both are drawn.
+  info.mesh_style = opts.mesh_style;
+  if (info.mesh_style == MeshStyle::automatic) {
+    const bool with_points =
+        std::any_of(opts.layers.begin(), opts.layers.end(), [](Layer l) {
+          return l != Layer::mesh && l != Layer::components &&
+                 l != Layer::frustums && l != Layer::panoramas;
+        });
+    info.mesh_style = with_points ? MeshStyle::overlay : MeshStyle::solid;
+  }
+
   for (const Layer layer : opts.layers) {
     SceneLayer drawn;
     drawn.layer = layer;
@@ -1159,6 +1313,72 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
       break;
     }
 
+    case Layer::deviation: {
+      if (!db.has_mesh(opts.mesh_name)) {
+        throw std::runtime_error("render: layer 'deviation' needs the mesh '" +
+                                 opts.mesh_name +
+                                 "', which this project does not have — run `" +
+                                 producing_command(Layer::mesh) + "` first");
+      }
+      const Cloud &cloud = ensure_geometry();
+      const auto mesh = db.mesh(opts.mesh_name);
+      if (!mesh || mesh->polygons.empty())
+        throw std::runtime_error("render: mesh '" + opts.mesh_name +
+                                 "' has no faces — re-run `" +
+                                 producing_command(Layer::mesh) + "`");
+      const stopwatch timer;
+      std::vector<double> d;
+      try {
+        d = geometry::point_to_mesh_distances(cloud, *mesh);
+      } catch (const std::invalid_argument &e) {
+        throw std::runtime_error(std::string("render: layer 'deviation': ") +
+                                 e.what());
+      }
+      const auto &dv = opts.deviation;
+      std::vector<unsigned char> colors(cloud.size() * 3);
+      for (std::size_t i = 0; i < cloud.size(); ++i) {
+        const auto c = deviation_color(d[i], dv);
+        colors[3 * i + 0] = c[0];
+        colors[3 * i + 1] = c[1];
+        colors[3 * i + 2] = c[2];
+      }
+      info.deviation = to_stats(
+          geometry::summarize_distances(d, dv.within_m, dv.uncovered_m));
+      // The same summary over the points of a segmented plane: the clutter a
+      // structural mesh is not meant to cover drops out.
+      if (db.has_point_cloud("planes")) {
+        const CloudLPtr planes = db.point_cloud_label("planes");
+        if (planes && planes->size() == cloud.size()) {
+          std::vector<double> planar(d.size(),
+                                     std::numeric_limits<double>::quiet_NaN());
+          for (std::size_t i = 0; i < d.size(); ++i)
+            if ((*planes)[i].label != core::kUnlabeled &&
+                !core::is_out_of_contract_label((*planes)[i].label))
+              planar[i] = d[i];
+          info.deviation_planar = to_stats(geometry::summarize_distances(
+              planar, dv.within_m, dv.uncovered_m));
+        } else {
+          core::warn("render: 'planes' ({} labels) is out of sync with '{}' "
+                     "({} points); no planar deviation summary",
+                     planes ? planes->size() : 0, opts.cloud_name,
+                     cloud.size());
+        }
+      }
+      const auto &st = *info.deviation;
+      core::info("render: deviation of '{}' from mesh '{}': {} points in "
+                 "{:.2f}s, mean {:.3f} m, P95 {:.3f} m, {:.1f}% within "
+                 "{:.2f} m, {:.1f}% beyond {:.2f} m (uncovered)",
+                 opts.cloud_name, opts.mesh_name, st.points, timer.elapsed(),
+                 st.mean_m, st.p95_m, 100.0 * st.within_share, dv.within_m,
+                 100.0 * st.uncovered_share, dv.uncovered_m);
+      if (st.points == 0)
+        core::warn("render: no point of '{}' has a finite distance to mesh "
+                   "'{}'; the deviation layer is uniformly grey",
+                   opts.cloud_name, opts.mesh_name);
+      add_point_layer(drawn, cloud, colors);
+      break;
+    }
+
     case Layer::mesh: {
       if (!db.has_mesh(opts.mesh_name)) {
         throw std::runtime_error("render: project has no mesh named '" +
@@ -1171,7 +1391,7 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
                                  "' has no faces — re-run `" +
                                  producing_command(Layer::mesh) + "`");
       }
-      drawn.actors.push_back(add_mesh_actor(renderer, *mesh, bounds));
+      add_mesh_layer(renderer, *mesh, info.mesh_style, opts, bounds, drawn);
       drawn.faces = mesh->polygons.size();
       break;
     }
@@ -1213,6 +1433,66 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
   if (!bounds.valid) {
     throw std::runtime_error(
         "render: the selected layers produced no drawable geometry");
+  }
+  info.frame_bounds = bounds;
+  if (opts.frame_quantile > 0.0 || opts.frame_yaw_deg != 0.0) {
+    // The box to frame, in the display frame (u, v, z) — world turned by the
+    // yaw, so a building drawn square to the screen is framed tightly — over
+    // the [q, 1 - q] quantiles of the cloud plus every mesh vertex.
+    const double q = std::clamp(opts.frame_quantile, 0.0, 0.49);
+    const double yaw = opts.frame_yaw_deg * std::numbers::pi / 180.0;
+    const double c = std::cos(yaw), sn = std::sin(yaw);
+    std::array<std::vector<double>, 3> axes;
+    if (geometry)
+      for (const auto &p : *geometry) {
+        if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z))
+          continue;
+        axes[0].push_back(c * p.x - sn * p.y);
+        axes[1].push_back(sn * p.x + c * p.y);
+        axes[2].push_back(p.z);
+      }
+    SceneBounds db;
+    if (!axes[0].empty()) {
+      std::array<double, 3> lo{}, hi{};
+      for (int k = 0; k < 3; ++k) {
+        auto &v = axes[static_cast<std::size_t>(k)];
+        const auto at = [&](double f) {
+          const auto i = static_cast<std::size_t>(
+              std::floor(f * static_cast<double>(v.size() - 1)));
+          std::nth_element(v.begin(), v.begin() + static_cast<long>(i),
+                           v.end());
+          return v[i];
+        };
+        lo[static_cast<std::size_t>(k)] = at(q);
+        hi[static_cast<std::size_t>(k)] = at(1.0 - q);
+      }
+      db.add(lo[0], lo[1], lo[2]);
+      db.add(hi[0], hi[1], hi[2]);
+    }
+    for (const auto &layer : info.layers)
+      if (layer.mesh_surface != nullptr)
+        for (vtkIdType i = 0; i < layer.mesh_surface->GetNumberOfPoints();
+             ++i) {
+          double p[3];
+          layer.mesh_surface->GetPoint(i, p);
+          db.add(c * p[0] - sn * p[1], sn * p[0] + c * p[1], p[2]);
+        }
+    if (db.valid) {
+      info.display_bounds = db;
+      info.display_yaw_deg = opts.frame_yaw_deg;
+      // Its world AABB, for what frames in world (orbit, sections).
+      SceneBounds fb;
+      for (const double u : {db.min[0], db.max[0]})
+        for (const double v : {db.min[1], db.max[1]})
+          for (const double z : {db.min[2], db.max[2]})
+            fb.add(c * u + sn * v, -sn * u + c * v, z);
+      info.frame_bounds = fb;
+      core::debug("render: framing the [{:g}, {:g}] quantile box at yaw "
+                  "{:g} deg: u [{:.2f}, {:.2f}] v [{:.2f}, {:.2f}] z [{:.2f}, "
+                  "{:.2f}]",
+                  q, 1.0 - q, opts.frame_yaw_deg, db.min[0], db.max[0],
+                  db.min[1], db.max[1], db.min[2], db.max[2]);
+    }
   }
   return info;
 }
@@ -1260,6 +1540,15 @@ CutPlane resolve_cut_plane(const ProjectDB &db, const SceneBounds &bounds,
   return cut;
 }
 
+namespace {
+/// The plan overlay and the mesh section lines are drawings laid over a cut
+/// or a section, not part of it.
+bool is_exempt_from_clipping(vtkActor *actor) {
+  const std::string name = actor->GetObjectName();
+  return name == kPlanOverlayActorName || name == kSectionLineActorName;
+}
+} // namespace
+
 /// vtkPlane keeps the side its normal points to, so the normal points down.
 /// Clipping planes live on the mapper and are evaluated in the vertex shader,
 /// which is what makes this work uniformly for point sprites, mesh triangles
@@ -1272,7 +1561,7 @@ void apply_cut_plane(vtkRenderer *renderer, double z) {
   vtkActorCollection *actors = renderer->GetActors();
   actors->InitTraversal();
   while (vtkActor *actor = actors->GetNextActor()) {
-    if (actor->GetObjectName() == kPlanOverlayActorName)
+    if (is_exempt_from_clipping(actor))
       continue; // a drawing over the section, not part of it
     if (vtkMapper *mapper = actor->GetMapper())
       mapper->AddClippingPlane(plane);
@@ -1288,6 +1577,133 @@ void clear_cut_planes(vtkRenderer *renderer) {
   }
 }
 
+// ── Vertical sections (reusex-8vx) ───────────────────────────────────────────
+
+ResolvedSection resolve_section(const SectionSpec &spec,
+                                const SceneBounds &bounds) {
+  if (!(spec.thickness > 0.0))
+    throw std::invalid_argument(
+        "render: section thickness must be positive (got " +
+        std::to_string(spec.thickness) + ")");
+  ResolvedSection r;
+  r.thickness = spec.thickness;
+  const double pad = spec.thickness;
+  switch (spec.kind) {
+  case SectionSpec::Kind::x:
+    if (spec.at < bounds.min[0] || spec.at > bounds.max[0])
+      throw std::invalid_argument(fmt::format(
+          "render: section x={:.3f} lies outside the scene (x in [{:.3f}, "
+          "{:.3f}])",
+          spec.at, bounds.min[0], bounds.max[0]));
+    r.p0 = {spec.at, bounds.min[1] - pad};
+    r.p1 = {spec.at, bounds.max[1] + pad};
+    break;
+  case SectionSpec::Kind::y:
+    if (spec.at < bounds.min[1] || spec.at > bounds.max[1])
+      throw std::invalid_argument(fmt::format(
+          "render: section y={:.3f} lies outside the scene (y in [{:.3f}, "
+          "{:.3f}])",
+          spec.at, bounds.min[1], bounds.max[1]));
+    r.p0 = {bounds.min[0] - pad, spec.at};
+    r.p1 = {bounds.max[0] + pad, spec.at};
+    break;
+  case SectionSpec::Kind::segment:
+    r.p0 = spec.p0;
+    r.p1 = spec.p1;
+    break;
+  }
+  const double dx = r.p1[0] - r.p0[0], dy = r.p1[1] - r.p0[1];
+  const double len = std::hypot(dx, dy);
+  if (!(len > 1e-9))
+    throw std::invalid_argument("render: a section segment needs two distinct "
+                                "end points");
+  r.dir = {dx / len, dy / len};
+  r.view = {-r.dir[1], r.dir[0]};
+  return r;
+}
+
+void apply_section(vtkRenderer *renderer, const ResolvedSection &section) {
+  const double h = 0.5 * section.thickness;
+  const auto &p0 = section.p0;
+  const auto &p1 = section.p1;
+  const auto &v = section.view;
+  const auto &d = section.dir;
+  // vtkPlane keeps the side its normal points to.
+  const auto plane = [](double ox, double oy, double nx, double ny) {
+    auto p = vtkSmartPointer<vtkPlane>::New();
+    p->SetOrigin(ox, oy, 0.0);
+    p->SetNormal(nx, ny, 0.0);
+    return p;
+  };
+  const vtkSmartPointer<vtkPlane> planes[4] = {
+      plane(p0[0] + v[0] * h, p0[1] + v[1] * h, -v[0], -v[1]),
+      plane(p0[0] - v[0] * h, p0[1] - v[1] * h, v[0], v[1]),
+      plane(p0[0], p0[1], d[0], d[1]), plane(p1[0], p1[1], -d[0], -d[1])};
+
+  vtkActorCollection *actors = renderer->GetActors();
+  actors->InitTraversal();
+  while (vtkActor *actor = actors->GetNextActor()) {
+    if (is_exempt_from_clipping(actor))
+      continue;
+    if (vtkMapper *mapper = actor->GetMapper())
+      for (const auto &p : planes)
+        mapper->AddClippingPlane(p);
+  }
+}
+
+vtkActor *add_mesh_section_line(vtkRenderer *renderer, const SceneInfo &info,
+                                const std::array<double, 3> &origin,
+                                const std::array<double, 3> &normal,
+                                const std::array<double, 3> &shift,
+                                const std::array<std::uint8_t, 3> &rgb,
+                                double width) {
+  vtkPolyData *surface = nullptr;
+  for (const auto &layer : info.layers)
+    if (layer.layer == Layer::mesh && layer.mesh_surface != nullptr)
+      surface = layer.mesh_surface;
+  if (surface == nullptr)
+    return nullptr;
+
+  vtkNew<vtkPlane> plane;
+  plane->SetOrigin(origin[0], origin[1], origin[2]);
+  plane->SetNormal(normal[0], normal[1], normal[2]);
+  vtkNew<vtkCutter> cutter;
+  cutter->SetInputData(surface);
+  cutter->SetCutFunction(plane);
+  cutter->GenerateTrianglesOff();
+  cutter->Update();
+  vtkPolyData *cut = cutter->GetOutput();
+  if (cut == nullptr || cut->GetNumberOfLines() == 0) {
+    core::debug("render: the section plane misses the mesh; no section line");
+    return nullptr;
+  }
+
+  vtkNew<vtkPoints> points;
+  points->SetDataType(VTK_DOUBLE);
+  points->SetNumberOfPoints(cut->GetNumberOfPoints());
+  for (vtkIdType i = 0; i < cut->GetNumberOfPoints(); ++i) {
+    double p[3];
+    cut->GetPoint(i, p);
+    points->SetPoint(i, p[0] + shift[0], p[1] + shift[1], p[2] + shift[2]);
+  }
+  vtkNew<vtkPolyData> poly;
+  poly->SetPoints(points);
+  poly->SetLines(cut->GetLines());
+
+  vtkNew<vtkPolyDataMapper> mapper;
+  mapper->SetInputData(poly);
+  mapper->ScalarVisibilityOff();
+  vtkNew<vtkActor> actor;
+  actor->SetMapper(mapper);
+  actor->SetObjectName(kSectionLineActorName);
+  actor->GetProperty()->SetColor(rgb[0] / 255.0, rgb[1] / 255.0,
+                                 rgb[2] / 255.0);
+  actor->GetProperty()->SetLineWidth(width);
+  actor->GetProperty()->SetLighting(false);
+  renderer->AddActor(actor);
+  return actor;
+}
+
 // ── Camera placement ─────────────────────────────────────────────────────────
 
 /// The view direction, up vector and projection type are always set
@@ -1299,18 +1715,24 @@ void clear_cut_planes(vtkRenderer *renderer) {
 /// (STANDARDS §6).
 void place_preset_camera(vtkRenderer *renderer, const CameraFraming &framing,
                          const SceneBounds &bounds) {
-  const std::array<double, 3> c = bounds.center();
-  double center[3] = {c[0], c[1], c[2]};
+  std::array<double, 3> c = bounds.center();
   const double reach = std::max(bounds.diagonal(), 1.0);
   const double aspect = framing.aspect;
   const double yaw = framing.yaw_deg * std::numbers::pi / 180.0;
   const double cy = std::cos(yaw), sy = std::sin(yaw);
   // The camera turns by -yaw so the model appears turned by +yaw. Extents in
-  // the turned frame decide the framing.
-  const double ex =
-      std::abs(cy) * bounds.extent(0) + std::abs(sy) * bounds.extent(1);
-  const double ey =
-      std::abs(sy) * bounds.extent(0) + std::abs(cy) * bounds.extent(1);
+  // the turned frame decide the framing: exact when the caller measured the
+  // geometry in that frame (display_bounds), else those of the turned AABB.
+  double ex = std::abs(cy) * bounds.extent(0) + std::abs(sy) * bounds.extent(1);
+  double ey = std::abs(sy) * bounds.extent(0) + std::abs(cy) * bounds.extent(1);
+  if (framing.display_bounds && framing.display_bounds->valid) {
+    const SceneBounds &d = *framing.display_bounds;
+    ex = d.extent(0);
+    ey = d.extent(1);
+    const auto m = d.center();
+    c = {cy * m[0] + sy * m[1], -sy * m[0] + cy * m[1], m[2]};
+  }
+  double center[3] = {c[0], c[1], c[2]};
 
   vtkCamera *cam = renderer->GetActiveCamera();
   cam->SetFocalPoint(center);
@@ -1329,15 +1751,82 @@ void place_preset_camera(vtkRenderer *renderer, const CameraFraming &framing,
     return;
 
   case ViewPreset::front:
-    // Orthographic elevation looking along +Y (turned by the yaw), world Z
-    // up.
+  case ViewPreset::back:
+  case ViewPreset::left:
+  case ViewPreset::right: {
+    // Orthographic elevations, world Z up, each turned by the yaw: front
+    // looks along +Y (from the south), back along -Y, left along +X (from
+    // the west), right along -X. The base direction rotated by -yaw is
+    // (sy, cy) for front, as before.
+    double bx = 0.0, by = 1.0;
+    if (framing.view == ViewPreset::back)
+      bx = 0.0, by = -1.0;
+    else if (framing.view == ViewPreset::left)
+      bx = 1.0, by = 0.0;
+    else if (framing.view == ViewPreset::right)
+      bx = -1.0, by = 0.0;
+    const double vx = cy * bx + sy * by;
+    const double vy = -sy * bx + cy * by;
+    // Screen right is display u for front/back and display v for
+    // left/right.
+    const bool sideways =
+        framing.view == ViewPreset::left || framing.view == ViewPreset::right;
+    const double across = sideways ? ey : ex;
     cam->ParallelProjectionOn();
-    cam->SetPosition(center[0] - reach * sy, center[1] - reach * cy, center[2]);
+    cam->SetPosition(center[0] - reach * vx, center[1] - reach * vy, center[2]);
     cam->SetViewUp(0.0, 0.0, 1.0);
     cam->SetParallelScale(
-        parallel_scale_for(ex, bounds.extent(2), aspect, framing.margin));
+        parallel_scale_for(across, bounds.extent(2), aspect, framing.margin));
     renderer->ResetCameraClippingRange();
     return;
+  }
+
+  case ViewPreset::section: {
+    if (!framing.section)
+      throw std::invalid_argument(
+          "place_preset_camera: the section view needs a section");
+    const ResolvedSection &sec = *framing.section;
+    // Frame the part of the line inside the scene, at the scene's height.
+    const auto along = [&](double x, double y) {
+      return (x - sec.p0[0]) * sec.dir[0] + (y - sec.p0[1]) * sec.dir[1];
+    };
+    double lo = std::numeric_limits<double>::infinity();
+    double hi = -lo;
+    if (framing.display_bounds && framing.display_bounds->valid) {
+      // The display box's corners, in world: tight for a section square to
+      // the display frame.
+      const SceneBounds &d = *framing.display_bounds;
+      for (const double u : {d.min[0], d.max[0]})
+        for (const double v : {d.min[1], d.max[1]}) {
+          const double a = along(cy * u + sy * v, -sy * u + cy * v);
+          lo = std::min(lo, a);
+          hi = std::max(hi, a);
+        }
+    } else {
+      for (const double x : {bounds.min[0], bounds.max[0]})
+        for (const double y : {bounds.min[1], bounds.max[1]}) {
+          lo = std::min(lo, along(x, y));
+          hi = std::max(hi, along(x, y));
+        }
+    }
+    const double len = std::hypot(sec.p1[0] - sec.p0[0], sec.p1[1] - sec.p0[1]);
+    lo = std::clamp(lo, 0.0, len);
+    hi = std::clamp(hi, 0.0, len);
+    if (hi <= lo)
+      lo = 0.0, hi = len;
+    const double mid = 0.5 * (lo + hi);
+    const double fx = sec.p0[0] + sec.dir[0] * mid;
+    const double fy = sec.p0[1] + sec.dir[1] * mid;
+    cam->ParallelProjectionOn();
+    cam->SetFocalPoint(fx, fy, center[2]);
+    cam->SetPosition(fx - reach * sec.view[0], fy - reach * sec.view[1],
+                     center[2]);
+    cam->SetViewUp(0.0, 0.0, 1.0);
+    cam->SetParallelScale(
+        parallel_scale_for(hi - lo, bounds.extent(2), aspect, framing.margin));
+    renderer->ResetCameraClippingRange();
+    return;
+  }
 
   case ViewPreset::orbit: {
     cam->ParallelProjectionOff();

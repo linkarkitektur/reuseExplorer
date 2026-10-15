@@ -156,7 +156,7 @@ endif()
 if(ReUseX_HAVE_VISUALIZE)
     find_dependency(VTK COMPONENTS CommonCore CommonDataModel
                     CommonExecutionModel RenderingCore RenderingOpenGL2
-                    RenderingFreeType)
+                    RenderingFreeType FiltersCore)
 endif()
 
 # reusex_gsplat: vendored gsplat CUDA rasterizer (LibTorch-linked).
