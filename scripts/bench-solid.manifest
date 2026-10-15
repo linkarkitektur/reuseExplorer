@@ -18,5 +18,5 @@ office_corridor    fixture    tests/fixtures/solid_model/two_rooms.plan.json -  
 # Local-only rows (never committed data), skipped unless the variable is set:
 # NewOffice: the authored reference is committed (DRAFT, reusex-z1v.2.6); the
 # scan is not. Point $REUSEX_NEWOFFICE_RUX at a NewOffice project.rux.
-newoffice         local      tests/fixtures/solid_model/newoffice.plan.json -                                               $REUSEX_NEWOFFICE_RUX -
+newoffice         local      tests/fixtures/solid_model/newoffice.plan.yaml -                                               $REUSEX_NEWOFFICE_RUX -
 # s3dis_area1      local      $REUSEX_S3DIS_DIR/area1.plan.json             -                                               $REUSEX_S3DIS_DIR/area1.rux storeys,walls,spaces,openings

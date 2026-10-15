@@ -15,8 +15,8 @@ by measuring the scan, draw them over a plan cut of the cloud, and correct
 until the drawing and the scan agree. The examples below use `plan.json`
 throughout; `rux edit plan` and `rux render --plan` take `plan.yaml` exactly
 the same way (picked by extension) -- YAML's block style and comments make
-it the easier form to hand-edit while iterating; only the committed fixture
-(step 8) is JSON.
+it the easier form to hand-edit, and a committed reference (step 8) is
+YAML: comments carry the provenance of every uncertain wall or opening.
 
 The result is a benchmark target, never ground truth. Mark a reference that
 has not been reviewed by the maintainer as a draft (see
@@ -176,11 +176,14 @@ measure the cloud  ->  write / edit plan.json  ->  rux edit plan --dry-run
    `1`-`9` the `--layers`, `0` the plan. The status line at the bottom shows
    the last reload or the reader's error.
 
-8. **Commit** the plan as `tests/fixtures/solid_model/<scan>.plan.json`
-   (JSON only, never the cloud) and add its row to
+8. **Commit** the plan as `tests/fixtures/solid_model/<scan>.plan.yaml`
+   (hand-written YAML with comments, never the cloud) and add its row to
    `scripts/bench-solid.manifest`. A row whose project is not in the
    repository uses a `$VARIABLE` path, so it is skipped where the variable is
    unset.
+   Edit the committed file by hand from then on: `rux edit plan --export`
+   writes canonical YAML without comments, so never round-trip it through
+   a writer.
 
 ## Marking a draft
 
