@@ -218,17 +218,25 @@ double bbox_gap(const InlierBBox &a, const InlierBBox &b) {
 /// tolerance) and the offset difference along the average normal (normalized by
 /// the coplanarity tolerance). Both terms are dimensionless after
 /// normalization, so a value < 1 means "within tolerance on both axes".
+///
+/// The metric is orientation-SENSITIVE: +n and -n are not the same direction.
+/// Plane normals carry the side the surface was observed from, so two parallel
+/// planes facing away from each other are the two faces of one wall (a pair for
+/// make_pairs), never a duplicate. Opposite-facing planes (dot < 0) therefore
+/// get an infinite distance (reusex-z1v.2.4).
 double plane_distance(const Eigen::Vector4d &Pi, const Eigen::Vector3d &Ci,
                       const Eigen::Vector4d &Pj, const Eigen::Vector3d &Cj,
                       double angle_tol_rad, double coplanar_tol_m) {
   const Eigen::Vector3d ni = Pi.head<3>();
   const Eigen::Vector3d nj = Pj.head<3>();
   const double dot = std::clamp(ni.dot(nj), -1.0, 1.0);
-  const double angle = std::acos(std::abs(dot)); // unsigned; treat ±n as equal
+  if (dot < 0.0)
+    return std::numeric_limits<double>::infinity(); // opposite-facing
+  const double angle = std::acos(dot);
 
-  // Offset difference along the (orientation-agnostic) average normal: the
-  // perpendicular distance between the two planes at their shared centroid.
-  Eigen::Vector3d n_avg = ni + (dot < 0 ? -nj : nj);
+  // Offset difference along the average normal: the perpendicular distance
+  // between the two planes at their shared centroid.
+  Eigen::Vector3d n_avg = ni + nj;
   const double n_avg_norm = n_avg.norm();
   double offset_diff;
   if (n_avg_norm < reusex::kEpsilonRelative) {
@@ -326,7 +334,17 @@ auto merge_planes(EigenVectorContainer<double, 4> const &planes_,
   // neighbour's plane at its far end. Below 0.8 the gate changes nothing and
   // merely doubles the merge cost (9.6 ms -> 19.1 ms), so no threshold buys
   // anything the coplanarity + adjacency test does not already decide.
+  //
+  // Opposite-facing planes are never mergeable (reusex-z1v.2.4): before this
+  // gate, plane_distance treated +n and -n alike, so the two faces of a
+  // 10-25 cm wall (offset well inside the 0.5 m tolerance) collapsed into one
+  // mid-wall plane, and make_pairs then invented a back face new_plane_offset
+  // behind it — moving the wall and giving it the wrong thickness.
   auto mergeable = [&](const Cluster &a, const Cluster &b, double &dist) {
+    if (a.plane.head<3>().dot(b.plane.head<3>()) < 0.0) {
+      dist = std::numeric_limits<double>::infinity();
+      return false;
+    }
     dist = plane_distance(a.plane, a.centroid, b.plane, b.centroid,
                           angle_tol_rad, coplanar_tol_m);
     if (dist >= kMergeDistanceThreshold)

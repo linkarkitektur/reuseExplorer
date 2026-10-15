@@ -84,6 +84,9 @@ auto compute_number_of_inliers(CloudConstPtr cloud,
  * offset within the tolerances below) **and** spatially adjacent (inlier
  * bounding boxes overlap, or their gap is below the coplanarity tolerance).
  *
+ * Planes whose normals face opposite ways (dot < 0) never merge: they are the
+ * two faces of one wall, which make_pairs pairs, not a duplicate surface.
+ *
  * There is no inlier-overlap gate. The `min_overlap` parameter this function
  * used to accept was removed in #325: measured on a real scan, honouring it at
  * its documented 0.8 default blocked legitimate split-wall merges (the very
