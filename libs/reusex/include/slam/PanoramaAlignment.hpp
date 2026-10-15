@@ -31,7 +31,9 @@
 #include <Eigen/Geometry>
 
 #include <array>
+#include <limits>
 #include <string>
+#include <vector>
 
 namespace reusex {
 class ProjectDB;
@@ -101,6 +103,112 @@ struct PanoramaAlignmentOptions {
   /// panorama to `<debug_dir>/<debug_name>_matches.jpg`.
   std::string debug_dir;
   std::string debug_name;
+
+  /// Keep every depth-backed correspondence in
+  /// PanoramaAlignmentDiagnostics::correspondences (off by default: a few
+  /// thousand rows per panorama).
+  bool collect_correspondences = false;
+};
+
+/// Which stage of align_panorama() decided the outcome. Every early exit has
+/// its own value, so a rejected panorama says *why* it kept its timestamp
+/// placement instead of a blanket "insufficient matches" (reusex-bx2.1).
+enum class PanoramaAlignmentOutcome {
+  aligned,        ///< pose accepted
+  no_image,       ///< the stored panorama image did not decode
+  seed_not_found, ///< the timestamp-seed node is not a sensor frame
+  /// no slice reached `min_slice_correspondences` PnP inliers (or the pool of
+  /// depth-backed correspondences was empty)
+  no_slice_pnp,
+  /// the best slice's PnP rotation is upside down against the seed frame's
+  /// gravity direction (#364)
+  upside_down,
+  /// the best slice's pose, applied to the whole pool, gates fewer than
+  /// `min_inliers` correspondences (the 6-DoF path's initial gate)
+  too_few_pooled_inliers,
+  /// the Gauss-Newton re-gating dropped below `min_inliers` (or, with
+  /// `fix_translation`, the final rotation-only count did)
+  refinement_collapsed,
+  /// the refined centre is further than `max_correction_m` from the seed
+  correction_gate,
+  /// fix_translation was requested but the seed frame has no usable pose
+  no_seed_pose,
+};
+
+/// Stable snake_case name of @p o ("aligned", "no_slice_pnp", ...), used in
+/// logs and in the diagnostics JSON.
+const char *to_string(PanoramaAlignmentOutcome o);
+
+/// Matching funnel of one perspective slice of the panorama.
+struct PanoramaSliceStats {
+  double yaw_deg = 0.0;   ///< slice centre azimuth in the panorama frame
+  double pitch_deg = 0.0; ///< slice centre elevation (+90 = up cap)
+  int keypoints = 0;      ///< ORB keypoints detected in the slice
+  /// slice keypoints whose best frame match passed the Lowe ratio test,
+  /// summed over all candidate frames (before the depth check)
+  int ratio_matches = 0;
+  /// of those, the ones whose frame keypoint has valid depth in
+  /// [min_depth, max_depth] — the slice's PnP input
+  int correspondences = 0;
+  /// solvePnPRansac inliers of this slice alone; -1 when PnP was not attempted
+  /// (fewer than `min_slice_correspondences` correspondences)
+  int pnp_inliers = -1;
+  /// correspondences of this slice in the final inlier set (0 unless the
+  /// refinement ran)
+  int final_inliers = 0;
+};
+
+/// Matching funnel of one candidate sensor frame.
+struct PanoramaFrameStats {
+  int node_id = -1;
+  /// frame timestamp minus the seed frame's (s); 0 for the seed itself, NaN
+  /// when either timestamp is unknown
+  double dt_from_seed_s = 0.0;
+  /// frame centre's distance from the seed frame's centre (m); -1 when either
+  /// pose is unusable
+  double dist_from_seed_m = -1.0;
+  int keypoints = 0;            ///< ORB keypoints detected in the frame
+  int keypoints_with_depth = 0; ///< of those, with depth in range
+  int ratio_matches = 0;   ///< Lowe-passing matches from all slices (pre-depth)
+  int correspondences = 0; ///< of those, depth-backed
+  int final_inliers = 0;   ///< correspondences in the final inlier set
+};
+
+/// One depth-backed slice<->frame correspondence, kept only when
+/// PanoramaAlignmentOptions::collect_correspondences is set (debugging and
+/// research: e.g. where on the sphere the matches land, relative to the
+/// dual-fisheye stitch seam).
+struct PanoramaCorrespondence {
+  int slice = -1;
+  int frame_node = -1;
+  double azimuth_deg = 0.0;   ///< panorama bearing azimuth, atan2(x, z)
+  double elevation_deg = 0.0; ///< panorama bearing elevation, asin(-y)
+  float slice_x = 0, slice_y = 0;
+  float frame_x = 0, frame_y = 0;
+  float hamming = 0;         ///< descriptor distance of the match
+  bool final_inlier = false; ///< in the final inlier set
+};
+
+/// Everything align_panorama() measured on the way to its outcome. Counters
+/// a run never reached stay at their defaults (-1 / 0 / NaN).
+struct PanoramaAlignmentDiagnostics {
+  std::vector<PanoramaSliceStats> slices;
+  std::vector<PanoramaFrameStats> frames; ///< candidate frames, match order
+  int correspondences_total = 0; ///< pooled depth-backed correspondences
+  int best_slice = -1;           ///< slice whose PnP seeded the refinement
+  int best_slice_inliers = 0;
+  /// pano_down . seed_down of the PnP seed rotation (gravity check, #364);
+  /// NaN when not evaluated
+  double down_dot = std::numeric_limits<double>::quiet_NaN();
+  int initial_inliers = -1; ///< pool gated by the PnP seed pose
+  int final_inliers = -1;   ///< after Gauss-Newton re-gating
+  double rms_deg = -1.0;    ///< angular RMS of the final inliers
+  /// refined centre's distance from the seed (m), also for a pose the
+  /// plausibility gate rejected; -1 when not measured
+  double delta_from_seed_m = -1.0;
+  int inlier_frames = 0; ///< distinct frames among the final inliers
+  int inlier_slices = 0; ///< distinct slices among the final inliers
+  std::vector<PanoramaCorrespondence> correspondences;
 };
 
 /// Outcome of aligning one panorama.
@@ -125,7 +233,17 @@ struct PanoramaAlignmentResult {
   /// to emit "translation fixed (seed node position)" in dry-run output
   /// rather than a misleading delta of 0.
   bool translation_fixed = false;
+  /// Which gate decided the result (`aligned` iff @ref aligned).
+  PanoramaAlignmentOutcome outcome = PanoramaAlignmentOutcome::no_image;
+  /// The per-slice / per-frame matching funnel behind @ref outcome.
+  PanoramaAlignmentDiagnostics diagnostics;
 };
+
+/// One JSON object (as text) holding @p r's outcome, pose summary and
+/// PanoramaAlignmentDiagnostics — the record `rux align 360 --diagnostics`
+/// writes per panorama.
+std::string
+panorama_alignment_diagnostics_json(const PanoramaAlignmentResult &r);
 
 /// Align one panorama against nearby sensor frames. Read-only on @p db (does
 /// not write the pose back — the caller decides, e.g. `rux align 360

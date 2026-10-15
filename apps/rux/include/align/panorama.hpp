@@ -22,6 +22,11 @@ struct SubcommandAlignPanoramaOptions {
   double max_correction = 5.0; ///< reject corrections beyond this (m); 0=off
   std::string figures_dir; ///< if set, dump alignment comparison figures here
   int figures_limit = 6;   ///< cap number of panoramas figured
+  /// if set, write every panorama's matching funnel (outcome, per-slice and
+  /// per-frame counts) to this JSON file
+  std::string diagnostics_path;
+  /// also include every depth-backed correspondence in the diagnostics file
+  bool diagnostics_correspondences = false;
 };
 
 void setup_subcommand_align_panorama(CLI::App &app,
