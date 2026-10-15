@@ -225,6 +225,10 @@ panorama_alignment_diagnostics_json(const PanoramaAlignmentResult &r) {
   j["best_slice_inliers"] = d.best_slice_inliers;
   j["null_best_slice_inliers"] = d.null_best_slice_inliers;
   j["noise_floor_threshold"] = d.noise_floor_threshold;
+  j["null_pooled_initial"] = d.null_pooled_initial;
+  j["null_pooled_final"] = d.null_pooled_final;
+  j["pooled_threshold"] = d.pooled_threshold;
+  j["final_threshold"] = d.final_threshold;
   j["max_correction_m"] = d.max_correction_m;
   j["down_dot"] = num(d.down_dot);
   j["initial_inliers"] = d.initial_inliers;
@@ -233,6 +237,7 @@ panorama_alignment_diagnostics_json(const PanoramaAlignmentResult &r) {
   j["delta_from_seed_m"] = num(d.delta_from_seed_m);
   j["inlier_frames"] = d.inlier_frames;
   j["inlier_slices"] = d.inlier_slices;
+  j["frames_considered"] = d.frames_considered;
   if (r.aligned) // panorama-optical->world, row-major 4x4
     j["pose"] = r.pose;
   json slices = json::array();
@@ -253,6 +258,7 @@ panorama_alignment_diagnostics_json(const PanoramaAlignmentResult &r) {
                       {"dist_from_seed_m", num(f.dist_from_seed_m)},
                       {"keypoints", f.keypoints},
                       {"keypoints_with_depth", f.keypoints_with_depth},
+                      {"sharpness", f.sharpness},
                       {"ratio_matches", f.ratio_matches},
                       {"correspondences", f.correspondences},
                       {"final_inliers", f.final_inliers}});
@@ -297,9 +303,11 @@ std::string panorama_alignment_summary(const PanoramaAlignmentResult &r) {
                        d.noise_floor_threshold);
   case PanoramaAlignmentOutcome::too_few_pooled_inliers:
   case PanoramaAlignmentOutcome::refinement_collapsed:
-    return fmt::format("{}: pooled {} -> final {} inliers (best slice {} PnP "
-                       "inliers)",
+    return fmt::format("{}: pooled {} -> final {} inliers, needs >= {} -> {} "
+                       "(shuffled null {} -> {}; best slice {} PnP inliers)",
                        name, d.initial_inliers, d.final_inliers,
+                       d.pooled_threshold, d.final_threshold,
+                       d.null_pooled_initial, d.null_pooled_final,
                        d.best_slice_inliers);
   case PanoramaAlignmentOutcome::correction_gate:
     return fmt::format("{}: centre {:.2f} m from seed > {:.2f} m ({} inliers, "
@@ -347,9 +355,63 @@ PanoramaAlignmentResult align_panorama(ProjectDB &db, int pano_id,
     return finish(PanoramaAlignmentOutcome::seed_not_found);
   }
   const int seed_idx = static_cast<int>(seed_it - all_ids.begin());
-  // order candidates by |offset| so the nearest frames are matched first
+  const double seed_ts = db.sensor_frame_timestamp(seed_node_id);
   std::vector<int> cand;
-  for (int d = 0; d <= opt.candidate_window; ++d) {
+  std::map<int, double> cand_sharpness;
+  if (opt.select_frames && seed_ts >= 0.0) {
+    // --- by quality: sharp frames spread over viewing directions ----------
+    // Walk out from the seed in id order while the frames stay inside the
+    // time window (ids follow capture order).
+    std::vector<pano_detail::FrameChoice> choices;
+    const bool seed_posed = db.has_sensor_frame_pose(seed_node_id);
+    const Eigen::Vector3d seed_c =
+        seed_posed
+            ? Eigen::Vector3d(to_matrix4(db.sensor_frame_pose(seed_node_id))
+                                  .block<3, 1>(0, 3))
+            : Eigen::Vector3d::Zero();
+    auto consider = [&](int idx) {
+      const int nid = all_ids[idx];
+      const double ts = db.sensor_frame_timestamp(nid);
+      if (ts < 0.0 || std::abs(ts - seed_ts) > opt.select_window_s)
+        return false;
+      if (!db.has_sensor_frame_pose(nid))
+        return true; // no world points to offer, but keep walking
+      const Eigen::Matrix4d T = to_matrix4(db.sensor_frame_pose(nid));
+      if (seed_posed && opt.select_max_dist_m > 0.0 &&
+          (T.block<3, 1>(0, 3) - seed_c).norm() > opt.select_max_dist_m)
+        return true; // too far from the seed, keep walking
+      pano_detail::FrameChoice fc;
+      fc.node_id = nid;
+      fc.dt_s = ts - seed_ts;
+      fc.sharpness = pano_detail::image_sharpness(db.sensor_frame_image(nid));
+      fc.view_dir = T.block<3, 1>(0, 2).normalized();
+      choices.push_back(fc);
+      return true;
+    };
+    consider(seed_idx);
+    for (int idx = seed_idx - 1; idx >= 0 && consider(idx); --idx) {
+    }
+    for (int idx = seed_idx + 1;
+         idx < static_cast<int>(all_ids.size()) && consider(idx); ++idx) {
+    }
+    pano_detail::FrameSelectOptions fso;
+    fso.max_frames = opt.max_candidates;
+    fso.min_sharpness_ratio = opt.min_sharpness_ratio;
+    fso.view_spread_deg = opt.view_spread_deg;
+    for (int i : pano_detail::select_candidate_frames(choices, fso)) {
+      cand.push_back(choices[i].node_id);
+      cand_sharpness[choices[i].node_id] = choices[i].sharpness;
+    }
+    diag.frames_considered = static_cast<int>(choices.size());
+  }
+  if (opt.select_frames && cand.empty())
+    core::warn("PanoramaAlignment: panorama {} — no frame to choose by "
+               "quality (seed {} timestamp {}, {} frames in the window); "
+               "falling back to the id window",
+               pano_id, seed_node_id, seed_ts, diag.frames_considered);
+  // by id: order candidates by |offset| so the nearest frames come first
+  const bool by_id = cand.empty();
+  for (int d = 0; by_id && d <= opt.candidate_window; ++d) {
     for (int s : (d == 0 ? std::vector<int>{0} : std::vector<int>{-d, +d})) {
       const int idx = seed_idx + s;
       if (idx >= 0 && idx < static_cast<int>(all_ids.size()))
@@ -374,12 +436,14 @@ PanoramaAlignmentResult align_panorama(ProjectDB &db, int pano_id,
   if (seed_has_pose)
     seed_centre =
         to_matrix4(db.sensor_frame_pose(seed_node_id)).block<3, 1>(0, 3);
-  const double seed_ts = db.sensor_frame_timestamp(seed_node_id);
   diag.frames.resize(cand.size());
   for (size_t fi = 0; fi < cand.size(); ++fi) {
     auto &fs = diag.frames[fi];
     const auto &fr = frames[fi];
     fs.node_id = cand[fi];
+    if (const auto it = cand_sharpness.find(cand[fi]);
+        it != cand_sharpness.end())
+      fs.sharpness = it->second;
     const double ts = db.sensor_frame_timestamp(cand[fi]);
     fs.dt_from_seed_s = (ts >= 0.0 && seed_ts >= 0.0)
                             ? ts - seed_ts
@@ -568,9 +632,30 @@ PanoramaAlignmentResult align_panorama(ProjectDB &db, int pano_id,
   // panorama's slices says how many. A best slice that does not clear it by
   // `null_margin` carries no detectable geometry: every later gate would only
   // report how a random pose happened to fail (or, worse, accept it).
+  // angular threshold from the slice reprojection tolerance (small-angle),
+  // relaxed 2x to admit the honest inliers of the other slices.
+  const double fx0 = slices.empty() ? 1.0 : slices[0].K(0, 0);
+  const double ang_gate = 2.0 * std::atan(opt.ransac_reproj_px / fx0);
+  // The pooled gate is calibrated against the same null (reusex-bx2.8) on
+  // the 6-DoF path; the rotation-only path keeps the fixed `min_inliers`.
+  const bool pooled_null = opt.null_trials > 0 &&
+                           opt.pooled_null_margin > 0.0 && !opt.fix_translation;
+  int need_initial = opt.min_inliers, need_final = opt.min_inliers;
   if (opt.null_trials > 0) {
-    diag.null_best_slice_inliers = pano_detail::shuffled_best_slice_inliers(
-        pnp_in, popt, opt.null_trials, opt.seed);
+    pano_detail::BearingRefineOptions null_ro{ang_gate, opt.refine_iterations,
+                                              1};
+    const pano_detail::NullFloor nf = pano_detail::shuffled_null_floor(
+        pnp_in, popt, opt.null_trials, opt.seed,
+        pooled_null ? &null_ro : nullptr);
+    diag.null_best_slice_inliers = nf.best_slice_inliers;
+    if (pooled_null) {
+      diag.null_pooled_initial = nf.pooled_initial;
+      diag.null_pooled_final = nf.pooled_final;
+      need_initial = pano_detail::noise_floor_threshold(
+          nf.pooled_initial, opt.pooled_null_margin, opt.min_inliers);
+      need_final = pano_detail::noise_floor_threshold(
+          nf.pooled_final, opt.pooled_null_margin, opt.min_inliers);
+    }
     diag.noise_floor_threshold = pano_detail::noise_floor_threshold(
         diag.null_best_slice_inliers, opt.null_margin,
         opt.min_slice_correspondences);
@@ -632,10 +717,8 @@ PanoramaAlignmentResult align_panorama(ProjectDB &db, int pano_id,
   }
 
   // --- gate the pool by consistency with the initial pose -------------------
-  // angular threshold from the slice reprojection tolerance (small-angle),
-  // relaxed 2x to admit the honest inliers of the other slices.
-  const double fx0 = slices.empty() ? 1.0 : slices[0].K(0, 0);
-  const double ang_gate = 2.0 * std::atan(opt.ransac_reproj_px / fx0);
+  diag.pooled_threshold = need_initial;
+  diag.final_threshold = need_final;
 
   // Parallel arrays for the shared bearing-space refinement: each pooled
   // correspondence's WORLD point against the panorama bearing it was seen
@@ -689,7 +772,7 @@ PanoramaAlignmentResult align_panorama(ProjectDB &db, int pano_id,
   // FINAL inlier count (checked after GN in PanoramaAlignment). The 6-DoF path
   // is unchanged (ro.min_inliers == opt.min_inliers).
   const int rot_only_min =
-      opt.fix_translation ? std::max(5, opt.min_inliers / 2) : opt.min_inliers;
+      opt.fix_translation ? std::max(5, opt.min_inliers / 2) : need_initial;
   pano_detail::BearingRefineOptions ro{rot_only_gate, opt.refine_iterations,
                                        rot_only_min};
   ro.initial_ang_gate = 0.0;
@@ -722,23 +805,30 @@ PanoramaAlignmentResult align_panorama(ProjectDB &db, int pano_id,
                                                t, &initial_inliers);
   }
 
-  // In the 6-DoF path the refinement function enforces opt.min_inliers
-  // internally, so initial_inliers < opt.min_inliers is a reliable early-exit
-  // signal (the function already returned {} and inl_idx is empty).
+  // In the 6-DoF path the refinement function enforces need_initial (the
+  // pooled gate: opt.min_inliers, or the null-calibrated count) internally,
+  // so initial_inliers < need_initial is a reliable early-exit signal (the
+  // function already returned {} and inl_idx is empty).
   //
   // In the rotation-only path ro.min_inliers was lowered to rot_only_min to
   // allow GN to start from a smaller initial inlier set. The FINAL acceptance
   // threshold is still opt.min_inliers and is checked on inl_idx.size() below.
   diag.initial_inliers = initial_inliers;
-  if (!opt.fix_translation && initial_inliers < opt.min_inliers) {
-    core::debug("PanoramaAlignment: panorama {} — {} pooled inliers < {}",
-                pano_id, initial_inliers, opt.min_inliers);
+  if (!opt.fix_translation && initial_inliers < need_initial) {
+    core::debug("PanoramaAlignment: panorama {} — {} pooled inliers < {} "
+                "(shuffled null {})",
+                pano_id, initial_inliers, need_initial,
+                diag.null_pooled_initial);
     return finish(PanoramaAlignmentOutcome::too_few_pooled_inliers);
   }
-  if (inl_idx.empty()) {
+  if (inl_idx.empty() ||
+      (!opt.fix_translation && static_cast<int>(inl_idx.size()) < need_final)) {
+    if (!inl_idx.empty())
+      diag.final_inliers = static_cast<int>(inl_idx.size());
     core::debug("PanoramaAlignment: panorama {} — refinement fell below {} "
-                "inliers (started at {})",
-                pano_id, opt.min_inliers, initial_inliers);
+                "inliers (started at {}, shuffled null {})",
+                pano_id, opt.fix_translation ? rot_only_min : need_final,
+                initial_inliers, diag.null_pooled_final);
     return finish(PanoramaAlignmentOutcome::refinement_collapsed);
   }
 

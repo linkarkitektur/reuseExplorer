@@ -383,16 +383,178 @@ then moves 1.6 m between seeds. So `min_inliers` was kept at 40.
   candidates that do carry matches are rarely the seed frame. That is
   reusex-bx2.6's ground: frame selection by sharpness and view diversity.
 
+## Follow-up: a pooled gate calibrated against the null (reusex-bx2.8, 2026-10-15)
+
+The pooled gate counts the correspondences of the whole pool that the best
+slice's pose explains. It was a fixed `min_inliers = 40`, set on the old,
+double-counted pool. It is now calibrated against the same shuffled null as
+the best-slice gate:
+
+- In every null trial, each slice pose that PnP finds on the permuted
+  correspondences is applied to that trial's whole permuted pool (slice
+  pixels turned into bearings) and refined, exactly as the real pose is.
+  The best of those counts, before and after refinement, is the pooled
+  support noise reaches on this panorama.
+- The real pooled count must beat it by `pooled_null_margin`
+  (`--pooled-null-margin`), before refinement (`too_few_pooled_inliers`)
+  and after (`refinement_collapsed`). `min_inliers` is now only a floor
+  (12). The best-slice permutations are drawn in the same order as before,
+  so the best-slice noise floor is unchanged.
+- With `--pooled-null-margin 0 --min-inliers 40`, the diagnostics are
+  identical to the bx2.5 defaults, apart from four new fields
+  (`null_pooled_initial`, `null_pooled_final`, `pooled_threshold`,
+  `final_threshold`).
+
+**Measurement** (NewOffice, seeds 42/1/2/3, each with the research null; as
+in the bx2.5 table). The pooled null reaches 7 to 34 inliers per panorama. On
+`018` it reaches 33 to 34, because its pool is concentrated in one direction.
+
+| configuration | accepted / run | null accepts | notes |
+|---|---:|---:|---|
+| fixed 40 (bx2.5 defaults, before) | 5.0 | 0 | |
+| fixed 20 | 8.5 | 0 | adds `007` `008` `012` `015` `016` `018`, and `009` in 3 of 4 seeds; `008` moves 1.9 m and `009` 1.0 m between seeds |
+| null x 1.5 | 7.5 | 0 | `007` 2/4, `012` 3/4; also `008` 3/4 (1.9 m spread), `009` 2/4 (1.0 m), `015` 1/4 |
+| null x 1.75 | 7.0 | 0 | `009` 2/4 at 1.0 m spread |
+| **null x 2 (new default)** | **6.25** | **0** | `007` 2/4, `012` 3/4 (both 0.00 m spread); `008` and `009` 1/4 each; `011` loses its 1.47 m seed-42 outlier |
+| null x 2.5 | 5.0 | 0 | loses `011`; `013` 1/4 |
+| null x 3 | 4.0 | 0 | |
+
+The floor (6, 12 or 20) changed nothing at margin 1.5: the calibrated count
+was always higher.
+
+**Does the pooled gate itself stop noise?** The research null never reaches
+it at the defaults: the best-slice gate stops every null panorama first. With
+the best-slice margin relaxed to 1.0 (`--null-margin 1`), 5 null panoramas
+over the 4 seeds reach the pooled gate with 7 to 25 pooled inliers. All 5
+stop there, at margin 1.5 and at 2. A fixed gate of 20 would have let two of
+them through (21 and 25).
+
+**Still open.**
+
+- `007` aligns in 2 of 4 seeds and `012` in 3 of 4. In the other seeds the
+  USAC seed picks a weaker best slice, and its pose either explains too
+  little of the pool or slides 5.4 m (`007`, seed 1).
+- `018` is not recovered. Its best slice is at the noise floor (15 to 21
+  against 17 to 26 needed), and in seed 42 its pooled null is 33.
+- Every accepted pose still draws its final inliers from one or two
+  candidate frames, never the seed frame (reusex-bx2.6).
+
+## Follow-up: frame selection and depth beyond 6 m (reusex-bx2.6, 2026-10-15)
+
+Two input changes, each with its own `PanoramaAlignmentOptions` field and
+`rux align 360` flag:
+
+- **Frames by quality** (`select_frames`, `--[no-]select-frames`). The
+  candidates are no longer the seed and its nearest ids. They are taken from
+  the frames within `select_window_s` = 10 s of the seed
+  (`--select-window`) whose centre is within `select_max_dist_m` = 1.5 m of
+  the seed's (`--select-max-dist`):
+  - Frames less sharp than half the sharpest are dropped
+    (`--min-sharpness-ratio`). Sharpness is the variance of the Laplacian at
+    320 px width.
+  - Then the sharpest frame that looks in a new direction (optical axis at
+    least `view_spread_deg` = 15° from every frame already chosen,
+    `--view-spread`) is added, repeatedly.
+  - The rest is filled with the sharpest remaining frames, up to
+    `max_candidates` = 8.
+- **Depth to 20 m** (`max_depth`, `--max-depth`).
+
+With `--no-select-frames --max-depth 6` the diagnostics are those of the
+bx2.8 defaults, plus two new fields: `frames_considered`, and `sharpness` per
+frame.
+
+**Measurement** (NewOffice, seeds 42/1/2/3, each with the research null).
+Rows marked † use a view spread of 30°, measured before 15° was chosen.
+
+| configuration | accepted / run | null accepts | notes |
+|---|---:|---:|---|
+| bx2.8 defaults (id window, 6 m) | 6.25 | 0 | |
+| id window, 20 m | 7.0 | 0 | `011` at 129 inliers (was 63); `003` 3/4 at 0.84 m spread |
+| selection, 6 s, no distance limit, 6 m † | 6.0 | 0 | `006` takes frames 3–5 m away that match nothing; `011` 2.0 m spread |
+| selection, 10 s, 1.5 m, 6 m † | 5.5 | 0 | `007` 4/4 at 15–20× its noise floor |
+| selection, 10 s, 1.5 m, 20 m † | 7.0 | 0 | |
+| **new defaults (10 s, 1.5 m, spread 15°, 20 m)** | **7.5** | **0** | see below |
+| defaults, view spread 0 (sharpest first) | 7.75 | 0 | `010` and `019` move 0.8 m between seeds |
+| defaults, view spread 30° / 45° | 7.0 / 7.0 | 0 | |
+| † without the sharpness filter | 6.5 | 0 | |
+| † window 6 s | 6.75 | 0 | |
+| † no distance limit | 6.0 | 0 | `003`, `006`, `015` move 0.9–1.2 m between seeds |
+| † distance limit 1.0 m | 7.0 | 0 | |
+| † 12 candidates | 7.25 | 0 | `008` 1.1 m spread |
+| defaults + confidence ≥ 1 or ≥ 2 beyond 6 m (throwaway) | 6.0 | 0 | the same as dropping far depth |
+| defaults + depth-dependent weighting, 2 % / 5 % (throwaway) | 7.5 / 8.25 | 0 | 2 %: poses move ≤ 6 cm; 5 %: adds `008` 3/4 at 1.75 m spread |
+
+At the new defaults the accepted panoramas are:
+
+| pano | seeds | delta m | best / null | spread m |
+|---|---:|---|---|---:|
+| 003 | 4/4 | 1.19 | 4.8–7.1× | 0.00 |
+| 005 | 1/4 | 0.56 | 1.9× | – |
+| 006 | 4/4 | 0.59 | 6.6–9.8× | 0.00 |
+| 007 | 4/4 | 0.99 | 14–18× (398 inliers) | 0.00 |
+| 008 | 1/4 | 0.96 | 3.6× | – |
+| 009 | 4/4 | 0.72 | 3.1–4.8× | 0.05 |
+| 010 | 4/4 | 0.36–0.46 | 8.9–11.8× | 0.39 |
+| 011 | 4/4 | 0.53–0.55 | 8–16× | 0.10 |
+| 015 | 2/4 | 0.66 | 2.5–3.0× | 0.00 |
+| 019 | 2/4 | 0.32–0.62 | 2.7–2.8× | 0.35 |
+
+- The research null accepts nothing. With the best-slice gate relaxed to 1.0
+  as well, it still accepts nothing.
+- Repeated runs are byte-identical.
+
+Against the bx2.8 defaults:
+
+- The margins are far wider: `007` goes from 3.8× to 14–18× and is accepted
+  in every seed, `011` from 4–6× to 8–16×.
+- `003` (4/4) and `015` (2/4) are new. `007`, `009` and `011` go from 2–3
+  seeds to all 4.
+- `012` and `013` are lost:
+  - `012`'s best frame (3083) is not among the 8 chosen.
+  - `013` holds 73 best-slice inliers but its centre lands 1.96 m from the
+    seed, so the prior rejects it.
+
+**The uncertainty model was measured and not kept.** The panorama is within
+about a metre of the frame, so an error along the frame ray subtends only a
+small angle at the panorama. An 8 % error at 15 m comes to about 0.3°, inside
+the 1.1° gate. A synthetic test with 8 % biased far depth moved the
+refined centre by 1 cm without weighting and 2 cm with it. On NewOffice, a
+2 % model changed nothing that mattered. A 5 % model widened the gate and let
+in `008` at centres 1.75 m apart. Requiring confidence 1 or 2 beyond 6 m gave
+identical results for both levels, and the same accepted set as clipping at
+6 m: the confidence map marks practically all far depth as low. So far depth
+is lifted plainly.
+
+**What it does not fix: translation conditioning.** Nearly every accepted
+pose still draws its final inliers from one or two frames, and rarely from
+the seed. Two observations:
+
+- The frame that holds the inliers is usually the one whose centre is
+  closest to the refined panorama centre: the frames taken while the operator
+  stood still for the capture.
+- The view-spread term chooses frames that look elsewhere. They do not add
+  inliers, and a spread of 30° or more lowers the accepted count.
+
+So in this data, genuine matches need a viewpoint close to the panorama's.
+Diversity of direction among the frames does not produce them. Failure mode 2
+remains: `013` aligns at 1.96 m with 73 inliers from one frame. The remaining
+levers are a learned matcher (cross-viewpoint matches) and an IMU gravity
+prior (reusex-bx2.2), which would fix two rotational degrees of freedom.
+
 ## Reproduce
 
 ```bash
 cp ~/repos/NewOffice/project.rux /tmp/no.rux
 rux -vv -p /tmp/no.rux align 360 --dry-run --overwrite \
     --diagnostics diag.json --diagnostics-correspondences
+# the bx2.8 frames (id window, depth clipped at 6 m), for comparison
+rux -vv -p /tmp/no.rux align 360 --dry-run --overwrite --no-select-frames \
+    --max-depth 6 --diagnostics bx28.json
 # the bx2.4 pool, for comparison
 rux -vv -p /tmp/no.rux align 360 --dry-run --overwrite --no-usac \
     --no-dedupe-overlap --nadir-mask 0 --no-frame-to-sphere \
-    --no-one-per-keypoint --diagnostics before.json
+    --no-one-per-keypoint --pooled-null-margin 0 --min-inliers 40 \
+    --no-select-frames --max-depth 6 --diagnostics before.json
 ```
 
 The null model, matcher, depth-range and RANSAC experiments came from an
