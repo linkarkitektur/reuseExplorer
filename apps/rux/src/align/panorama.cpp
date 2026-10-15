@@ -14,6 +14,11 @@
 #include <cmath>
 #include <exception>
 #include <filesystem>
+#include <fstream>
+#include <map>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 void setup_subcommand_align_panorama(CLI::App &app,
                                      std::shared_ptr<RuxOptions> global_opt) {
@@ -33,6 +38,8 @@ EXAMPLES:
   rux align 360 --dry-run          # report inliers / RMS / correction only
   rux align 360 --overwrite        # re-align panoramas already aligned
   rux align 360 --fix-translation  # rotation-only (recommended when EXIF reliable)
+  rux -vv align 360 --dry-run --diagnostics diag.json
+                                   # why each panorama aligned or not
 
 WORKFLOW:
   1. rux import rtabmap scan.db     # sensor frames (with timestamps + depth)
@@ -41,7 +48,10 @@ WORKFLOW:
 
 NOTES:
   - Requires panoramas linked to a sensor frame (node_id) with depth.
-  - A panorama that fails to align keeps its timestamp placement.
+  - A panorama that fails to align keeps its timestamp placement; the log
+    names the gate that rejected it (no_slice_pnp, upside_down,
+    too_few_pooled_inliers, refinement_collapsed, correction_gate, ...).
+    -vv logs the matching funnel per panorama, -vvv per slice and frame.
   - --fix-translation is recommended when EXIF timestamps are reliable.
     The panorama centre is fixed to the seed frame position; only the 3-DOF
     rotation is solved. This avoids ill-conditioned translation drift when
@@ -80,6 +90,13 @@ NOTES:
   sub->add_option("--figures-limit", opt->figures_limit,
                   "Cap number of panoramas figured")
       ->capture_default_str();
+  sub->add_option("--diagnostics", opt->diagnostics_path,
+                  "Write each panorama's outcome and matching funnel "
+                  "(per-slice / per-frame counts) to this JSON file");
+  sub->add_flag("--diagnostics-correspondences",
+                opt->diagnostics_correspondences,
+                "Also write every depth-backed correspondence to the "
+                "--diagnostics file");
 
   sub->callback([opt, global_opt]() {
     spdlog::trace("calling run_subcommand_align_panorama");
@@ -104,6 +121,11 @@ int run_subcommand_align_panorama(SubcommandAlignPanoramaOptions const &opt,
     ao.min_inliers = opt.min_inliers;
     ao.max_correction_m = opt.max_correction;
     ao.fix_translation = opt.fix_translation;
+    ao.collect_correspondences =
+        !opt.diagnostics_path.empty() && opt.diagnostics_correspondences;
+    if (opt.diagnostics_correspondences && opt.diagnostics_path.empty())
+      spdlog::warn("--diagnostics-correspondences has no effect without "
+                   "--diagnostics");
 
     // Slices are spread evenly over 360 deg; if their FOVs do not add up the
     // equator is sampled with gaps and matchable features get dropped.
@@ -123,6 +145,8 @@ int run_subcommand_align_panorama(SubcommandAlignPanoramaOptions const &opt,
 
     int aligned = 0, skipped = 0, failed = 0, figured = 0;
     double sum_delta = 0.0;
+    std::map<std::string, int> by_outcome;
+    std::vector<std::string> diagnostics;
 
     try {
       for (const auto &pano : panos) {
@@ -148,9 +172,18 @@ int run_subcommand_align_panorama(SubcommandAlignPanoramaOptions const &opt,
 
         auto r =
             reusex::geometry::align_panorama(db, pano.id, pano.node_id, ao);
+        ++by_outcome[reusex::geometry::to_string(r.outcome)];
+        if (!opt.diagnostics_path.empty())
+          diagnostics.push_back(
+              reusex::geometry::panorama_alignment_diagnostics_json(r));
         if (!r.aligned) {
-          spdlog::warn("{}: alignment failed (insufficient matches)",
-                       pano.filename);
+          const auto &d = r.diagnostics;
+          spdlog::warn("{}: alignment failed ({}): {} depth-backed matches, "
+                       "best slice {} PnP inliers, pooled {} -> final {}, "
+                       "{:.2f} m from seed",
+                       pano.filename, reusex::geometry::to_string(r.outcome),
+                       d.correspondences_total, d.best_slice_inliers,
+                       d.initial_inliers, d.final_inliers, d.delta_from_seed_m);
           ++failed;
           continue;
         }
@@ -186,6 +219,21 @@ int run_subcommand_align_panorama(SubcommandAlignPanoramaOptions const &opt,
                  aligned, skipped, failed,
                  opt.dry_run ? " (dry-run, no poses written)" : "",
                  aligned > 0 ? sum_delta / aligned : 0.0);
+    for (const auto &[outcome, n] : by_outcome)
+      spdlog::info("  {}: {}", outcome, n);
+
+    if (!opt.diagnostics_path.empty()) {
+      std::ofstream out(opt.diagnostics_path);
+      if (!out)
+        throw std::runtime_error("cannot write diagnostics file " +
+                                 opt.diagnostics_path);
+      out << "[\n";
+      for (size_t i = 0; i < diagnostics.size(); ++i)
+        out << diagnostics[i] << (i + 1 < diagnostics.size() ? ",\n" : "\n");
+      out << "]\n";
+      spdlog::info("Wrote alignment diagnostics for {} panoramas to {}",
+                   diagnostics.size(), opt.diagnostics_path);
+    }
 
     return RuxError::SUCCESS;
 
