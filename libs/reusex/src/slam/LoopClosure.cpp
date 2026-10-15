@@ -16,9 +16,9 @@
 #include "core/ProjectDB.hpp"
 #include "core/SensorIntrinsics.hpp"
 #include "core/logging.hpp"
+#include "panorama_features.hpp"
 
 #include <opencv2/features2d.hpp>
-#include <opencv2/imgproc.hpp>
 
 #include <Eigen/Geometry>
 
@@ -40,14 +40,13 @@ namespace reusex::geometry {
 
 namespace {
 
-/// Per-frame feature cache: ORB descriptors and the metric 3D point (optical
-/// frame) each keypoint back-projects to. pts3d[k] is invalid (NaN) when the
-/// keypoint has no usable depth.
-struct FrameFeatures {
-  cv::Mat descriptors;                ///< Nx32 CV_8U ORB descriptors
-  std::vector<Eigen::Vector3d> pts3d; ///< optical-frame 3D point per keypoint
-  std::vector<char> valid;            ///< depth was in range
-};
+// LoopClosure's own ORB+depth lifting (once duplicated here) now reuses the
+// panorama front-end's `pano_detail::extract_frame_features` (reusex-xlg.11):
+// same ORB detect+compute, same colour-pixel -> depth-pixel mapping, same
+// pinhole back-projection, same [min_depth, max_depth] gate. The 3D points
+// come back in `local` (optical frame) instead of the old `pts3d` name;
+// `valid` and `descriptors` are unchanged. (Used unaliased: `detect_loop_edges`
+// below already has a local variable named `pd`.)
 
 /// Descriptor width every routine here assumes: OpenCV ORB always describes
 /// with 32 bytes / 256 bits. hamming32() reads exactly this many bytes per
@@ -59,80 +58,58 @@ bool is_orb_descriptor_block(const cv::Mat &m) {
   return m.empty() || (m.type() == CV_8U && m.cols == kOrbDescriptorBytes);
 }
 
-FrameFeatures extract_features(ProjectDB &db, int node_id,
-                               const LoopClosureOptions &opt,
-                               const cv::Ptr<cv::ORB> &orb) {
-  FrameFeatures out;
-  cv::Mat color = db.sensor_frame_image(node_id);
-  cv::Mat depth16 = db.sensor_frame_depth(node_id);
-  if (color.empty() || depth16.empty())
-    return out;
-
-  cv::Mat gray;
-  if (color.channels() == 3)
-    cv::cvtColor(color, gray, cv::COLOR_BGR2GRAY);
-  else if (color.channels() == 4)
-    cv::cvtColor(color, gray, cv::COLOR_BGRA2GRAY);
-  else
-    gray = color;
-
-  cv::Mat depth_f;
-  depth16.convertTo(depth_f, CV_32FC1, 1.0 / 1000.0); // mm -> m
-
-  const core::SensorIntrinsics intr = db.sensor_frame_intrinsics(node_id);
-  // Missing/blank intrinsics must fail loudly, not be papered over with a
-  // width of 1 (which silently produces a garbage focal scale). Mirrors the
-  // explicit guard in extract_frame_surfels (surfel_extraction.cpp).
-  if (intr.width <= 0 || intr.height <= 0) {
-    core::warn("LoopClosure: node {} has invalid intrinsic dimensions {}x{}; "
-               "skipping frame",
-               node_id, intr.width, intr.height);
-    return out;
+/// Thin wrapper around the shared extractor that preserves two LoopClosure
+/// safety nets the shared helper does not have:
+///  - a LOUD warn-and-skip on degenerate intrinsics (width/height <= 0, or a
+///    non-positive focal length), mirroring extract_frame_surfels. The shared
+///    helper instead clamps a non-positive width to 1 (PanoramaAlignment /
+///    PanoramaLoopEdges silently accept that); gated on `has_sensor_frame` so
+///    a frame with literally nothing stored (the degenerate-input tests)
+///    stays silent, exactly as before.
+///  - rejecting a malformed ORB descriptor block outright instead of trusting
+///    it into the Hamming-distance routines below.
+///
+/// Known behavioural difference from the old local implementation: the
+/// shared helper also requires `db.has_sensor_frame_pose(node_id)` (it
+/// composes a world pose for the OTHER two callers) and returns no
+/// keypoints at all when that is false, even with perfectly good
+/// colour/depth/intrinsics. The old LoopClosure extractor never looked at
+/// the stored pose — `detect_loop_edges` takes `seed_poses` as an explicit
+/// argument instead. In practice every caller (`collect_loop_candidates` via
+/// `graph_discover`) only ever passes node ids that already have a stored
+/// pose (it requires `has_initial_pose` or `has_sensor_frame_pose` to include
+/// a frame at all), so this does not change today's results, but a future
+/// caller supplying externally-computed seed poses for frames with no stored
+/// `sensor_frames.transform` would now silently get zero features for them.
+pano_detail::FrameFeatures extract_features(ProjectDB &db, int node_id,
+                                            const LoopClosureOptions &opt,
+                                            const cv::Ptr<cv::ORB> &orb) {
+  if (db.has_sensor_frame(node_id)) {
+    const core::SensorIntrinsics intr = db.sensor_frame_intrinsics(node_id);
+    if (intr.width <= 0 || intr.height <= 0) {
+      core::warn("LoopClosure: node {} has invalid intrinsic dimensions {}x{}; "
+                 "skipping frame",
+                 node_id, intr.width, intr.height);
+      return {};
+    }
+    if (intr.fx <= 0.0 || intr.fy <= 0.0) {
+      core::warn("LoopClosure: node {} has non-positive focal length "
+                 "({:.3f}, {:.3f}); skipping frame",
+                 node_id, intr.fx, intr.fy);
+      return {};
+    }
   }
-  // Intrinsics scaled to the DEPTH resolution (mirrors surfel_extraction).
-  const double sx = static_cast<double>(depth_f.cols) / intr.width;
-  const double sy = static_cast<double>(depth_f.rows) / intr.height;
-  const double fx = intr.fx * sx, fy = intr.fy * sy;
-  const double cx = intr.cx * sx, cy = intr.cy * sy;
-  if (fx <= 0.0 || fy <= 0.0) {
-    core::warn("LoopClosure: node {} has non-positive focal length "
-               "({:.3f}, {:.3f}); skipping frame",
-               node_id, fx, fy);
-    return out;
-  }
 
-  std::vector<cv::KeyPoint> kps;
-  orb->detectAndCompute(gray, cv::noArray(), kps, out.descriptors);
-  if (kps.empty()) {
-    out.descriptors.release();
-    return out;
-  }
-  if (!is_orb_descriptor_block(out.descriptors)) {
+  pano_detail::FrameFeatures f = pano_detail::extract_frame_features(
+      db, node_id, orb, opt.min_depth, opt.max_depth);
+  if (!is_orb_descriptor_block(f.descriptors)) {
     core::warn("LoopClosure: node {} produced {}x{} descriptors of type {} "
                "(expected Nx{} CV_8U); skipping frame",
-               node_id, out.descriptors.rows, out.descriptors.cols,
-               out.descriptors.type(), kOrbDescriptorBytes);
-    out.descriptors.release();
-    return out;
+               node_id, f.descriptors.rows, f.descriptors.cols,
+               f.descriptors.type(), kOrbDescriptorBytes);
+    f.descriptors.release();
   }
-
-  out.pts3d.resize(kps.size());
-  out.valid.assign(kps.size(), 0);
-  for (size_t k = 0; k < kps.size(); ++k) {
-    // Map the color-image keypoint to the depth grid and back-project.
-    const int ud = static_cast<int>(std::lround(
-        kps[k].pt.x * static_cast<double>(depth_f.cols) / gray.cols));
-    const int vd = static_cast<int>(std::lround(
-        kps[k].pt.y * static_cast<double>(depth_f.rows) / gray.rows));
-    if (ud < 0 || vd < 0 || ud >= depth_f.cols || vd >= depth_f.rows)
-      continue;
-    const float z = depth_f.at<float>(vd, ud);
-    if (!std::isfinite(z) || z < opt.min_depth || z > opt.max_depth)
-      continue;
-    out.pts3d[k] = Eigen::Vector3d((ud - cx) * z / fx, (vd - cy) * z / fy, z);
-    out.valid[k] = 1;
-  }
-  return out;
+  return f;
 }
 
 /// 3D-3D rigid fit of src -> dst (both 3xN), returning the 4x4 transform T with
@@ -228,7 +205,7 @@ inline int hamming32(const uchar *a, const uchar *b) {
 /// k-means) from a random sample of the frames' ORB descriptors. Returns a
 /// K x kOrbDescriptorBytes CV_8U matrix of word centres. K may shrink if too
 /// few samples exist.
-cv::Mat build_vocabulary(const std::vector<FrameFeatures> &feats,
+cv::Mat build_vocabulary(const std::vector<pano_detail::FrameFeatures> &feats,
                          const LoopClosureOptions &opt, std::mt19937 &rng) {
   std::vector<cv::Mat> sample; // each row one descriptor (1 x 32 CV_8U)
   for (const auto &f : feats) {
@@ -306,7 +283,8 @@ cv::Mat build_vocabulary(const std::vector<FrameFeatures> &feats,
 
 /// TF-IDF, L2-normalised bag-of-words histogram per frame over `vocab`.
 std::vector<std::vector<float>>
-bow_histograms(const std::vector<FrameFeatures> &feats, const cv::Mat &vocab) {
+bow_histograms(const std::vector<pano_detail::FrameFeatures> &feats,
+               const cv::Mat &vocab) {
   const int N = static_cast<int>(feats.size());
   const int K = vocab.rows;
   std::vector<std::vector<float>> hist(N, std::vector<float>(K, 0.0f));
@@ -611,7 +589,7 @@ detect_loop_edges(ProjectDB &db, const std::vector<int> &node_ids,
 
   // --- 1. Per-frame features (cached) -------------------------------------
   auto orb = cv::ORB::create(opt.max_features);
-  std::vector<FrameFeatures> feats(N);
+  std::vector<pano_detail::FrameFeatures> feats(N);
   for (int i = 0; i < N; ++i)
     feats[i] = extract_features(db, node_ids[i], opt, orb);
   core::info("LoopClosure: extracted ORB features for {} frames", N);
@@ -735,8 +713,8 @@ detect_loop_edges(ProjectDB &db, const std::vector<int> &node_ids,
       const int ti = m[0].trainIdx; // index into frame i
       if (!fj.valid[qj] || !fi.valid[ti])
         continue;
-      ps.push_back(fj.pts3d[qj]);
-      pd.push_back(fi.pts3d[ti]);
+      ps.push_back(fj.local[qj]);
+      pd.push_back(fi.local[ti]);
     }
     best_putative_seen =
         std::max(best_putative_seen, static_cast<int>(ps.size()));
