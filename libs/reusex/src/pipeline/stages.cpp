@@ -901,6 +901,16 @@ MeshStageOptions mesh_options_from_parameters(std::string_view parameters) {
   options.sectioned = param_or(params, "sectioned", options.sectioned);
   options.sectioned_threshold =
       param_or(params, "sectioned_threshold", options.sectioned_threshold);
+  auto &st = options.structural;
+  st.enabled = param_or(params, "structural_filter", st.enabled);
+  st.min_wall_area_m2 =
+      param_or(params, "structural_min_wall_area", st.min_wall_area_m2);
+  st.collinear_offset_m =
+      param_or(params, "structural_collinear_offset", st.collinear_offset_m);
+  st.min_storey_clearance_m = param_or(params, "structural_storey_clearance",
+                                       st.min_storey_clearance_m);
+  st.min_footprint_overlap = param_or(params, "structural_footprint_overlap",
+                                      st.min_footprint_overlap);
   const auto solver_str = param_or<std::string>(params, "solver", "auto");
   try {
     options.solver = geometry::parse_solver_choice(solver_str);

@@ -32,6 +32,11 @@ struct SubcommandMeshOptions {
       reusex::geometry::MeshOptions{}.sectioned_threshold;
   std::string solver = "auto"; ///< MIP backend: auto | cuopt | highs.
 
+  /// Structural plane selection (reusex-8l3). Defaults mirror
+  /// MeshOptions::structural.
+  reusex::geometry::StructuralPlaneOptions structural =
+      reusex::geometry::MeshOptions{}.structural;
+
   std::string filter_expr; ///< Filter expression to limit processing
 };
 

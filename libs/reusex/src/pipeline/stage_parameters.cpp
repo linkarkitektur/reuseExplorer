@@ -281,6 +281,27 @@ const std::vector<ParameterDescriptor> &mesh_parameters() {
                 "Engage the sectioned solve only when the cell complex has "
                 "at least this many cells.",
                 static_cast<long long>(d.sectioned_threshold), 1.0, 1000000.0),
+        boolean("structural_filter", "Structural planes only",
+                "Build the cell complex from wall lines and storey "
+                "floors/ceilings only: merge collinear wall pieces, drop "
+                "jambs and furniture-level horizontals (reusex-8l3). Off "
+                "uses every plane.",
+                d.structural.enabled),
+        num("structural_min_wall_area", "Min wall support [m^2]",
+            "Surface a wall line needs, counting the opposite face of the "
+            "same wall, to become an arrangement line.",
+            static_cast<float>(d.structural.min_wall_area_m2), 0.0, 100.0),
+        num("structural_collinear_offset", "Collinear merge distance [m]",
+            "Same-facing wall planes closer than this become one line.",
+            static_cast<float>(d.structural.collinear_offset_m), 0.0, 2.0),
+        num("structural_storey_clearance", "Storey clearance [m]",
+            "A horizontal plane less than this above a larger floor under "
+            "it is furniture, not a storey section.",
+            static_cast<float>(d.structural.min_storey_clearance_m), 0.0, 10.0),
+        num("structural_footprint_overlap", "Furniture footprint overlap",
+            "Fraction of a horizontal plane's footprint that must lie over "
+            "the floor below for the clearance rule to apply.",
+            static_cast<float>(d.structural.min_footprint_overlap), 0.0, 1.0),
         optional_of(ParameterType::string, "filter", "Point filter",
                     "Filter expression restricting which points are meshed. "
                     "Empty means the whole cloud."),
