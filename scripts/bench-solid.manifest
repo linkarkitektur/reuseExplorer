@@ -20,3 +20,11 @@ office_corridor    fixture    tests/fixtures/solid_model/two_rooms.plan.json -  
 # scan is not. Point $REUSEX_NEWOFFICE_RUX at a NewOffice project.rux.
 newoffice         local      tests/fixtures/solid_model/newoffice.plan.json -                                               $REUSEX_NEWOFFICE_RUX -
 # s3dis_area1      local      $REUSEX_S3DIS_DIR/area1.plan.json             -                                               $REUSEX_S3DIS_DIR/area1.rux storeys,walls,spaces,openings
+# house1 / house2 (scan archive, see reusex-yf4.3): authored references
+# committed (DRAFT, maintainer review pending), scans not. Point the variables
+# at a copy of each project.rux whose clouds/planes were regenerated (sensor-
+# oriented normals) and `rux create storeys` run: the references use the
+# detected level frames. house1 = one storey with a split level; house2 = two
+# storeys in their own frames, heavily drifted.
+house1            local      tests/fixtures/solid_model/house1.plan.yaml    -                                               $REUSEX_HOUSE1_RUX -
+house2            local      tests/fixtures/solid_model/house2.plan.yaml    -                                               $REUSEX_HOUSE2_RUX -

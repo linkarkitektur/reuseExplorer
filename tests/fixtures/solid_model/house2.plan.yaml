@@ -1,0 +1,759 @@
+# SPDX-FileCopyrightText: 2026 Povl Filip Sonne-Frederiksen
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# house2 reference plan -- DRAFT, maintainer review pending (reusex-yf4.3).
+#
+# Hand-authored ground-truth target for the solid-model benchmark
+# (docs/design/solid-model-json.md, docs/guides/solid-model-reference-authoring.md).
+# Never round-trip this file through a writer (rux edit plan --export drops the
+# comments): edit it by hand with the --watch loop.
+#
+# Source scan: scan archive house-2_c582d1f758/reusex/project.rux (384 frames),
+# clouds/planes regenerated with sensor-oriented normals, then `rux create
+# storeys` (two storeys, each in its own level frame). Nothing derived from the
+# scan except this file is committed; point $REUSEX_HOUSE2_RUX at such a copy.
+#
+# What the scan shows: a 1.5-storey house with a N-S ridge (gables north and
+# south), a lower extension to the north-east (room NE) and a glazed conservatory
+# to the south. The two storeys are tilted ~0.5 deg against each other (per-storey
+# level frames below), and BOTH storeys carry heavy in-storey drift:
+#  - storey 0 is ghosted: many walls appear twice, rotated up to ~15 deg; the north
+#    half (living room N) was scanned walking a loop looking inwards, so its outer
+#    walls are mostly missing;
+#  - storey 1's walls run ~15 deg off storey 0's in the north and ~8 deg in the
+#    south, and its gable room floor sits 0.14 m above the rest (reusex-32o).
+# The plan follows the scan AS REGISTERED (the benchmark compares in this frame);
+# it does not correct drift. Where a wall's two faces disagree it gets thickness
+# -1 and an axis on the better face, and each such choice is noted. Where the scan
+# cannot tell (living room N's outline, most storey-0 openings) the plan says so
+# or leaves the element out, with a low confidence on what is drawn.
+#
+# Rooms named from the sensor images (frame ids in each space's metadata).
+model_version: 1
+units: m
+name: "house2 reference (DRAFT)"
+description: "DRAFT - needs maintainer review. Agent-authored on the house2 scan (scan archive house-2_c582d1f758) with the loop in docs/guides/solid-model-reference-authoring.md; not ground truth (decision D5). Two storeys, each in its own detected level frame (tilted ~0.5 deg apart); heavy in-storey drift and ghosted walls on storey 0, so many walls have unknown thickness and the outline of living room N is a low-confidence estimate."
+storeys:
+  - guid: "storey-0"
+    idx: 0
+    name: "Stueetage"
+    z_floor: 0.0
+    z_ceiling: 2.57
+    # Detected per-storey level frame (rux create storeys, 2026-10-15), copied verbatim.
+    level_transform: [0.999999108, -1.39177914e-06, 0.00133547189, -5.91784786, -1.39177914e-06, 0.999997828, 0.00208432244, -4.63084936, -0.00133547189, -0.00208432244, 0.999996936, 1.58571309, 0, 0, 0, 1]
+    source: manual
+    locked: true
+    metadata: {status: "draft - needs maintainer review", frame: "storey 0's own detected frame (0.17 deg off world z)"}
+  - guid: "storey-1"
+    idx: 1
+    name: "1. sal"
+    z_floor: 2.82
+    z_ceiling: 4.95
+    # Storey 1 has its OWN detected frame, tilted 0.5 deg against storey 0's (the two
+    # storeys were registered ~1 deg apart). z stays anchored at storey 0's floor height,
+    # so this storey's floor is at z 2.82 (reusex-z1v.3.5). Its walls/spaces are in
+    # this frame; x/y differ from storey 0's frame by < 2 mm at the origin.
+    level_transform: [0.999984872, -3.89360346e-05, -0.00550032238, -5.91865276, -3.89360346e-05, 0.999899785, -0.0141569117, -4.6326906, 0.00550032238, 0.0141569117, 0.999884658, 1.45493381, 0, 0, 0, 1]
+    source: manual
+    locked: true
+    metadata: {status: "draft - needs maintainer review", frame: "storey 1's own detected frame (0.5 deg off storey 0's)", ceiling: "flat part 4.95-5.1, sloped down to knee walls at ~3.97; gable room 5.31"}
+walls:
+  # Storey 0 (ground floor). storey 0 is ghosted: several walls appear twice in the cloud, the copies rotated by up to ~15 deg (pose drift between passes); the axis is on the dominant (densest, longest) copy.
+  # All storey-0 walls 0 -> 2.70 (ceiling 2.57-2.73 by room).
+  - guid: "x0-w"
+    storey: 0
+    axis: [[-5.989, -7.621], [-5.847, -3.702]]
+    z_base: 0.00
+    height: 2.70
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin), thickness unknown. West facade (utility room and the unentered south-west room)."}
+  - guid: "x0-s-w"
+    storey: 0
+    axis: [[-5.999, -7.647], [-1.250, -7.903]]
+    z_base: 0.00
+    height: 2.70
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin), thickness unknown. South facade of the south-west room and the bathroom."}
+  - guid: "x0-s-liv"
+    storey: 0
+    axis: [[-0.650, -8.100], [2.550, -8.330]]
+    z_base: 0.00
+    height: 2.70
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Living room S | conservatory: the former external wall; its living-room face is stepped by ~0.25 m at the conservatory door (y -8.05 west of it, -8.3 east of it: ghosting), so the axis runs between the two steps (watch loop: densest sheet 3.5 cm off) and thickness is unknown."}
+  - guid: "x0-cons-w"
+    storey: 0
+    axis: [[-0.504, -11.498], [-0.232, -8.902]]
+    z_base: 0.00
+    height: 2.40
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "Conservatory west side: glazed; the axis follows the scanned frame / sill line, thickness unknown."}
+  - guid: "x0-cons-s"
+    storey: 0
+    axis: [[0.303, -11.568], [3.002, -11.828]]
+    z_base: 0.00
+    height: 2.40
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "Conservatory south side: glazed, axis on the frame / sill line. The east side (x ~3.9) is glass that did not scan: no wall drawn, the space is closed at x 3.9 by assumption."}
+  - guid: "i0-liv-w"
+    storey: 0
+    axis: [[-0.758, -8.000], [-0.562, -4.950]]
+    z_base: 0.00
+    height: 2.70
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "West wall of living room S. Its two faces are inverted by ~0.1 m (drift); axis = mean (so the watch loop sees the densest face ~6 cm off), thickness unknown. A 0.5 m gap separates it from the bathroom's east face (i0-bath-e): duct/closet or a second wall, not resolvable."}
+  - guid: "i0-bath-e"
+    storey: 0
+    axis: [[-1.271, -7.900], [-1.156, -5.700]]
+    z_base: 0.00
+    height: 2.70
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "East wall of the bathroom, axis on the bathroom face (the other side is the 0.5 m gap, see i0-liv-w)."}
+  - guid: "i0-bath-w"
+    storey: 0
+    axis: [[-3.828, -7.748], [-3.693, -5.149]]
+    z_base: 0.00
+    height: 2.70
+    thickness: 0.18
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Bathroom | south-west room, 0.18 m (0.16 / 0.20 at the ends)."}
+  - guid: "i0-hall-s"
+    storey: 0
+    axis: [[-3.800, -4.800], [-0.900, -5.000]]
+    z_base: 0.00
+    height: 2.70
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Hall | bathroom. Seen twice from the hall (copies at y -4.6..-4.9 and -4.8..-5.0, storey 0 is ghosted: several walls appear twice in the cloud, the copies rotated by up to ~15 deg (pose drift between passes); the axis is on the dominant (densest, longest) copy); axis on the longer copy, thickness unknown."}
+  - guid: "i0-hall-n"
+    storey: 0
+    axis: [[-4.151, -3.729], [-1.302, -3.914]]
+    z_base: 0.00
+    height: 2.70
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Hall | kitchen side; axis on the hall face (the other side is ghosted), thickness unknown."}
+  - guid: "x0-liv-e"
+    storey: 0
+    axis: [[2.580, -7.800], [2.620, -4.900]]
+    z_base: 0.00
+    height: 2.70
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin), thickness unknown. East facade of living room S; a rotated duplicate (from (2.0,-8.2) to (2.6,-6.0)) is ghosting and ignored."}
+  - guid: "i0-stair-s"
+    storey: 0
+    axis: [[-0.293, -4.024], [1.947, -4.327]]
+    z_base: 0.00
+    height: 2.70
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Living room S | stair hall; axis on the living-room face (stair side cluttered by the stair stringer), thickness unknown."}
+  - guid: "i0-stair-n"
+    storey: 0
+    axis: [[-0.287, -2.546], [1.911, -2.788]]
+    z_base: 0.00
+    height: 2.70
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Stair hall | kitchen; axis on the kitchen face, thickness unknown."}
+  - guid: "i0-kit-n"
+    storey: 0
+    axis: [[-4.800, 0.730], [-0.960, 0.226]]
+    z_base: 0.00
+    height: 2.70
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Kitchen | passage north of it; faces inverted at the west end (-15 cm) and +6 cm at the east end: drift; axis = mean, thickness unknown."}
+  - guid: "i0-kit-w"
+    storey: 0
+    axis: [[-4.800, -3.196], [-4.700, -1.297]]
+    z_base: 0.00
+    height: 2.70
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Kitchen west wall, axis on the kitchen face. Two more copies further west (x -5.3 .. -5.0) are ghosting; what lies west of it is not scanned."}
+  - guid: "x0-ne-s"
+    storey: 0
+    axis: [[3.153, -0.521], [6.499, -0.912]]
+    z_base: 0.00
+    height: 2.40
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin), thickness unknown. Room NE (lower ceiling 2.36)."}
+  - guid: "x0-ne-n"
+    storey: 0
+    axis: [[3.901, 2.613], [6.499, 2.335]]
+    z_base: 0.00
+    height: 2.40
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin), thickness unknown. Room NE."}
+  - guid: "x0-ne-e"
+    storey: 0
+    axis: [[7.797, 2.200], [7.456, -0.997]]
+    z_base: 0.00
+    height: 2.40
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin), thickness unknown. Room NE east gable."}
+  - guid: "i0-ne-w"
+    storey: 0
+    axis: [[3.648, 3.891], [3.261, 0.602]]
+    z_base: 0.00
+    height: 2.70
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Room NE | living room N. Axis on the WEST face (seen from living room N; the dense one, rms 0.1 cm). The east face (room NE side) shows only in short pieces ~0.25-0.35 m further east, so the room NE polygon starts there; thickness not measured (-1)."}
+  - guid: "i0-n-s"
+    storey: 0
+    axis: [[-4.800, 2.652], [-0.602, 2.230]]
+    z_base: 0.00
+    height: 2.70
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Passage | living room N; axis on the north face (the only side with a full face)."}
+  - guid: "x0-util-n"
+    storey: 0
+    axis: [[-5.900, -3.664], [-4.200, -3.730]]
+    z_base: 0.00
+    height: 2.70
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin), thickness unknown. North wall of the utility room (back entrance with sink)."}
+  # Storey 1 (attic under a N-S ridge, gables north and south). Own level frame (detected,
+  # 0.5 deg off storey 0), floor at z 2.82. Walls of the long sides are knee walls.
+  # The storey is drifted in yaw too: its walls run ~15 deg off the ground floor's in the
+  # north part and ~8 deg in the south part (reusex-32o); the plan follows the scan.
+  - guid: "x1-n-w"
+    storey: 1
+    axis: [[-2.239, 7.456], [1.103, 6.389]]
+    z_base: 2.82
+    height: 2.13
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin), thickness unknown. North GABLE (full height; the scan reaches 5.07): room N."}
+  - guid: "x1-n-e"
+    storey: 1
+    axis: [[1.169, 6.257], [4.499, 5.326]]
+    z_base: 2.82
+    height: 2.13
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin), thickness unknown. North GABLE: room NE."}
+  - guid: "x1-e-n"
+    storey: 1
+    axis: [[4.551, 5.295], [3.783, 2.424]]
+    z_base: 2.82
+    height: 1.15
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin), thickness unknown. East knee wall under the roof slope: 2.82 -> ~3.97 (planes top out at 3.76-4.08), the sloped ceiling above it is not representable."}
+  - guid: "x1-e-s"
+    storey: 1
+    axis: [[4.110, 1.700], [3.490, -1.130]]
+    z_base: 2.82
+    height: 1.15
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin), thickness unknown. East knee wall under the roof slope: 2.82 -> ~3.97 (planes top out at 3.76-4.08), the sloped ceiling above it is not representable; a jog at y ~0.3 is not modelled."}
+  - guid: "x1-w-n"
+    storey: 1
+    axis: [[-2.234, 7.415], [-2.779, 5.594]]
+    z_base: 2.82
+    height: 1.15
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin), thickness unknown. West knee wall under the roof slope: 2.82 -> ~3.97 (planes top out at 3.76-4.08), the sloped ceiling above it is not representable (room N)."}
+  - guid: "i1-n-s"
+    storey: 1
+    axis: [[-2.756, 6.029], [-0.349, 5.333]]
+    z_base: 2.82
+    height: 2.13
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Room N | corridor / void: axis on the room-N face; 0.4-0.9 m north of i1-nw-n (a void or closet between, not scanned). Thickness unknown."}
+  - guid: "i1-nw-n"
+    storey: 1
+    axis: [[-2.992, 4.935], [-0.798, 4.389]]
+    z_base: 2.82
+    height: 2.13
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Bedroom W north wall, axis on its south face (seen from bedroom W); see i1-n-s."}
+  - guid: "x1-w-nw"
+    storey: 1
+    axis: [[-3.095, 4.599], [-3.942, 0.659]]
+    z_base: 2.82
+    height: 1.15
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin), thickness unknown. West knee wall under the roof slope: 2.82 -> ~3.97 (planes top out at 3.76-4.08), the sloped ceiling above it is not representable (bedroom W, north part)."}
+  - guid: "x1-w-sw"
+    storey: 1
+    axis: [[-4.079, -0.293], [-4.838, -2.758]]
+    z_base: 2.82
+    height: 1.15
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin), thickness unknown. West knee wall under the roof slope: 2.82 -> ~3.97 (planes top out at 3.76-4.08), the sloped ceiling above it is not representable (bedroom W, south part; ~0.15 m jog against x1-w-nw at y ~0, drawn as a polygon step only)."}
+  - guid: "i1-w-s"
+    storey: 1
+    axis: [[-4.746, -2.793], [-1.915, -3.483]]
+    z_base: 2.82
+    height: 2.13
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Bedroom W south wall, axis on its north face. 0.5-0.7 m north of the gable room's north wall (i1-gab-n-w): one thick wall / chimney or a void; the scan does not show which."}
+  - guid: "i1-long-w"
+    storey: 1
+    axis: [[-2.602, -3.200], [-0.528, 5.301]]
+    z_base: 2.82
+    height: 2.13
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Corridor | bedroom W, 8.7 m long. Faces inverted (-12 / +4 cm) and noisy along the length (in-storey drift); axis = mean, thickness unknown."}
+  - guid: "i1-long-e"
+    storey: 1
+    axis: [[-0.510, -0.100], [1.112, 6.215]]
+    z_base: 2.82
+    height: 2.13
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Corridor | rooms N/NE/E; axis on the east face (rms 0.7 cm); the corridor face is 0.4 m off at the south end (drift). Thickness unknown."}
+  - guid: "i1-e-ne"
+    storey: 1
+    axis: [[0.406, 3.258], [3.844, 2.324]]
+    z_base: 2.82
+    height: 2.13
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Room E | room NE; faces cross (+17 / -9 cm, drift); axis = mean, thickness unknown."}
+  - guid: "i1-e-s"
+    storey: 1
+    axis: [[-0.421, -0.314], [3.388, -1.160]]
+    z_base: 2.82
+    height: 2.13
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Room E south wall, axis on its north face; south of it the landing / bathroom (faces there ghosted)."}
+  - guid: "x1-bath-e"
+    storey: 1
+    axis: [[1.974, -3.941], [2.513, -1.341]]
+    z_base: 2.82
+    height: 1.77
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "East wall of the upstairs bathroom, axis on the bathroom face; nothing scanned beyond it (roof void or outside), top at ~4.59."}
+  - guid: "i1-gab-n-w"
+    storey: 1
+    axis: [[-5.027, -3.686], [-1.876, -3.872]]
+    z_base: 2.82
+    height: 2.13
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Gable room north wall (west part), axis on its south face; see i1-w-s."}
+  - guid: "i1-gab-n-e"
+    storey: 1
+    axis: [[0.000, -4.290], [1.990, -4.580]]
+    z_base: 2.82
+    height: 2.13
+    thickness: -1.00
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "Gable room | bathroom / stairwell. Axis on the face seen from the gable room (plane at y -4.29..-4.58); the faces seen from the north (bathroom/stairwell) lie ~0.2 m further north but are short and ghosted, so thickness unknown."}
+  - guid: "x1-gab-s"
+    storey: 1
+    axis: [[-5.450, -7.550], [1.620, -8.600]]
+    z_base: 2.82
+    height: 2.13
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "South GABLE (the scan follows the gable outline up to ~5.35); inner face drawn by hand along the dense sheet in a 0.9-1.6 m-above-floor slice (the bin fit is spoiled by the arched window niche and exposed beams), +-5 cm. Thickness unknown."}
+  - guid: "x1-gab-w"
+    storey: 1
+    axis: [[-5.456, -7.456], [-4.981, -3.522]]
+    z_base: 2.82
+    height: 1.15
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin), thickness unknown. West knee wall under the roof slope: 2.82 -> ~3.97 (planes top out at 3.76-4.08), the sloped ceiling above it is not representable (gable room). The face is jagged (pieces at x -5.5, -5.1, -5.0: drift between passes); the axis follows the whole run (support 0.90); the watch loop reports the densest single piece 6.5 cm further in, moving the axis there drops support to 0.47."}
+  - guid: "x1-gab-e"
+    storey: 1
+    axis: [[1.538, -8.488], [2.060, -4.621]]
+    z_base: 2.82
+    height: 1.15
+    thickness: -1.00
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "external: only the inner face is scanned; axis on the inner face (fitted per 0.4 m bin), thickness unknown. East knee wall under the roof slope: 2.82 -> ~3.97 (planes top out at 3.76-4.08), the sloped ceiling above it is not representable (gable room)."}
+spaces:
+  # Storey 0. Floor/ceiling heights per space are the plane modes inside the polygon.
+  - guid: "s0-utility"
+    storey: 0
+    name: "Utility / back entrance"
+    kind: room
+    polygon:
+      outer: [[-5.950, -5.000], [-4.250, -5.000], [-4.200, -3.730], [-5.846, -3.666]]
+    z_floor: 0.06
+    z_ceiling: 2.73
+    source: manual
+    locked: true
+    confidence: 0.6
+    metadata: {identified_by: "Tiled floor, sink in a worktop under the window, coat hooks (frames 1-24)."}
+  - guid: "s0-hall"
+    storey: 0
+    name: "Hall"
+    kind: corridor
+    polygon:
+      outer: [[-4.200, -4.780], [-1.250, -4.990], [-1.300, -3.914], [-4.150, -3.729]]
+    z_floor: 0.06
+    z_ceiling: 2.73
+    source: manual
+    locked: true
+    metadata: {identified_by: "Tiled corridor with doors off it (frames 35-62, 383-389)."}
+  - guid: "s0-bath"
+    storey: 0
+    name: "Bathroom"
+    kind: room
+    polygon:
+      outer: [[-3.739, -7.769], [-1.271, -7.902], [-1.119, -4.985], [-3.586, -4.815]]
+    z_floor: 0.08
+    z_ceiling: 2.62
+    source: manual
+    locked: true
+    metadata: {identified_by: "Tiled walls, bathtub, WC (frames 63-85)."}
+  - guid: "s0-living-s"
+    storey: 0
+    name: "Living room S"
+    kind: room
+    polygon:
+      outer: [[-0.764, -8.092], [2.573, -8.332], [2.627, -4.419], [-0.501, -3.996]]
+    z_floor: 0.08
+    z_ceiling: 2.68
+    source: manual
+    locked: true
+    metadata: {identified_by: "Laminate floor, garden door, door to the conservatory (frames 86-106, 239-242)."}
+  - guid: "s0-stair-hall"
+    storey: 0
+    name: "Stair hall"
+    kind: corridor
+    polygon:
+      outer: [[-0.290, -3.950], [2.550, -4.120], [2.600, -2.850], [-0.290, -2.546]]
+    z_floor: 0.00
+    z_ceiling: 2.57
+    source: manual
+    locked: true
+    confidence: 0.6
+    metadata: {identified_by: "Stair to the first floor rises here westwards (frames 244-256 climb it; treads visible in the plan cut at x 0.2..1.6)."}
+  - guid: "s0-conservatory"
+    storey: 0
+    name: "Conservatory"
+    kind: room
+    polygon:
+      outer: [[-0.503, -11.490], [3.900, -11.920], [3.900, -8.900], [-0.230, -8.600]]
+    z_floor: 0.05
+    z_ceiling: 2.39
+    source: manual
+    locked: true
+    confidence: 0.6
+    metadata: {identified_by: "Glazed walls and roof, hardwood deck floor (frames 110-135). East boundary at x 3.9 assumed (glass not scanned)."}
+  - guid: "s0-kitchen"
+    storey: 0
+    name: "Kitchen"
+    kind: room
+    polygon:
+      outer: [[-4.790, -2.950], [-1.200, -2.750], [-1.100, 0.290], [-4.750, 0.720]]
+    z_floor: 0.00
+    z_ceiling: 2.57
+    source: manual
+    locked: true
+    confidence: 0.5
+    metadata: {identified_by: "Kitchen units, fridge, cooker, glazed door to the garden (frames 210-230). Boundary to the east (x ~-1.2) drawn where the units end; the room may continue to x ~0."}
+  - guid: "s0-room-ne"
+    storey: 0
+    name: "Room NE"
+    kind: room
+    polygon:
+      outer: [[3.620, -0.555], [7.453, -1.024], [7.797, 2.196], [3.800, 2.623]]
+    z_floor: 0.00
+    z_ceiling: 2.36
+    source: manual
+    locked: true
+    metadata: {identified_by: "Laminate floor, window and garden door, lower ceiling 2.36 (frames 161-178); likely an extension."}
+  - guid: "s0-living-n"
+    storey: 0
+    name: "Living room N"
+    kind: room
+    polygon:
+      outer: [[-3.800, 2.620], [-0.650, 2.240], [-0.700, -1.000], [3.250, -0.550], [3.400, 4.500], [0.000, 4.900], [-1.200, 6.400], [-3.800, 6.400]]
+    z_floor: 0.02
+    z_ceiling: 2.56
+    source: manual
+    locked: true
+    confidence: 0.3
+    metadata: {identified_by: "Large room(s) with windows (frames 176-199 orbit it, looking inwards, so its outer walls were barely scanned). Outline from the ceiling extent and the camera path, NOT from walls: may be two rooms."}
+  - guid: "s0-passage"
+    storey: 0
+    name: "Passage / dining"
+    kind: room
+    polygon:
+      outer: [[-4.750, 0.720], [-1.100, 0.290], [-0.650, 2.240], [-3.800, 2.620], [-4.700, 2.700]]
+    z_floor: 0.02
+    z_ceiling: 2.59
+    source: manual
+    locked: true
+    confidence: 0.3
+    metadata: {identified_by: "Band between the kitchen and living room N (frames 199-208; window in frame 205); ceiling hardly scanned."}
+  # Storey 1 (first floor, attic).
+  - guid: "s1-gable"
+    storey: 1
+    name: "Gable room (exposed beams)"
+    kind: room
+    polygon:
+      outer: [[-5.467, -7.547], [1.525, -8.586], [2.064, -4.591], [0.000, -4.290], [-1.876, -3.872], [-5.001, -3.688]]
+    z_floor: 2.96
+    z_ceiling: 5.31
+    source: manual
+    locked: true
+    metadata: {identified_by: "Exposed collar beams, arched brick-framed gable window (frames 258-280). Floor at 2.96: 0.14 m above the rest of storey 1 in its own frame (in-storey drift, reusex-32o)."}
+  - guid: "s1-bedroom-w"
+    storey: 1
+    name: "Bedroom W"
+    kind: room
+    polygon:
+      outer: [[-4.842, -2.770], [-2.629, -3.309], [-0.753, 4.378], [-3.021, 4.942], [-3.942, 0.659], [-4.079, -0.293]]
+    z_floor: 2.79
+    z_ceiling: 4.96
+    source: manual
+    locked: true
+    confidence: 0.6
+    metadata: {identified_by: "Bedroom under the west roof slope with a roof window (frames 296-316). 7.5 m long; no dividing wall found in the cloud, could be two rooms."}
+  - guid: "s1-bedroom-n"
+    storey: 1
+    name: "Bedroom N"
+    kind: room
+    polygon:
+      outer: [[-2.223, 7.451], [1.153, 6.373], [0.800, 5.001], [-2.657, 6.000]]
+    z_floor: 2.84
+    z_ceiling: 5.09
+    source: manual
+    locked: true
+    metadata: {identified_by: "Wardrobe, north gable window (frames 352-361)."}
+  - guid: "s1-bedroom-ne"
+    storey: 1
+    name: "Bedroom NE"
+    kind: room
+    polygon:
+      outer: [[1.126, 6.269], [4.555, 5.310], [3.762, 2.346], [0.356, 3.272]]
+    z_floor: 2.82
+    z_ceiling: 5.02
+    source: manual
+    locked: true
+    metadata: {identified_by: "Gable-end room (frames 336-348)."}
+  - guid: "s1-bedroom-e"
+    storey: 1
+    name: "Bedroom E"
+    kind: room
+    polygon:
+      outer: [[0.356, 3.272], [4.224, 2.221], [3.479, -1.180], [-0.421, -0.314], [-0.510, -0.100]]
+    z_floor: 2.83
+    z_ceiling: 4.94
+    source: manual
+    locked: true
+    metadata: {identified_by: "Wood-boarded ceiling, door from the corridor (frames 320-332)."}
+  - guid: "s1-corridor"
+    storey: 1
+    name: "Corridor / landing"
+    kind: corridor
+    polygon:
+      outer: [[-0.509, 5.379], [0.800, 5.001], [-0.510, -0.100], [-0.421, -0.314], [0.180, -0.620], [0.250, -2.620], [-1.450, -2.710], [-2.420, -2.450]]
+    z_floor: 2.80
+    z_ceiling: 4.96
+    source: manual
+    locked: true
+    metadata: {identified_by: "Long corridor down the middle (frames 362-373) and the landing at the top of the stair (frames 281-295). Floor set to 2.80 (the plane mode 2.69 is pulled down by the stairwell)."}
+  - guid: "s1-bath"
+    storey: 1
+    name: "Bathroom (first floor)"
+    kind: room
+    polygon:
+      outer: [[0.250, -2.620], [0.300, -0.950], [2.460, -1.250], [2.240, -2.650]]
+    z_floor: 2.78
+    z_ceiling: 4.95
+    source: manual
+    locked: true
+    confidence: 0.5
+    metadata: {identified_by: "Mirror, washbasin, WC (frames 284-288). Outline approximate (faces ghosted)."}
+openings:
+  # Openings read off elevations of the wall band. Only clear ones are drawn: most of storey 0
+  # is too ghosted to read sills and jambs, and the outer walls of living room N were not
+  # scanned. Missing openings are listed in the report, not guessed.
+  - guid: "o0-liv-cons"
+    wall: "x0-s-liv"
+    kind: door
+    s_start: 1.05
+    s_end: 1.95
+    z_sill: 0.00
+    z_head: 2.40
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "living room S -> conservatory"}
+  - guid: "o0-hall-bath"
+    wall: "i0-hall-s"
+    kind: door
+    s_start: 1.65
+    s_end: 2.45
+    z_sill: 0.00
+    z_head: 2.05
+    is_external: false
+    source: manual
+    locked: true
+    metadata: {note: "hall -> bathroom"}
+  - guid: "o1-gable-win"
+    wall: "x1-gab-s"
+    kind: window
+    s_start: 2.50
+    s_end: 4.50
+    z_sill: 3.50
+    z_head: 5.05
+    is_external: true
+    source: manual
+    locked: true
+    metadata: {note: "arched gable window (brick arch), head at the crown"}
+  - guid: "o1-corr-w-1"
+    wall: "i1-long-w"
+    kind: door
+    s_start: 0.10
+    s_end: 0.70
+    z_sill: 2.82
+    z_head: 4.72
+    is_external: false
+    source: manual
+    locked: true
+    confidence: 0.6
+    metadata: {note: "landing -> bedroom W (south end)"}
+  - guid: "o1-corr-w-2"
+    wall: "i1-long-w"
+    kind: door
+    s_start: 7.80
+    s_end: 8.20
+    z_sill: 2.82
+    z_head: 4.75
+    is_external: false
+    source: manual
+    locked: true
+    confidence: 0.4
+    metadata: {note: "corridor -> bedroom W (north end); only 0.4 m of the gap is clear"}
+  - guid: "o1-corr-e"
+    wall: "i1-long-e"
+    kind: door
+    s_start: 4.00
+    s_end: 4.55
+    z_sill: 2.82
+    z_head: 4.60
+    is_external: false
+    source: manual
+    locked: true
+    confidence: 0.6
+    metadata: {note: "corridor -> bedroom NE"}
+  - guid: "o1-corr-e-2"
+    wall: "i1-long-e"
+    kind: door
+    s_start: 0.75
+    s_end: 1.40
+    z_sill: 2.82
+    z_head: 4.72
+    is_external: false
+    source: manual
+    locked: true
+    confidence: 0.4
+    metadata: {note: "corridor -> bedroom E (frame 320 looks out through it); jambs unclear"}
