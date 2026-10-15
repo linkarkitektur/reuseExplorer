@@ -92,14 +92,30 @@ locked_storey_conflicts(const std::vector<StoreyRecord> &stored,
   std::vector<LockedStoreyConflict> out;
   if (fresh.empty())
     return out;
-  const auto &frame = fresh.front().level_transform;
-  const Eigen::Matrix4d to = to_matrix(frame);
   for (const auto &s : stored) {
     if (!s.locked)
       continue;
+    // The new row this locked one stands for: the one carrying its GUID,
+    // else the one whose floor is nearest (each new row may have its own
+    // frame, reusex-z1v.3.5).
+    const StoreyRecord *ref = nullptr;
+    double best = 0.0;
+    for (const auto &f : fresh) {
+      if (f.guid == s.guid) {
+        ref = &f;
+        break;
+      }
+      const double d = std::abs(
+          height_in_frame(s, s.z_floor, f.level_transform) - f.z_floor);
+      if (ref == nullptr || d < best) {
+        ref = &f;
+        best = d;
+      }
+    }
     LockedStoreyConflict c;
     c.guid = s.guid;
     c.idx = s.idx;
+    const Eigen::Matrix4d to = to_matrix(ref->level_transform);
     const Eigen::Matrix4d from = to_matrix(s.level_transform);
     const Eigen::Matrix3d dr =
         to.topLeftCorner<3, 3>() * from.topLeftCorner<3, 3>().transpose();
@@ -110,11 +126,11 @@ locked_storey_conflicts(const std::vector<StoreyRecord> &stored,
     c.frame_differs =
         c.frame_angle_deg > angle_tol_deg || c.frame_shift_m > shift_tol_m;
 
-    const double lo = height_in_frame(s, s.z_floor, frame);
-    const double hi = height_in_frame(s, s.z_ceiling, frame);
     for (const auto &f : fresh) {
       if (f.guid == s.guid)
         continue;
+      const double lo = height_in_frame(s, s.z_floor, f.level_transform);
+      const double hi = height_in_frame(s, s.z_ceiling, f.level_transform);
       const double overlap =
           std::min(hi, f.z_ceiling) - std::max(lo, f.z_floor);
       if (overlap > 1e-3)
