@@ -25,6 +25,7 @@
 #include <pcl/io/ply_io.h>
 #include <sqlite3.h>
 
+#include <fmt/ranges.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -418,7 +419,7 @@ class ProjectDB::Impl {
   bool hasSettingsTable = false;
 
   // cppcheck-suppress unusedStructMember
-  static constexpr int LATEST_SCHEMA_VERSION = 28;
+  static constexpr int LATEST_SCHEMA_VERSION = 29;
 
   // How long one statement waits for a lock another connection holds before
   // failing with SQLITE_BUSY. sqlite's default is not to wait at all.
@@ -836,6 +837,10 @@ class ProjectDB::Impl {
 
     if (current < 28) {
       migrateToV28();
+    }
+
+    if (current < 29) {
+      migrateToV29();
     }
 
     reusex::trace("Schema version: {}", getCurrentSchemaVersion());
@@ -2745,6 +2750,306 @@ class ProjectDB::Impl {
                             "project_settings");
     sp.release();
     reusex::info("Migration to schema version 28 complete");
+  }
+
+  /// Shift every non-zero, in-contract uint32 label in a stored Label
+  /// cloud's chunks by +1, in place. The chunks are concatenated first so a
+  /// record straddling a chunk boundary is shifted correctly, then written
+  /// back with each chunk's original length.
+  void shiftStoredLabelsV29(int cloudId) {
+    struct Chunk {
+      sqlite3_int64 rowid;
+      size_t size;
+    };
+    std::vector<Chunk> chunks;
+    std::vector<uint8_t> bytes;
+    {
+      sqlite3_stmt *s = prepare_or_throw(
+          db,
+          "SELECT rowid, data FROM point_cloud_data WHERE cloud_id = ? "
+          "ORDER BY chunk_index;",
+          "migrateToV29");
+      StmtGuard g(s);
+      sqlite3_bind_int(s, 1, cloudId);
+      int rc;
+      while ((rc = sqlite3_step(s)) == SQLITE_ROW) {
+        const auto *src =
+            static_cast<const uint8_t *>(sqlite3_column_blob(s, 1));
+        const auto n = static_cast<size_t>(sqlite3_column_bytes(s, 1));
+        chunks.push_back({sqlite3_column_int64(s, 0), n});
+        if (n > 0)
+          bytes.insert(bytes.end(), src, src + n);
+      }
+      if (rc != SQLITE_DONE)
+        throw std::runtime_error("migrateToV29: failed to read label chunks: " +
+                                 std::string(sqlite3_errmsg(db)));
+    }
+    if (bytes.size() % LABEL_STEP != 0)
+      throw std::runtime_error(
+          "migrateToV29: label cloud " + std::to_string(cloudId) + " holds " +
+          std::to_string(bytes.size()) + " bytes, not a multiple of " +
+          std::to_string(LABEL_STEP));
+    for (size_t off = 0; off < bytes.size(); off += LABEL_STEP) {
+      uint32_t v = 0;
+      std::memcpy(&v, bytes.data() + off, sizeof v);
+      // Unlabeled stays unlabeled (API class 0 was already lost into it), and
+      // an out-of-contract value is reported by its readers, not invented
+      // into a class here.
+      if (v == core::kUnlabeled || core::is_out_of_contract_label(v))
+        continue;
+      ++v;
+      std::memcpy(bytes.data() + off, &v, sizeof v);
+    }
+    sqlite3_stmt *u = prepare_or_throw(
+        db, "UPDATE point_cloud_data SET data = ? WHERE rowid = ?;",
+        "migrateToV29");
+    StmtGuard ug(u);
+    size_t off = 0;
+    for (const auto &c : chunks) {
+      sqlite3_reset(u);
+      sqlite3_clear_bindings(u);
+      static const uint8_t kEmpty = 0;
+      sqlite3_bind_blob(u, 1, c.size ? bytes.data() + off : &kEmpty,
+                        static_cast<int>(c.size), SQLITE_STATIC);
+      sqlite3_bind_int64(u, 2, c.rowid);
+      if (sqlite3_step(u) != SQLITE_DONE)
+        throw std::runtime_error("migrateToV29: failed to write label chunk: " +
+                                 std::string(sqlite3_errmsg(db)));
+      off += c.size;
+    }
+  }
+
+  void migrateToV29() {
+    reusex::info("Migrating database to schema version 29");
+    // Decision D8 (reusex-z1v.2.1): point label = API class + 1. Before v29 a
+    // semantic label cloud stored the API class verbatim, so API class 0 (the
+    // first prompt class) collided with kUnlabeled. Every stored semantic
+    // cloud without parameters.label_encoding is shifted (+1, 0 stays 0), its
+    // label_definitions re-keyed and the key stamped. The class numbers that
+    // name its classes elsewhere follow: instances.semantic_class, the
+    // "SM<cls>-" instance definitions and survey_types.semantic_class.
+    // Structural label clouds (planes, rooms, instances) are not semantic and
+    // keep their ids.
+    Savepoint sp(db, "migrate_v29");
+
+    struct Cloud {
+      int id;
+      std::string name;
+      std::string stage;
+      std::string params;
+    };
+    std::vector<Cloud> labelClouds;
+    // Guarded: legacy fixtures and partial schemas may lack point_clouds.
+    if (tableExists("point_clouds")) {
+      sqlite3_stmt *s = prepare_or_throw(
+          db,
+          "SELECT id, name, COALESCE(stage, ''), COALESCE(parameters, '') "
+          "FROM point_clouds WHERE point_type = 'Label' ORDER BY id;",
+          "migrateToV29");
+      StmtGuard g(s);
+      while (sqlite3_step(s) == SQLITE_ROW)
+        labelClouds.push_back({sqlite3_column_int(s, 0), column_text(s, 1),
+                               column_text(s, 2), column_text(s, 3)});
+    }
+    std::set<int> instanceClouds;
+    if (tableExists("instances")) {
+      sqlite3_stmt *s = prepare_or_throw(
+          db, "SELECT DISTINCT cloud_id FROM instances;", "migrateToV29");
+      StmtGuard g(s);
+      while (sqlite3_step(s) == SQLITE_ROW)
+        instanceClouds.insert(sqlite3_column_int(s, 0));
+    }
+    for (const auto &c : labelClouds)
+      if (c.stage == "segment_instances")
+        instanceClouds.insert(c.id);
+
+    const auto parseParams = [](const std::string &raw, bool &ok) {
+      ok = true;
+      if (raw.empty())
+        return nlohmann::json::object();
+      try {
+        auto j = nlohmann::json::parse(raw);
+        if (j.is_object())
+          return j;
+      } catch (const nlohmann::json::exception &) {
+      }
+      ok = false;
+      return nlohmann::json::object();
+    };
+
+    std::vector<std::string> shifted;
+    for (const auto &c : labelClouds) {
+      // A semantic cloud is what a semantic stage wrote (reconstruct,
+      // project_labels) or the default semantic cloud name, whichever stage
+      // last touched it (sync_downsample, segment_resource). Never an
+      // instance, plane or room cloud.
+      const bool semanticStage =
+          c.stage == "reconstruct" || c.stage == "project_labels";
+      if (!(semanticStage || c.name == "labels") ||
+          instanceClouds.count(c.id) != 0 || c.stage == "segment_planes" ||
+          c.stage == "segment_rooms")
+        continue;
+      bool ok = true;
+      auto params = parseParams(c.params, ok);
+      if (ok && params.contains(core::kLabelEncodingKey))
+        continue;
+      if (!ok) {
+        reusex::warn("migrateToV29: cloud '{}' has unparsable parameters; "
+                     "keeping them under 'legacy_parameters'",
+                     c.name);
+        params["legacy_parameters"] = c.params;
+      }
+
+      shiftStoredLabelsV29(c.id);
+
+      // Re-keyed by delete + insert: an in-place `label_id + 1` would trip
+      // the (cloud_id, label_id) key row by row.
+      struct Def {
+        int id;
+        std::string name;
+        bool has_color;
+        sqlite3_int64 color;
+      };
+      std::vector<Def> defs;
+      {
+        sqlite3_stmt *s = prepare_or_throw(
+            db,
+            "SELECT label_id, name, color_rgb FROM label_definitions "
+            "WHERE cloud_id = ? AND label_id >= 0 ORDER BY label_id;",
+            "migrateToV29");
+        StmtGuard g(s);
+        sqlite3_bind_int(s, 1, c.id);
+        while (sqlite3_step(s) == SQLITE_ROW)
+          defs.push_back({sqlite3_column_int(s, 0), column_text(s, 1),
+                          sqlite3_column_type(s, 2) != SQLITE_NULL,
+                          sqlite3_column_int64(s, 2)});
+      }
+      if (!defs.empty()) {
+        {
+          sqlite3_stmt *s = prepare_or_throw(
+              db,
+              "DELETE FROM label_definitions WHERE cloud_id = ? AND "
+              "label_id >= 0;",
+              "migrateToV29");
+          StmtGuard g(s);
+          sqlite3_bind_int(s, 1, c.id);
+          if (sqlite3_step(s) != SQLITE_DONE)
+            throw std::runtime_error(
+                "migrateToV29: failed to clear label definitions: " +
+                std::string(sqlite3_errmsg(db)));
+        }
+        sqlite3_stmt *s = prepare_or_throw(
+            db,
+            "INSERT INTO label_definitions (cloud_id, label_id, name, "
+            "color_rgb) VALUES (?, ?, ?, ?);",
+            "migrateToV29");
+        StmtGuard g(s);
+        for (const auto &d : defs) {
+          sqlite3_reset(s);
+          sqlite3_clear_bindings(s);
+          sqlite3_bind_int(s, 1, c.id);
+          sqlite3_bind_int(s, 2, d.id + 1);
+          bind_text(s, 3, d.name);
+          if (d.has_color)
+            sqlite3_bind_int64(s, 4, d.color);
+          else
+            sqlite3_bind_null(s, 4);
+          if (sqlite3_step(s) != SQLITE_DONE)
+            throw std::runtime_error(
+                "migrateToV29: failed to re-key label definitions: " +
+                std::string(sqlite3_errmsg(db)));
+        }
+      }
+
+      params[core::kLabelEncodingKey] = core::kLabelEncodingApiPlusOne;
+      {
+        sqlite3_stmt *s = prepare_or_throw(
+            db, "UPDATE point_clouds SET parameters = ? WHERE id = ?;",
+            "migrateToV29");
+        StmtGuard g(s);
+        const auto dumped = params.dump();
+        bind_text(s, 1, dumped);
+        sqlite3_bind_int(s, 2, c.id);
+        if (sqlite3_step(s) != SQLITE_DONE)
+          throw std::runtime_error("migrateToV29: failed to stamp encoding: " +
+                                   std::string(sqlite3_errmsg(db)));
+      }
+      shifted.push_back(c.name);
+    }
+
+    std::size_t instanceRows = 0, instanceDefs = 0, surveyTypes = 0;
+    if (!shifted.empty()) {
+      if (tableExists("instances")) {
+        execOrThrow("UPDATE instances SET semantic_class = semantic_class + 1 "
+                    "WHERE semantic_class >= 0;");
+        instanceRows = static_cast<std::size_t>(sqlite3_changes(db));
+      }
+      if (tableExists("survey_types")) {
+        execOrThrow("UPDATE survey_types SET semantic_class = semantic_class "
+                    "+ 1 WHERE semantic_class >= 0;");
+        surveyTypes = static_cast<std::size_t>(sqlite3_changes(db));
+      }
+      // "SM<cls>-<id> (<n>p)" names the semantic class in an instance
+      // cloud's definitions; rewrite <cls>.
+      for (int cid : instanceClouds) {
+        std::vector<std::pair<int, std::string>> rewrites;
+        {
+          sqlite3_stmt *s = prepare_or_throw(
+              db,
+              "SELECT label_id, name FROM label_definitions WHERE cloud_id = ? "
+              "AND name LIKE 'SM%';",
+              "migrateToV29");
+          StmtGuard g(s);
+          sqlite3_bind_int(s, 1, cid);
+          while (sqlite3_step(s) == SQLITE_ROW) {
+            const std::string name = column_text(s, 1);
+            std::size_t i = 2;
+            while (i < name.size() && name[i] >= '0' && name[i] <= '9' &&
+                   i < 12)
+              ++i;
+            if (i == 2 || i >= name.size() || name[i] != '-')
+              continue;
+            const long long cls = std::stoll(name.substr(2, i - 2));
+            rewrites.emplace_back(sqlite3_column_int(s, 0),
+                                  "SM" + std::to_string(cls + 1) +
+                                      name.substr(i));
+          }
+        }
+        sqlite3_stmt *u = prepare_or_throw(
+            db,
+            "UPDATE label_definitions SET name = ? WHERE cloud_id = ? AND "
+            "label_id = ?;",
+            "migrateToV29");
+        StmtGuard ug(u);
+        for (const auto &[lid, name] : rewrites) {
+          sqlite3_reset(u);
+          bind_text(u, 1, name);
+          sqlite3_bind_int(u, 2, cid);
+          sqlite3_bind_int(u, 3, lid);
+          if (sqlite3_step(u) != SQLITE_DONE)
+            throw std::runtime_error(
+                "migrateToV29: failed to rewrite instance definition: " +
+                std::string(sqlite3_errmsg(db)));
+          ++instanceDefs;
+        }
+      }
+    }
+
+    insertSchemaVersion(29, "Point label = API class + 1: semantic label "
+                            "clouds shifted and stamped label_encoding");
+    sp.release();
+    if (shifted.empty())
+      reusex::info("Migration to schema version 29 complete: no semantic "
+                   "label cloud to re-encode");
+    else
+      reusex::info("Migration to schema version 29 complete: re-encoded "
+                   "semantic cloud(s) [{}] (point label = API class + 1); "
+                   "{} instance row(s), {} instance definition(s), {} survey "
+                   "type(s) re-based. Points of API class 0 were stored as "
+                   "unlabeled and stay so; re-run `rux create clouds` or "
+                   "`rux create project` to recover them",
+                   fmt::join(shifted, ", "), instanceRows, instanceDefs,
+                   surveyTypes);
   }
 
   /// 1-based position of a report version in generation order.
