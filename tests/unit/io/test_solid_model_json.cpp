@@ -18,7 +18,9 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 using Catch::Matchers::ContainsSubstring;
 using reusex::core::SolidModel;
@@ -341,4 +343,83 @@ TEST_CASE("SolidModelFromJson_OutOfRangeNumbers_Throw", "[io][solid_model]") {
     return;
   }
   CHECK_THROWS_AS(solid_model_from_json(doc.dump()), std::invalid_argument);
+}
+
+// ── Files and the project import path (reusex-z1v.2.6, rux edit plan) ───────
+
+TEST_CASE("SolidModelFile_RoundTrip_IsAFixedPoint", "[io][solid_model]") {
+  const SolidModel m =
+      reusex::io::solid_model_from_file(fixture("two_rooms.plan.json"));
+  CHECK(m.walls.size() == 7);
+  reusex::test_support::TempPath tmp("test_solid_model_file", ".json");
+  reusex::io::solid_model_to_file(m, tmp.path);
+  const SolidModel back = reusex::io::solid_model_from_file(tmp.path);
+  CHECK(solid_model_to_json(back) == solid_model_to_json(m));
+}
+
+TEST_CASE("SolidModelFile_Unreadable_IsAnIoErrorNotAnInvalidDocument",
+          "[io][solid_model]") {
+  reusex::test_support::TempPath tmp("test_solid_model_missing", ".json");
+  // A missing file is not "an invalid document": callers map the two to
+  // different exit codes.
+  CHECK_THROWS_AS(reusex::io::solid_model_from_file(tmp.path),
+                  std::runtime_error);
+  try {
+    (void)reusex::io::solid_model_from_file(tmp.path);
+  } catch (const std::invalid_argument &) {
+    FAIL("a missing file must not throw std::invalid_argument");
+  } catch (const std::runtime_error &e) {
+    CHECK_THAT(e.what(), ContainsSubstring(tmp.path.string()));
+  }
+  {
+    std::ofstream out(tmp.path);
+    out << R"({"model_version": 1, "walls": [{"guid": "w1", "bogus": 1}]})";
+  }
+  CHECK_THROWS_AS(reusex::io::solid_model_from_file(tmp.path),
+                  std::invalid_argument);
+}
+
+TEST_CASE("MarkImported_SetsSourceAndLockOnEveryElement", "[io][solid_model]") {
+  SolidModel m = solid_model_from_json(minimal_doc().dump());
+  reusex::io::mark_imported(m);
+  for (const auto &s : m.storeys)
+    CHECK((s.source == "imported" && s.locked));
+  for (const auto &w : m.walls)
+    CHECK((w.source == "imported" && w.locked));
+  for (const auto &s : m.spaces)
+    CHECK((s.source == "imported" && s.locked));
+  for (const auto &o : m.openings)
+    CHECK((o.source == "imported" && o.locked));
+}
+
+TEST_CASE("StoreSolidModel_ProjectWithoutTables_StoresNothingAndSaysWhich",
+          "[io][solid_model]") {
+  reusex::test_support::TempPath tmp("test_store_solid_model");
+  reusex::ProjectDB db(tmp.path);
+  SolidModel m = solid_model_from_json(minimal_doc().dump());
+  const auto r = reusex::io::store_solid_model(db, m);
+  CHECK(r.stored() == 0);
+  CHECK(r.not_stored ==
+        std::vector<std::string>{"storeys", "walls", "spaces", "openings"});
+
+  // Only kinds the model provides are reported.
+  SolidModel walls_only;
+  walls_only.provided.walls = true;
+  const auto r2 = reusex::io::store_solid_model(db, walls_only);
+  CHECK(r2.not_stored == std::vector<std::string>{"walls"});
+}
+
+TEST_CASE("SolidModelFixture_NewOffice_IsAValidDraftReference",
+          "[io][solid_model]") {
+  // Authored with docs/guides/solid-model-reference-authoring.md; a draft
+  // until the maintainer has reviewed it (reusex-z1v.2.6).
+  const SolidModel m =
+      reusex::io::solid_model_from_file(fixture("newoffice.plan.json"));
+  CHECK(m.storeys.size() == 1);
+  CHECK(m.walls.size() >= 10);
+  CHECK(m.spaces.size() >= 5);
+  CHECK(m.openings.size() >= 10);
+  CHECK_THAT(m.description, ContainsSubstring("DRAFT"));
+  CHECK_THAT(m.storeys[0].metadata,
+             ContainsSubstring("draft - needs maintainer review"));
 }

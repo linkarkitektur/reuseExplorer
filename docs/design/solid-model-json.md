@@ -26,7 +26,8 @@ holds both sides of the benchmark:
 | Metrics | `libs/reusex/include/reconstruction/solid_metrics.hpp` (`compare_solid_models`, `fit_report`) |
 | CLI | `rux analyze solid` (`apps/rux/src/analyze/solid.cpp`) |
 | Bench | `scripts/bench-solid.sh`, `scripts/bench-solid.manifest`, `scripts/bench-solid-compare.py` |
-| Fixtures | `tests/fixtures/solid_model/*.json` (synthetic only) |
+| Fixtures | `tests/fixtures/solid_model/*.json`: hand-written synthetic plans, and references authored on our own scans (`newoffice.plan.json`, a DRAFT) |
+| Authoring | [`docs/guides/solid-model-reference-authoring.md`](../guides/solid-model-reference-authoring.md) (`rux edit plan`, `rux render --plan`) |
 
 ## No ground truth
 
@@ -37,7 +38,7 @@ checked visually against the scan; a converted third-party model is a
 **baseline row**, scored against the same reference, never a reference
 itself. S3DIS may be used locally for benchmarking, but no file derived from
 it is ever committed (`tests/fixtures/solid_model/` holds hand-written
-synthetic plans only).
+synthetic plans and references authored on our own scans, JSON only).
 
 ## Document
 

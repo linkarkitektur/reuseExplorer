@@ -58,6 +58,7 @@ const std::vector<StageSpec> &stage_specs() {
         {"beta", "--beta", {}, {}},
         {"max_iter", "--max-iter", {}, {}},
         {"propagate_max_radius", "--propagate-radius", {}, {}},
+        {"min_room_area", "--min-room-area", {}, {}},
         {"filter", "--filter", {}, {}}}},
       {"instances",
        {"create", "instances"},

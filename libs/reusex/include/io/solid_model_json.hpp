@@ -14,8 +14,11 @@
 
 #include <reusex/core/solid_model.hpp>
 
+#include <cstddef>
+#include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace reusex {
 class ProjectDB;
@@ -47,6 +50,48 @@ std::string solid_model_to_json(const core::SolidModel &model, int indent = 2);
 /// @throws std::invalid_argument naming the offending element, e.g.
 ///         "walls[2] (guid 'w3'): axis has zero length".
 core::SolidModel solid_model_from_json(std::string_view text);
+
+/// Read and parse a document file (solid_model_from_json).
+///
+/// @throws std::runtime_error naming the path when the file cannot be read.
+/// @throws std::invalid_argument when its content is not a valid document.
+core::SolidModel solid_model_from_file(const std::filesystem::path &path);
+
+/// Write @p model to @p path (solid_model_to_json, plus a final newline),
+/// creating parent directories.
+///
+/// @throws std::runtime_error naming the path when it cannot be written.
+void solid_model_to_file(const core::SolidModel &model,
+                         const std::filesystem::path &path, int indent = 2);
+
+/// Mark every storey, wall, space and opening as `source` "imported",
+/// `locked` — what an authored reference becomes when it is imported into a
+/// project, so no re-run of a detecting stage overwrites it.
+void mark_imported(core::SolidModel &model);
+
+/// What store_solid_model() wrote.
+struct SolidModelStoreResult {
+  std::size_t storeys = 0, walls = 0, spaces = 0, openings = 0; ///< rows
+  /// Element kinds the model provides (SolidModel::has_*) that were not
+  /// stored because the project has no table for them yet, in the order
+  /// storeys, walls, spaces, openings.
+  std::vector<std::string> not_stored;
+
+  [[nodiscard]] std::size_t stored() const {
+    return storeys + walls + spaces + openings;
+  }
+};
+
+/// Write @p model's elements into the project's solid-model tables, the
+/// inverse of load_solid_model() (`rux edit plan --import`).
+///
+/// Each kind is written where its table exists; at WP0 none does, so every
+/// provided kind lands in SolidModelStoreResult::not_stored and nothing is
+/// written. WP1 (storeys), WP3 (walls), WP4 (spaces) and WP5 (openings) each
+/// add their part here, next to their part of load_solid_model(), so that
+/// `JSON -> tables -> JSON` stays lossless.
+SolidModelStoreResult store_solid_model(ProjectDB &db,
+                                        const core::SolidModel &model);
 
 /// The typed building model stored in a project.
 ///

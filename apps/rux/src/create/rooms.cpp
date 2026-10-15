@@ -88,6 +88,14 @@ NOTES:
       ->default_val(opt->propagate_max_radius)
       ->check(CLI::Range(0.0, 10.0));
 
+  sub->add_option("--min-room-area", opt->min_room_area,
+                  "Minimum room size, as the plane surface [m^2] its sample "
+                  "points cover. Smaller communities (points that see little "
+                  "or nothing) join the room they see most instead of "
+                  "becoming rooms. 0 keeps every community.")
+      ->default_val(opt->min_room_area)
+      ->check(CLI::Range(0.0, 1000.0));
+
   sub->add_option(
          "-f, --filter", opt->filter_expr,
          "Filter expression to limit processing to specific labeled points.\n"
@@ -125,6 +133,7 @@ std::string rooms_stage_parameters(SubcommandSegRoomsOptions const &opt) {
       .set("beta", opt.beta)
       .set("max_iter", opt.max_iter)
       .set("propagate_max_radius", opt.propagate_max_radius)
+      .set("min_room_area", opt.min_room_area)
       .set_if(!opt.filter_expr.empty(), "filter", opt.filter_expr)
       .dump();
 }
