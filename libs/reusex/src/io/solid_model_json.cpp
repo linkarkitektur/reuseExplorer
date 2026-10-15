@@ -9,8 +9,15 @@
 #include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
+#include <CGAL/Boolean_set_operations_2.h>
+#include <CGAL/Exact_predicates_exact_constructions_kernel.h>
+#include <CGAL/Gps_segment_traits_2.h>
+
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <initializer_list>
+#include <limits>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -72,10 +79,38 @@ class Reader {
   int integer(const char *key, int fallback) const {
     if (!has(key))
       return fallback;
-    const json &v = j_.at(key);
-    if (!v.is_number_integer())
-      fail(where_, fmt::format("'{}' must be an integer", key));
-    return v.get<int>();
+    return to_int(j_.at(key), fmt::format("'{}'", key));
+  }
+
+  /// An integer that fits an `int`; anything else throws naming @p what.
+  int to_int(const json &v, const std::string &what) const {
+    constexpr auto lo = std::numeric_limits<int>::min();
+    constexpr auto hi = std::numeric_limits<int>::max();
+    bool ok = false;
+    if (v.is_number_unsigned())
+      ok = v.get<std::uint64_t>() <= static_cast<std::uint64_t>(hi);
+    else if (v.is_number_integer())
+      ok = v.get<std::int64_t>() >= lo && v.get<std::int64_t>() <= hi;
+    if (!ok)
+      fail(where_,
+           fmt::format("{} must be an integer in [{}, {}]", what, lo, hi));
+    return static_cast<int>(v.get<std::int64_t>());
+  }
+
+  /// A JSON array of exactly @p n finite numbers.
+  std::vector<double> numbers(const char *key, std::size_t n,
+                              const char *shape) const {
+    const json &v = at(key);
+    if (!v.is_array() || v.size() != n)
+      fail(where_, fmt::format("'{}' must be {}", key, shape));
+    std::vector<double> out;
+    for (const auto &e : v) {
+      if (!e.is_number() || !std::isfinite(e.get<double>()))
+        fail(where_,
+             fmt::format("'{}' must be {} (finite numbers)", key, shape));
+      out.push_back(e.get<double>());
+    }
+    return out;
   }
 
   bool boolean(const char *key, bool fallback) const {
@@ -113,6 +148,8 @@ class Reader {
     return p;
   }
 
+  /// An open ring. A repeated closing point (GeoJSON style) is dropped, so
+  /// rings are always stored and written open.
   std::vector<core::PlanPoint> ring(const json &v,
                                     const std::string &what) const {
     if (!v.is_array())
@@ -121,6 +158,8 @@ class Reader {
     out.reserve(v.size());
     for (std::size_t i = 0; i < v.size(); ++i)
       out.push_back(point(v[i], fmt::format("{}[{}]", what, i)));
+    if (out.size() > 3 && out.front() == out.back())
+      out.pop_back();
     if (out.size() < 3)
       fail(where_,
            fmt::format("{} needs at least 3 points, has {}", what, out.size()));
@@ -172,22 +211,67 @@ void read_common(const Reader &r, std::string &source, bool &locked,
   metadata = r.metadata();
 }
 
-ojson metadata_value(const std::string &text) {
-  if (text.empty())
-    return nullptr;
+/// A record's `metadata` is JSON text by contract (the reader stores the
+/// document's value as `dump()`); anything else could not be written so that
+/// it reads back as the same record, so it is rejected.
+ojson metadata_value(const std::string &text, const std::string &where) {
   try {
     return ojson::parse(text);
   } catch (const ojson::parse_error &) {
-    return text; // stored metadata that is not JSON stays a string
+    fail(where, "'metadata' is not JSON text");
   }
 }
 
-template <typename R> void write_common(ojson &o, const R &r) {
+template <typename R>
+void write_common(ojson &o, const R &r, const std::string &where) {
   o["source"] = r.source;
   o["locked"] = r.locked;
   o["confidence"] = r.confidence;
   if (!r.metadata.empty())
-    o["metadata"] = metadata_value(r.metadata);
+    o["metadata"] = metadata_value(r.metadata, where);
+}
+
+std::string record_name(const char *array, std::size_t i,
+                        const std::string &guid) {
+  return guid.empty() ? fmt::format("{}[{}]", array, i)
+                      : fmt::format("{}[{}] (guid '{}')", array, i, guid);
+}
+
+using EK = CGAL::Exact_predicates_exact_constructions_kernel;
+using Traits = CGAL::Gps_segment_traits_2<EK>;
+using Polygon = Traits::Polygon_2;
+using PolygonWithHoles = Traits::Polygon_with_holes_2;
+
+/// A simple ring with non-zero area, oriented counter-clockwise for the
+/// outer boundary and clockwise for a hole.
+Polygon checked_ring(const std::vector<core::PlanPoint> &ring,
+                     const std::string &where, const std::string &what,
+                     bool hole) {
+  Polygon p;
+  for (const auto &q : ring)
+    p.push_back(EK::Point_2(q[0], q[1]));
+  if (!p.is_simple())
+    fail(where, fmt::format("{} is not a simple polygon (it touches or "
+                            "crosses itself, or repeats a point)",
+                            what));
+  if (p.orientation() == CGAL::ZERO)
+    fail(where, fmt::format("{} has zero area (collinear points)", what));
+  if ((p.orientation() == CGAL::COUNTERCLOCKWISE) == hole)
+    p.reverse_orientation();
+  return p;
+}
+
+/// Outer ring and holes form one valid polygon with holes: every ring simple
+/// and non-degenerate, every hole strictly inside the outer ring, holes
+/// pairwise disjoint. Either winding is accepted; it is not changed.
+void check_polygon(const core::SpacePolygon &poly, const std::string &where) {
+  PolygonWithHoles pwh(checked_ring(poly.outer, where, "polygon.outer", false));
+  for (std::size_t i = 0; i < poly.holes.size(); ++i)
+    pwh.add_hole(checked_ring(poly.holes[i], where,
+                              fmt::format("polygon.holes[{}]", i), true));
+  if (!poly.holes.empty() && !CGAL::is_valid_polygon_with_holes(pwh, Traits()))
+    fail(where, "polygon.holes must lie strictly inside polygon.outer and "
+                "must not overlap or touch each other");
 }
 
 ojson ring_json(const std::vector<core::PlanPoint> &ring) {
@@ -220,7 +304,7 @@ std::string solid_model_to_json(const core::SolidModel &m, int indent) {
       o["z_floor"] = s.z_floor;
       o["z_ceiling"] = s.z_ceiling;
       o["level_transform"] = s.level_transform;
-      write_common(o, s);
+      write_common(o, s, record_name("storeys", &s - m.storeys.data(), s.guid));
       arr.push_back(std::move(o));
     }
     doc["storeys"] = std::move(arr);
@@ -245,7 +329,7 @@ std::string solid_model_to_json(const core::SolidModel &m, int indent) {
       o["face_points"] = {w.face_a_points, w.face_b_points};
       o["co_visibility"] = w.co_visibility;
       o["axis_family"] = w.axis_family;
-      write_common(o, w);
+      write_common(o, w, record_name("walls", &w - m.walls.data(), w.guid));
       arr.push_back(std::move(o));
     }
     doc["walls"] = std::move(arr);
@@ -288,7 +372,7 @@ std::string solid_model_to_json(const core::SolidModel &m, int indent) {
       o["volume"] = s.volume;
       o["compactness"] = s.compactness;
       o["room_label"] = s.room_label;
-      write_common(o, s);
+      write_common(o, s, record_name("spaces", &s - m.spaces.data(), s.guid));
       arr.push_back(std::move(o));
     }
     doc["spaces"] = std::move(arr);
@@ -321,7 +405,8 @@ std::string solid_model_to_json(const core::SolidModel &m, int indent) {
       o["is_external"] = op.is_external;
       if (!op.source_instance_guid.empty())
         o["source_instance_guid"] = op.source_instance_guid;
-      write_common(o, op);
+      write_common(o, op,
+                   record_name("openings", &op - m.openings.data(), op.guid));
       arr.push_back(std::move(o));
     }
     doc["openings"] = std::move(arr);
@@ -351,7 +436,9 @@ std::string solid_model_to_json(const core::SolidModel &m, int indent) {
               {"relation_type", r.relation_type},
               {"weight", r.weight}};
       if (!r.metadata.empty())
-        o["metadata"] = metadata_value(r.metadata);
+        o["metadata"] = metadata_value(
+            r.metadata,
+            record_name("scene_relations", &r - m.scene_relations.data(), ""));
       arr.push_back(std::move(o));
     }
     doc["scene_relations"] = std::move(arr);
@@ -364,7 +451,7 @@ core::SolidModel solid_model_from_json(std::string_view text) {
   json doc;
   try {
     doc = json::parse(text);
-  } catch (const json::parse_error &e) {
+  } catch (const json::exception &e) { // parse_error, number overflow, ...
     fail("document", fmt::format("not valid JSON ({})", e.what()));
   }
   const Reader top(doc, "document");
@@ -375,10 +462,10 @@ core::SolidModel solid_model_from_json(std::string_view text) {
   const json &version = top.at("model_version");
   if (!version.is_number_integer())
     fail("document", "'model_version' must be an integer");
-  if (version.get<int>() != kSolidModelJsonVersion)
+  if (version.dump() != std::to_string(kSolidModelJsonVersion))
     fail("document",
          fmt::format("model_version {} is not supported (this build reads {})",
-                     version.get<int>(), kSolidModelJsonVersion));
+                     version.dump(), kSolidModelJsonVersion));
   if (top.text("units", "m") != "m")
     fail("document", "'units' must be \"m\"");
 
@@ -402,14 +489,9 @@ core::SolidModel solid_model_from_json(std::string_view text) {
     s.z_floor = r.number("z_floor", s.z_floor);
     s.z_ceiling = r.number("z_ceiling", s.z_ceiling);
     if (r.has("level_transform")) {
-      const json &t = r.at("level_transform");
-      if (!t.is_array() || t.size() != 16)
-        fail(r.where(), "'level_transform' must be 16 numbers (4x4 row-major)");
-      for (std::size_t i = 0; i < 16; ++i) {
-        if (!t[i].is_number())
-          fail(r.where(), "'level_transform' must be 16 numbers");
-        s.level_transform[i] = t[i].get<double>();
-      }
+      const auto t =
+          r.numbers("level_transform", 16, "16 numbers (4x4 row-major)");
+      std::copy(t.begin(), t.end(), s.level_transform.begin());
     }
     read_common(r, s.source, s.locked, s.confidence, s.metadata);
     m.storeys.push_back(std::move(s));
@@ -449,12 +531,9 @@ core::SolidModel solid_model_from_json(std::string_view text) {
     w.height = r.number("height", w.height);
     w.thickness = r.number("thickness", w.thickness);
     if (r.has("thickness_ci")) {
-      const json &ci = r.at("thickness_ci");
-      if (!ci.is_array() || ci.size() != 2 || !ci[0].is_number() ||
-          !ci[1].is_number())
-        fail(r.where(), "'thickness_ci' must be [lo, hi]");
-      w.thickness_ci_lo = ci[0].get<double>();
-      w.thickness_ci_hi = ci[1].get<double>();
+      const auto ci = r.numbers("thickness_ci", 2, "[lo, hi]");
+      w.thickness_ci_lo = ci[0];
+      w.thickness_ci_hi = ci[1];
     }
     w.lean_deg = r.number("lean_deg", w.lean_deg);
     w.is_external = r.boolean("is_external", w.is_external);
@@ -462,11 +541,10 @@ core::SolidModel solid_model_from_json(std::string_view text) {
     w.seen_share = r.number("seen_share", w.seen_share);
     if (r.has("face_points")) {
       const json &fp = r.at("face_points");
-      if (!fp.is_array() || fp.size() != 2 || !fp[0].is_number_integer() ||
-          !fp[1].is_number_integer())
+      if (!fp.is_array() || fp.size() != 2)
         fail(r.where(), "'face_points' must be [a, b] integers");
-      w.face_a_points = fp[0].get<int>();
-      w.face_b_points = fp[1].get<int>();
+      w.face_a_points = r.to_int(fp[0], "'face_points'[0]");
+      w.face_b_points = r.to_int(fp[1], "'face_points'[1]");
     }
     w.co_visibility = r.number("co_visibility", w.co_visibility);
     w.axis_family = r.integer("axis_family", w.axis_family);
@@ -520,6 +598,7 @@ core::SolidModel solid_model_from_json(std::string_view text) {
         s.polygon.holes.push_back(
             poly.ring(holes[i], fmt::format("holes[{}]", i)));
     }
+    check_polygon(s.polygon, r.where());
     s.z_floor = r.number("z_floor", s.z_floor);
     s.z_ceiling = r.number("z_ceiling", s.z_ceiling);
     s.area = r.number("area", s.area);

@@ -29,13 +29,20 @@ inline constexpr int kSolidModelJsonVersion = 1;
 /// Serialise a model. Keys come out in a fixed order and every element array
 /// the model provides (`SolidModel::has_*`) is written, so the output is
 /// deterministic and a "provided but empty" kind survives a round trip.
+///
+/// @throws std::invalid_argument when a record's `metadata` is not JSON text
+///         (the reader always stores JSON text there).
 std::string solid_model_to_json(const core::SolidModel &model, int indent = 2);
 
 /// Parse a document.
 ///
-/// Strict: an unknown key, a wrong type, a dangling reference (an opening
-/// whose `wall` names no wall), a duplicate guid / storey idx, a degenerate
-/// wall axis or polygon all throw.
+/// Strict: an unknown key, a wrong type, a non-finite number, an integer
+/// outside `int`, a dangling reference (an opening whose `wall` names no
+/// wall), a duplicate guid / storey idx, a zero-length wall axis, and a space
+/// polygon that is not a valid polygon with holes (a ring with < 3 points,
+/// self-intersecting or of zero area; a hole not strictly inside the outer
+/// ring, or overlapping another hole) all throw. A ring whose last point
+/// repeats its first is accepted and stored open (the point dropped).
 ///
 /// @throws std::invalid_argument naming the offending element, e.g.
 ///         "walls[2] (guid 'w3'): axis has zero length".

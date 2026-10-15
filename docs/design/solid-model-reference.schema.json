@@ -29,7 +29,7 @@
       "maxItems": 2
     },
     "ring": {
-      "description": "Open ring (first point not repeated), either winding, simple.",
+      "description": "Simple ring of non-zero area, either winding. Written open; a repeated closing point is accepted on read and dropped. Holes must lie strictly inside the outer ring and not overlap or touch each other (checked by the reader, not by this schema).",
       "type": "array",
       "items": {"$ref": "#/$defs/point2"},
       "minItems": 3
@@ -42,7 +42,9 @@
     },
     "storey_ref": {
       "description": "The idx of a storey in 'storeys' (checked only when 'storeys' is present).",
-      "type": "integer"
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647
     },
     "storey": {
       "type": "object",

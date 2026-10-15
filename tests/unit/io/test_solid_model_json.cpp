@@ -235,3 +235,110 @@ TEST_CASE("LoadSolidModel_ProjectWithoutSolidModelTables_ProvidesNothing",
   CHECK_FALSE(m.has_spaces());
   CHECK_FALSE(m.has_openings());
 }
+
+TEST_CASE("SolidModelFromJson_InvalidSpacePolygons_ThrowNamingTheSpace",
+          "[io][solid_model]") {
+  auto doc = minimal_doc();
+  auto &poly = doc["spaces"][0]["polygon"];
+  SECTION("self-intersecting outer ring") {
+    poly["outer"] = {{0, 0}, {4, 3}, {4, 0}, {0, 3}};
+  }
+  SECTION("collinear outer ring") { poly["outer"] = {{0, 0}, {1, 0}, {2, 0}}; }
+  SECTION("hole outside the outer ring") {
+    poly["holes"] = {{{5, 5}, {6, 5}, {6, 6}, {5, 6}}};
+  }
+  SECTION("hole crossing the outer ring") {
+    poly["holes"] = {{{3, 1}, {5, 1}, {5, 2}, {3, 2}}};
+  }
+  SECTION("overlapping holes") {
+    poly["holes"] = {{{1, 1}, {2, 1}, {2, 2}, {1, 2}},
+                     {{1.5, 1.5}, {2.5, 1.5}, {2.5, 2.5}, {1.5, 2.5}}};
+  }
+  CHECK_THROWS_WITH(solid_model_from_json(doc.dump()),
+                    ContainsSubstring("spaces[0]"));
+}
+
+TEST_CASE("SolidModelFromJson_ValidHoles_AreKept", "[io][solid_model]") {
+  auto doc = minimal_doc();
+  doc["spaces"][0]["polygon"]["holes"] = {{{1, 1}, {2, 1}, {2, 2}, {1, 2}},
+                                          {{3, 1}, {3.5, 1}, {3.5, 2}}};
+  const SolidModel m = solid_model_from_json(doc.dump());
+  CHECK(m.spaces[0].polygon.holes.size() == 2);
+}
+
+TEST_CASE("SolidModelFromJson_RepeatedClosingPoint_IsDropped",
+          "[io][solid_model]") {
+  // GeoJSON-style closed rings are accepted and stored open, so the writer
+  // never emits the closing point and a second round trip is a fixed point.
+  auto doc = minimal_doc();
+  doc["spaces"][0]["polygon"]["outer"] = {
+      {0, 0}, {4, 0}, {4, 3}, {0, 3}, {0, 0}};
+  const SolidModel m = solid_model_from_json(doc.dump());
+  CHECK(m.spaces[0].polygon.outer.size() == 4);
+  const std::string once = solid_model_to_json(m);
+  CHECK(solid_model_to_json(solid_model_from_json(once)) == once);
+}
+
+TEST_CASE("SolidModelJson_ProvidedButEmptyStoreys_SurviveRoundTrip",
+          "[io][solid_model]") {
+  const SolidModel m =
+      solid_model_from_json(R"({"model_version": 1, "storeys": []})");
+  CHECK(m.has_storeys());
+  const auto j = nlohmann::json::parse(solid_model_to_json(m));
+  REQUIRE(j.contains("storeys"));
+  CHECK(j.at("storeys").empty());
+  CHECK(solid_model_from_json(j.dump()).has_storeys());
+}
+
+TEST_CASE("SolidModelToJson_MetadataThatIsNotJson_Throws",
+          "[io][solid_model]") {
+  // metadata is JSON text by contract; writing anything else would not read
+  // back as the same record.
+  SolidModel m = solid_model_from_json(minimal_doc().dump());
+  m.walls[0].metadata = "not json";
+  CHECK_THROWS_WITH(solid_model_to_json(m),
+                    ContainsSubstring("w1") && ContainsSubstring("metadata"));
+}
+
+TEST_CASE("SolidModelFromJson_StringMetadata_IsAFixedPoint",
+          "[io][solid_model]") {
+  auto doc = minimal_doc();
+  doc["walls"][0]["metadata"] = "123";
+  const std::string once =
+      solid_model_to_json(solid_model_from_json(doc.dump()));
+  CHECK(nlohmann::json::parse(once)["walls"][0]["metadata"] == "123");
+  CHECK(solid_model_to_json(solid_model_from_json(once)) == once);
+}
+
+TEST_CASE("SolidModelFromJson_OutOfRangeNumbers_Throw", "[io][solid_model]") {
+  auto doc = minimal_doc();
+  SECTION("storey beyond int") { doc["walls"][0]["storey"] = 4294967296LL; }
+  SECTION("negative idx beyond int") {
+    doc["storeys"][0]["idx"] = -4294967296LL;
+  }
+  SECTION("face_points beyond int") {
+    doc["walls"][0]["face_points"] = {1, 4294967296LL};
+  }
+  SECTION("level_transform overflow") {
+    std::string text = doc.dump();
+    const std::string key = R"("z_floor":0)";
+    text.replace(
+        text.find(key), key.size(),
+        R"("level_transform":[1e400,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"z_floor":0)");
+    // The JSON parser itself refuses a number that overflows a double; it
+    // must still surface as std::invalid_argument, not a json exception.
+    CHECK_THROWS_AS(solid_model_from_json(text), std::invalid_argument);
+    return;
+  }
+  SECTION("thickness_ci overflow") {
+    std::string text = doc.dump();
+    const std::string key = R"("thickness":0.2)";
+    text.replace(text.find(key), key.size(),
+                 R"("thickness":0.2,"thickness_ci":[0.1,1e400])");
+    // The JSON parser itself refuses a number that overflows a double; it
+    // must still surface as std::invalid_argument, not a json exception.
+    CHECK_THROWS_AS(solid_model_from_json(text), std::invalid_argument);
+    return;
+  }
+  CHECK_THROWS_AS(solid_model_from_json(doc.dump()), std::invalid_argument);
+}
