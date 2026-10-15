@@ -8,12 +8,15 @@
 #include <memory>
 #include <string>
 
+#include <reusex/core/storey_identity.hpp>
 #include <reusex/segmentation/level.hpp>
 
-/// Options of `rux create storeys`: exactly reusex::geometry::LevelOptions,
-/// so the CLI defaults are the library's (docs/STANDARDS.md §4).
+/// Options of `rux create storeys`: reusex::geometry::LevelOptions plus the
+/// identity tolerance, so the CLI defaults are the library's
+/// (docs/STANDARDS.md §4).
 struct SubcommandCreateStoreysOptions {
   reusex::geometry::LevelOptions level{};
+  reusex::core::StoreyIdentityOptions identity{};
 };
 
 void setup_subcommand_create_storeys(CLI::App &app,

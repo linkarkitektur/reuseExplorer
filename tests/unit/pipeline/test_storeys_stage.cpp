@@ -12,6 +12,7 @@
 #include <reusex/core/ProjectDB.hpp>
 #include <reusex/core/guid.hpp>
 #include <reusex/core/stage_contract.hpp>
+#include <reusex/core/storey_identity.hpp>
 #include <reusex/pipeline/stage_parameters.hpp>
 #include <reusex/pipeline/stages.hpp>
 #include <reusex/segmentation/level.hpp>
@@ -21,7 +22,10 @@
 
 #include <nlohmann/json.hpp>
 
+#include <sqlite3.h>
+
 #include <string>
+#include <vector>
 
 using namespace reusex;
 using namespace reusex::pipeline;
@@ -32,7 +36,7 @@ namespace {
 
 /// Two axis-aligned storeys (floor 0 / ceiling 2.7, floor 3.0 / ceiling 5.8)
 /// with walls, written as the planes stage would.
-void seed_two_storeys(ProjectDB &db) {
+void seed_two_storeys(ProjectDB &db, bool with_basement = false) {
   Cloud cloud;
   CloudL labels;
   CloudLoc centroids;
@@ -81,6 +85,12 @@ void seed_two_storeys(ProjectDB &db) {
         },
         30, int((z1 - z0) / 0.2), 1, 0, 0);
   };
+  if (with_basement) { // floor -3.0, ceiling -0.3 (a 0.3 m slab below 0)
+    horizontal(-3.0, 1);
+    horizontal(-0.3, -1);
+    wall(0, -2.9, -0.4);
+    wall(8, -2.9, -0.4);
+  }
   horizontal(0.0, 1);
   horizontal(2.7, -1);
   wall(0, 0.1, 2.6);
@@ -94,6 +104,21 @@ void seed_two_storeys(ProjectDB &db) {
   db.save_point_cloud("planes", labels, "segment_planes");
   db.save_point_cloud("plane_centroids", centroids, "segment_planes");
   db.save_point_cloud("plane_normals", normals, "segment_planes");
+}
+
+/// storeys.run_id of every row, idx ascending (not in StoreyRecord).
+std::vector<int> run_ids(const TempPath &project) {
+  sqlite3 *raw = nullptr;
+  REQUIRE(sqlite3_open(project.path.string().c_str(), &raw) == SQLITE_OK);
+  sqlite3_stmt *st = nullptr;
+  sqlite3_prepare_v2(raw, "SELECT run_id FROM storeys ORDER BY idx;", -1, &st,
+                     nullptr);
+  std::vector<int> ids;
+  while (sqlite3_step(st) == SQLITE_ROW)
+    ids.push_back(sqlite3_column_int(st, 0));
+  sqlite3_finalize(st);
+  sqlite3_close(raw);
+  return ids;
 }
 
 StageResult run(ProjectDB &db, const TempPath &project,
@@ -129,7 +154,7 @@ TEST_CASE("StoreysStage_Parameters_AreLevelOptionsDefaults",
     FAIL("no parameter " << key);
     return {};
   };
-  CHECK(params.size() == 8);
+  CHECK(params.size() == 9);
   CHECK(std::get<double>(value("horizontal_cos")) == d.horizontal_cos);
   CHECK(std::get<double>(value("inlier_m")) == d.inlier_m);
   CHECK(std::get<long long>(value("max_fit_iterations")) ==
@@ -140,6 +165,8 @@ TEST_CASE("StoreysStage_Parameters_AreLevelOptionsDefaults",
   CHECK(std::get<double>(value("min_storey_height_m")) ==
         d.min_storey_height_m);
   CHECK(std::get<double>(value("default_height_m")) == d.default_height_m);
+  CHECK(std::get<double>(value("guid_match_m")) ==
+        core::StoreyIdentityOptions{}.match_m);
 }
 
 TEST_CASE("StoreysStage_EmptyProject_IsRefusedAsInvalidInput",
@@ -153,7 +180,7 @@ TEST_CASE("StoreysStage_EmptyProject_IsRefusedAsInvalidInput",
   CHECK_FALSE(db.has_storeys());
 }
 
-TEST_CASE("StoreysStage_TwoStoreys_WritesRowsWithDeterministicGuids",
+TEST_CASE("StoreysStage_TwoStoreys_WritesRowsWithStableGuids",
           "[pipeline][stages][storeys]") {
   TempPath project("test_storeys_stage_two");
   ProjectDB db(project.path);
@@ -173,9 +200,13 @@ TEST_CASE("StoreysStage_TwoStoreys_WritesRowsWithDeterministicGuids",
   CHECK(rows[0].z_ceiling == Approx(2.7).margin(0.02));
   CHECK(rows[1].z_floor == Approx(3.0).margin(0.02));
   CHECK(rows[1].z_ceiling == Approx(5.8).margin(0.02));
+  // First run: nothing stored to match, so both GUIDs are minted from the
+  // floor height (core/storey_identity.hpp).
+  CHECK(rows[0].guid ==
+        core::deterministic_guid(db.project_guid(), "storeys/z0"));
+  CHECK(rows[1].guid ==
+        core::deterministic_guid(db.project_guid(), "storeys/z300"));
   for (const auto &s : rows) {
-    CHECK(s.guid == core::deterministic_guid(
-                        db.project_guid(), "storeys/" + std::to_string(s.idx)));
     CHECK(s.source == "detected");
     CHECK_FALSE(s.name.empty());
   }
@@ -184,6 +215,7 @@ TEST_CASE("StoreysStage_TwoStoreys_WritesRowsWithDeterministicGuids",
   REQUIRE(log.size() == 1);
   CHECK(log[0].stage == "storeys");
   CHECK(log[0].status == "success");
+  CHECK(run_ids(project) == std::vector<int>{log[0].id, log[0].id});
 
   // A re-run with the same input keeps every GUID.
   REQUIRE(run(db, project).ok);
@@ -206,4 +238,31 @@ TEST_CASE("StoreysStage_Parameters_ReachDetectStoreys",
   const auto log = db.pipeline_log(1);
   REQUIRE(log.size() == 1);
   CHECK(nlohmann::json::parse(log[0].parameters)["min_storey_height_m"] == 6.0);
+}
+
+TEST_CASE("StoreysStage_NewLowerStorey_KeepsTheOldStoreysGuids",
+          "[pipeline][stages][storeys]") {
+  TempPath project("test_storeys_stage_basement");
+  std::vector<core::StoreyRecord> before;
+  {
+    ProjectDB db(project.path);
+    seed_two_storeys(db);
+    REQUIRE(run(db, project).ok);
+    before = db.storeys();
+    REQUIRE(before.size() == 2);
+    // Re-scan finds a basement: every storey moves up one idx and the level
+    // frame's origin moves 3 m down.
+    seed_two_storeys(db, /*with_basement=*/true);
+    const auto r = run(db, project);
+    INFO(r.message);
+    REQUIRE(r.ok);
+  }
+  ProjectDB db(project.path);
+  const auto after = db.storeys();
+  REQUIRE(after.size() == 3);
+  CHECK(after[1].guid == before[0].guid);
+  CHECK(after[2].guid == before[1].guid);
+  CHECK(after[0].guid != before[0].guid);
+  CHECK(after[0].guid != before[1].guid);
+  CHECK(after[1].z_floor == Approx(3.0).margin(0.02));
 }

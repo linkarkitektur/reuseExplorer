@@ -5,6 +5,7 @@
 #include "utils/parse_number.hpp"
 #include <reusex/pipeline/stage_parameters.hpp>
 
+#include <reusex/core/storey_identity.hpp>
 #include <reusex/reconstruction/mesh.hpp>
 #include <reusex/segmentation/level.hpp>
 #include <reusex/segmentation/reconstruct.hpp>
@@ -389,7 +390,8 @@ const std::vector<ParameterDescriptor> &graph_discover_parameters() {
 }
 
 const std::vector<ParameterDescriptor> &storeys_parameters() {
-  // Keys are the LevelOptions field names; bounds mirror the CLI's
+  // Keys are the LevelOptions field names plus guid_match_m
+  // (core::StoreyIdentityOptions::match_m); bounds mirror the CLI's
   // CLI::Range checks (apps/rux/src/create/storeys.cpp).
   static const std::vector<ParameterDescriptor> table = [] {
     const geometry::LevelOptions d{};
@@ -420,6 +422,10 @@ const std::vector<ParameterDescriptor> &storeys_parameters() {
         dnum("default_height_m", "Default storey height [m]",
              "Storey height used when no ceiling level exists.",
              d.default_height_m, 0.5, 20.0),
+        dnum("guid_match_m", "Identity match [m]",
+             "A re-detected storey keeps the GUID of the stored storey whose "
+             "floor is within this distance (in the new level frame).",
+             core::StoreyIdentityOptions{}.match_m, 0.0, 5.0),
     };
   }();
   return table;

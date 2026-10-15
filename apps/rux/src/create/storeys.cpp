@@ -41,8 +41,9 @@ NOTES:
   - Requires 'cloud', 'planes', 'plane_centroids', 'plane_normals'
   - Always writes at least one storey; a single-storey or ceiling-less scan
     is one row whose metadata says why
-  - Locked rows (source manual) are kept on a re-run; GUIDs are
-    deterministic, so a re-run keeps them
+  - A re-detected storey keeps the GUID of the stored storey whose floor
+    it matches (--guid-match), even when its idx changes; locked rows are
+    kept on a re-run (warned about when they no longer fit the new frame)
 )");
 
   sub->get_formatter()->column_width(40);
@@ -81,6 +82,12 @@ NOTES:
       ->default_val(l.default_height_m)
       ->check(CLI::Range(0.5, 20.0));
 
+  sub->add_option("--guid-match", opt->identity.match_m,
+                  "A re-detected storey keeps the GUID of the stored storey "
+                  "whose floor is within this distance [m]")
+      ->default_val(opt->identity.match_m)
+      ->check(CLI::Range(0.0, 5.0));
+
   sub->callback([opt, global_opt]() {
     spdlog::trace("calling create storeys subcommand");
     if (rux::capture_stage_params("storeys", storeys_stage_parameters(*opt)))
@@ -101,6 +108,7 @@ storeys_stage_parameters(SubcommandCreateStoreysOptions const &opt) {
       .set("slab_merge_m", l.slab_merge_m)
       .set("min_storey_height_m", l.min_storey_height_m)
       .set("default_height_m", l.default_height_m)
+      .set("guid_match_m", opt.identity.match_m)
       .dump();
 }
 

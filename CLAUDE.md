@@ -594,8 +594,9 @@ tree — if a doc mentions `RTABMapDatabase`, that doc is stale.
   Schema v30 adds the `storeys` table (`core::StoreyRecord`, `save_storeys`
   / `storeys()`; written by `rux create storeys`, `JobStage::storeys`) and
   `project_guid()` (project_settings key `project_guid`), the namespace of
-  the solid-model rows' deterministic GUIDs (`core::deterministic_guid`,
-  uuid5 over `"storeys/<idx>"`, ...)
+  the solid-model rows' GUIDs (`core::deterministic_guid`; a re-detected
+  storey keeps its stored GUID, `core/storey_identity.hpp`). It is
+  write-once, so a file copy is the same project
 - Migrating schema; `LATEST_SCHEMA_VERSION` is defined in
   `src/core/ProjectDB.cpp` — read it there rather than trusting a doc (it moves
   most releases)

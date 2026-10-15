@@ -104,7 +104,8 @@ const std::vector<StageSpec> &stage_specs() {
         {"peak_min_share", "--peak-min-share", {}, {}},
         {"slab_merge_m", "--slab-merge", {}, {}},
         {"min_storey_height_m", "--min-storey-height", {}, {}},
-        {"default_height_m", "--default-height", {}, {}}}},
+        {"default_height_m", "--default-height", {}, {}},
+        {"guid_match_m", "--guid-match", {}, {}}}},
   };
   return specs;
 }

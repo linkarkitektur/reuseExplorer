@@ -161,6 +161,13 @@ StageResult run_logged_stage(ProjectDB &db, const StageContext &ctx,
                              std::string_view name, std::string_view log_name,
                              const std::function<StageResult()> &body);
 
+/// As above, handing @p body the id of the pipeline_log row it runs under,
+/// so a stage can attribute the rows it writes to its run (storeys.run_id).
+StageResult
+run_logged_stage(ProjectDB &db, const StageContext &ctx, std::string_view name,
+                 std::string_view log_name,
+                 const std::function<StageResult(int log_id)> &body);
+
 /// Open `ctx.project` read-write and run the stage against it.
 StageResult run_stage(const StageContext &ctx);
 
