@@ -55,7 +55,9 @@ NOTES:
     -vv logs the matching funnel per panorama, -vvv per slice and frame.
   - Acceptance is evidence-based: the best slice's PnP support must beat the
     same panorama's shuffled-correspondence null by --null-margin
-    (below_noise_floor otherwise), and the centre must stay within
+    (below_noise_floor otherwise), the pooled support of its pose must beat
+    the null's pooled support by --pooled-null-margin (too_few_pooled_inliers
+    / refinement_collapsed otherwise), and the centre must stay within
     --max-correction of the seed frame, the hand-held position prior for a
     360 camera carried next to the scanner. Raise or disable (0) it for a
     camera that was placed elsewhere.
@@ -75,7 +77,8 @@ NOTES:
       "Fix the panorama centre to the seed frame's stored position and solve "
       "for rotation only. Recommended when EXIF timestamps are reliable.");
   sub->add_option("--min-inliers", ao.min_inliers,
-                  "Accept an alignment above this many pooled inliers")
+                  "Floor of the pooled-inlier gate (the whole gate with "
+                  "--pooled-null-margin 0)")
       ->check(CLI::NonNegativeNumber)
       ->capture_default_str();
   sub->add_option("--window", ao.candidate_window,
@@ -145,6 +148,11 @@ NOTES:
   sub->add_option("--null-margin", ao.null_margin,
                   "The best slice must beat the noise floor by this factor")
       ->check(CLI::Range(1.0, 100.0))
+      ->capture_default_str();
+  sub->add_option("--pooled-null-margin", ao.pooled_null_margin,
+                  "The pooled inliers must beat the shuffled null's pooled "
+                  "support by this factor (0: only --min-inliers)")
+      ->check(CLI::Range(0.0, 100.0))
       ->capture_default_str();
   sub->add_option("--max-correction", ao.max_correction_m,
                   "Hand-held position prior: reject a centre further than "

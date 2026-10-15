@@ -383,6 +383,62 @@ then moves 1.6 m between seeds. So `min_inliers` was kept at 40.
   candidates that do carry matches are rarely the seed frame. That is
   reusex-bx2.6's ground: frame selection by sharpness and view diversity.
 
+## Follow-up: a pooled gate calibrated against the null (reusex-bx2.8, 2026-10-15)
+
+The pooled gate counts the correspondences of the whole pool that the best
+slice's pose explains. It was a fixed `min_inliers = 40`, set on the old,
+double-counted pool. It is now calibrated against the same shuffled null as
+the best-slice gate:
+
+- In every null trial, each slice pose that PnP finds on the permuted
+  correspondences is applied to that trial's whole permuted pool (slice
+  pixels turned into bearings) and refined, exactly as the real pose is.
+  The best of those counts, before and after refinement, is the pooled
+  support noise reaches on this panorama.
+- The real pooled count must beat it by `pooled_null_margin`
+  (`--pooled-null-margin`), before refinement (`too_few_pooled_inliers`)
+  and after (`refinement_collapsed`). `min_inliers` is now only a floor
+  (12). The best-slice permutations are drawn in the same order as before,
+  so the best-slice noise floor is unchanged.
+- With `--pooled-null-margin 0 --min-inliers 40`, the diagnostics are
+  identical to the bx2.5 defaults, apart from four new fields
+  (`null_pooled_initial`, `null_pooled_final`, `pooled_threshold`,
+  `final_threshold`).
+
+**Measurement** (NewOffice, seeds 42/1/2/3, each with the research null; as
+in the bx2.5 table). The pooled null reaches 7 to 34 inliers per panorama. On
+`018` it reaches 33 to 34, because its pool is concentrated in one direction.
+
+| configuration | accepted / run | null accepts | notes |
+|---|---:|---:|---|
+| fixed 40 (bx2.5 defaults, before) | 5.0 | 0 | |
+| fixed 20 | 8.5 | 0 | adds `007` `008` `012` `015` `016` `018`, and `009` in 3 of 4 seeds; `008` moves 1.9 m and `009` 1.0 m between seeds |
+| null x 1.5 | 7.5 | 0 | `007` 2/4, `012` 3/4; also `008` 3/4 (1.9 m spread), `009` 2/4 (1.0 m), `015` 1/4 |
+| null x 1.75 | 7.0 | 0 | `009` 2/4 at 1.0 m spread |
+| **null x 2 (new default)** | **6.25** | **0** | `007` 2/4, `012` 3/4 (both 0.00 m spread); `008` and `009` 1/4 each; `011` loses its 1.47 m seed-42 outlier |
+| null x 2.5 | 5.0 | 0 | loses `011`; `013` 1/4 |
+| null x 3 | 4.0 | 0 | |
+
+The floor (6, 12 or 20) changed nothing at margin 1.5: the calibrated count
+was always higher.
+
+**Does the pooled gate itself stop noise?** The research null never reaches
+it at the defaults: the best-slice gate stops every null panorama first. With
+the best-slice margin relaxed to 1.0 (`--null-margin 1`), 5 null panoramas
+over the 4 seeds reach the pooled gate with 7 to 25 pooled inliers. All 5
+stop there, at margin 1.5 and at 2. A fixed gate of 20 would have let two of
+them through (21 and 25).
+
+**Still open.**
+
+- `007` aligns in 2 of 4 seeds and `012` in 3 of 4. In the other seeds the
+  USAC seed picks a weaker best slice, and its pose either explains too
+  little of the pool or slides 5.4 m (`007`, seed 1).
+- `018` is not recovered. Its best slice is at the noise floor (15 to 21
+  against 17 to 26 needed), and in seed 42 its pooled null is 33.
+- Every accepted pose still draws its final inliers from one or two
+  candidate frames, never the seed frame (reusex-bx2.6).
+
 ## Reproduce
 
 ```bash

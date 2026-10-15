@@ -102,8 +102,15 @@ struct PanoramaAlignmentOptions {
 
   // --- PnP resection -----------------------------------------------------
   int min_slice_correspondences = 6; ///< need this many to PnP a slice
-  int min_inliers = 40;              ///< accept alignment above this (total)
-  float ransac_reproj_px = 5.0f;     ///< solvePnPRansac reprojection threshold
+  /// Floor of the pooled gate: the best slice's pose must explain at least
+  /// this many correspondences of the whole pool, before and after the
+  /// bearing refinement. With `pooled_null_margin` (the default) the gate is
+  /// the larger of this and the shuffled null's pooled support x margin; with
+  /// the null off (or `fix_translation`) it is the whole gate. 12 (twice
+  /// the slice PnP minimum) never bound on NewOffice: the calibrated count
+  /// was 19 or more for every accepted panorama.
+  int min_inliers = 12;
+  float ransac_reproj_px = 5.0f; ///< solvePnPRansac reprojection threshold
   int ransac_iterations = 500;
   /// Resect each slice with OpenCV's USAC (MAGSAC++ scoring, local
   /// optimisation; seeded by `seed`) instead of the classic EPnP RANSAC loop.
@@ -124,6 +131,19 @@ struct PanoramaAlignmentOptions {
   /// null's best-slice inliers (and at least `min_slice_correspondences`),
   /// else the panorama is rejected as `below_noise_floor`.
   double null_margin = 1.5;
+  /// Pooled gate against the same null (reusex-bx2.8): each null slice pose
+  /// is applied to the whole permuted pool and refined like the real one,
+  /// and the real pooled count (before and after refinement) must beat the
+  /// null's best by this factor. A fixed count could not be right for every
+  /// panorama: after the deduplicated pool (reusex-bx2.5) NewOffice 007 and
+  /// 012 beat their best-slice noise floor 3.8x and 5.1x but held 30 and 36
+  /// pooled inliers against a fixed 40. 2 was measured on NewOffice (4
+  /// seeds): 1.5 also accepts 008 and 009 at centres that move 1.0-1.9 m
+  /// between seeds; 2.5 loses 011 and 013. With the best-slice gate relaxed
+  /// to 1.0, every shuffled-null pose that reached this gate stopped here,
+  /// where a fixed 20 would have let two through. 0 keeps only
+  /// `min_inliers`.
+  double pooled_null_margin = 2.0;
 
   /// Hand-held position prior: reject an alignment whose refined centre is
   /// further than this from the timestamp-seed frame. Bearing-only resection
@@ -273,6 +293,13 @@ struct PanoramaAlignmentDiagnostics {
   int null_best_slice_inliers = -1;
   /// best-slice inliers needed to pass the noise floor; -1 when not run
   int noise_floor_threshold = -1;
+  /// pooled support of the shuffled null's poses, before / after refinement
+  /// (reusex-bx2.8); -1 when the pooled null did not run
+  int null_pooled_initial = -1;
+  int null_pooled_final = -1;
+  /// pooled inliers needed before / after refinement; -1 when not reached
+  int pooled_threshold = -1;
+  int final_threshold = -1;
   /// pano_down . seed_down of the PnP seed rotation (gravity check, #364);
   /// NaN when not evaluated
   double down_dot = std::numeric_limits<double>::quiet_NaN();

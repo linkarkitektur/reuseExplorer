@@ -225,6 +225,10 @@ panorama_alignment_diagnostics_json(const PanoramaAlignmentResult &r) {
   j["best_slice_inliers"] = d.best_slice_inliers;
   j["null_best_slice_inliers"] = d.null_best_slice_inliers;
   j["noise_floor_threshold"] = d.noise_floor_threshold;
+  j["null_pooled_initial"] = d.null_pooled_initial;
+  j["null_pooled_final"] = d.null_pooled_final;
+  j["pooled_threshold"] = d.pooled_threshold;
+  j["final_threshold"] = d.final_threshold;
   j["max_correction_m"] = d.max_correction_m;
   j["down_dot"] = num(d.down_dot);
   j["initial_inliers"] = d.initial_inliers;
@@ -297,9 +301,11 @@ std::string panorama_alignment_summary(const PanoramaAlignmentResult &r) {
                        d.noise_floor_threshold);
   case PanoramaAlignmentOutcome::too_few_pooled_inliers:
   case PanoramaAlignmentOutcome::refinement_collapsed:
-    return fmt::format("{}: pooled {} -> final {} inliers (best slice {} PnP "
-                       "inliers)",
+    return fmt::format("{}: pooled {} -> final {} inliers, needs >= {} -> {} "
+                       "(shuffled null {} -> {}; best slice {} PnP inliers)",
                        name, d.initial_inliers, d.final_inliers,
+                       d.pooled_threshold, d.final_threshold,
+                       d.null_pooled_initial, d.null_pooled_final,
                        d.best_slice_inliers);
   case PanoramaAlignmentOutcome::correction_gate:
     return fmt::format("{}: centre {:.2f} m from seed > {:.2f} m ({} inliers, "
@@ -568,9 +574,30 @@ PanoramaAlignmentResult align_panorama(ProjectDB &db, int pano_id,
   // panorama's slices says how many. A best slice that does not clear it by
   // `null_margin` carries no detectable geometry: every later gate would only
   // report how a random pose happened to fail (or, worse, accept it).
+  // angular threshold from the slice reprojection tolerance (small-angle),
+  // relaxed 2x to admit the honest inliers of the other slices.
+  const double fx0 = slices.empty() ? 1.0 : slices[0].K(0, 0);
+  const double ang_gate = 2.0 * std::atan(opt.ransac_reproj_px / fx0);
+  // The pooled gate is calibrated against the same null (reusex-bx2.8) on
+  // the 6-DoF path; the rotation-only path keeps the fixed `min_inliers`.
+  const bool pooled_null = opt.null_trials > 0 &&
+                           opt.pooled_null_margin > 0.0 && !opt.fix_translation;
+  int need_initial = opt.min_inliers, need_final = opt.min_inliers;
   if (opt.null_trials > 0) {
-    diag.null_best_slice_inliers = pano_detail::shuffled_best_slice_inliers(
-        pnp_in, popt, opt.null_trials, opt.seed);
+    pano_detail::BearingRefineOptions null_ro{ang_gate, opt.refine_iterations,
+                                              1};
+    const pano_detail::NullFloor nf = pano_detail::shuffled_null_floor(
+        pnp_in, popt, opt.null_trials, opt.seed,
+        pooled_null ? &null_ro : nullptr);
+    diag.null_best_slice_inliers = nf.best_slice_inliers;
+    if (pooled_null) {
+      diag.null_pooled_initial = nf.pooled_initial;
+      diag.null_pooled_final = nf.pooled_final;
+      need_initial = pano_detail::noise_floor_threshold(
+          nf.pooled_initial, opt.pooled_null_margin, opt.min_inliers);
+      need_final = pano_detail::noise_floor_threshold(
+          nf.pooled_final, opt.pooled_null_margin, opt.min_inliers);
+    }
     diag.noise_floor_threshold = pano_detail::noise_floor_threshold(
         diag.null_best_slice_inliers, opt.null_margin,
         opt.min_slice_correspondences);
@@ -632,10 +659,8 @@ PanoramaAlignmentResult align_panorama(ProjectDB &db, int pano_id,
   }
 
   // --- gate the pool by consistency with the initial pose -------------------
-  // angular threshold from the slice reprojection tolerance (small-angle),
-  // relaxed 2x to admit the honest inliers of the other slices.
-  const double fx0 = slices.empty() ? 1.0 : slices[0].K(0, 0);
-  const double ang_gate = 2.0 * std::atan(opt.ransac_reproj_px / fx0);
+  diag.pooled_threshold = need_initial;
+  diag.final_threshold = need_final;
 
   // Parallel arrays for the shared bearing-space refinement: each pooled
   // correspondence's WORLD point against the panorama bearing it was seen
@@ -689,7 +714,7 @@ PanoramaAlignmentResult align_panorama(ProjectDB &db, int pano_id,
   // FINAL inlier count (checked after GN in PanoramaAlignment). The 6-DoF path
   // is unchanged (ro.min_inliers == opt.min_inliers).
   const int rot_only_min =
-      opt.fix_translation ? std::max(5, opt.min_inliers / 2) : opt.min_inliers;
+      opt.fix_translation ? std::max(5, opt.min_inliers / 2) : need_initial;
   pano_detail::BearingRefineOptions ro{rot_only_gate, opt.refine_iterations,
                                        rot_only_min};
   ro.initial_ang_gate = 0.0;
@@ -722,23 +747,30 @@ PanoramaAlignmentResult align_panorama(ProjectDB &db, int pano_id,
                                                t, &initial_inliers);
   }
 
-  // In the 6-DoF path the refinement function enforces opt.min_inliers
-  // internally, so initial_inliers < opt.min_inliers is a reliable early-exit
-  // signal (the function already returned {} and inl_idx is empty).
+  // In the 6-DoF path the refinement function enforces need_initial (the
+  // pooled gate: opt.min_inliers, or the null-calibrated count) internally,
+  // so initial_inliers < need_initial is a reliable early-exit signal (the
+  // function already returned {} and inl_idx is empty).
   //
   // In the rotation-only path ro.min_inliers was lowered to rot_only_min to
   // allow GN to start from a smaller initial inlier set. The FINAL acceptance
   // threshold is still opt.min_inliers and is checked on inl_idx.size() below.
   diag.initial_inliers = initial_inliers;
-  if (!opt.fix_translation && initial_inliers < opt.min_inliers) {
-    core::debug("PanoramaAlignment: panorama {} — {} pooled inliers < {}",
-                pano_id, initial_inliers, opt.min_inliers);
+  if (!opt.fix_translation && initial_inliers < need_initial) {
+    core::debug("PanoramaAlignment: panorama {} — {} pooled inliers < {} "
+                "(shuffled null {})",
+                pano_id, initial_inliers, need_initial,
+                diag.null_pooled_initial);
     return finish(PanoramaAlignmentOutcome::too_few_pooled_inliers);
   }
-  if (inl_idx.empty()) {
+  if (inl_idx.empty() ||
+      (!opt.fix_translation && static_cast<int>(inl_idx.size()) < need_final)) {
+    if (!inl_idx.empty())
+      diag.final_inliers = static_cast<int>(inl_idx.size());
     core::debug("PanoramaAlignment: panorama {} — refinement fell below {} "
-                "inliers (started at {})",
-                pano_id, opt.min_inliers, initial_inliers);
+                "inliers (started at {}, shuffled null {})",
+                pano_id, opt.fix_translation ? rot_only_min : need_final,
+                initial_inliers, diag.null_pooled_final);
     return finish(PanoramaAlignmentOutcome::refinement_collapsed);
   }
 

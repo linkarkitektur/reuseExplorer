@@ -223,6 +223,31 @@ int shuffled_best_slice_inliers(const std::vector<SlicePnPInput> &slices,
                                 const SlicePnPOptions &opt, int trials,
                                 unsigned seed);
 
+/// What the shuffled null reaches on one panorama (reusex-bx2.4, -bx2.8).
+struct NullFloor {
+  /// max PnP inliers of any slice in any trial (shuffled_best_slice_inliers)
+  int best_slice_inliers = 0;
+  /// max over every null slice pose of the pool it gates (the whole
+  /// permuted sphere, as bearings), before and after refine_bearing_pose;
+  /// -1 when not measured
+  int pooled_initial = -1;
+  int pooled_final = -1;
+};
+
+/// shuffled_best_slice_inliers(), plus the pooled support of the null poses
+/// when @p pooled is non-null: in each trial, every slice pose PnP found on
+/// the permuted correspondences is applied to the union of that trial's
+/// permuted slices (slice pixels turned into panorama bearings) and refined
+/// with @p pooled, exactly as the real best-slice pose is applied to the real
+/// pool. The best-slice permutations are drawn in the same order as
+/// shuffled_best_slice_inliers(), so `best_slice_inliers` is identical;
+/// slices with too few correspondences to PnP are permuted with a separate
+/// generator. Deterministic for a given @p seed (STANDARDS §6).
+NullFloor shuffled_null_floor(const std::vector<SlicePnPInput> &slices,
+                              const SlicePnPOptions &opt, int trials,
+                              unsigned seed,
+                              const BearingRefineOptions *pooled);
+
 /// The best-slice PnP inlier count a panorama needs to beat the noise floor:
 /// strictly more than @p margin x @p null_best, and never fewer than
 /// @p min_correspondences.
