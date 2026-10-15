@@ -1425,30 +1425,50 @@ class ProjectDB {
     std::vector<int64_t> type_ids; // linked survey types, ascending
     std::string created_at;
     std::string updated_at;
+    /// Linked survey parts (schema v31, sample_part_links), ascending. A
+    /// part link bears on the type the part is filed under *now*
+    /// (samples_for_type), so it follows a re-filed part; deleting the part
+    /// drops it. Empty on a read-only open of a pre-v31 project. Kept LAST so
+    /// positional aggregate initializers still compile.
+    std::vector<std::string> part_codes{};
   };
   struct SamplePatch {
     std::optional<std::string> title, what;
     std::optional<core::SampleStage> stage;
     std::optional<core::SampleResult> result;
   };
-  /// Register a sample, its type links and its initial stage in one
-  /// transaction (duplicate type ids collapse).
-  /// @throws std::out_of_range when a `type_ids` entry names no survey type.
+  /// Register a sample, its type and part links and its initial stage in
+  /// one transaction (duplicate type ids / part codes collapse).
+  /// @throws std::out_of_range when a `type_ids` entry names no survey type
+  ///         ("no survey type <id>") or a `part_codes` entry names no survey
+  ///         part ("no survey part '<code>'").
   /// @throws std::invalid_argument when `stage` is not planlagt/udtaget.
   /// Nothing is written (and no P-## code consumed) when it throws.
-  SampleRecord
-  add_sample(std::string_view title, std::string_view what,
-             const std::vector<int64_t> &type_ids = {},
-             core::SampleStage stage = core::SampleStage::planlagt);
+  SampleRecord add_sample(std::string_view title, std::string_view what,
+                          const std::vector<int64_t> &type_ids = {},
+                          core::SampleStage stage = core::SampleStage::planlagt,
+                          const std::vector<std::string> &part_codes = {});
   [[nodiscard]] std::vector<SampleRecord> samples() const; // by id
   [[nodiscard]] std::optional<SampleRecord> sample(int64_t id) const;
   SampleRecord
   update_sample(int64_t id,
                 const SamplePatch &patch); // storage only; no stage rules
   bool delete_sample(int64_t id);          // false when absent
-  void
-  set_sample_links(int64_t id,
-                   const std::vector<int64_t> &type_ids); // replaces the set
+  /// Replaces the sample's type links and, when @p part_codes is given, its
+  /// part links as well, in one transaction (nullopt leaves the part links
+  /// as they are). Everything is validated before the first write.
+  /// @throws std::out_of_range for an unknown sample, a `type_ids` entry
+  ///         naming no survey type, or a `part_codes` entry naming no survey
+  ///         part. Nothing changes when it throws.
+  void set_sample_links(
+      int64_t id, const std::vector<int64_t> &type_ids,
+      const std::optional<std::vector<std::string>> &part_codes = std::nullopt);
+  /// Replaces only the sample's part links (schema v31). Throws as
+  /// set_sample_links does.
+  void set_sample_part_links(int64_t id,
+                             const std::vector<std::string> &part_codes);
+  /// Samples that bear on @p type_id: linked to it directly, or linked to a
+  /// survey part currently filed under it. By id, each sample once.
   [[nodiscard]] std::vector<SampleRecord>
   samples_for_type(int64_t type_id) const;
 

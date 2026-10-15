@@ -422,9 +422,11 @@ class ProjectDB::Impl {
   bool hasSettingsTable = false;
   /// storeys exists (v30).
   bool hasStoreysTable = false;
+  /// sample_part_links exists (v31).
+  bool hasSamplePartLinks = false;
 
   // cppcheck-suppress unusedStructMember
-  static constexpr int LATEST_SCHEMA_VERSION = 30;
+  static constexpr int LATEST_SCHEMA_VERSION = 31;
 
   // How long one statement waits for a lock another connection holds before
   // failing with SQLITE_BUSY. sqlite's default is not to wait at all.
@@ -548,6 +550,7 @@ class ProjectDB::Impl {
     hasInitialTransform = columnExists("sensor_frames", "initial_transform");
     hasSettingsTable = tableExists("project_settings");
     hasStoreysTable = tableExists("storeys");
+    hasSamplePartLinks = tableExists("sample_part_links");
   }
 
   /// True the first time this process opens dbPath read-only at schema
@@ -851,6 +854,10 @@ class ProjectDB::Impl {
 
     if (current < 30) {
       migrateToV30();
+    }
+
+    if (current < 31) {
+      migrateToV31();
     }
 
     reusex::trace("Schema version: {}", getCurrentSchemaVersion());
@@ -3152,6 +3159,37 @@ class ProjectDB::Impl {
                  "survey type(s) ({} renamed) and {} passport designation(s)",
                  shifted.size(), fmt::join(shifted, ", "), instanceRows,
                  instanceDefs, surveyTypes, surveyNames, passportNames);
+  }
+
+  void migrateToV31() {
+    reusex::info("Migrating database to schema version 31");
+    // Samples linked to specific survey parts (rux-frontend frontend-r46).
+    // Unlike v24's samples.part_code (dropped in v25), a real foreign key:
+    // deleting a part (or its type, which cascades to the parts) drops the
+    // link, and a renamed code follows. The link stores no type — a part's
+    // samples bear on the type it is filed under now (samples_for_type), so
+    // re-filing a part carries its samples with it.
+    execOrThrow("BEGIN TRANSACTION;");
+    try {
+      execOrThrow(R"(
+        CREATE TABLE IF NOT EXISTS sample_part_links (
+          sample_id INTEGER NOT NULL REFERENCES samples(id) ON DELETE CASCADE,
+          part_code TEXT    NOT NULL REFERENCES survey_parts(code)
+            ON DELETE CASCADE ON UPDATE CASCADE,
+          PRIMARY KEY (sample_id, part_code)
+        );
+        CREATE INDEX IF NOT EXISTS idx_sample_part_links_part
+          ON sample_part_links(part_code);
+      )");
+      insertSchemaVersion(31, "Link samples to survey parts "
+                              "(sample_part_links)");
+      execOrThrow("COMMIT;");
+    } catch (...) {
+      if (sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr) != SQLITE_OK)
+        reusex::warn("migrateToV31: ROLLBACK failed: {}", sqlite3_errmsg(db));
+      throw;
+    }
+    reusex::info("Migration to schema version 31 complete");
   }
 
   /// 1-based position of a report version in generation order.
@@ -10681,9 +10719,11 @@ constexpr const char *kSampleColumns =
     "id, code, title, what, stage, result, created_at, updated_at";
 } // namespace
 
-// Fills type_ids for each record in place.
+// Fills type_ids (and, when the v31 table exists, part_codes) for each
+// record in place.
 static void attach_sample_links(sqlite3 *db,
-                                std::vector<ProjectDB::SampleRecord> &records) {
+                                std::vector<ProjectDB::SampleRecord> &records,
+                                bool has_part_links) {
   sqlite3_stmt *stmt = prepare_or_throw(
       db,
       "SELECT type_id FROM sample_links WHERE sample_id = ? ORDER BY type_id;",
@@ -10695,12 +10735,67 @@ static void attach_sample_links(sqlite3 *db,
     while (sqlite3_step(stmt) == SQLITE_ROW)
       r.type_ids.push_back(sqlite3_column_int64(stmt, 0));
   }
+  if (!has_part_links)
+    return;
+  sqlite3_stmt *parts =
+      prepare_or_throw(db,
+                       "SELECT part_code FROM sample_part_links WHERE "
+                       "sample_id = ? ORDER BY part_code;",
+                       "sample_part_links");
+  StmtGuard parts_guard(parts);
+  for (auto &r : records) {
+    sqlite3_reset(parts);
+    sqlite3_bind_int64(parts, 1, r.id);
+    while (sqlite3_step(parts) == SQLITE_ROW)
+      r.part_codes.push_back(column_text(parts, 0));
+  }
+}
+
+// The distinct part codes of @p codes, in first-seen order.
+// @throws std::out_of_range ("no survey part '<code>'", as the survey part
+//         accessors word it) when one names no survey part.
+static std::vector<std::string>
+checked_part_codes(sqlite3 *db, const std::vector<std::string> &codes) {
+  sqlite3_stmt *stmt = prepare_or_throw(
+      db, "SELECT 1 FROM survey_parts WHERE code = ?;", "sample_part_links");
+  StmtGuard guard(stmt);
+  std::vector<std::string> out;
+  for (const auto &c : codes) {
+    sqlite3_reset(stmt);
+    bind_text(stmt, 1, c);
+    if (sqlite3_step(stmt) != SQLITE_ROW)
+      throw std::out_of_range("no survey part '" + c + "'");
+    if (std::find(out.begin(), out.end(), c) == out.end())
+      out.push_back(c);
+  }
+  return out;
+}
+
+// Inserts (sample_id, code) rows; call inside the caller's transaction.
+static void insert_sample_part_links(sqlite3 *db, int64_t id,
+                                     const std::vector<std::string> &codes,
+                                     const char *context) {
+  sqlite3_stmt *ins =
+      prepare_or_throw(db,
+                       "INSERT OR IGNORE INTO sample_part_links "
+                       "(sample_id, part_code) VALUES (?, ?);",
+                       context);
+  StmtGuard guard(ins);
+  for (const auto &c : codes) {
+    sqlite3_reset(ins);
+    sqlite3_bind_int64(ins, 1, id);
+    bind_text(ins, 2, c);
+    if (sqlite3_step(ins) != SQLITE_DONE)
+      throw std::runtime_error(std::string(context) + ": " +
+                               sqlite3_errmsg(db));
+  }
 }
 
 ProjectDB::SampleRecord
 ProjectDB::add_sample(std::string_view title, std::string_view what,
                       const std::vector<int64_t> &type_ids,
-                      core::SampleStage stage) {
+                      core::SampleStage stage,
+                      const std::vector<std::string> &part_codes) {
   impl_->checkWritable();
   // A sample is registered before it reaches a lab; later stages are reached
   // by update_sample (via update_sample_checked).
@@ -10718,6 +10813,7 @@ ProjectDB::add_sample(std::string_view title, std::string_view what,
     if (std::find(links.begin(), links.end(), t) == links.end())
       links.push_back(t);
   }
+  const auto parts = checked_part_codes(impl_->db, part_codes);
 
   int64_t id = 0;
   // The row, its links and its stage land together.
@@ -10768,6 +10864,7 @@ ProjectDB::add_sample(std::string_view title, std::string_view what,
           throw std::runtime_error("add_sample: " +
                                    std::string(sqlite3_errmsg(impl_->db)));
       }
+      insert_sample_part_links(impl_->db, id, parts, "add_sample");
     }
     impl_->execOrThrow("COMMIT;");
   } catch (...) {
@@ -10790,7 +10887,7 @@ std::vector<ProjectDB::SampleRecord> ProjectDB::samples() const {
   std::vector<SampleRecord> out;
   while (sqlite3_step(stmt) == SQLITE_ROW)
     out.push_back(read_sample_row(stmt));
-  attach_sample_links(impl_->db, out);
+  attach_sample_links(impl_->db, out, impl_->hasSamplePartLinks);
   return out;
 }
 
@@ -10803,7 +10900,7 @@ std::optional<ProjectDB::SampleRecord> ProjectDB::sample(int64_t id) const {
   if (sqlite3_step(stmt) != SQLITE_ROW)
     return std::nullopt;
   std::vector<SampleRecord> one{read_sample_row(stmt)};
-  attach_sample_links(impl_->db, one);
+  attach_sample_links(impl_->db, one, impl_->hasSamplePartLinks);
   return one.front();
 }
 
@@ -10856,14 +10953,18 @@ bool ProjectDB::delete_sample(int64_t id) {
   return sqlite3_changes(impl_->db) > 0;
 }
 
-void ProjectDB::set_sample_links(int64_t id,
-                                 const std::vector<int64_t> &type_ids) {
+void ProjectDB::set_sample_links(
+    int64_t id, const std::vector<int64_t> &type_ids,
+    const std::optional<std::vector<std::string>> &part_codes) {
   impl_->checkWritable();
   if (!sample(id))
     throw std::out_of_range("no sample " + std::to_string(id));
   for (auto t : type_ids)
     if (!survey_type(t))
       throw std::out_of_range("no survey type " + std::to_string(t));
+  std::optional<std::vector<std::string>> parts;
+  if (part_codes)
+    parts = checked_part_codes(impl_->db, *part_codes);
   impl_->execOrThrow("BEGIN TRANSACTION;");
   try {
     sqlite3_stmt *del = prepare_or_throw(
@@ -10885,6 +10986,17 @@ void ProjectDB::set_sample_links(int64_t id,
         throw std::runtime_error("set_sample_links: " +
                                  std::string(sqlite3_errmsg(impl_->db)));
     }
+    if (parts) {
+      sqlite3_stmt *del_parts = prepare_or_throw(
+          impl_->db, "DELETE FROM sample_part_links WHERE sample_id = ?;",
+          "set_sample_links");
+      StmtGuard del_parts_guard(del_parts);
+      sqlite3_bind_int64(del_parts, 1, id);
+      if (sqlite3_step(del_parts) != SQLITE_DONE)
+        throw std::runtime_error("set_sample_links: " +
+                                 std::string(sqlite3_errmsg(impl_->db)));
+      insert_sample_part_links(impl_->db, id, *parts, "set_sample_links");
+    }
     impl_->execOrThrow("COMMIT;");
   } catch (...) {
     // Non-throwing on purpose: a throw here would mask the original
@@ -10899,12 +11011,35 @@ void ProjectDB::set_sample_links(int64_t id,
   }
 }
 
+void ProjectDB::set_sample_part_links(
+    int64_t id, const std::vector<std::string> &part_codes) {
+  const auto current = sample(id);
+  if (!current)
+    throw std::out_of_range("no sample " + std::to_string(id));
+  set_sample_links(id, current->type_ids, part_codes);
+}
+
 std::vector<ProjectDB::SampleRecord>
 ProjectDB::samples_for_type(int64_t type_id) const {
+  // A part link bears on the type the part is filed under now, so the join
+  // is resolved at read time rather than stored.
+  const char *sql =
+      impl_->hasSamplePartLinks
+          ? "SELECT sample_id FROM sample_links WHERE type_id = ?1 UNION "
+            "SELECT l.sample_id FROM sample_part_links l JOIN survey_parts p "
+            "ON p.code = l.part_code WHERE p.type_id = ?1;"
+          : "SELECT sample_id FROM sample_links WHERE type_id = ?1;";
+  sqlite3_stmt *stmt = prepare_or_throw(impl_->db, sql, "samples_for_type");
+  StmtGuard guard(stmt);
+  sqlite3_bind_int64(stmt, 1, type_id);
+  std::set<int64_t> ids;
+  while (sqlite3_step(stmt) == SQLITE_ROW)
+    ids.insert(sqlite3_column_int64(stmt, 0));
   std::vector<SampleRecord> out;
+  if (ids.empty())
+    return out;
   for (auto &s : samples())
-    if (std::find(s.type_ids.begin(), s.type_ids.end(), type_id) !=
-        s.type_ids.end())
+    if (ids.count(s.id) != 0)
       out.push_back(std::move(s));
   return out;
 }

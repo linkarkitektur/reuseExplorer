@@ -596,7 +596,11 @@ tree — if a doc mentions `RTABMapDatabase`, that doc is stale.
   `project_guid()` (project_settings key `project_guid`), the namespace of
   the solid-model rows' GUIDs (`core::deterministic_guid`; a re-detected
   storey keeps its stored GUID, `core/storey_identity.hpp`). It is
-  write-once, so a file copy is the same project
+  write-once, so a file copy is the same project. Schema v31 adds
+  `sample_part_links` (sample ↔ survey part, FK-cascading on both sides;
+  `SampleRecord::part_codes`, `set_sample_part_links`): a part-linked
+  sample bears on the type the part is filed under now, so
+  `samples_for_type` / `core::environment_statuses` roll it up there
 - Migrating schema; `LATEST_SCHEMA_VERSION` is defined in
   `src/core/ProjectDB.cpp` — read it there rather than trusting a doc (it moves
   most releases)
