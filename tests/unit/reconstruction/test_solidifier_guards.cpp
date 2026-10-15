@@ -96,6 +96,38 @@ TEST_CASE("Solidifier_MissingPropertyMaps_ThrowsDescriptiveError",
                           ContainsSubstring("c:room_probabilities"));
 }
 
+TEST_CASE("CellComplex_ZeroBoundedFaces_ThrowsDescriptiveErrorNamingCause",
+          "[geometry][cellcomplex][guards]") {
+  // Two parallel vertical planes with no perpendicular wall cannot enclose
+  // any area: the 2D arrangement has 0 bounded faces, so the projected cell
+  // count is 0. Construction must fail fast here, naming the real cause
+  // (no bounded faces, the plane counts) and pointing at `create planes` —
+  // not continue on to build a 0-cell complex and let Solidifier::solve()
+  // run a vacuous MIP that reports the misleading "increase --time-limit /
+  // use --solver highs / stronger plane merging" hint (reusex-qw0). Because
+  // construction throws, Solidifier is never constructed and no solve is
+  // ever attempted for this case.
+  PlaneVec planes;
+  planes.emplace_back(1, 0, 0, 0);  // x = 0
+  planes.emplace_back(1, 0, 0, -4); // x = 4 (parallel: no perpendicular pair)
+  std::vector<size_t> verticals = {0, 1};
+
+  planes.emplace_back(0, 0, 1, 0);    // z = 0
+  planes.emplace_back(0, 0, 1, -2.5); // z = 2.5
+  std::vector<size_t> horizontals = {2, 3};
+
+  std::vector<std::pair<size_t, size_t>> pairs{}; // no enclosing wall pairs
+
+  REQUIRE_THROWS_WITH(
+      std::make_shared<CellComplex>(planes, verticals, horizontals, pairs,
+                                    std::array<double, 2>{-1.0, -1.0},
+                                    std::array<double, 2>{5.0, 3.5},
+                                    std::nullopt, /*max_cells=*/500),
+      ContainsSubstring("0 bounded faces") && ContainsSubstring("2 vertical") &&
+          ContainsSubstring("2 horizontal") &&
+          ContainsSubstring("create planes"));
+}
+
 TEST_CASE("CellComplex_MaxCellsExceededByFragmentation_ThrowsDescriptiveError",
           "[geometry][cellcomplex][guards]") {
   // A tiny max_cells makes even the single-box arrangement exceed the limit,
