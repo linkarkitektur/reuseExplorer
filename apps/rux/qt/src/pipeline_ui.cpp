@@ -38,6 +38,8 @@ QString stage_name_da(pl::JobStage stage) {
     return "Klassificér planer";
   case pl::JobStage::walls:
     return "Vægge";
+  case pl::JobStage::openings:
+    return "Åbninger";
   }
   return {};
 }
@@ -68,6 +70,9 @@ QString stage_blurb_da(pl::JobStage stage) {
   case pl::JobStage::walls:
     return "Find væggene: akse, målt tykkelse og hvordan de mødes (hjørner, "
            "T-samlinger).";
+  case pl::JobStage::openings:
+    return "Find døre, vinduer og åbninger i væggene: hvor væggen mangler og "
+           "intet står foran den.";
   }
   return {};
 }
@@ -232,6 +237,50 @@ QString parameter_label_da(pl::JobStage stage,
           {{"walls", "guid_match_m"}, "Samme væg inden for [m]"},
           {{"walls", "guid_match_angle_deg"}, "Samme væg vinkel [°]"},
           {{"walls", "guid_min_overlap"}, "Samme væg overlap"},
+          {{"openings", "cell_m"}, "Rastercelle [m]"},
+          {{"openings", "slab_margin_m"}, "Vægmargin [m]"},
+          {{"openings", "unknown_half_thickness_m"},
+           "Ukendt halv tykkelse [m]"},
+          {{"openings", "front_m"}, "Skjult af ting inden for [m]"},
+          {{"openings", "floor_clear_m"}, "Fri af gulv [m]"},
+          {{"openings", "ceiling_clear_m"}, "Fri af loft [m]"},
+          {{"openings", "local_levels"}, "Mål gulv og loft lokalt"},
+          {{"openings", "level_search_m"}, "Søg gulv/loft inden for [m]"},
+          {{"openings", "min_level_points"}, "Mindste punkter i gulvlag"},
+          {{"openings", "sill_snap_m"}, "Bundkarm til gulv under [m]"},
+          {{"openings", "min_wall_points"}, "Mindste vægpunkter"},
+          {{"openings", "min_occluder_points"}, "Mindste skjulende punkter"},
+          {{"openings", "morph_radius"}, "Morfologiradius [celler]"},
+          {{"openings", "min_width_m"}, "Smalleste åbning [m]"},
+          {{"openings", "min_height_m"}, "Laveste åbning [m]"},
+          {{"openings", "min_fill"}, "Mindste fyldning"},
+          {{"openings", "min_open_share"}, "Mindste gennemsete andel"},
+          {{"openings", "min_jamb_share"}, "Mindste karmandel"},
+          {{"openings", "drop_top_bands"}, "Drop usete topbånd"},
+          {{"openings", "top_band_max_m"}, "Topbånd under [m]"},
+          {{"openings", "min_floor_height_m"}, "Laveste åbning fra gulv [m]"},
+          {{"openings", "door_max_sill_m"}, "Højeste dørtrin [m]"},
+          {{"openings", "door_min_height_m"}, "Laveste dør [m]"},
+          {{"openings", "door_max_height_m"}, "Højeste dør [m]"},
+          {{"openings", "full_height_tol_m"}, "Gulv-til-loft tolerance [m]"},
+          {{"openings", "mullion_max_gap_m"}, "Bredeste sprosse [m]"},
+          {{"openings", "mullion_max_dz_m"}, "Sprosse: højdeforskel [m]"},
+          {{"openings", "evidence_band_m"}, "Evidensbånd [m]"},
+          {{"openings", "min_class_share"}, "Mindste klasseandel"},
+          {{"openings", "min_instance_points"}, "Mindste instanspunkter"},
+          {{"openings", "min_glass_share"}, "Mindste glasandel"},
+          {{"openings", "crossing_max_step_m"}, "Længste kameraskridt [m]"},
+          {{"openings", "crossing_tol_m"}, "Krydsning: tolerance [m]"},
+          {{"openings", "crossing_door_max_sill_m"},
+           "Krydset: højeste brystning [m]"},
+          {{"openings", "crossing_storey_below_m"}, "Kamera under gulv [m]"},
+          {{"openings", "crossing_storey_above_m"}, "Kamera over loft [m]"},
+          {{"openings", "leaf_margin_m"}, "Dørblad: margin [m]"},
+          {{"openings", "min_leaf_points"}, "Mindste dørbladspunkter"},
+          {{"openings", "leaf_bin_deg"}, "Dørblad: vinkelinterval [°]"},
+          {{"openings", "leaf_min_radius_share"}, "Dørblad: indre radius"},
+          {{"openings", "guid_match_m"}, "Samme åbning inden for [m]"},
+          {{"openings", "guid_min_overlap"}, "Samme åbning overlap"},
   };
   if (auto it = labels.find({std::string(pl::to_string(stage)), d.key});
       it != labels.end())
@@ -273,6 +322,8 @@ reusex::core::PipelineStage contract_stage(pl::JobStage stage) {
     return P::classify;
   case pl::JobStage::walls:
     return P::walls;
+  case pl::JobStage::openings:
+    return P::openings;
   }
   return P::clouds;
 }

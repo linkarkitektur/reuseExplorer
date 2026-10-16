@@ -146,6 +146,8 @@ std::string producing_command(Layer layer) {
     return "rux analyze drift -o drift.json";
   case Layer::walls:
     return "rux create walls";
+  case Layer::openings:
+    return "rux create openings";
   }
   return "the corresponding rux create subcommand";
 }
@@ -1095,6 +1097,103 @@ std::vector<vtkActor *> add_walls_layer(vtkRenderer *renderer,
   return actors;
 }
 
+// ── Openings layer (reusex-z1v.7.3) ──────────────────────────────────────────
+//
+// The `openings` table drawn in its host walls' faces, through the host
+// wall's storey frame (the plan overlay's PlanBuilder). In 3D
+// (PlanPlacement::level) each opening is a rectangle s_start..s_end x
+// z_sill..z_head on both faces of its wall (axis +- half the thickness, a
+// centimetre proud), outline plus a translucent fill, so elevations and
+// sections from either side show it; in plan (PlanPlacement::above_scene) a
+// bar along the axis with a tick across the wall at each end, the plan
+// overlay's symbol, on a sheet over the cut. Coloured by kind: door, window,
+// opening (SceneOptions::plan_door_rgb, plan_window_rgb, plan_opening_rgb).
+
+/// How far proud of the wall face a 3D opening rectangle is drawn [m].
+constexpr double kOpeningProudM = 0.01;
+
+std::vector<vtkActor *> add_openings_layer(vtkRenderer *renderer,
+                                           const ProjectDB &db,
+                                           const SceneOptions &opts,
+                                           SceneBounds &bounds,
+                                           SceneLayer &drawn) {
+  const auto openings = db.openings();
+  if (openings.empty())
+    throw std::runtime_error("render: project has no openings — run `" +
+                             producing_command(Layer::openings) + "` first");
+  std::unordered_map<std::string, core::WallRecord> walls;
+  for (auto &w : db.walls())
+    walls.emplace(w.guid, std::move(w));
+  core::SolidModel frames;
+  frames.storeys = db.storeys();
+  const bool sheet = opts.plan_placement == PlanPlacement::above_scene;
+  PlanBuilder b(frames, opts.plan_placement, bounds, opts.plan_sheet_z);
+  // [kind][0 = outline, 1 = fill]: door, window, opening.
+  std::array<std::array<PlanGeometry, 2>, 3> g;
+  std::size_t orphans = 0;
+  for (const auto &o : openings) {
+    const auto it = walls.find(o.wall);
+    if (it == walls.end()) {
+      ++orphans;
+      continue;
+    }
+    const core::WallRecord &w = it->second;
+    const Eigen::Vector2d p0(w.x0, w.y0), p1(w.x1, w.y1);
+    const double len = (p1 - p0).norm();
+    if (!(len > 0.0) || !std::isfinite(len)) {
+      ++orphans;
+      continue;
+    }
+    const Eigen::Vector2d d = (p1 - p0) / len;
+    const Eigen::Vector2d n(-d.y(), d.x());
+    const double half = w.thickness > 0.0 ? 0.5 * w.thickness : 0.0;
+    const std::size_t k = o.kind == "door" ? 0 : o.kind == "window" ? 1 : 2;
+    const Eigen::Vector2d a = p0 + d * o.s_start, e = p0 + d * o.s_end;
+    const auto at = [&](const Eigen::Vector2d &q, double z) {
+      return b.world(w.storey, q.x(), q.y(), z);
+    };
+    if (sheet) {
+      const double tick = half + kOpeningTickM;
+      b.segment(g[k][0], at(a, w.z_base), at(e, w.z_base));
+      for (const Eigen::Vector2d &c : {a, e})
+        b.segment(g[k][0], at(c + n * tick, w.z_base),
+                  at(c - n * tick, w.z_base));
+    } else {
+      for (const double side : {1.0, -1.0}) {
+        const Eigen::Vector2d off = n * (side * (half + kOpeningProudM));
+        b.ring(g[k][0], &g[k][1],
+               {at(a + off, o.z_sill), at(e + off, o.z_sill),
+                at(e + off, o.z_head), at(a + off, o.z_head)});
+      }
+    }
+    ++drawn.items;
+  }
+  if (orphans > 0)
+    core::warn("render: {} of {} openings name a wall the walls table does not "
+               "hold (walls ran again since `{}`); not drawn",
+               orphans, openings.size(), producing_command(Layer::openings));
+
+  const std::array<std::array<std::uint8_t, 3>, 3> rgb{
+      opts.plan_door_rgb, opts.plan_window_rgb, opts.plan_opening_rgb};
+  std::vector<vtkActor *> actors;
+  const auto add = [&](PlanGeometry &geo, const std::array<std::uint8_t, 3> &c,
+                       double width, double opacity) {
+    if (geo.empty())
+      return;
+    vtkActor *a = add_plan_actor(renderer, geo, c, width, opacity);
+    if (!sheet)
+      a->SetObjectName(kOpeningsActorName); // cut with the scene in 3D
+    actors.push_back(a);
+  };
+  for (std::size_t k = 0; k < 3; ++k)
+    add(g[k][1], rgb[k], 1.0, 0.35); // translucent fills first
+  for (std::size_t k = 0; k < 3; ++k)
+    add(g[k][0], rgb[k], sheet ? 5.0 : 3.0, 1.0);
+  b.extend(bounds);
+  core::info("render: openings: {} drawn", drawn.items);
+  return actors;
+}
+
 /// Parallel scale (half the viewport height in world units) that exactly fits
 /// an @p across x @p up rectangle into an image of the given aspect ratio.
 ///
@@ -1679,7 +1778,7 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
         "render: no layers selected — pass at least one of "
         "cloud, labels, planes, rooms, instances, mesh, "
         "components, frustums, panoramas, deviation, passes, graph, drift, "
-        "walls");
+        "walls, openings");
   if (!(opts.deviation.within_m > 0.0) ||
       !(opts.deviation.uncovered_m > opts.deviation.within_m))
     throw std::runtime_error(
@@ -1774,12 +1873,13 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
         std::any_of(opts.layers.begin(), opts.layers.end(), [](Layer l) {
           return l != Layer::mesh && l != Layer::components &&
                  l != Layer::frustums && l != Layer::panoramas &&
-                 l != Layer::graph && l != Layer::drift && l != Layer::walls;
+                 l != Layer::graph && l != Layer::drift && l != Layer::walls &&
+                 l != Layer::openings;
         });
     info.mesh_style = with_points ? MeshStyle::overlay : MeshStyle::solid;
   }
 
-  std::optional<std::size_t> walls_layer;
+  std::optional<std::size_t> walls_layer, openings_layer;
   for (const Layer layer : opts.layers) {
     SceneLayer drawn;
     drawn.layer = layer;
@@ -1987,6 +2087,11 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
       // them (PlanBuilder measures the bounds when it is made).
       walls_layer = info.layers.size();
       break;
+
+    case Layer::openings:
+      // After the walls, so in plan its sheet sits over theirs.
+      openings_layer = info.layers.size();
+      break;
     }
     info.drawn_points += drawn.points;
     info.drawn_faces += drawn.faces;
@@ -1996,6 +2101,10 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
   if (walls_layer) {
     SceneLayer &drawn = info.layers[*walls_layer];
     drawn.actors = add_walls_layer(renderer, db, opts, bounds, drawn);
+  }
+  if (openings_layer) {
+    SceneLayer &drawn = info.layers[*openings_layer];
+    drawn.actors = add_openings_layer(renderer, db, opts, bounds, drawn);
   }
 
   if (opts.plan)

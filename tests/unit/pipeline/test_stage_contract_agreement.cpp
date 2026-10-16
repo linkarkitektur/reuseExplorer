@@ -79,6 +79,8 @@ core::PipelineStage contract_of(pipeline::JobStage stage) {
     return core::PipelineStage::classify;
   case pipeline::JobStage::walls:
     return core::PipelineStage::walls;
+  case pipeline::JobStage::openings:
+    return core::PipelineStage::openings;
   }
   FAIL("JobStage has no contract mapping");
   return core::PipelineStage::clouds;
@@ -89,7 +91,8 @@ const std::vector<pipeline::JobStage> &runnable_stages() {
       pipeline::JobStage::clouds,   pipeline::JobStage::planes,
       pipeline::JobStage::rooms,    pipeline::JobStage::instances,
       pipeline::JobStage::mesh,     pipeline::JobStage::storeys,
-      pipeline::JobStage::classify, pipeline::JobStage::walls};
+      pipeline::JobStage::classify, pipeline::JobStage::walls,
+      pipeline::JobStage::openings};
   return stages;
 }
 

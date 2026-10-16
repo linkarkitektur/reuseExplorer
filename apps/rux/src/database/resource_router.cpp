@@ -10,6 +10,7 @@
 #include "database/label_router.hpp"
 #include "database/log_router.hpp"
 #include "database/mesh_router.hpp"
+#include "database/opening_router.hpp"
 #include "database/panorama_router.hpp"
 #include "database/passport_router.hpp"
 #include "database/plane_class_router.hpp"
@@ -38,6 +39,7 @@ RouterRegistry::RouterRegistry(std::shared_ptr<reusex::ProjectDB> db)
   routers_["projects"] = std::make_unique<ProjectRouter>(db);
   routers_["storeys"] = std::make_unique<StoreyRouter>(db);
   routers_["walls"] = std::make_unique<WallRouter>(db);
+  routers_["openings"] = std::make_unique<OpeningRouter>(db);
   routers_["wall_joins"] = std::make_unique<WallJoinRouter>(db);
 
   spdlog::trace("Initialized router registry with {} routers", routers_.size());

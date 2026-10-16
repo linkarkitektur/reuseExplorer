@@ -49,6 +49,7 @@ DIRECTIONS: "dict[str, str]" = {
     "wall_precision": HIGHER,
     "opening_recall": HIGHER,
     "opening_precision": HIGHER,
+    "opening_iou_mean": HIGHER,
     "fit_mean_m": LOWER,
     "fit_within_share": HIGHER,
     "mesh_unsupported_share": LOWER,

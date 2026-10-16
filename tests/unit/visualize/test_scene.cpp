@@ -694,3 +694,117 @@ TEST_CASE("PopulateScene_Walls_AboveScene_AreFootprintsOverTheCut",
   for (vtkActor *a : l.actors)
     CHECK(a->GetMapper()->GetNumberOfClippingPlanes() == 0);
 }
+
+// ── Openings layer (reusex-z1v.7.3) ──────────────────────────────────────────
+
+namespace {
+
+/// The two walls of seed_walls() plus a door in wall-a (s 1 .. 2, floor to
+/// 2.1 m) and a window in wall-b (s 1 .. 2, 0.9 .. 2.0 m).
+void seed_openings(ProjectDB &db) {
+  seed_walls(db);
+  core::OpeningRecord door;
+  door.guid = "door-1";
+  door.wall = "wall-a";
+  door.kind = "door";
+  door.s_start = 1.0;
+  door.s_end = 2.0;
+  door.z_sill = 0.0;
+  door.z_head = 2.1;
+  core::OpeningRecord win = door;
+  win.guid = "win-1";
+  win.wall = "wall-b";
+  win.kind = "window";
+  win.z_sill = 0.9;
+  win.z_head = 2.0;
+  db.save_openings({door, win});
+}
+
+} // namespace
+
+TEST_CASE("PopulateScene_Openings_NoOpenings_NamesTheStageToRun",
+          "[visualize][scene][openings]") {
+  TempPath tmp("test_scene_openings_missing");
+  ProjectDB db(tmp.path);
+  seed_cloud(db, 10);
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.layers = {viz::Layer::cloud, viz::Layer::openings};
+  CHECK_THROWS_WITH(viz::populate_scene(renderer, db, o),
+                    ContainsSubstring("rux create openings"));
+  CHECK(viz::layer_from_string("openings") == viz::Layer::openings);
+  CHECK(viz::to_string(viz::Layer::openings) == "openings");
+}
+
+TEST_CASE("PopulateScene_Openings_Level_AreRectanglesInTheWallFaces",
+          "[visualize][scene][openings]") {
+  TempPath tmp("test_scene_openings_level");
+  ProjectDB db(tmp.path);
+  seed_openings(db);
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.layers = {viz::Layer::openings};
+  o.plan_placement = viz::PlanPlacement::level;
+  const auto info = viz::populate_scene(renderer, db, o);
+  REQUIRE(info.layers.size() == 1);
+  const auto &l = info.layers[0];
+  CHECK(l.layer == viz::Layer::openings);
+  CHECK(l.items == 2);
+  REQUIRE_FALSE(l.actors.empty());
+  // The door: in wall-a (world y = 20 +/- 0.11), x 11 .. 12, z -1.5 .. 0.6.
+  bool door = false, window = false;
+  for (const auto &p : layer_points(l)) {
+    if (std::abs(p[1] - 20.0) < 0.2) {
+      door = true;
+      CHECK(std::abs(std::abs(p[1] - 20.0) - 0.11) < 1e-6);
+      CHECK(p[0] >= 11.0 - 1e-9);
+      CHECK(p[0] <= 12.0 + 1e-9);
+      CHECK(p[2] >= -1.5 - 1e-9);
+      CHECK(p[2] <= 0.6 + 0.05);
+    } else {
+      window = true; // wall-b: x = 14 +/- 0.11, y 21 .. 22, z -0.6 .. 0.5
+      CHECK(std::abs(std::abs(p[0] - 14.0) - 0.11) < 1e-6);
+      CHECK(p[1] >= 21.0 - 1e-9);
+      CHECK(p[1] <= 22.0 + 1e-9);
+      CHECK(p[2] >= -0.6 - 1e-9);
+      CHECK(p[2] <= 0.5 + 0.05);
+    }
+  }
+  CHECK(door);
+  CHECK(window);
+  // Coloured by kind.
+  bool door_rgb = false, window_rgb = false;
+  for (vtkActor *a : l.actors) {
+    CHECK(std::string(a->GetObjectName()) == viz::kOpeningsActorName);
+    double rgb[3];
+    a->GetProperty()->GetColor(rgb);
+    door_rgb |= std::abs(rgb[0] * 255.0 - o.plan_door_rgb[0]) < 0.5 &&
+                std::abs(rgb[1] * 255.0 - o.plan_door_rgb[1]) < 0.5;
+    window_rgb |= std::abs(rgb[2] * 255.0 - o.plan_window_rgb[2]) < 0.5 &&
+                  std::abs(rgb[0] * 255.0 - o.plan_window_rgb[0]) < 0.5;
+  }
+  CHECK(door_rgb);
+  CHECK(window_rgb);
+}
+
+TEST_CASE("PopulateScene_Openings_AboveScene_AreBarsOverTheCut",
+          "[visualize][scene][openings]") {
+  TempPath tmp("test_scene_openings_plan");
+  ProjectDB db(tmp.path);
+  seed_cloud(db, 10);
+  seed_openings(db);
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.layers = {viz::Layer::openings, viz::Layer::cloud, viz::Layer::walls};
+  o.plan_placement = viz::PlanPlacement::above_scene;
+  const auto info = viz::populate_scene(renderer, db, o);
+  REQUIRE(info.layers.size() == 3);
+  const auto &l = info.layers[0];
+  CHECK(l.layer == viz::Layer::openings);
+  CHECK(l.items == 2);
+  for (const auto &p : layer_points(l))
+    CHECK(p[2] >= 0.5);
+  viz::apply_cut_plane(renderer, 0.2);
+  for (vtkActor *a : l.actors)
+    CHECK(a->GetMapper()->GetNumberOfClippingPlanes() == 0);
+}

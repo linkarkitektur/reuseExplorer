@@ -22,6 +22,8 @@ namespace rux::database {
  *                         is_external, assumed, seen_share, face_a_points,
  *                         face_b_points, co_visibility, axis_family, source,
  *                         locked, confidence, metadata, joins
+ * - walls.<id>.openings → the openings in that wall (openings table,
+ *                         `rux create openings`)
  *
  * The walls of one storey: `rux get storeys.<idx>.walls`. Coordinates are in
  * that storey's level frame. `rux del walls` deletes every wall and join;

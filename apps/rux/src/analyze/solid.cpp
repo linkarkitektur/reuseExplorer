@@ -41,6 +41,7 @@ std::string format_solid_summary(const reusex::geometry::SolidModelReport &r) {
       "wall thickness error  mean {} / P95 {}\n"
       "opening recall        {}  ({} of {} reference openings)\n"
       "opening precision     {}  ({} detected openings)\n"
+      "opening IoU (mean)    {}\n"
       "fit mean              {}  ({} points)\n"
       "fit within            {}\n"
       "mesh unsupported      {}  (of {} mesh)\n"
@@ -56,9 +57,9 @@ std::string format_solid_summary(const reusex::geometry::SolidModelReport &r) {
       show(r.wall_thickness_err_mean_m, 1000.0, " mm"),
       show(r.wall_thickness_err_p95_m, 1000.0, " mm"), show(r.opening_recall),
       r.matched_openings, r.reference_openings, show(r.opening_precision),
-      r.detected_openings, show(r.fit_mean_m, 1000.0, " mm"), r.fit_points,
-      show(r.fit_within_share), show(r.mesh_unsupported_share),
-      show(r.mesh_area_m2, 1.0, " m2"),
+      r.detected_openings, show(r.opening_iou_mean),
+      show(r.fit_mean_m, 1000.0, " mm"), r.fit_points, show(r.fit_within_share),
+      show(r.mesh_unsupported_share), show(r.mesh_area_m2, 1.0, " m2"),
       r.fit_source.empty() ? std::string("n/a") : r.fit_source,
       show(r.seen_share_mean), show(r.assumed_share));
 }
