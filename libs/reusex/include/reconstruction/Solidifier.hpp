@@ -87,6 +87,51 @@ BackendDecision select_mip_backend(SolverChoice solver, bool primary_is_cuopt,
 std::string describe_mip_solver(SolverChoice solver, bool build_has_cuopt,
                                 size_t cuopt_max_variables);
 
+/// Outcome of solving one (sub)problem on a single MIP backend. Declared
+/// publicly (rather than kept file-local in Solidifier.cpp) so
+/// solve_mip_subset_with_fallback() below can be unit tested without linking
+/// cuOpt or building a real CellComplex (reusex-8r0).
+struct MipSubResult {
+  bool solved = false;
+  SolveStatus status = SolveStatus::not_solved;
+  std::unordered_map<CellComplex::Vertex, int> room_label{};
+  std::unordered_map<CellComplex::Vertex, std::set<int>> wall_label{};
+  size_t variables = 0;
+  size_t constraints = 0;
+};
+
+/// Run the primary-then-HiGHS-fallback policy for one (sub)problem (issue
+/// #226, reusex-81y, reusex-8r0), decoupled from the actual CGAL solver types
+/// via @p run_primary / @p run_highs so it is unit-testable in isolation.
+///
+/// @p run_primary / @p run_highs perform the actual solve (CGAL's MIP traits
+/// classes in production; a canned lambda in tests) and are allowed to
+/// THROW: a stub/broken CUDA driver surfaces a cuOpt failure as
+/// `std::bad_alloc` from RMM's allocator, or another exception type entirely,
+/// at solver construction or solve time — not a clean
+/// `SolveStatus::error`/`numerical_error` return (reusex-8r0). An exception
+/// escaping @p run_primary is therefore treated exactly like a hard error
+/// status for fallback purposes:
+///
+/// - `--solver highs`: runs @p run_highs directly; @p run_primary is never
+///   called.
+/// - `auto`/`cuopt` at or under the reusex-81y size guard (or whenever this
+///   build's compiled-in primary is already HiGHS): runs @p run_primary. A
+///   hard error status, or an exception, under `auto` logs a warning naming
+///   the error/exception and retries via @p run_highs (@p used_highs_fallback
+///   is set); under an explicit `cuopt` the error is logged and, for an
+///   exception, rethrown — reported rather than silently swallowed (STANDARDS
+///   §5).
+/// - `auto`/`cuopt` over the size guard: runs @p run_highs pre-emptively (see
+///   select_mip_backend()) without ever calling @p run_primary;
+///   @p size_guard_tripped is set for `auto` only.
+MipSubResult solve_mip_subset_with_fallback(
+    SolverChoice solver, bool primary_is_cuopt, size_t subset_cells,
+    size_t estimated_variables, size_t cuopt_max_variables,
+    const std::function<MipSubResult()> &run_primary,
+    const std::function<MipSubResult()> &run_highs, bool &used_highs_fallback,
+    bool &size_guard_tripped);
+
 struct SolidifierOptions {
   /// Wall-clock time limit for the MIP solve, in seconds. Guards against the
   /// solver hanging indefinitely on complex buildings (issue #212). When
