@@ -167,6 +167,17 @@ def main() -> int:
         check("CLI rejects malformed JSON", r.returncode == 1
               and "malformed JSON" in r.stderr, r.stderr)
 
+    # Informational metrics that are not numbers (fit_source names the
+    # project the fit was measured on, a scratch path that differs per run)
+    # are reported, never gated, and never crash the comparison.
+    lines = mod.compare(
+        {"a": row("a", fit_source="project '/tmp/x/a.rux'")},
+        {"a": row("a", fit_source="project '/tmp/y/a.rux'")}, 10.0)
+    src = [l for l in lines if l.metric == "fit_source"]
+    check("text metric is compared as info, not gated",
+          len(src) == 1 and src[0].verdict == "info"
+          and not src[0].regression, str(src))
+
     if _failures:
         print(f"\n{len(_failures)} check(s) failed: {', '.join(_failures)}")
         return 1
