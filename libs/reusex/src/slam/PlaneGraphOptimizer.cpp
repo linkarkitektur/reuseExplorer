@@ -19,6 +19,7 @@
 #include <gtsam/linear/NoiseModel.h>
 #include <gtsam/nonlinear/GncOptimizer.h>
 #include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
+#include <gtsam/nonlinear/NonlinearFactor.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
 #include <gtsam/slam/BetweenFactor.h>
@@ -27,6 +28,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <random>
 #include <utility>
 #include <vector>
@@ -64,6 +66,151 @@ class ClonableOrientedPlane3Factor : public gtsam::OrientedPlane3Factor {
         new ClonableOrientedPlane3Factor(*this));
   }
 };
+
+/// Normal of an OrientedPlane3 as a unit 3-vector, with its Jacobian with
+/// respect to the plane's 3-dim tangent space.
+Eigen::Vector3d plane_normal(const gtsam::OrientedPlane3 &plane,
+                             gtsam::Matrix33 *H) {
+  gtsam::Matrix23 Hn;
+  gtsam::Matrix32 Hp;
+  const gtsam::Unit3 n = plane.normal(H ? &Hn : nullptr);
+  const gtsam::Point3 v = n.point3(H ? &Hp : nullptr);
+  if (H)
+    *H = Hp * Hn;
+  return v;
+}
+
+/// Manhattan prior on a VERTICAL plane landmark (reusex-rqn.1): its normal
+/// must lie along the horizontal axis at azimuth `theta + offset` (or its
+/// opposite). Residual (2-DoF, ~rad): [n.up, n.perp(theta)] — the wall's tilt
+/// from vertical and its azimuth error. `theta` is a shared scalar variable,
+/// so the grid's azimuth is estimated jointly with the poses.
+class ManhattanWallFactor
+    : public gtsam::NoiseModelFactorN<gtsam::OrientedPlane3, double> {
+  using Base = gtsam::NoiseModelFactorN<gtsam::OrientedPlane3, double>;
+  Eigen::Vector3d up_, e1_, e2_;
+  double offset_;
+
+    public:
+  ManhattanWallFactor(gtsam::Key plane, gtsam::Key theta,
+                      const Eigen::Vector3d &up, const Eigen::Vector3d &e1,
+                      const Eigen::Vector3d &e2, double offset,
+                      const gtsam::SharedNoiseModel &noise)
+      : Base(noise, plane, theta), up_(up), e1_(e1), e2_(e2), offset_(offset) {}
+  gtsam::Vector evaluateError(
+      const gtsam::OrientedPlane3 &plane, const double &theta,
+      boost::optional<gtsam::Matrix &> H1 = boost::none,
+      boost::optional<gtsam::Matrix &> H2 = boost::none) const override {
+    gtsam::Matrix33 Hv;
+    const Eigen::Vector3d v = plane_normal(plane, H1 ? &Hv : nullptr);
+    const double a = theta + offset_;
+    const Eigen::Vector3d dir = std::cos(a) * e1_ + std::sin(a) * e2_;
+    const Eigen::Vector3d perp = -std::sin(a) * e1_ + std::cos(a) * e2_;
+    if (H1) {
+      gtsam::Matrix23 P;
+      P.row(0) = up_.transpose();
+      P.row(1) = perp.transpose();
+      *H1 = P * Hv;
+    }
+    if (H2) // d(perp)/d(theta) = -dir
+      *H2 = (gtsam::Matrix21() << 0.0, -v.dot(dir)).finished();
+    return gtsam::Vector2(v.dot(up_), v.dot(perp));
+  }
+  gtsam::NonlinearFactor::shared_ptr clone() const override {
+    return gtsam::NonlinearFactor::shared_ptr(new ManhattanWallFactor(*this));
+  }
+};
+
+/// Manhattan prior on a HORIZONTAL plane landmark (floor, ceiling, table top):
+/// its normal must be +-up. Residual: the normal's two horizontal components.
+class ManhattanLevelFactor
+    : public gtsam::NoiseModelFactorN<gtsam::OrientedPlane3> {
+  using Base = gtsam::NoiseModelFactorN<gtsam::OrientedPlane3>;
+  Eigen::Vector3d e1_, e2_;
+
+    public:
+  ManhattanLevelFactor(gtsam::Key plane, const Eigen::Vector3d &e1,
+                       const Eigen::Vector3d &e2,
+                       const gtsam::SharedNoiseModel &noise)
+      : Base(noise, plane), e1_(e1), e2_(e2) {}
+  gtsam::Vector evaluateError(
+      const gtsam::OrientedPlane3 &plane,
+      boost::optional<gtsam::Matrix &> H = boost::none) const override {
+    gtsam::Matrix33 Hv;
+    const Eigen::Vector3d v = plane_normal(plane, H ? &Hv : nullptr);
+    if (H) {
+      gtsam::Matrix23 P;
+      P.row(0) = e1_.transpose();
+      P.row(1) = e2_.transpose();
+      *H = P * Hv;
+    }
+    return gtsam::Vector2(v.dot(e1_), v.dot(e2_));
+  }
+  gtsam::NonlinearFactor::shared_ptr clone() const override {
+    return gtsam::NonlinearFactor::shared_ptr(new ManhattanLevelFactor(*this));
+  }
+};
+
+/// Wrap an angle (rad) to [-pi/4, pi/4): the residual of an azimuth to the
+/// nearest of four axes 90 deg apart.
+double wrap_quarter(double a) {
+  const double q = M_PI / 2.0;
+  return a - q * std::floor((a + q / 2.0) / q);
+}
+
+/// The Manhattan frame: up and a right-handed horizontal basis (e1, e2).
+struct ManhattanFrame {
+  int up_axis = 2;
+  Eigen::Vector3d up = Eigen::Vector3d::UnitZ();
+  Eigen::Vector3d e1 = Eigen::Vector3d::UnitX();
+  Eigen::Vector3d e2 = Eigen::Vector3d::UnitY();
+};
+
+/// Up axis for the Manhattan prior. `automatic` takes the world axis along
+/// which the seed camera positions spread least (see ManhattanUp).
+ManhattanFrame manhattan_frame(ManhattanUp choice,
+                               const std::vector<Eigen::Matrix4d> &poses) {
+  ManhattanFrame f;
+  int axis = 2;
+  switch (choice) {
+  case ManhattanUp::x:
+    axis = 0;
+    break;
+  case ManhattanUp::y:
+    axis = 1;
+    break;
+  case ManhattanUp::z:
+    axis = 2;
+    break;
+  case ManhattanUp::automatic: {
+    Eigen::Vector3d mean = Eigen::Vector3d::Zero();
+    for (const auto &T : poses)
+      mean += T.block<3, 1>(0, 3);
+    mean /= static_cast<double>(std::max<size_t>(1, poses.size()));
+    Eigen::Vector3d var = Eigen::Vector3d::Zero();
+    for (const auto &T : poses)
+      var += (T.block<3, 1>(0, 3) - mean).cwiseAbs2();
+    var.minCoeff(&axis);
+    Eigen::Vector3d sorted = var;
+    std::sort(sorted.data(), sorted.data() + 3);
+    core::info("PlaneGraph: Manhattan up axis {} (camera position spread "
+               "{:.2f} m along it vs {:.2f} m along the next axis)",
+               "xyz"[axis],
+               std::sqrt(sorted(0) / std::max<size_t>(1, poses.size())),
+               std::sqrt(sorted(1) / std::max<size_t>(1, poses.size())));
+    if (sorted(1) < 4.0 * sorted(0))
+      core::warn("PlaneGraph: the Manhattan up axis is ambiguous (camera "
+                 "positions spread similarly along two axes); pass "
+                 "--manhattan-up to choose it");
+    break;
+  }
+  }
+  f.up_axis = axis;
+  f.up = Eigen::Vector3d::Unit(axis);
+  f.e1 = Eigen::Vector3d::Unit((axis + 1) % 3);
+  f.e2 = f.up.cross(f.e1);
+  return f;
+}
 
 /// A plane detected in one frame, expressed in that frame's OPTICAL frame as a
 /// unit normal + signed offset d so that n.dot(p) + d = 0 for points on it.
@@ -595,6 +742,25 @@ PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
           clamped, n_obs, lo, hi);
   }
 
+  // --- Manhattan prior set-up (reusex-rqn.1) -------------------------------
+  // The prior lives on the plane LANDMARK variables, so it needs them.
+  const bool manhattan = options_.manhattan && options_.use_plane_factors;
+  if (options_.manhattan && !options_.use_plane_factors)
+    core::warn("PlaneGraph: --manhattan is ignored under --no-plane-factors: "
+               "the prior constrains plane landmarks and there are none");
+  ManhattanFrame mframe;
+  if (manhattan) {
+    mframe = manhattan_frame(options_.manhattan_up, seed);
+    result.manhattan_up_axis = mframe.up_axis;
+  }
+  const double man_gate = options_.manhattan_max_angle_deg * M_PI / 180.0;
+  const double man_level_gate =
+      options_.manhattan_level_max_angle_deg * M_PI / 180.0;
+  const double man_sigma = options_.manhattan_sigma_deg * M_PI / 180.0;
+  // Azimuth of the grid, carried from round to round (nullopt: estimate it).
+  std::optional<double> man_theta;
+  const gtsam::Key man_key = gtsam::Symbol('m', 0);
+
   double round_max_shift = 0.0;
 
   // --- Alternating rounds: associate at cur poses -> optimize -> refit ------
@@ -756,6 +922,10 @@ PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
     // options_.odometry_robust leaves them OUT of the known-inlier set so GNC
     // can down-weight them; they then need their own 6-DoF TLS threshold.
     std::vector<size_t> odom_factors;
+    // Graph positions of the Manhattan wall / level factors (each with the
+    // TLS threshold of its own gate).
+    std::vector<size_t> manhattan_factors;
+    std::vector<size_t> manhattan_level_factors;
 
     // Edge records for pose-graph persistence: populated alongside graph
     // construction, residuals filled post-solve.  Cleared and rebuilt each
@@ -966,6 +1136,108 @@ PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
     }
     result.plane_factors = plane_factors;
 
+    // Manhattan factors on the kept landmarks. Classification uses the
+    // landmark normal at the CURRENT poses; the gate is the same angle that
+    // later becomes the factors' GNC-TLS threshold.
+    bool man_theta_in_graph = false;
+    if (manhattan) {
+      struct Vert {
+        size_t l;
+        double phi;
+        double w;
+      };
+      std::vector<Vert> verts;
+      std::vector<size_t> levels;
+      int skipped = 0;
+      const double sin_gate = std::sin(man_gate);
+      const double cos_level_gate = std::cos(man_level_gate);
+      for (size_t l = 0; l < landmarks.size(); ++l) {
+        if (landmark_key[l] < 0)
+          continue;
+        const Eigen::Vector3d &n = landmarks[l].normal;
+        const double c = std::abs(n.dot(mframe.up));
+        if (c >= cos_level_gate)
+          levels.push_back(l);
+        else if (c <= sin_gate)
+          verts.push_back({l, std::atan2(n.dot(mframe.e2), n.dot(mframe.e1)),
+                           std::max(1.0, landmarks[l].weight)});
+        else
+          ++skipped; // slanted (a sloped ceiling, a ramp): neither
+      }
+      // Grid azimuth: start from the weighted circular mean of 4*phi (the
+      // four axes fold onto one direction), then re-centre on the walls that
+      // fall inside the gate, so off-grid walls do not bias it.
+      if (!man_theta && !verts.empty()) {
+        double sx = 0.0, sy = 0.0;
+        for (const auto &v : verts) {
+          sx += v.w * std::cos(4.0 * v.phi);
+          sy += v.w * std::sin(4.0 * v.phi);
+        }
+        double theta = std::atan2(sy, sx) / 4.0;
+        for (int it = 0; it < 3; ++it) {
+          double num = 0.0, den = 0.0;
+          for (const auto &v : verts) {
+            const double r = wrap_quarter(v.phi - theta);
+            if (std::abs(r) <= man_gate) {
+              num += v.w * r;
+              den += v.w;
+            }
+          }
+          if (den > 0.0)
+            theta += num / den;
+        }
+        man_theta = theta;
+      }
+      auto noise = gtsam::noiseModel::Isotropic::Sigma(2, man_sigma);
+      gtsam::SharedNoiseModel man_noise = noise;
+      if (!options_.use_gnc)
+        man_noise = gtsam::noiseModel::Robust::Create(
+            gtsam::noiseModel::mEstimator::Huber::Create(1.345), noise);
+      int n_vert = 0, n_level = 0;
+      for (const auto &v : verts) {
+        const double r = wrap_quarter(v.phi - *man_theta);
+        if (std::abs(r) > man_gate) {
+          ++skipped;
+          continue;
+        }
+        // Which of the four axes: phi - r = theta + k * 90 deg.
+        const double offset =
+            std::round((v.phi - r - *man_theta) / (M_PI / 2.0)) * (M_PI / 2.0);
+        graph.emplace_shared<ManhattanWallFactor>(P(landmark_key[v.l]), man_key,
+                                                  mframe.up, mframe.e1,
+                                                  mframe.e2, offset, man_noise);
+        manhattan_factors.push_back(graph.size() - 1);
+        ++n_vert;
+      }
+      for (size_t l : levels) {
+        graph.emplace_shared<ManhattanLevelFactor>(
+            P(landmark_key[l]), mframe.e1, mframe.e2, man_noise);
+        manhattan_level_factors.push_back(graph.size() - 1);
+        ++n_level;
+      }
+      if (n_vert > 0) {
+        initial.insert(man_key, *man_theta);
+        man_theta_in_graph = true;
+      }
+      result.manhattan_vertical = n_vert;
+      result.manhattan_horizontal = n_level;
+      result.manhattan_skipped = skipped;
+      core::info("PlaneGraph round {}: Manhattan prior on {} wall and {} level "
+                 "landmarks ({} outside the {:.1f} / {:.1f} deg gates), grid "
+                 "azimuth "
+                 "{:.2f} deg, sigma {:.2f} deg",
+                 round + 1, n_vert, n_level, skipped,
+                 options_.manhattan_max_angle_deg,
+                 options_.manhattan_level_max_angle_deg,
+                 man_theta ? *man_theta * 180.0 / M_PI : 0.0,
+                 options_.manhattan_sigma_deg);
+      if (n_vert + n_level == 0)
+        core::warn("PlaneGraph: --manhattan found no landmark within {:.1f} "
+                   "deg of the grid among {} kept landmarks; the prior has "
+                   "no effect",
+                   options_.manhattan_max_angle_deg, kept);
+    }
+
     // -- Solve --------------------------------------------------------------
     const double round_initial_error = graph.error(initial);
     if (round == 0)
@@ -981,10 +1253,12 @@ PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
         GncParamsLM gnc_params(lm_params);
         gnc_params.setKnownInliers(trusted_factors);
         GncLM optimizer(graph, initial, gnc_params);
-        if (loop_factors.empty() && odom_factors.empty()) {
+        const bool any_manhattan =
+            !manhattan_factors.empty() || !manhattan_level_factors.empty();
+        if (loop_factors.empty() && odom_factors.empty() && !any_manhattan) {
           optimizer.setInlierCostThresholds(
               static_cast<double>(options_.gnc_inlier_cost));
-        } else if (loop_factors.empty()) {
+        } else if (loop_factors.empty() && !any_manhattan) {
           // Robust odometry only: plane factors keep the 3-DoF chi-square
           // threshold, odometry gets the 6-DoF one.
           gtsam::Vector barc = gtsam::Vector::Constant(
@@ -1012,11 +1286,23 @@ PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
           for (size_t k : odom_factors)
             barc[static_cast<Eigen::Index>(k)] =
                 static_cast<double>(options_.odometry_gnc_inlier_cost);
+          // A Manhattan factor stays an inlier while its normal is within
+          // the gate: 0.5 * (gate / sigma)^2.
+          const double man_barc =
+              0.5 * (man_gate / man_sigma) * (man_gate / man_sigma);
+          for (size_t k : manhattan_factors)
+            barc[static_cast<Eigen::Index>(k)] = man_barc;
+          const double level_barc =
+              0.5 * (man_level_gate / man_sigma) * (man_level_gate / man_sigma);
+          for (size_t k : manhattan_level_factors)
+            barc[static_cast<Eigen::Index>(k)] = level_barc;
           optimizer.setInlierCostThresholds(barc);
-          core::info("PlaneGraph: {} trusted loop factors given a relaxed GNC "
-                     "inlier threshold of {:.2f} (others {:.2f})",
+          core::info("PlaneGraph: per-factor GNC thresholds: {} trusted loop "
+                     "factors at {:.2f}, {} Manhattan wall / {} level "
+                     "factors at {:.2f} / {:.2f}, others {:.2f}",
                      loop_factors.size(), options_.loop_trust_inlier_cost,
-                     options_.gnc_inlier_cost);
+                     manhattan_factors.size(), manhattan_level_factors.size(),
+                     man_barc, level_barc, options_.gnc_inlier_cost);
         }
         solution = optimizer.optimize();
       } else {
@@ -1034,6 +1320,10 @@ PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
     }
     result.converged = true;
     result.final_error = graph.error(solution);
+    if (man_theta_in_graph) {
+      man_theta = solution.at<double>(man_key);
+      result.manhattan_axis_deg = wrap_quarter(*man_theta) * 180.0 / M_PI;
+    }
 
     // Extract per-edge residuals for pose-graph persistence.  Repopulated
     // each round so result.edges always reflects the FINAL round's solve.

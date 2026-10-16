@@ -82,6 +82,16 @@ struct SubcommandOptimizeOptions {
   float loop_default_sigma_trans =
       reusex::geometry::PlaneGraphOptions{}.loop_default_sigma_trans;
 
+  // Manhattan-world prior (reusex-rqn.1). Defaults mirror PlaneGraphOptions.
+  bool manhattan = reusex::geometry::PlaneGraphOptions{}.manhattan;
+  float manhattan_sigma_deg =
+      reusex::geometry::PlaneGraphOptions{}.manhattan_sigma_deg;
+  float manhattan_max_angle_deg =
+      reusex::geometry::PlaneGraphOptions{}.manhattan_max_angle_deg;
+  float manhattan_level_max_angle_deg =
+      reusex::geometry::PlaneGraphOptions{}.manhattan_level_max_angle_deg;
+  std::string manhattan_up = "z"; ///< auto | x | y | z
+
   // Surfel extraction (shared with `rux register`).
   float surfel_voxel = 0.03f;
   float min_distance = 0.0f;

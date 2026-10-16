@@ -36,6 +36,13 @@ void apply_optimize_parameters(PlaneGraphOptions &options, bool &dry_run,
   options.assoc_rounds = get("assoc_rounds", options.assoc_rounds);
   if (get("no_gnc", false))
     options.use_gnc = false;
+  options.manhattan = get("manhattan", options.manhattan);
+  options.manhattan_sigma_deg =
+      get("manhattan_sigma_deg", options.manhattan_sigma_deg);
+  options.manhattan_max_angle_deg =
+      get("manhattan_max_angle_deg", options.manhattan_max_angle_deg);
+  options.manhattan_level_max_angle_deg = get(
+      "manhattan_level_max_angle_deg", options.manhattan_level_max_angle_deg);
   dry_run = get("dry_run", dry_run);
 }
 
