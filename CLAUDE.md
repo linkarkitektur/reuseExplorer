@@ -258,41 +258,44 @@ Two workflows, split by whether they need the nix closure:
 | Workflow | Triggers | Jobs |
 |---|---|---|
 | `.github/workflows/lint.yml` | push (main) + PR | clang-format, REUSE/SPDX |
-| `.github/workflows/ci.yml` | push (main) + PR + `workflow_dispatch` | `nix build .#checks.x86_64-linux.tests` (CPU variant: ctest + install check), on main also `github:…#cpu`: each substituted if `scripts/ci-local.sh` pushed it, else built |
+| `.github/workflows/ci.yml` | push (main) + PR + `workflow_dispatch` | `nix build .#ci` (CPU variant: package + ctest + install check), substitute-first: compiles only what nobody pushed |
 
-**Build locally, let CI confirm** (reusex-37v, reusex-uk8). Build and test
-are **two derivations**: `.#cpu` compiles ReUseX once (outputs `out`, the
-installed package ruxd builds against, and `testsuite`, the test binaries +
-ctest files); `checks.tests` (= `cpu.check`, `default.nix`) only runs ctest
-and the package-consumer install check against them and outputs a pass stamp
-with no references. Before pushing a PR, on a clean, committed tree:
+**Build locally, let CI confirm** (reusex-37v, reusex-uk8). What CI realises
+is one flake output, `.#ci`, and you build exactly that — no script. Build
+and test are **two derivations**: `checks.cpu` (= `packages.cpu`) compiles
+ReUseX once into `out` (the installed package ruxd builds against) and
+`testsuite` (test binaries + ctest files); `checks.tests` (= `cpu.check`,
+`default.nix`) only runs ctest and the package-consumer install check against
+them and outputs a pass stamp with no references. `.#ci` links all three.
+Before pushing a branch, on a clean, committed tree, from the dev shell
+(it has `cachix`):
 
 ```bash
-scripts/ci-local.sh        # build .#cpu + checks.tests for HEAD (--cores 8), push out, testsuite, stamp
-scripts/ci-local.sh --check  # would CI hit for HEAD?
+nix build .#ci --print-out-paths | cachix push reusex
 ```
 
 CI checks out the **PR head commit** (not GitHub's merge commit), evaluates
-the same derivations and tries `nix build --max-jobs 0` (substitute only):
-the stamp first; on a miss the `.#cpu` outputs (then it only runs the tests);
-only if those are missing too does it compile (~25-45 min). On `main` the
-downstream `github:…#cpu` step substitutes the same way. Every step logs
-the derivations and a `::notice` saying which path it took. The derivations
-match locally and in CI because the sources are `lib.fileset`-narrowed in
-`default.nix`: the **build** source holds only what the compile reads (no
-`tests/fixtures`, so a GitHub tarball's LFS pointers cannot change it, and
-`github:…#cpu` = `.#cpu`), the **test** source adds what tests read at run
-time (`tests/fixtures`, `docs/CONTRACTS.md`, …). Edits to `docs/`,
-`.github/`, `CLAUDE.md`, most of `scripts/` change neither; a fixture or
-`CONTRACTS.md` edit reruns only the tests. A file a test reads must be in
-the test fileset (it fails only under nix otherwise), and test binaries find
-it through `source_dir()` / `rux_executable()` (`tests/support/`), whose
-compiled-in paths `checks.tests` overrides with `REUSEX_TEST_SOURCE_DIR` /
+the same derivations, logs them and nix's `--dry-run` plan, and tries
+`nix build .#ci --max-jobs 0` (substitute only). On a miss it builds only
+what is missing (a cached `.#cpu` means tests only, ~5 min; otherwise the full
+compile, ~25-45 min) and a `::notice` says which. On `main` it also proves
+that `github:…#cpu` (what downstream repos fetch) is the same derivation as
+`.#cpu`. The derivations match locally and in CI because the sources are
+`lib.fileset`-narrowed in `default.nix`: the **build** source holds only what
+the compile reads (no `tests/fixtures`, so a GitHub tarball's LFS pointers
+cannot change it), the **test** source adds what tests read at run time
+(`tests/fixtures`, `docs/CONTRACTS.md`, …). Edits to `docs/`, `.github/`,
+`CLAUDE.md`, most of `scripts/` change nothing; a fixture or `CONTRACTS.md`
+edit reruns only the tests. A file a test reads must be in the test fileset
+(it fails only under nix otherwise), and test binaries reach it through
+`source_dir()` / `rux_executable()` (`tests/support/`), whose compiled-in
+paths `checks.tests` overrides with `REUSEX_TEST_SOURCE_DIR` /
 `REUSEX_TEST_RUX_EXECUTABLE`. The local nix build reuses `/var/cache/ccache`
 inside the sandbox (`overlays/ccache.nix`), so a rebuild after a small change
-is mostly linking. Pushing needs a Cachix write token (`CACHIX_AUTH_TOKEN` or
-`cachix authtoken`); in CI the token is an **environment** secret on the `CI`
-environment (hence `environment: CI`), and CI itself pushes only from `main`.
+is mostly linking plus the ~6 min test run. Pushing needs a Cachix write token
+(`cachix authtoken <token>` once, or `CACHIX_AUTH_TOKEN`); in CI the token
+is an **environment** secret on the `CI` environment (hence `environment:
+CI`), and CI itself pushes only from `main`.
 
 The build steps use `shell: bash` (pipefail): GitHub's default `bash -e`
 let `nix build | tee` exit 0 on test failures until reusex-37v.
