@@ -34,6 +34,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -146,6 +147,18 @@ struct GraphLayerOptions {
   std::array<std::uint8_t, 3> pin_rgb{0x00, 0x72, 0xb2};
   /// Edge colour when the edge has no residual (never solved).
   std::array<std::uint8_t, 3> unsolved_rgb{0x9a, 0xa0, 0xa6};
+};
+
+/// One pose-graph edge as the graph layer draws it: by default the stored
+/// rows (ProjectDB::list_pose_graph_edges()); a caller with a candidate solve
+/// in memory (`rux optimize --watch`, reusex-rcv.1.18) hands in the same
+/// edges with that solve's residuals (RenderOptions::graph_edges).
+struct GraphLayerEdge {
+  std::int64_t from_node_id = 0, to_node_id = 0;
+  std::string edge_type;       ///< "odometry" | "loop_closure" | ...
+  std::string status = "auto"; ///< "auto" | "confirmed" | "rejected"
+  /// 0.5 x whitened squared residual; NaN = not solved (drawn grey).
+  double residual = std::numeric_limits<double>::quiet_NaN();
 };
 
 /// The colour of an edge with residual @p r: green at 0, yellow at

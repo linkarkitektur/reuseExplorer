@@ -1184,7 +1184,16 @@ void add_graph_actors(vtkRenderer *renderer, const ProjectDB &db,
     drawn.actors.push_back(name(actor));
   }
 
-  // The stored edges, coloured by residual.
+  // The stored edges (or the caller's, a candidate solve's), coloured by
+  // residual.
+  std::vector<GraphLayerEdge> edges;
+  if (opts.graph_edges) {
+    edges = *opts.graph_edges;
+  } else {
+    for (const auto &e : db.list_pose_graph_edges())
+      edges.push_back(
+          {e.from_node_id, e.to_node_id, e.edge_type, e.status, e.residual});
+  }
   {
     vtkNew<vtkPoints> pts;
     pts->SetDataType(VTK_DOUBLE);
@@ -1193,13 +1202,13 @@ void add_graph_actors(vtkRenderer *renderer, const ProjectDB &db,
     rgb->SetNumberOfComponents(3);
     rgb->SetName("colors");
     std::size_t missing = 0;
-    for (const auto &e : db.list_pose_graph_edges()) {
+    for (const auto &e : edges) {
       if (e.edge_type == "odometry" && !opts.graph.odometry_edges)
         continue;
       if (e.status == "rejected" && !opts.graph.rejected_edges)
         continue;
-      const auto a = where.find(e.from_node_id);
-      const auto b = where.find(e.to_node_id);
+      const auto a = where.find(static_cast<int>(e.from_node_id));
+      const auto b = where.find(static_cast<int>(e.to_node_id));
       if (a == where.end() || b == where.end()) {
         ++missing;
         continue;

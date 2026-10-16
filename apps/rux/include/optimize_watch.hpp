@@ -19,6 +19,8 @@
 
 #include <reusex/core/pose_edits.hpp>
 #include <reusex/core/solid_model.hpp>
+#include <reusex/slam/PlaneGraphOptimizer.hpp>
+#include <reusex/visualize/drift_layers.hpp>
 
 #include <Eigen/Core>
 
@@ -130,6 +132,19 @@ std::vector<std::int64_t> edited_nodes(const reusex::core::PoseEdits &edits,
 /// initial poses the solve seeds from: fit(initial -> D_c * candidate).
 Eigen::Matrix4d fit_rigid_delta(const std::vector<Eigen::Matrix4d> &from,
                                 const std::vector<Eigen::Matrix4d> &to);
+
+/// reusex-rcv.1.18: the pose-graph edges of @p graph as the graph layer
+/// draws them, coloured by the candidate solve @p result (its per-edge
+/// residuals, PoseGraphEdgeRecord::tag = index in graph.edges) instead of
+/// the residuals last written to the project. An edge that did not enter
+/// the solve has none (NaN, drawn grey). @p stored_status: the status of
+/// each stored row (ProjectDB::list_pose_graph_edges() order, which
+/// graph.edges follows); edges beyond it (odometry derived in memory) are
+/// "auto".
+std::vector<reusex::visualize::GraphLayerEdge>
+candidate_graph_edges(const reusex::geometry::StoredPoseGraph &graph,
+                      const std::vector<std::string> &stored_status,
+                      const reusex::geometry::PlaneGraphResult &result);
 
 /// Split the node ids @p nodes (node order) into runs of one storey: each
 /// camera position (@p positions, world) goes to the storey whose

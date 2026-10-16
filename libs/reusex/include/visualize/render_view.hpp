@@ -336,6 +336,10 @@ struct RenderOptions {
   /// candidate solve), index-aligned with ProjectDB::sensor_frame_ids();
   /// empty = the stored poses.
   std::vector<Eigen::Matrix4d> poses;
+  /// The edges the `graph` layer draws, replacing the stored rows (with
+  /// their stored residuals): a candidate solve's residuals
+  /// (reusex-rcv.1.18). nullopt = ProjectDB::list_pose_graph_edges().
+  std::optional<std::vector<GraphLayerEdge>> graph_edges;
   /// The `passes` layer's points, already back-projected with @ref passes
   /// and @ref poses (preview_cloud()): a caller that renders several views
   /// of one candidate solve (`rux optimize --watch`) makes it once. null =

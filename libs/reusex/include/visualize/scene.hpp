@@ -211,6 +211,8 @@ struct SceneOptions {
   std::optional<core::PoseEdits> edits;      ///< `graph` pins
   /// World poses replacing the stored ones (RenderOptions::poses).
   std::vector<Eigen::Matrix4d> poses;
+  /// Edges replacing the stored rows (RenderOptions::graph_edges).
+  std::optional<std::vector<GraphLayerEdge>> graph_edges;
   /// A preview cloud already made with @ref passes and @ref poses
   /// (RenderOptions::preview); null = back-project here.
   std::shared_ptr<const PreviewCloud> preview;

@@ -341,6 +341,24 @@ TEST_CASE("DriftLayers_Graph_TrajectoryEdgesByResidualAndPins",
   // Good is green, bad beyond the scale is not.
   CHECK(viz::residual_color(0.0, o.graph) !=
         viz::residual_color(100.0, o.graph));
+
+  // reusex-rcv.1.18: a candidate solve's edges replace the stored rows (and
+  // their stored residuals): now 1-6 is the bad one, 2-5 good, 3-4 solved.
+  vtkNew<vtkRenderer> r2;
+  o.graph_edges = std::vector<viz::GraphLayerEdge>{
+      {1, 6, "loop_closure", "auto", 100.0},
+      {2, 5, "loop_closure", "auto", 1.0},
+      {3, 4, "loop_closure", "auto", 2.0},
+      {1, 2, "odometry", "auto", 500.0},        // along the path: not drawn
+      {2, 4, "loop_closure", "rejected", 1.0}}; // not drawn
+  const auto cand = viz::populate_scene(r2, db, o).drift_legend;
+  CHECK(cand.graph_edges == 3);
+  CHECK(cand.graph_edges_bad == 1);
+  CHECK(cand.graph_edges_unsolved == 0);
+  // An empty override draws no edge at all (not the stored ones).
+  vtkNew<vtkRenderer> r3;
+  o.graph_edges = std::vector<viz::GraphLayerEdge>{};
+  CHECK(viz::populate_scene(r3, db, o).drift_legend.graph_edges == 0);
 }
 
 TEST_CASE("DriftLayers_Drift_HeatCellsPerStorey", "[visualize][drift]") {

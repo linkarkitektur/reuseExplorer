@@ -362,6 +362,40 @@ TEST_CASE("OptimizeWatchSession: suggestion pastes, re-solves, keeps the last "
   CHECK(stored_poses(project) == before);
 }
 
+TEST_CASE("candidate_graph_edges colours by the candidate solve",
+          "[rux_app][optimize][watch]") {
+  // reusex-rcv.1.18: three stored rows (one rejected) plus one odometry
+  // edge derived in memory; the solve reports residuals for two of them.
+  reusex::geometry::StoredPoseGraph g;
+  const auto edge = [](int a, int b, const char *type) {
+    reusex::geometry::StoredPoseGraph::Edge e;
+    e.from_node_id = a;
+    e.to_node_id = b;
+    e.edge_type = type;
+    return e;
+  };
+  g.edges = {edge(1, 2, "odometry"), edge(1, 5, "loop_closure"),
+             edge(2, 6, "loop_closure"), edge(5, 6, "odometry")};
+  reusex::geometry::PlaneGraphResult res;
+  res.edges.push_back({0, 1, "odometry", 0.25, 1.0, 0});
+  res.edges.push_back({0, 4, "loop_closure", 42.0, 1.0, 1});
+  res.edges.push_back({0, 4, "loop_closure", 7.0, 1.0, -1}); // untagged
+  res.edges.push_back({0, 4, "loop_closure", 9.0, 1.0, 17}); // out of range
+  const auto out =
+      rux::candidate_graph_edges(g, {"auto", "confirmed", "rejected"}, res);
+  REQUIRE(out.size() == 4);
+  CHECK(out[0].residual == 0.25);
+  CHECK(out[1].residual == 42.0);
+  CHECK(out[1].status == "confirmed");
+  CHECK(std::isnan(out[2].residual)); // not solved: grey
+  CHECK(out[2].status == "rejected");
+  CHECK(out[3].status == "auto"); // in-memory odometry
+  CHECK(std::isnan(out[3].residual));
+  CHECK(out[1].from_node_id == 1);
+  CHECK(out[1].to_node_id == 5);
+  CHECK(out[1].edge_type == "loop_closure");
+}
+
 TEST_CASE("OptimizeWatchSession --apply writes transform, never initial",
           "[rux_app][optimize][watch]") {
   TempDir dir("optimize_watch_apply");

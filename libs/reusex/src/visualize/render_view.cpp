@@ -593,6 +593,7 @@ cv::Mat render_view(const ProjectDB &db, const RenderOptions &opts,
   scene.edits = opts.edits;
   scene.poses = opts.poses;
   scene.preview = opts.preview;
+  scene.graph_edges = opts.graph_edges;
   scene.plan_placement =
       opts.view == ViewPreset::top || opts.view == ViewPreset::plan
           ? PlanPlacement::above_scene

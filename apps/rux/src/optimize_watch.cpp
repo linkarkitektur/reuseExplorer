@@ -352,6 +352,28 @@ storey_runs(const std::vector<std::int64_t> &nodes,
   return merged;
 }
 
+std::vector<viz::GraphLayerEdge>
+candidate_graph_edges(const reusex::geometry::StoredPoseGraph &graph,
+                      const std::vector<std::string> &stored_status,
+                      const reusex::geometry::PlaneGraphResult &result) {
+  std::vector<viz::GraphLayerEdge> out;
+  out.reserve(graph.edges.size());
+  for (std::size_t k = 0; k < graph.edges.size(); ++k) {
+    const auto &e = graph.edges[k];
+    viz::GraphLayerEdge g;
+    g.from_node_id = e.from_node_id;
+    g.to_node_id = e.to_node_id;
+    g.edge_type = e.edge_type;
+    if (k < stored_status.size())
+      g.status = stored_status[k];
+    out.push_back(std::move(g));
+  }
+  for (const auto &rec : result.edges)
+    if (rec.tag >= 0 && static_cast<std::size_t>(rec.tag) < out.size())
+      out[static_cast<std::size_t>(rec.tag)].residual = rec.residual;
+  return out;
+}
+
 // ── The session ─────────────────────────────────────────────────────────────
 
 struct OptimizeWatchSession::State {
@@ -377,6 +399,9 @@ struct OptimizeWatchSession::State {
   /// diagnostics and the preview cloud back-project, read once at load (the
   /// pixels do not depend on the poses; each cycle only re-transforms them).
   std::optional<reusex::core::FrameDepthCache> depth_cache;
+  /// Status of each stored pose-graph row (the graph layer hides rejected
+  /// edges; reusex-rcv.1.18 colours them by the candidate solve).
+  std::vector<std::string> edge_status;
 
   std::optional<reusex::core::PoseEdits> edits; ///< last good
   std::vector<Eigen::Matrix4d> shown;           ///< last good solve's poses
@@ -462,6 +487,8 @@ bool OptimizeWatchSession::State::load(std::string &out) {
     }
     storeys = plan && !plan->storeys.empty() ? plan->storeys : db->storeys();
 
+    for (const auto &e : db->list_pose_graph_edges())
+      edge_status.push_back(e.status);
     auto loaded = geometry::load_stored_pose_graph(*db, options);
     if (opt.fast) // no plane factors: the solve needs no surfels at all
       for (auto &f : loaded.frames) {
@@ -1049,6 +1076,9 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
       base.poses = r.poses;
       base.preview = preview;
       base.edits = edits;
+      // The graph panel shows which edges fight THIS cycle's edits.
+      base.graph_edges =
+          candidate_graph_edges(*s.graph, s.edge_status, solve->result);
       base.frame_quantile = 0.002;
       if (drift)
         base.drift_heatmap =
