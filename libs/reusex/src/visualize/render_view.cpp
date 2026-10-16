@@ -592,6 +592,7 @@ cv::Mat render_view(const ProjectDB &db, const RenderOptions &opts,
   scene.drift_heatmap = opts.drift_heatmap;
   scene.edits = opts.edits;
   scene.poses = opts.poses;
+  scene.preview = opts.preview;
   scene.plan_placement =
       opts.view == ViewPreset::top || opts.view == ViewPreset::plan
           ? PlanPlacement::above_scene

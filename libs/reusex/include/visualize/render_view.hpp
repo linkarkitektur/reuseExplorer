@@ -23,6 +23,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -335,6 +336,11 @@ struct RenderOptions {
   /// candidate solve), index-aligned with ProjectDB::sensor_frame_ids();
   /// empty = the stored poses.
   std::vector<Eigen::Matrix4d> poses;
+  /// The `passes` layer's points, already back-projected with @ref passes
+  /// and @ref poses (preview_cloud()): a caller that renders several views
+  /// of one candidate solve (`rux optimize --watch`) makes it once. null =
+  /// render_view() back-projects the frames itself.
+  std::shared_ptr<const PreviewCloud> preview;
 
   /// Frame the camera on the [q, 1 - q] quantiles of the cloud (plus the
   /// mesh) rather than on everything drawn; 0 = everything

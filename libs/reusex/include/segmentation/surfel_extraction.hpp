@@ -47,7 +47,7 @@ struct SurfelExtractionParams {
 ///          has invalid intrinsics, or yields too few points for normal
 ///          estimation.
 std::optional<FrameSurfels>
-extract_frame_surfels(ProjectDB &db, int node_id,
+extract_frame_surfels(const ProjectDB &db, int node_id,
                       const SurfelExtractionParams &params);
 
 } // namespace reusex::geometry

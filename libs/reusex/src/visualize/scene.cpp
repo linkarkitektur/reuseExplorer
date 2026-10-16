@@ -1044,9 +1044,10 @@ vtkActor *add_passes_actor(vtkRenderer *renderer, const ProjectDB &db,
         "this project has none — run `" +
         producing_command(Layer::passes) + "` first");
   const stopwatch timer;
-  PreviewCloud pc;
+  PreviewCloud computed;
   try {
-    pc = preview_cloud(db, opts.passes, opts.poses);
+    if (!opts.preview)
+      computed = preview_cloud(db, opts.passes, opts.poses);
   } catch (const std::invalid_argument &e) {
     throw std::runtime_error(std::string("render: layer 'passes': ") +
                              e.what());
@@ -1055,6 +1056,7 @@ vtkActor *add_passes_actor(vtkRenderer *renderer, const ProjectDB &db,
                              e.what() + " — run `" +
                              producing_command(Layer::passes) + "` first");
   }
+  const PreviewCloud &pc = opts.preview ? *opts.preview : computed;
   if (static_cast<std::size_t>(opts.passes.segments) > palette.colors.size())
     core::warn("render: {} pass segments but {} pass colours; segments {} "
                "apart share a colour",

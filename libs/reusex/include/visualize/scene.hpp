@@ -25,6 +25,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -210,6 +211,9 @@ struct SceneOptions {
   std::optional<core::PoseEdits> edits;      ///< `graph` pins
   /// World poses replacing the stored ones (RenderOptions::poses).
   std::vector<Eigen::Matrix4d> poses;
+  /// A preview cloud already made with @ref passes and @ref poses
+  /// (RenderOptions::preview); null = back-project here.
+  std::shared_ptr<const PreviewCloud> preview;
 };
 
 /// The `deviation` layer's colour of a point @p d metres from the mesh: the
