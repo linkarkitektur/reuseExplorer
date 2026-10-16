@@ -72,9 +72,9 @@ struct SolidModelReport {
   /// counts 0.
   std::optional<double> room_iou_mean;
   /// RMS of the matched detected walls' endpoint distances to their reference
-  /// wall's axis line [m]. Face to face when one of the two is drawn on one
-  /// face (thickness unknown or assumed) and the other has measured faces:
-  /// the distance to the nearer of those faces (reusex-v8p).
+  /// wall's axis line [m]. Face to face when one of the two is drawn on its
+  /// one seen face (thickness -1) and the other as a centre line (thickness
+  /// > 0): the distance to the nearer face of the latter (reusex-v8p).
   std::optional<double> wall_position_rms_m;
   /// |detected - reference| thickness over matched walls whose thickness is
   /// known (> 0) and measured (not WallRecord::assumed) on both sides: mean

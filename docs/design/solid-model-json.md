@@ -240,7 +240,7 @@ storey at all (no storeys, walls or spaces) covers everything.
 | `room_count_error` | detected spaces - reference spaces (signed) | 0 |
 | `room_iou_mean` | mean over reference spaces of the 2D IoU with the detected space matched to it; unmatched = 0 | higher |
 | `wall_recall` / `wall_precision` | matched / reference walls, matched / detected walls | higher |
-| `wall_position_rms_m` | RMS of matched detected walls' endpoint distances to the reference axis line; face to face when exactly one of the pair has measured faces (see Matching) | lower |
+| `wall_position_rms_m` | RMS of matched detected walls' endpoint distances to the reference axis line; face to face when exactly one of the pair is drawn on a face (thickness -1; see Matching) | lower |
 | `wall_thickness_err_mean_m` / `_p95_m` | \|detected - reference\| thickness over matched walls whose thickness is known (> 0) and measured (`assumed` false) on both sides; mean and nearest-rank P95. Pairs left out for `assumed` are counted in `counts.thickness_assumed_excluded`, scored pairs in `counts.thickness_pairs` | lower |
 | `opening_recall` / `opening_precision` | matched / reference, matched / detected openings | higher |
 | `opening_iou_mean` | mean over reference openings of the IoU with the detected opening paired one-to-one (greedy by IoU, any overlap, no `opening_match_iou` threshold); 0 for an unpaired one. How close the misses came | higher |
@@ -260,10 +260,10 @@ report is deterministic (STANDARDS §6):
   `wall_match_min_overlap` (0.5) of their union (a 1D IoU), so a short
   fragment lying on the line cannot take the full wall's place. Closest
   midpoint first. Distances are face to face when the two walls follow
-  different conventions: when exactly one of them has known faces
-  (thickness > 0 and not `assumed`), the other's axis -- a seen face, or a
-  defaulted guess -- is measured to the nearer of those two faces; otherwise
-  axis to axis. A one-sided detected wall on the inner face of a measured
+  different conventions: when exactly one of them is a centre line
+  (thickness > 0, measured or `assumed`), the other's axis -- a seen face
+  (thickness -1) -- is measured to the nearer of its two faces (axis +-
+  thickness / 2); otherwise axis to axis. A one-sided detected wall on the inner face of a measured
   reference wall therefore scores 0, as does a measured detected wall whose
   inner face lies on a one-sided reference axis.
 - **Spaces** on the same storey: exact 2D IoU (CGAL boolean set operations

@@ -115,17 +115,18 @@ double signed_off_line(const Axis &a, double x, double y) {
   return (y - a.ay) * a.dx - (x - a.ax) * a.dy;
 }
 
-/// Half the thickness of a wall whose faces are known: measured (> 0, not
-/// assumed); 0 for a wall drawn on one face (thickness -1, reusex-v8p) or
-/// with a defaulted thickness, whose axis is all there is to compare.
+/// Half the thickness of a wall drawn as a centre line (thickness > 0,
+/// measured or assumed: its faces are at +- this); 0 for a wall drawn on
+/// its one seen face (thickness -1, reusex-v8p).
 double face_half(const core::WallRecord &w) {
-  return w.thickness > 0.0 && !w.assumed ? 0.5 * w.thickness : 0.0;
+  return w.thickness > 0.0 ? 0.5 * w.thickness : 0.0;
 }
 
 /// Distance of a detected wall's axis point (x, y) from reference axis
-/// @p r (reusex-v8p): axis to axis when both walls have known faces or
-/// neither has; when only one does, from the other's axis (a face) to the
-/// nearer of its two faces -- a one-sided wall is drawn on its seen face.
+/// @p r (reusex-v8p): axis to axis when both walls are centre lines or both
+/// are faces; when only one is a centre line, from the other's axis (a
+/// face) to the nearer of its two faces -- a one-sided wall is drawn on its
+/// seen face.
 double wall_dist(const Axis &r, double r_half, double d_half, double x,
                  double y) {
   const double sd = signed_off_line(r, x, y);

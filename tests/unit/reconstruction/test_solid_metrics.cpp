@@ -180,14 +180,16 @@ TEST_CASE("CompareSolidModels_OneSidedWalls_ComparedFaceToFace",
     const auto r = compare_solid_models(det, ref);
     CHECK_THAT(r.wall_position_rms_m.value(), WithinAbs(0.02, 1e-9));
   }
-  SECTION("an assumed (defaulted) thickness has no faces to compare") {
+  SECTION("an assumed thickness is still a centre line") {
+    // Its faces are +- half the assumed thickness: the one-sided reference
+    // is compared with the nearer of them.
     SolidModel ref;
     ref.walls = {wall("s", 0, 0.15, 6, 0.15, -1.0)};
     SolidModel det;
     det.walls = {wall("a", 0, 0.0, 6, 0.0, 0.3)};
     det.walls[0].assumed = true;
     const auto r = compare_solid_models(det, ref);
-    CHECK_THAT(r.wall_position_rms_m.value(), WithinAbs(0.15, 1e-9));
+    CHECK_THAT(r.wall_position_rms_m.value(), WithinAbs(0.0, 1e-9));
   }
 }
 
