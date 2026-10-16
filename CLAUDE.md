@@ -265,7 +265,7 @@ pass stamp (ctest log, no runtime closure). Before pushing a PR, on a clean,
 committed tree:
 
 ```bash
-scripts/ci-local.sh        # nix build .#checks... for HEAD (--cores 8), push the stamp
+scripts/ci-local.sh        # nix build .#checks... for HEAD (--cores 4), push the stamp
 scripts/ci-local.sh --check  # would CI hit for HEAD?
 ```
 

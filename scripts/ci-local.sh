@@ -21,9 +21,9 @@
 #   scripts/ci-local.sh --check      # only report whether CI would hit
 #
 # Environment:
-#   CI_LOCAL_CORES      cores per build (default 8; this machine had RAM
-#                       faults at higher -j)
-#   CI_LOCAL_MAX_JOBS   parallel derivations (default 2)
+#   CI_LOCAL_CORES      cores per build (default 4; this machine had RAM
+#                       faults and MCEs at higher load)
+#   CI_LOCAL_MAX_JOBS   parallel derivations (default 1)
 #   CACHIX_AUTH_TOKEN   write token for reusex.cachix.org; alternatively
 #                       `cachix authtoken <token>` once, which stores it in
 #                       ~/.config/cachix/cachix.dhall
@@ -37,8 +37,8 @@ set -euo pipefail
 
 cache=reusex
 attr='.#checks.x86_64-linux.tests'
-cores="${CI_LOCAL_CORES:-8}"
-max_jobs="${CI_LOCAL_MAX_JOBS:-2}"
+cores="${CI_LOCAL_CORES:-4}"
+max_jobs="${CI_LOCAL_MAX_JOBS:-1}"
 push=1
 check_only=0
 

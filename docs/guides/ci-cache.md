@@ -48,7 +48,7 @@ What each piece does:
 - **`scripts/ci-local.sh`** refuses a dirty tree (the hash would include
   uncommitted changes CI never sees), prints the commit, derivation and
   output path, skips everything if the stamp is already in the cache, builds
-  with `--cores 8 --max-jobs 2` (`CI_LOCAL_CORES` / `CI_LOCAL_MAX_JOBS`;
+  with `--cores 4 --max-jobs 1` (`CI_LOCAL_CORES` / `CI_LOCAL_MAX_JOBS`;
   the dev machine had RAM faults at higher `-j`), and pushes the one stamp
   path with `cachix push reusex`. It needs a write token: `CACHIX_AUTH_TOKEN`,
   or `cachix authtoken <token>` once (stored in
