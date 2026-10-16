@@ -433,7 +433,13 @@ TEST_CASE("SolidModelFixture_NewOffice_FollowsTheMaintainersRoomLayout",
   // maintainer decided the 3 WC stalls are fully enclosed rooms and should be
   // detected (and referenced) as separate spaces, so the single "Bathroom"
   // space is now split into "WC 1"/"WC 2"/"WC 3" plus a shared
-  // "Bathroom lobby" (washbasin/entrance) space.
+  // "Bathroom lobby" (washbasin/entrance) space. Same session, a second
+  // maintainer decision: the printer room (front, entered from the
+  // corridor) and the server room (behind it, entered only through the
+  // printer room) are separate spaces too, split by the new
+  // p-printer-server wall placed from the cloud (see its comment in
+  // newoffice.plan.yaml), so "Printer/server room" is now "Printer room"
+  // plus "Server room".
   const SolidModel m =
       reusex::io::solid_model_from_file(fixture("newoffice.plan.yaml"));
   std::vector<std::string> names;
@@ -443,8 +449,8 @@ TEST_CASE("SolidModelFixture_NewOffice_FollowsTheMaintainersRoomLayout",
   CHECK(names == std::vector<std::string>{
                      "Bathroom lobby", "Closed office", "Kitchen/assembly",
                      "Meeting room 1", "Meeting room 2", "Meeting room/storage",
-                     "Open office", "Printer/server room", "WC 1", "WC 2",
-                     "WC 3"});
+                     "Open office", "Printer room", "Server room", "WC 1",
+                     "WC 2", "WC 3"});
   CHECK_THAT(m.description, ContainsSubstring("maintainer's description"));
   CHECK_THAT(m.storeys[0].metadata, ContainsSubstring("room_layout"));
 }

@@ -68,6 +68,11 @@ description: >-
   (s-bathroom-lobby), using the existing stall partition walls (p-wc-1-2,
   p-wc-2-3, p-wc-south, p-wc-east, p-office-south, p-corridor-east,
   p-bath-printer, x-east) as boundaries; see the comments at each new space.
+  Same session: the "Printer/server room" space was likewise split into
+  s-printer-room (front, from the corridor) and s-server-room (behind it,
+  entered only through the printer room), separated by the new
+  p-printer-server wall placed from a series of depth-sections through the
+  room (see its comment).
 
 storeys:
   - guid: "storey-0"
@@ -512,6 +517,37 @@ walls:
     metadata:
       note: "Printer-server room / kitchen: faces at b=-4.32 (printer room) and -4.98 (kitchen backsplash, between the counter and the upper cabinets, z 1.0-1.5 m). The kitchen's base cabinets (front at b=-5.56) and upper cabinets run along it; the draft's p-hall-north at b=-5.57 was that cabinet front. 0.66 m may include an installation cavity"
 
+  # DECISION (reusex-mdu, 2026-10-16): per the maintainer, split "Printer-server
+  # room" into a printer room (front, entered from the corridor via
+  # o-printer-door) and a server room (behind it, entered only through the
+  # printer room). Placed by scanning the room's own depth with a series of
+  # narrow (0.2 m) elevation sections perpendicular to its length, each at a
+  # fixed fraction s of the way from p-bath-printer/p-corridor-east toward
+  # p-kitchen-north/p-printer-east (s=0 at the corridor end): s=0.30 shows
+  # only furniture (a cabinet/copier silhouette well under ceiling height);
+  # s=0.45 shows a partial floor-to-ceiling sheet (only the kitchen-north
+  # half of the width); s=0.50 shows a CLEAN full-width floor-to-ceiling wall
+  # with a door-shaped gap (x = 16-53% of the width, i.e. a ~0.83 m opening);
+  # s=0.55 shows no wall at all, only scattered rack-like clutter (the server
+  # room's own equipment, consistent with "network rack and electrical
+  # panel" from the room's note). The wall is thin and only its s=0.50 face
+  # was resolved this way, so thickness stays unknown (one perpendicular cut
+  # caught it cleanly; no second parallel sheet was found at the neighbouring
+  # cuts to pair into a thickness). Axis = the s=0.50 points on p-bath-printer
+  # and p-kitchen-north.
+  - guid: "p-printer-server"
+    storey: 0
+    axis: [[17.230, 17.344], [18.962, 15.935]]
+    z_base: 0.0
+    height: 2.88
+    thickness: -1.0
+    is_external: false
+    assumed: false
+    locked: true
+    source: manual
+    metadata:
+      note: "Printer room / server room: one face resolved by perpendicular depth-sections at s=0.50 of the room's length (see DECISION above); thickness unknown"
+
   - guid: "p-kitchen-storage"
     storey: 0
     axis: [[25.383, 8.869], [27.893, 11.955]]
@@ -705,22 +741,43 @@ spaces:
     metadata:
       note: "shared washbasin / entrance area (reusex-mdu, 2026-10-16): double vanity (frames 2343, 2407), bounded by p-corridor-east (entrance, door o-bath-door), p-bath-printer (north), p-wc-east (east, washbasin/service-shaft wall) and p-wc-south (south -- the stall fronts; the 3 stall doors open onto this space)"
 
-  - guid: "s-printer-server"
+  # DECISION (reusex-mdu, 2026-10-16): the former single "Printer/server
+  # room" is split into these two spaces by the new p-printer-server wall
+  # (see its DECISION comment for how the split line was placed and
+  # verified against the cloud).
+  - guid: "s-printer-room"
     storey: 0
-    name: "Printer/server room"
+    name: "Printer room"
     kind: room
     polygon:
       outer:
         - [17.473, 14.629]
-        - [19.938, 17.658]
-        - [18.494, 18.832]
+        - [18.962, 15.935]
+        - [17.230, 17.344]
         - [16.03, 15.803]
     z_floor: 0.0
     z_ceiling: 2.88
     source: manual
     locked: true
     metadata:
-      note: "copier, plotter, network rack and electrical panel (frames 1549-1682, 3118)"
+      note: "front room, entered from the corridor (o-printer-door): copier and plotter (frames 1549-1682, 3118)"
+
+  - guid: "s-server-room"
+    storey: 0
+    name: "Server room"
+    kind: room
+    polygon:
+      outer:
+        - [18.962, 15.935]
+        - [19.938, 17.658]
+        - [18.494, 18.832]
+        - [17.230, 17.344]
+    z_floor: 0.0
+    z_ceiling: 2.88
+    source: manual
+    locked: true
+    metadata:
+      note: "back room, entered only through the printer room (o-printer-server-door): network rack and electrical panel (frames 1549-1682, 3118)"
 
   - guid: "s-kitchen"
     storey: 0
@@ -815,7 +872,15 @@ openings:
   - {guid: "o-mr1-door", wall: "p-mr1-glass", kind: door, s_start: 3.25, s_end: 4.11, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "Meeting room 1 glass door: between the mullion posts; approximate, head height assumed; position re-measured against the capture trajectory (reusex-a51), moved to the north end near p-mr1-office"}}
   - {guid: "o-office-opening", wall: "p-corridor-east", kind: opening, s_start: 7.3, s_end: 9.05, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "Closed office: no wall points between b=2.65 and 4.4 below 1.9 m; a glazed front with a door (frame 792); head height assumed"}}
   - {guid: "o-bath-door", wall: "p-corridor-east", kind: door, s_start: 2.4, s_end: 3.2, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "Bathroom door: gaps on the wall axis at b=-2.2..-1.5, the open leaf lies against the room face (frames 870, 3178); approximate, head height assumed"}}
-  - {guid: "o-printer-door", wall: "p-corridor-east", kind: door, s_start: 1.2, s_end: 1.75, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "Printer-server room door (frames 873, 1615); head height assumed"}}
+  - {guid: "o-printer-door", wall: "p-corridor-east", kind: door, s_start: 1.2, s_end: 1.75, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "Printer room door, from the corridor (frames 873, 1615); head height assumed"}}
+  # NEW (reusex-mdu, 2026-10-16): the server-room door in the new
+  # p-printer-server partition. s/width from the clean door-shaped gap found
+  # at the s=0.50 depth-section (see the DECISION on p-printer-server):
+  # x = 16-53% of the wall's 2.233 m length. z_head: no clear head-height
+  # signal in the sparse cloud at this gap (a rough pixel read gave ~2.2 m);
+  # kept at the file's standard assumed door head instead of over-fitting
+  # noisy sparse points.
+  - {guid: "o-printer-server-door", wall: "p-printer-server", kind: door, s_start: 0.36, s_end: 1.19, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "server room door, from the printer room; position from a depth-section through the gap, head height assumed"}}
   - {guid: "o-wc1-door", wall: "p-wc-south", kind: door, s_start: 0.43, s_end: 1.08, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "stall door, leaf open; head height assumed"}}
   - {guid: "o-wc2-door", wall: "p-wc-south", kind: door, s_start: 1.73, s_end: 2.33, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "stall door, leaf open; head height assumed"}}
   # s re-indexed to the moved p-storage-glass (same posts: old s 0.70-1.55).
