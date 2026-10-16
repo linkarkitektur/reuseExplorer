@@ -36,6 +36,8 @@ QString stage_name_da(pl::JobStage stage) {
     return "Etager";
   case pl::JobStage::classify:
     return "Klassificér planer";
+  case pl::JobStage::walls:
+    return "Vægge";
   }
   return {};
 }
@@ -63,6 +65,9 @@ QString stage_blurb_da(pl::JobStage stage) {
   case pl::JobStage::classify:
     return "Giv hver plan en rolle — væg, gulv, loft, møbel — ud fra "
            "semantik og geometri.";
+  case pl::JobStage::walls:
+    return "Find væggene: akse, målt tykkelse og hvordan de mødes (hjørner, "
+           "T-samlinger).";
   }
   return {};
 }
@@ -175,6 +180,55 @@ QString parameter_label_da(pl::JobStage stage,
           {{"classify", "min_labelled_share"}, "Mindste mærkede andel"},
           {{"classify", "min_class_share"}, "Mindste klasseandel"},
           {{"classify", "role_map"}, "Klasse → rolle (JSON-fil)"},
+          {{"walls", "max_families"}, "Ekstra vægretninger"},
+          {{"walls", "family_angle_deg"}, "Retningsvindue [°]"},
+          {{"walls", "min_family_share"}, "Mindste andel for en retning"},
+          {{"walls", "wall_role_only"}, "Kun vægplaner giver retninger"},
+          {{"walls", "family_refine_iterations"}, "Forfiningsrunder"},
+          {{"walls", "family_refine_deg"}, "Smalleste forfiningsvindue [°]"},
+          {{"walls", "assign_angle_deg"}, "Tilknyt punkter inden for [°]"},
+          {{"walls", "square_deg"}, "Ret vægplaner op inden for [°]"},
+          {{"walls", "bin_m"}, "Profilinterval [m]"},
+          {{"walls", "min_peak_points"}, "Mindste top [punkter]"},
+          {{"walls", "min_peak_prominence_share"}, "Mindste topfremtræden"},
+          {{"walls", "min_peak_separation_m"}, "Mindste topafstand [m]"},
+          {{"walls", "face_window_m"}, "Fladevindue [m]"},
+          {{"walls", "min_column_share"}, "Mindste søjleandel"},
+          {{"walls", "run_gap_m"}, "Del ved hul over [m]"},
+          {{"walls", "min_run_m"}, "Korteste vægstykke [m]"},
+          {{"walls", "min_run_points"}, "Færrest punkter pr. stykke"},
+          {{"walls", "cell_m"}, "Celle [m]"},
+          {{"walls", "storey_margin_m"}, "Margin om etagen [m]"},
+          {{"walls", "min_gap_m"}, "Tyndeste væg [m]"},
+          {{"walls", "max_gap_m"}, "Tykkeste væg [m]"},
+          {{"walls", "min_shared_m"}, "Mindste fælles længde [m]"},
+          {{"walls", "max_valley_share"}, "Største dalandel"},
+          {{"walls", "min_co_visibility"}, "Mindste fælles synlighed"},
+          {{"walls", "max_crossed_gap_m"}, "Krydset par under [m]"},
+          {{"walls", "min_cell_points"}, "Mindste punkter pr. celle"},
+          {{"walls", "outlier_sigma_k"}, "Udligger ved sigma"},
+          {{"walls", "min_robust_sigma_m"}, "Mindste robuste sigma [m]"},
+          {{"walls", "bootstrap_samples"}, "Bootstrap-gentagelser"},
+          {{"walls", "seed"}, "Frø (bootstrap)"},
+          {{"walls", "ci_level"}, "Konfidensniveau"},
+          {{"walls", "default_thickness_m"}, "Antaget tykkelse [m]"},
+          {{"walls", "external_strip_near_m"}, "Ydervægsbånd fra [m]"},
+          {{"walls", "external_strip_far_m"}, "Ydervægsbånd til [m]"},
+          {{"walls", "external_max_z_m"}, "Ydervægsbånd højde [m]"},
+          {{"walls", "min_room_density"}, "Mindste rumtæthed [pkt/m²]"},
+          {{"walls", "snap_wide_m"}, "Fang (bred) [m]"},
+          {{"walls", "snap_narrow_m"}, "Fang (smal) [m]"},
+          {{"walls", "bridge_gap_m"}, "Bro over hul [m]"},
+          {{"walls", "bridge_offset_m"}, "Bro: forskydning [m]"},
+          {{"walls", "bridge_thickness_m"}, "Bro: tykkelsesforskel [m]"},
+          {{"walls", "recess_max_length_m"}, "Længste niche [m]"},
+          {{"walls", "corner_m"}, "Hjørne inden for [m]"},
+          {{"walls", "tee_m"}, "T-samling inden for [m]"},
+          {{"walls", "tee_on_wall_m"}, "T-samling tolerance [m]"},
+          {{"walls", "min_seen_share"}, "Mindste sete andel"},
+          {{"walls", "guid_match_m"}, "Samme væg inden for [m]"},
+          {{"walls", "guid_match_angle_deg"}, "Samme væg vinkel [°]"},
+          {{"walls", "guid_min_overlap"}, "Samme væg overlap"},
   };
   if (auto it = labels.find({std::string(pl::to_string(stage)), d.key});
       it != labels.end())
@@ -214,6 +268,8 @@ reusex::core::PipelineStage contract_stage(pl::JobStage stage) {
     return P::storeys;
   case pl::JobStage::classify:
     return P::classify;
+  case pl::JobStage::walls:
+    return P::walls;
   }
   return P::clouds;
 }

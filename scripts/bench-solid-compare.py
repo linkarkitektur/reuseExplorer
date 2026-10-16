@@ -99,6 +99,8 @@ def fmt(value) -> str:
         return "n/a"
     if isinstance(value, int) and not isinstance(value, bool):
         return f"{value:+d}" if value else "0"
+    if not isinstance(value, float):
+        return str(value)
     return f"{value:.4g}"
 
 
@@ -122,6 +124,12 @@ def compare_metric(
         return Line(row, key, b, c, "", "NEW")
     if cand is None:
         return Line(row, key, b, c, "", "LOST", regression=True)
+    numeric = all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                  for v in (base, cand))
+    if not numeric:
+        # A text metric (fit_source names the scratch copy it was measured
+        # on): reported, never gated.
+        return Line(row, key, b, c, "" if base == cand else "changed", "info")
     if direction is None:
         return Line(row, key, b, c, f"{cand - base:+.4g}", "info")
     worse = worsening(direction, float(base), float(cand))

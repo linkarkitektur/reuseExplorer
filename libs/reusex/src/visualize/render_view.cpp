@@ -281,6 +281,8 @@ std::string_view to_string(Layer layer) {
     return "panoramas";
   case Layer::deviation:
     return "deviation";
+  case Layer::walls:
+    return "walls";
   }
   return "unknown";
 }
@@ -322,9 +324,9 @@ std::optional<ViewPreset> view_preset_from_string(std::string_view name) {
 
 const std::vector<Layer> &all_layers() {
   static const std::vector<Layer> layers{
-      Layer::cloud,     Layer::labels,   Layer::planes,     Layer::rooms,
-      Layer::instances, Layer::mesh,     Layer::components, Layer::frustums,
-      Layer::panoramas, Layer::deviation};
+      Layer::cloud,     Layer::labels,    Layer::planes,     Layer::rooms,
+      Layer::instances, Layer::mesh,      Layer::components, Layer::frustums,
+      Layer::panoramas, Layer::deviation, Layer::walls};
   return layers;
 }
 

@@ -7,6 +7,7 @@
 
 #include <reusex/core/storey_identity.hpp>
 #include <reusex/pipeline/mesh_parameters.hpp>
+#include <reusex/pipeline/wall_parameters.hpp>
 #include <reusex/reconstruction/mesh.hpp>
 #include <reusex/segmentation/band_rooms.hpp>
 #include <reusex/segmentation/classify_planes.hpp>
@@ -645,6 +646,8 @@ const std::vector<ParameterDescriptor> &stage_parameters(JobStage stage) {
     return storeys_parameters();
   case JobStage::classify:
     return classify_parameters();
+  case JobStage::walls:
+    return wall_stage_parameters();
   }
   throw std::logic_error("unhandled JobStage in stage_parameters()");
 }
