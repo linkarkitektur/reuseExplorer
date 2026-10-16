@@ -96,6 +96,7 @@ TEST_CASE("CompareSolidModels_IdenticalModels_ScorePerfect",
   CHECK(r.wall_precision.value() == 1.0);
   CHECK(r.opening_recall.value() == 1.0);
   CHECK(r.opening_precision.value() == 1.0);
+  CHECK_THAT(r.opening_iou_mean.value(), WithinAbs(1.0, 1e-12));
   CHECK(r.matched_walls == 4);
 }
 
@@ -111,6 +112,7 @@ TEST_CASE("CompareSolidModels_EmptyModels_EveryMetricIsNa",
   CHECK_FALSE(r.wall_precision.has_value());
   CHECK_FALSE(r.opening_recall.has_value());
   CHECK_FALSE(r.opening_precision.has_value());
+  CHECK_FALSE(r.opening_iou_mean.has_value());
   CHECK_FALSE(r.fit_mean_m.has_value());
   CHECK_FALSE(r.seen_share_mean.has_value());
   CHECK_FALSE(r.assumed_share.has_value());
@@ -267,6 +269,8 @@ TEST_CASE("CompareSolidModels_OpeningShiftedAlongTheWall_IouDecidesTheMatch",
     const auto r = compare_solid_models(det, ref);
     CHECK(r.opening_recall.value() == 0.0);
     CHECK(r.opening_precision.value() == 0.0);
+    // ...but the near miss shows in the IoU mean (no threshold).
+    CHECK_THAT(r.opening_iou_mean.value(), WithinAbs(1.0 / 3.0, 1e-9));
   }
 }
 

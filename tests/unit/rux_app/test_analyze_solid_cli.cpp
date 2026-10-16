@@ -116,9 +116,9 @@ TEST_CASE("AnalyzeSolidCli_ProjectWithoutSolidModelTables_ReportsAllNa",
   for (const char *k :
        {"room_count_error", "room_iou_mean", "wall_position_rms_m",
         "wall_thickness_err_mean_m", "wall_thickness_err_p95_m", "wall_recall",
-        "wall_precision", "opening_recall", "opening_precision", "fit_mean_m",
-        "fit_within_share", "mesh_area_m2", "mesh_unsupported_share",
-        "seen_share_mean", "assumed_share"}) {
+        "wall_precision", "opening_recall", "opening_precision",
+        "opening_iou_mean", "fit_mean_m", "fit_within_share", "mesh_area_m2",
+        "mesh_unsupported_share", "seen_share_mean", "assumed_share"}) {
     INFO(k);
     CHECK(j.at(k).is_null());
   }

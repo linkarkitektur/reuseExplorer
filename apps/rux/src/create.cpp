@@ -14,6 +14,7 @@
 #include "create/material.hpp"
 #include "create/materials.hpp"
 #include "create/mesh.hpp"
+#include "create/openings_dev.hpp"
 #include "create/planes.hpp"
 #include "create/project.hpp"
 #include "create/rooms.hpp"
@@ -88,6 +89,7 @@ NOTES:
   setup_subcommand_create_attributes(*sub, global_opt);
   setup_subcommand_create_gsplat(*sub, global_opt);
   setup_subcommand_create_segment_frame(*sub, global_opt);
+  setup_subcommand_create_openings_dev(*sub, global_opt);
 
   sub->require_subcommand(1);
 }
