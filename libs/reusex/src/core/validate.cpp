@@ -241,6 +241,7 @@ struct ProjectState {
   int plane_classes = 0;
   int walls = 0;
   int wall_joins = 0;
+  int openings = 0;
 };
 
 ProjectState read_state(const ProjectDB &db) {
@@ -258,6 +259,7 @@ ProjectState read_state(const ProjectDB &db) {
   state.plane_classes = static_cast<int>(db.plane_classes("planes").size());
   state.walls = static_cast<int>(db.walls().size());
   state.wall_joins = static_cast<int>(db.wall_joins().size());
+  state.openings = static_cast<int>(db.openings().size());
   return state;
 }
 
@@ -287,6 +289,8 @@ int table_rows(const ProjectState &state, std::string_view name) {
     return state.walls;
   if (name == "wall_joins")
     return state.wall_joins;
+  if (name == "openings")
+    return state.openings;
   return 0;
 }
 

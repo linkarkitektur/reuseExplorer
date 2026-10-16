@@ -428,9 +428,11 @@ class ProjectDB::Impl {
   bool hasSamplePartLinks = false;
   /// walls and wall_joins exist (v33).
   bool hasWallsTable = false;
+  /// openings exists (v34).
+  bool hasOpeningsTable = false;
 
   // cppcheck-suppress unusedStructMember
-  static constexpr int LATEST_SCHEMA_VERSION = 33;
+  static constexpr int LATEST_SCHEMA_VERSION = 34;
 
   // How long one statement waits for a lock another connection holds before
   // failing with SQLITE_BUSY. sqlite's default is not to wait at all.
@@ -557,6 +559,7 @@ class ProjectDB::Impl {
     hasPlaneClassesTable = tableExists("plane_classes");
     hasSamplePartLinks = tableExists("sample_part_links");
     hasWallsTable = tableExists("walls") && tableExists("wall_joins");
+    hasOpeningsTable = tableExists("openings");
   }
 
   /// True the first time this process opens dbPath read-only at schema
@@ -872,6 +875,10 @@ class ProjectDB::Impl {
 
     if (current < 33) {
       migrateToV33();
+    }
+
+    if (current < 34) {
+      migrateToV34();
     }
 
     reusex::trace("Schema version: {}", getCurrentSchemaVersion());
@@ -4002,6 +4009,217 @@ class ProjectDB::Impl {
     checkWritable();
     if (hasWallsTable)
       execOrThrow("DELETE FROM wall_joins; DELETE FROM walls;");
+  }
+
+  void migrateToV34() {
+    reusex::info("Migrating database to schema version 34");
+    // Solid-model WP5 (reusex-z1v.7.3): doors, windows and plain openings in
+    // the walls' faces. The host wall is named by its guid (wall_guid), not
+    // by a foreign key to walls(id): a walls re-run deletes and re-inserts
+    // its unlocked rows, and a cascading key would take every opening (a
+    // locked, hand-fixed one too) with them, while the wall's GUID survives
+    // the re-run (core/wall_identity.hpp). An opening whose host is gone
+    // stays until the openings stage runs again; load_solid_model() skips it.
+    Savepoint sp(db, "migrate_v34");
+    execOrThrow(R"(
+      CREATE TABLE IF NOT EXISTS openings (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        guid                 TEXT    NOT NULL UNIQUE,
+        wall_guid            TEXT    NOT NULL,
+        kind                 TEXT    NOT NULL
+          CHECK (kind IN ('door', 'window', 'opening')),
+        s_start              REAL    NOT NULL,
+        s_end                REAL    NOT NULL,
+        z_sill               REAL    NOT NULL,
+        z_head               REAL    NOT NULL,
+        state                TEXT    NOT NULL DEFAULT 'unknown'
+          CHECK (state IN ('open', 'closed', 'unknown')),
+        is_external          INTEGER NOT NULL DEFAULT 0
+          CHECK (is_external IN (0, 1)),
+        source_instance_guid TEXT    NOT NULL DEFAULT '',
+        source               TEXT    NOT NULL DEFAULT 'detected'
+          CHECK (source IN ('detected', 'manual', 'imported')),
+        locked               INTEGER NOT NULL DEFAULT 0 CHECK (locked IN (0, 1)),
+        confidence           REAL    NOT NULL DEFAULT -1,
+        metadata             TEXT    NOT NULL DEFAULT '',
+        run_id               INTEGER,
+        created_at           TEXT    NOT NULL
+          DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_openings_wall ON openings(wall_guid);
+    )");
+    insertSchemaVersion(34, "Solid model: openings table");
+    sp.release();
+    reusex::info("Migration to schema version 34 complete");
+  }
+
+  // ── Openings (v34) ───────────────────────────────────────────────────────
+
+  static constexpr const char *kOpeningColumns =
+      "id, guid, wall_guid, kind, s_start, s_end, z_sill, z_head, state, "
+      "is_external, source_instance_guid, source, locked, confidence, metadata";
+
+  static core::OpeningRecord readOpening(sqlite3_stmt *s) {
+    core::OpeningRecord r;
+    r.id = sqlite3_column_int64(s, 0);
+    r.guid = column_text(s, 1);
+    r.wall = column_text(s, 2);
+    r.kind = column_text(s, 3);
+    r.s_start = sqlite3_column_double(s, 4);
+    r.s_end = sqlite3_column_double(s, 5);
+    r.z_sill = sqlite3_column_double(s, 6);
+    r.z_head = sqlite3_column_double(s, 7);
+    r.state = column_text(s, 8);
+    r.is_external = sqlite3_column_int(s, 9) != 0;
+    r.source_instance_guid = column_text(s, 10);
+    r.source = column_text(s, 11);
+    r.locked = sqlite3_column_int(s, 12) != 0;
+    r.confidence = sqlite3_column_double(s, 13);
+    r.metadata = column_text(s, 14);
+    return r;
+  }
+
+  std::vector<core::OpeningRecord> listOpenings() const {
+    std::vector<core::OpeningRecord> out;
+    if (!hasOpeningsTable)
+      return out;
+    const std::string sql = std::string("SELECT ") + kOpeningColumns +
+                            " FROM openings ORDER BY wall_guid, s_start, id;";
+    sqlite3_stmt *s = prepare_or_throw(db, sql.c_str(), "openings");
+    StmtGuard guard(s);
+    int rc;
+    while ((rc = sqlite3_step(s)) == SQLITE_ROW)
+      out.push_back(readOpening(s));
+    if (rc != SQLITE_DONE)
+      throw std::runtime_error("openings: " + std::string(sqlite3_errmsg(db)));
+    return out;
+  }
+
+  std::optional<core::OpeningRecord>
+  openingByGuid(std::string_view guid) const {
+    if (!hasOpeningsTable)
+      return std::nullopt;
+    const std::string sql = std::string("SELECT ") + kOpeningColumns +
+                            " FROM openings WHERE guid = ?;";
+    sqlite3_stmt *s = prepare_or_throw(db, sql.c_str(), "opening_by_guid");
+    StmtGuard guard(s);
+    bind_text(s, 1, guid);
+    if (sqlite3_step(s) != SQLITE_ROW)
+      return std::nullopt;
+    return readOpening(s);
+  }
+
+  size_t saveOpenings(const std::vector<core::OpeningRecord> &openings,
+                      int runId) {
+    checkWritable();
+    if (!hasOpeningsTable)
+      throw std::runtime_error("save_openings: project schema predates v34");
+    static const std::set<std::string, std::less<>> kKinds = {"door", "window",
+                                                              "opening"};
+    static const std::set<std::string, std::less<>> kStates = {"open", "closed",
+                                                               "unknown"};
+    std::set<std::string, std::less<>> guids;
+    for (const auto &r : openings) {
+      if (r.guid.empty())
+        throw std::invalid_argument("save_openings: an opening in wall " +
+                                    r.wall + " has no guid");
+      const auto where = "save_openings: opening " + r.guid;
+      if (r.wall.empty())
+        throw std::invalid_argument(where + " names no host wall");
+      if (!kKinds.count(r.kind))
+        throw std::invalid_argument(where + " has invalid kind '" + r.kind +
+                                    "'");
+      if (!kStates.count(r.state))
+        throw std::invalid_argument(where + " has invalid state '" + r.state +
+                                    "'");
+      if (r.source != "detected" && r.source != "manual" &&
+          r.source != "imported")
+        throw std::invalid_argument(where + " has invalid source '" + r.source +
+                                    "'");
+      if (!(r.s_end > r.s_start) || !(r.z_head > r.z_sill))
+        throw std::invalid_argument(
+            where + " is empty (s " + std::to_string(r.s_start) + ".." +
+            std::to_string(r.s_end) + ", z " + std::to_string(r.z_sill) + ".." +
+            std::to_string(r.z_head) + ")");
+      if (!guids.insert(r.guid).second)
+        throw std::invalid_argument("save_openings: duplicate guid " + r.guid);
+    }
+
+    Savepoint sp(db, "save_openings");
+    std::set<std::string, std::less<>> lockedGuids;
+    {
+      sqlite3_stmt *s = prepare_or_throw(
+          db, "SELECT guid FROM openings WHERE locked = 1;", "save_openings");
+      StmtGuard guard(s);
+      int rc;
+      while ((rc = sqlite3_step(s)) == SQLITE_ROW)
+        lockedGuids.insert(column_text(s, 0));
+      if (rc != SQLITE_DONE)
+        throw std::runtime_error("save_openings: reading locked rows: " +
+                                 std::string(sqlite3_errmsg(db)));
+    }
+    execOrThrow("DELETE FROM openings WHERE locked = 0;");
+
+    sqlite3_stmt *ins = prepare_or_throw(
+        db,
+        "INSERT INTO openings (guid, wall_guid, kind, s_start, s_end, z_sill, "
+        "z_head, state, is_external, source_instance_guid, source, locked, "
+        "confidence, metadata, run_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+        "save_openings");
+    StmtGuard guard(ins);
+    size_t written = 0, skipped = 0;
+    for (const auto &r : openings) {
+      if (lockedGuids.count(r.guid)) {
+        ++skipped;
+        continue;
+      }
+      sqlite3_reset(ins);
+      sqlite3_clear_bindings(ins);
+      bind_text(ins, 1, r.guid);
+      bind_text(ins, 2, r.wall);
+      bind_text(ins, 3, r.kind);
+      sqlite3_bind_double(ins, 4, r.s_start);
+      sqlite3_bind_double(ins, 5, r.s_end);
+      sqlite3_bind_double(ins, 6, r.z_sill);
+      sqlite3_bind_double(ins, 7, r.z_head);
+      bind_text(ins, 8, r.state);
+      sqlite3_bind_int(ins, 9, r.is_external ? 1 : 0);
+      bind_text(ins, 10, r.source_instance_guid);
+      bind_text(ins, 11, r.source);
+      sqlite3_bind_int(ins, 12, r.locked ? 1 : 0);
+      sqlite3_bind_double(ins, 13, r.confidence);
+      bind_text(ins, 14, r.metadata);
+      if (runId >= 0)
+        sqlite3_bind_int(ins, 15, runId);
+      else
+        sqlite3_bind_null(ins, 15);
+      if (sqlite3_step(ins) != SQLITE_DONE)
+        throw std::runtime_error("save_openings: insert of opening " + r.guid +
+                                 " failed: " + sqlite3_errmsg(db));
+      ++written;
+    }
+    sp.release();
+    if (skipped > 0)
+      reusex::info(
+          "save_openings: {} opening(s) are locked; kept the stored rows",
+          skipped);
+    return written;
+  }
+
+  bool hasOpenings() const {
+    if (!hasOpeningsTable)
+      return false;
+    sqlite3_stmt *s = prepare_or_throw(
+        db, "SELECT EXISTS (SELECT 1 FROM openings);", "has_openings");
+    StmtGuard guard(s);
+    return sqlite3_step(s) == SQLITE_ROW && sqlite3_column_int(s, 0) != 0;
+  }
+
+  void deleteOpenings() {
+    checkWritable();
+    if (hasOpeningsTable)
+      execOrThrow("DELETE FROM openings;");
   }
 
   // ── Scan helpers (#129) ──────────────────────────────────────────────────
@@ -8656,6 +8874,25 @@ std::vector<core::WallJoinRecord> ProjectDB::wall_joins() const {
 }
 
 void ProjectDB::delete_walls() { impl_->deleteWalls(); }
+
+size_t
+ProjectDB::save_openings(const std::vector<core::OpeningRecord> &openings,
+                         int run_id) {
+  return impl_->saveOpenings(openings, run_id);
+}
+
+std::vector<core::OpeningRecord> ProjectDB::openings() const {
+  return impl_->listOpenings();
+}
+
+std::optional<core::OpeningRecord>
+ProjectDB::opening_by_guid(std::string_view guid) const {
+  return impl_->openingByGuid(guid);
+}
+
+bool ProjectDB::has_openings() const { return impl_->hasOpenings(); }
+
+void ProjectDB::delete_openings() { impl_->deleteOpenings(); }
 
 core::SensorIntrinsics ProjectDB::sensor_frame_intrinsics(int nodeId) const {
   return impl_->getSensorFrameIntrinsics(nodeId);

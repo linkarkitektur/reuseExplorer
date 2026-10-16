@@ -48,6 +48,7 @@ enum class PipelineStage {
   storeys,        ///< storeys and the measured vertical (level frame)
   classify,       ///< the role of each plane (wall, floor, ceiling, ...)
   walls,          ///< walls with a measured thickness and their joins
+  openings,       ///< doors, windows and openings in the walls' faces
   mesh,           ///< generate the reconstructed mesh
   texture,        ///< texture-map the reconstructed mesh
   windows,        ///< derive window building components

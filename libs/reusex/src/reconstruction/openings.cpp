@@ -404,7 +404,65 @@ std::vector<OpeningRect> merge_mullions(std::vector<OpeningRect> rects,
     }
     out.push_back(r);
   }
-  return out;
+  // A transom: rectangles stacked over the same stretch of wall, at most
+  // mullion_max_gap_m apart vertically, are one opening too.
+  const auto area = [](const OpeningRect &r) {
+    return (r.s_end - r.s_start) * (r.z_head - r.z_sill);
+  };
+  for (bool merged = true; merged;) {
+    merged = false;
+    for (std::size_t a = 0; a < out.size() && !merged; ++a)
+      for (std::size_t b = 0; b < out.size() && !merged; ++b) {
+        if (a == b)
+          continue;
+        const OpeningRect &lo = out[a], &up = out[b];
+        if (up.z_sill < lo.z_head - 1e-9 ||
+            up.z_sill - lo.z_head > opt.mullion_max_gap_m + 1e-9 ||
+            std::abs(up.s_start - lo.s_start) > opt.mullion_max_dz_m + 1e-9 ||
+            std::abs(up.s_end - lo.s_end) > opt.mullion_max_dz_m + 1e-9)
+          continue;
+        OpeningRect u = lo;
+        u.s_start = std::min(lo.s_start, up.s_start);
+        u.s_end = std::max(lo.s_end, up.s_end);
+        u.z_head = up.z_head;
+        u.at_ceiling = up.at_ceiling;
+        const double au = area(u);
+        u.fill =
+            au > 0.0 ? (lo.fill * area(lo) + up.fill * area(up)) / au : 0.0;
+        u.open_share =
+            au > 0.0
+                ? (lo.open_share * area(lo) + up.open_share * area(up)) / au
+                : 0.0;
+        u.open_cells = lo.open_cells + up.open_cells;
+        u.jamb_start = std::min(lo.jamb_start, up.jamb_start);
+        u.jamb_end = std::min(lo.jamb_end, up.jamb_end);
+        out[a] = u;
+        out.erase(out.begin() + static_cast<std::ptrdiff_t>(b));
+        merged = true;
+      }
+  }
+  // A rectangle lying mostly (over half its area) inside a bigger one is
+  // part of it (the trimmed box of one component reaching over another).
+  std::vector<OpeningRect> kept;
+  for (std::size_t a = 0; a < out.size(); ++a) {
+    bool inside = false;
+    for (std::size_t b = 0; b < out.size() && !inside; ++b) {
+      if (a == b || area(out[b]) < area(out[a]) ||
+          (area(out[b]) == area(out[a]) && b > a))
+        continue;
+      const double w = std::min(out[a].s_end, out[b].s_end) -
+                       std::max(out[a].s_start, out[b].s_start);
+      const double h = std::min(out[a].z_head, out[b].z_head) -
+                       std::max(out[a].z_sill, out[b].z_sill);
+      inside = w > 0.0 && h > 0.0 && w * h > 0.5 * area(out[a]);
+    }
+    if (!inside)
+      kept.push_back(out[a]);
+  }
+  std::sort(kept.begin(), kept.end(), [](const auto &x, const auto &y) {
+    return std::tie(x.s_start, x.z_sill) < std::tie(y.s_start, y.z_sill);
+  });
+  return kept;
 }
 
 std::string classify_opening(const OpeningRect &rect, double z_floor,

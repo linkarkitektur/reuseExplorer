@@ -51,6 +51,9 @@ const std::vector<Artifact> &artifacts() {
       {"wall_joins", ArtifactKind::table, Alignment::none,
        "wall_joins: corner / tee / collinear joins between walls "
        "(schema v33)"},
+      {"openings", ArtifactKind::table, Alignment::none,
+       "openings: doors, windows and openings in the walls' faces, with "
+       "their evidence (schema v34)"},
       {"mesh", ArtifactKind::mesh, Alignment::none,
        "the reconstructed watertight mesh"},
       {"textured_mesh", ArtifactKind::mesh, Alignment::none,
@@ -200,6 +203,18 @@ const std::vector<StageContract> &contracts() {
         {{"plane_classes"}},
         {{"storeys"}}},
        {"walls", "wall_joins"}},
+
+      {PipelineStage::openings,
+       "openings",
+       {},
+       "rux create openings",
+       "doors, windows and openings in the walls' faces",
+       // The face raster reads `cloud` around each wall of `walls`, in its
+       // storey's level frame. `labels`, `instances`, the glass confidence
+       // images and the sensor poses are optional evidence, so they are not
+       // declared, as for `classify`.
+       {{{"cloud"}}, {{"walls"}}, {{"storeys"}}},
+       {"openings"}},
 
       {PipelineStage::mesh,
        "mesh",

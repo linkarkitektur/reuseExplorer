@@ -93,6 +93,15 @@ TEST_CASE("MergeMullions_JoinsASplitWindow", "[reconstruction][openings]") {
             .size() == 2);
   CHECK(merge_mullions({rect(1.0, 1.8, 0.0, 2.1), rect(1.9, 2.7, 0.9, 2.1)})
             .size() == 2);
+  // A transom: a fanlight over a window, 10 cm apart.
+  auto t =
+      merge_mullions({rect(1.0, 2.0, 0.9, 1.9), rect(1.05, 2.0, 2.0, 2.4)});
+  REQUIRE(t.size() == 1);
+  CHECK_THAT(t[0].z_head, WithinAbs(2.4, 1e-12));
+  // A small rectangle mostly inside a bigger one is part of it.
+  t = merge_mullions({rect(1.0, 2.0, 0.9, 2.4), rect(1.2, 1.6, 2.0, 2.6)});
+  REQUIRE(t.size() == 1);
+  CHECK_THAT(t[0].z_head, WithinAbs(2.4, 1e-12));
 }
 
 TEST_CASE("DetectOpenings_EachClass_GeometryAlone",

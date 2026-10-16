@@ -252,8 +252,11 @@ std::vector<OpeningRect> fit_openings(const FaceRaster &raster, double z_floor,
 /// Merge rectangles of one face split by a mullion (W5.2): neighbours along
 /// the wall at most mullion_max_gap_m apart whose sills and heads agree
 /// within mullion_max_dz_m become their union (fill = the cell-weighted
-/// mean, the outer jambs, at_floor / at_ceiling of either). Input and output
-/// sorted by s_start.
+/// mean, the outer jambs, at_floor / at_ceiling of either); so do
+/// rectangles stacked over the same stretch (ends within mullion_max_dz_m)
+/// at most mullion_max_gap_m apart vertically (a transom); a rectangle
+/// lying over half inside a bigger one is dropped. Output sorted by
+/// s_start.
 std::vector<OpeningRect> merge_mullions(std::vector<OpeningRect> rects,
                                         const OpeningOptions &opt = {});
 

@@ -240,6 +240,10 @@ inline constexpr const char *kPlanOverlayActorName = "reusex.plan_overlay";
 /// like the plan overlay, and its actors carry kPlanOverlayActorName.
 inline constexpr const char *kWallsActorName = "reusex.walls";
 
+/// vtkObject name of an `openings` layer actor in 3D (PlanPlacement::level);
+/// in plan the layer is a sheet like the walls layer's.
+inline constexpr const char *kOpeningsActorName = "reusex.openings";
+
 /// vtkObject name of a mesh section line (add_mesh_section_line()); exempt
 /// from the cut and the section slab like the plan overlay.
 inline constexpr const char *kSectionLineActorName = "reusex.section_line";
@@ -254,7 +258,8 @@ struct SceneLayer {
   vtkActor *coarse = nullptr;
   std::size_t points = 0; ///< points drawn (per point layer)
   std::size_t faces = 0;  ///< mesh faces drawn
-  std::size_t items = 0;  ///< frustums / panoramas / components / walls drawn
+  std::size_t items = 0;  ///< frustums / panoramas / components / walls /
+                          ///< openings drawn
   /// Walls layer only: walls drawn dimmer (assumed, or seen_share < 0.5).
   std::size_t dim = 0;
   /// Mesh layer only: the mesh's surface poly-data, the source of

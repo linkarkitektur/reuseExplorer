@@ -22,9 +22,15 @@ void setup_subcommand_create_windows(CLI::App &app,
                                      std::shared_ptr<RuxOptions> global_opt) {
   auto opt = std::make_shared<SubcommandWindowOptions>();
   auto *sub =
-      app.add_subcommand("windows", "Create window building components");
+      app.add_subcommand("windows", "(deprecated: use `rux create openings`) "
+                                    "Create window building components");
 
   sub->footer(R"(
+DEPRECATED:
+  Replaced by `rux create openings` (doors, windows and openings in the
+  walls' faces, the 'openings' table; solid-model WP5). This command will
+  be removed when the WP6 solids land.
+
 DESCRIPTION:
   Generates window building components from instance-segmented point clouds
   and wall geometry from the mesh. For each window instance, projects points
@@ -115,6 +121,10 @@ NOTES:
 
 int run_subcommand_create_windows(SubcommandWindowOptions const &opt,
                                   const RuxOptions &global_opt) {
+  spdlog::warn("`rux create windows` is deprecated and will be removed with "
+               "the WP6 solids: use `rux create walls` then `rux create "
+               "openings` (doors, windows and openings in the walls' faces, "
+               "the 'openings' table)");
   try {
     fs::path project_path = global_opt.project_db;
     spdlog::info("Create windows in project: {}", project_path.string());

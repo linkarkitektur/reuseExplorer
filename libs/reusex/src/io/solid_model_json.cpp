@@ -5,6 +5,7 @@
 #include "io/solid_model_json.hpp"
 
 #include "core/ProjectDB.hpp"
+#include "core/logging.hpp"
 
 #include <fmt/format.h>
 #include <nlohmann/json.hpp>
@@ -899,6 +900,25 @@ core::SolidModel load_solid_model(const ProjectDB &db) {
   m.walls = db.walls();
   m.wall_joins = db.wall_joins();
   m.provided.walls = !m.walls.empty();
+  // The openings stage writes openings (WP5), naming their host wall by
+  // guid. An opening whose host is gone (walls ran again and lost it) is
+  // left out: the model must not name a wall it does not hold.
+  std::set<std::string> hosts;
+  for (const auto &w : m.walls)
+    hosts.insert(w.guid);
+  std::size_t orphans = 0;
+  for (auto &o : db.openings()) {
+    if (hosts.count(o.wall))
+      m.openings.push_back(std::move(o));
+    else
+      ++orphans;
+  }
+  if (orphans > 0)
+    core::warn("load_solid_model: {} opening(s) name a wall the walls table "
+               "no longer holds (walls ran again); left out -- re-run `rux "
+               "create openings`",
+               orphans);
+  m.provided.openings = !m.openings.empty();
   return m;
 }
 

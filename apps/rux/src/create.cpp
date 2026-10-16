@@ -14,7 +14,7 @@
 #include "create/material.hpp"
 #include "create/materials.hpp"
 #include "create/mesh.hpp"
-#include "create/openings_dev.hpp"
+#include "create/openings.hpp"
 #include "create/planes.hpp"
 #include "create/project.hpp"
 #include "create/rooms.hpp"
@@ -45,6 +45,7 @@ SUBCOMMANDS:
   storeys      Detect storeys and the measured vertical
   classify     Classify planes: wall, floor, ceiling, furniture, ...
   walls        Walls with a measured thickness and their joins
+  openings     Doors, windows and openings in the walls
   materials    Create a material passport per instance
   survey       Fill the Ressourcekortlægning from instances
   mesh         Generate watertight mesh from planes
@@ -52,7 +53,7 @@ SUBCOMMANDS:
   gsplat       Train a 3D Gaussian Splatting model (CUDA)
   project      Project 2D labels onto 3D point cloud
   material     Create blank material passport
-  windows      Create window building components
+  windows      (deprecated: use openings) Window building components
   attributes   Extract per-instance attributes with a vision-language model
 
 TYPICAL WORKFLOW:
@@ -81,6 +82,7 @@ NOTES:
   setup_subcommand_create_storeys(*sub, global_opt);
   setup_subcommand_create_classify(*sub, global_opt);
   setup_subcommand_create_walls(*sub, global_opt);
+  setup_subcommand_create_openings(*sub, global_opt);
   setup_subcommand_create_materials(*sub, global_opt);
   setup_subcommand_create_survey(*sub, global_opt);
   setup_subcommand_create_mesh(*sub, global_opt);
@@ -89,7 +91,6 @@ NOTES:
   setup_subcommand_create_attributes(*sub, global_opt);
   setup_subcommand_create_gsplat(*sub, global_opt);
   setup_subcommand_create_segment_frame(*sub, global_opt);
-  setup_subcommand_create_openings_dev(*sub, global_opt);
 
   sub->require_subcommand(1);
 }

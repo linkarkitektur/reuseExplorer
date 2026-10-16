@@ -5,22 +5,27 @@
 #include "reusex/pipeline/stages.hpp"
 #include "reusex/core/label_encoding.hpp"
 #include "reusex/pipeline/mesh_parameters.hpp"
+#include "reusex/pipeline/opening_parameters.hpp"
 #include "reusex/pipeline/stage_parameters.hpp"
 #include "reusex/pipeline/tile_index.hpp"
 #include "reusex/pipeline/wall_parameters.hpp"
 
 #include "reusex/core/ProjectDB.hpp"
+#include "reusex/core/SensorIntrinsics.hpp"
 #include "reusex/core/class_role_map.hpp"
 #include "reusex/core/filter_expression.hpp"
 #include "reusex/core/guid.hpp"
 #include "reusex/core/label_semantics.hpp"
 #include "reusex/core/logging.hpp"
 #include "reusex/core/normal_orientation.hpp"
+#include "reusex/core/opening_identity.hpp"
 #include "reusex/core/storey_identity.hpp"
 #include "reusex/core/validate.hpp"
 #include "reusex/core/wall_identity.hpp"
+#include "reusex/geometry/transform_utils.hpp"
 #include "reusex/io/reusex.hpp"
 #include "reusex/reconstruction/mesh.hpp"
+#include "reusex/reconstruction/openings.hpp"
 #include "reusex/reconstruction/walls.hpp"
 #include "reusex/segmentation/classify_planes.hpp"
 #include "reusex/segmentation/level.hpp"
@@ -34,9 +39,12 @@
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <nlohmann/json.hpp>
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <exception>
 #include <map>
@@ -63,7 +71,7 @@ struct StageName {
 // used in `ruxd`'s HTTP contract (docs/gui/openapi.yaml, in its own repo) and
 // `contract` selects the input check run before the stage executes
 // (docs/CONTRACTS.md).
-constexpr std::array<StageName, 11> kStages{{
+constexpr std::array<StageName, 12> kStages{{
     {JobStage::clouds, "clouds", "cloud_reconstruction",
      core::PipelineStage::clouds, false},
     {JobStage::planes, "planes", "segment_planes", core::PipelineStage::planes,
@@ -109,6 +117,10 @@ constexpr std::array<StageName, 11> kStages{{
     // Not cancellable: per storey, histograms and bounded fits over the wall
     // points; about a second on NewOffice (1.5 M points).
     {JobStage::walls, "walls", "walls", core::PipelineStage::walls, false},
+    // Not cancellable: per wall, a raster over the points near it; a few
+    // seconds on NewOffice (88 walls, 1.5 M points).
+    {JobStage::openings, "openings", "openings", core::PipelineStage::openings,
+     false},
 }};
 
 const StageName &descriptor(JobStage stage) {
@@ -980,6 +992,263 @@ StageResult run_walls(ProjectDB &db, const json &params, int log_id) {
        {"table", "wall_joins", static_cast<int64_t>(stored_joins.size())}});
 }
 
+namespace {
+
+/// What a semantic class name says for opening evidence: glass first (a
+/// "glass partition", "glass door"), then door ("door", "door frame"), then
+/// window.
+geometry::OpeningClass opening_class_of(std::string name) {
+  std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  if (name.find("glass") != std::string::npos)
+    return geometry::OpeningClass::glass;
+  if (name.find("door") != std::string::npos)
+    return geometry::OpeningClass::door;
+  if (name.find("window") != std::string::npos)
+    return geometry::OpeningClass::window;
+  return geometry::OpeningClass::none;
+}
+
+/// One posed frame with a glass confidence image, for the glass evidence.
+struct GlassFrame {
+  Eigen::Affine3d world_to_optical;
+  double fx, fy, cx, cy; ///< scaled to @ref image
+  cv::Mat image;         ///< CV_8U, 0 = glass, 255 = trust depth
+};
+
+/// Share of @p rect's face (a 4 x 4 grid of samples in the wall's axis
+/// plane, taken to world through @p storey) that the frames seeing it mark
+/// as glass (< 128); -1 when no frame sees any sample.
+double glass_share(const std::vector<GlassFrame> &frames,
+                   const core::StoreyRecord &storey,
+                   const core::WallRecord &wall,
+                   const geometry::OpeningRect &rect) {
+  const Eigen::Affine3d level_to_world =
+      geometry::to_affine(storey.level_transform).inverse();
+  const Eigen::Vector2d a(wall.x0, wall.y0), b(wall.x1, wall.y1);
+  const double len = (b - a).norm();
+  if (!(len > 0.0))
+    return -1.0;
+  const Eigen::Vector2d d = (b - a) / len;
+  int seen = 0, glass = 0;
+  for (int i = 0; i < 4; ++i)
+    for (int k = 0; k < 4; ++k) {
+      const double s =
+          rect.s_start + (i + 0.5) / 4.0 * (rect.s_end - rect.s_start);
+      const double z =
+          rect.z_sill + (k + 0.5) / 4.0 * (rect.z_head - rect.z_sill);
+      const Eigen::Vector2d q = a + s * d;
+      const Eigen::Vector3d w =
+          level_to_world * Eigen::Vector3d(q.x(), q.y(), z);
+      for (const auto &f : frames) {
+        const Eigen::Vector3d c = f.world_to_optical * w;
+        if (c.z() < 0.3 || c.z() > 6.0)
+          continue;
+        const double u = f.fx * c.x() / c.z() + f.cx;
+        const double v = f.fy * c.y() / c.z() + f.cy;
+        if (u < 0 || v < 0 || u >= f.image.cols || v >= f.image.rows)
+          continue;
+        ++seen;
+        if (f.image.at<std::uint8_t>(static_cast<int>(v), static_cast<int>(u)) <
+            128)
+          ++glass;
+      }
+    }
+  return seen > 0 ? static_cast<double>(glass) / seen : -1.0;
+}
+
+} // namespace
+
+StageResult run_openings(ProjectDB &db, const json &params, int log_id) {
+  OpeningStageOptions o;
+  try {
+    o = opening_options_from_parameters(params.dump());
+  } catch (const std::invalid_argument &e) {
+    return StageResult::invalid(e.what());
+  }
+
+  const auto storeys = db.storeys();
+  const auto walls = db.walls();
+  if (storeys.empty())
+    return StageResult::invalid(
+        "openings: the project has no storeys; run `rux create storeys`");
+  if (walls.empty())
+    return StageResult::invalid(
+        "openings: the project has no walls; run `rux create walls`");
+  const auto cloud = db.point_cloud_xyzrgb("cloud");
+  const std::size_t n = cloud->size();
+
+  // Semantic classes (optional): what each point's class says.
+  std::vector<geometry::OpeningClass> classes;
+  std::map<int, geometry::OpeningClass> class_of_label;
+  if (db.has_point_cloud(kDefaultSemanticCloud)) {
+    for (const auto &[label, name] :
+         db.label_definitions(kDefaultSemanticCloud))
+      class_of_label[label] = opening_class_of(name);
+    const auto labels = db.point_cloud_label(kDefaultSemanticCloud);
+    if (labels && labels->size() == n) {
+      classes.assign(n, geometry::OpeningClass::none);
+      for (std::size_t i = 0; i < n; ++i)
+        if (auto it =
+                class_of_label.find(static_cast<int>(labels->points[i].label));
+            it != class_of_label.end())
+          classes[i] = it->second;
+    } else {
+      warn("openings: the '{}' cloud has {} points but 'cloud' has {}; no "
+           "semantic evidence",
+           kDefaultSemanticCloud, labels ? labels->size() : 0, n);
+    }
+  }
+  // Instances (optional): the instance each point belongs to.
+  std::vector<int> instance;
+  std::vector<geometry::OpeningInstance> instances;
+  if (db.has_point_cloud("instances")) {
+    const auto ic = db.point_cloud_label("instances");
+    const auto rows = db.instances("instances");
+    if (ic && ic->size() == n && !rows.empty()) {
+      std::map<uint32_t, int> index;
+      for (const auto &r : rows) {
+        index[r.instance_id] = static_cast<int>(instances.size());
+        const auto it = class_of_label.find(r.semantic_class);
+        instances.push_back({r.guid, it == class_of_label.end()
+                                         ? geometry::OpeningClass::none
+                                         : it->second});
+      }
+      instance.assign(n, -1);
+      for (std::size_t i = 0; i < n; ++i)
+        if (auto it = index.find(ic->points[i].label); it != index.end())
+          instance[i] = it->second;
+    } else {
+      warn("openings: the 'instances' cloud has {} points ({} rows) but "
+           "'cloud' has {}; no instance evidence (re-run `rux create "
+           "instances`)",
+           ic ? ic->size() : 0, rows.size(), n);
+    }
+  }
+  // The camera path (frames in capture order) and the glass images.
+  std::vector<Eigen::Vector3d> path;
+  std::vector<GlassFrame> glass_frames;
+  const auto glass_ids = db.glass_confidence_image_ids();
+  const std::set<int> glass_set(glass_ids.begin(), glass_ids.end());
+  // At most ~300 glass frames, evenly over the capture (memory: the images
+  // are kept at a quarter of their size).
+  const std::size_t glass_step =
+      std::max<std::size_t>(1, glass_ids.size() / 300);
+  std::size_t glass_seen = 0;
+  for (const int id : db.sensor_frame_ids()) {
+    if (!db.has_sensor_frame_pose(id))
+      continue;
+    const auto intr = db.sensor_frame_intrinsics(id);
+    const Eigen::Affine3d world =
+        geometry::to_affine(db.sensor_frame_pose(id)) *
+        geometry::to_affine(intr.local_transform);
+    path.push_back(world.translation());
+    if (!glass_set.count(id) || glass_seen++ % glass_step != 0)
+      continue;
+    cv::Mat img = db.glass_confidence_image(id);
+    if (img.empty() || intr.width <= 0 || intr.height <= 0)
+      continue;
+    cv::resize(img, img, cv::Size(), 0.25, 0.25, cv::INTER_NEAREST);
+    GlassFrame g;
+    g.world_to_optical = world.inverse();
+    g.fx = intr.fx * img.cols / intr.width;
+    g.fy = intr.fy * img.rows / intr.height;
+    g.cx = intr.cx * img.cols / intr.width;
+    g.cy = intr.cy * img.rows / intr.height;
+    g.image = img;
+    glass_frames.push_back(std::move(g));
+  }
+  info("openings: evidence: {} semantic labels, {} instances, {} camera "
+       "positions, {} glass frames",
+       classes.empty() ? "no" : "with", instances.size(), path.size(),
+       glass_frames.size());
+
+  std::vector<core::OpeningRecord> found;
+  std::map<std::string, int> kinds;
+  int open_doors = 0, crossed = 0, with_instance = 0;
+  for (const auto &st : storeys) {
+    const Eigen::Affine3d T = geometry::to_affine(st.level_transform);
+    geometry::OpeningEvidence ev;
+    std::vector<std::size_t> keep;
+    for (std::size_t i = 0; i < n; ++i) {
+      const auto &p = cloud->points[i];
+      if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z))
+        continue;
+      const Eigen::Vector3d q = T * Eigen::Vector3d(p.x, p.y, p.z);
+      if (q.z() < st.z_floor - 0.2 || q.z() > st.z_ceiling + 0.2)
+        continue;
+      ev.points.push_back(q);
+      keep.push_back(i);
+    }
+    if (!classes.empty())
+      for (const auto i : keep)
+        ev.classes.push_back(classes[i]);
+    if (!instance.empty()) {
+      for (const auto i : keep)
+        ev.instance.push_back(instance[i]);
+      ev.instances = instances;
+    }
+    for (const auto &c : path)
+      ev.trajectory.push_back(T * c);
+    if (!glass_frames.empty())
+      ev.glass = [&, st](const core::WallRecord &w,
+                         const geometry::OpeningRect &r) {
+        return glass_share(glass_frames, st, w, r);
+      };
+    std::vector<geometry::DetectedOpening> det;
+    try {
+      det = geometry::detect_openings(ev, walls, st, o.openings);
+    } catch (const std::invalid_argument &e) {
+      return StageResult::invalid(e.what());
+    }
+    int on_storey = 0;
+    for (auto &d : det) {
+      ++kinds[d.record.kind];
+      open_doors += d.record.state == "open" ? 1 : 0;
+      crossed += d.crossings > 0 ? 1 : 0;
+      with_instance += d.record.source_instance_guid.empty() ? 0 : 1;
+      found.push_back(std::move(d.record));
+      ++on_storey;
+    }
+    info("openings: storey {}: {} point(s), {} opening(s)", st.idx,
+         ev.points.size(), on_storey);
+  }
+  if (found.empty())
+    warn("openings: no opening in {} wall(s) on {} storey(s) over {} points; "
+         "check the walls (`rux render --layers cloud,walls`) and the "
+         "occluder reach (--front {})",
+         walls.size(), storeys.size(), n, o.openings.front_m);
+
+  // Stable identity: a re-detected opening keeps the GUID of the stored one
+  // in the same wall (core/opening_identity.hpp); walls keep theirs across a
+  // walls re-run, so a locked (hand-fixed) opening survives both.
+  core::OpeningIdentityResult ids;
+  try {
+    ids = core::assign_opening_guids(found, db.openings(), db.project_guid(),
+                                     o.identity);
+  } catch (const std::invalid_argument &e) {
+    return StageResult::failure(e.what());
+  }
+  info("openings: {} matched a stored opening ({} locked, kept as stored), "
+       "{} new GUID(s)",
+       ids.matched, ids.locked_matched, ids.minted);
+
+  const size_t written = db.save_openings(found, log_id);
+  const auto rows = db.openings();
+  const auto locked_kept = static_cast<size_t>(std::count_if(
+      rows.begin(), rows.end(), [](const auto &r) { return r.locked; }));
+  return StageResult::success(
+      fmt::format("{} opening(s) in {} wall(s): {} door(s) ({} open), {} "
+                  "window(s), {} opening(s); {} crossed by the camera path, "
+                  "{} with an instance; {} row(s) written, {} locked row(s) "
+                  "kept",
+                  found.size(), walls.size(), kinds["door"], open_doors,
+                  kinds["window"], kinds["opening"], crossed, with_instance,
+                  written, locked_kept),
+      {{"table", "openings", static_cast<int64_t>(rows.size())}});
+}
+
 StageResult dispatch(ProjectDB &db, const StageContext &ctx, const json &params,
                      int log_id) {
   switch (ctx.stage) {
@@ -1021,6 +1290,8 @@ StageResult dispatch(ProjectDB &db, const StageContext &ctx, const json &params,
     return run_classify(db, params, log_id);
   case JobStage::walls:
     return run_walls(db, params, log_id);
+  case JobStage::openings:
+    return run_openings(db, params, log_id);
   }
   return StageResult::failure("unknown stage");
 }

@@ -214,6 +214,11 @@ EXAMPLES:
   rux -p scan.rux render -o walls.png --view plan --layers cloud,walls
   rux -p scan.rux render -o vs.png --view plan --layers cloud,walls --plan ref.plan.yaml
 
+  # Detected openings (rux create openings): in plan on the walls, and in
+  # an elevation of one wall (a section along its axis)
+  rux -p scan.rux render -o op.png --view plan --layers cloud,walls,openings
+  rux -p scan.rux render -o el.png --section 0,0:5,0 --section-thickness 0.6 --layers cloud,openings
+
   # Mesh over the cloud, seen from the west
   rux -p scan.rux render -o west.png --view left --layers cloud,mesh
 
@@ -258,6 +263,13 @@ MESH QA (reusex-8vx):
     cover). A legend with mean, P95 and the two shares is drawn in.
   - --qa writes a contact sheet: plan cut, four elevations, three sections
     (or the given --section ones) and a deviation plan.
+
+OPENINGS (reusex-z1v.7.3):
+  - The `openings` layer draws the openings table in its walls' faces:
+    doors orange, windows light blue, other openings yellow. In plan and
+    top views a bar along the wall with a tick at each end, on a sheet over
+    the cut cloud; in every other view a rectangle (sill to head) just
+    proud of both faces of the wall, so elevations and sections show it.
 
 WALLS (reusex-z1v.5.6):
   - The `walls` layer draws the walls table in blue: in plan and top views

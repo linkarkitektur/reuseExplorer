@@ -283,6 +283,8 @@ std::string_view to_string(Layer layer) {
     return "deviation";
   case Layer::walls:
     return "walls";
+  case Layer::openings:
+    return "openings";
   }
   return "unknown";
 }
@@ -326,7 +328,7 @@ const std::vector<Layer> &all_layers() {
   static const std::vector<Layer> layers{
       Layer::cloud,     Layer::labels,    Layer::planes,     Layer::rooms,
       Layer::instances, Layer::mesh,      Layer::components, Layer::frustums,
-      Layer::panoramas, Layer::deviation, Layer::walls};
+      Layer::panoramas, Layer::deviation, Layer::walls,      Layer::openings};
   return layers;
 }
 

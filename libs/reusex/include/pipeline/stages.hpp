@@ -52,6 +52,7 @@ enum class JobStage {
   storeys,        ///< detect storeys and the level frame -> "storeys" table
   classify,       ///< classify each plane -> "plane_classes" table
   walls,          ///< walls + their joins -> "walls" / "wall_joins" tables
+  openings,       ///< doors, windows, openings in the walls -> "openings"
 };
 
 /// Canonical lower-case stage name (the token used on the wire and the CLI).

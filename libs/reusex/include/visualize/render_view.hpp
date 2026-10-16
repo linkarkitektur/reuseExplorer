@@ -62,6 +62,7 @@ enum class Layer {
   panoramas,  ///< a marker at each placed 360 panorama
   deviation,  ///< `cloud` coloured by distance to the mesh (mesh QA)
   walls,      ///< `walls` table: footprints in plan, boxes in 3D (WP3)
+  openings,   ///< `openings` table: rectangles in the wall faces (WP5)
 };
 
 /// Parse a layer name as accepted by `rux render --layers`.
