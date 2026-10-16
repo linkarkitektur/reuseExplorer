@@ -701,7 +701,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | `info` | — (project summary) | `src/info.cpp` |
 | `log` | — (pipeline execution history) | `src/log.cpp` |
 | `view` | — (interactive viewer, needs a display; `--plan gt.yaml --watch` = hot-reloading ground-truth workbench over `populate_scene`, `view/plan_workbench.hpp`) | `src/view/` |
-| `render` | — (headless render to PNG: `--view top\|plan[:h]\|front\|back\|left\|right\|orbit:N\|frame:<id>`, `--section x=<m>\|y=<m>\|<x0>,<y0>:<x1>,<y1>`; layers incl. `frustums`, `panoramas`, `deviation` (cloud coloured by distance to the mesh); label layers on the `--label-*` token scale; `--qa` writes the mesh-QA contact sheet, `visualize/qa_sheet.hpp`; `--plan gt.yaml --watch` re-renders and prints plan scores on every save, `render_watch.hpp`) | `src/render.cpp` |
+| `render` | — (headless render to PNG: `--view top\|plan[:h]\|front\|back\|left\|right\|orbit:N\|frame:<id>`, `--section x=<m>\|y=<m>\|<x0>,<y0>:<x1>,<y1>`; layers incl. `frustums`, `panoramas`, `deviation` (cloud coloured by distance to the mesh), `walls` (the walls table: footprints on a sheet over the cut in plan/top, boxes in 3D; assumed or < 50 % seen dimmer — also a Qt 3D layer, "Vægge"); label layers on the `--label-*` token scale; `--qa` writes the mesh-QA contact sheet, `visualize/qa_sheet.hpp`; `--plan gt.yaml --watch` re-renders and prints plan scores on every save, `render_watch.hpp`) | `src/render.cpp` |
 | `assemble` | — (multi-scan assembly) | `src/assemble.cpp` |
 
 With **no** subcommand, `rux` launches the Qt client (help without a display).
