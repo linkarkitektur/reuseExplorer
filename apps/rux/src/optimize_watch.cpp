@@ -899,31 +899,49 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
                                   {"split", !left_out.empty()}});
       ++emitted;
     }
-    // A shear guard: pin the untouched node that moved most back where the
-    // solve without edits had it (the regression-221 lesson: an anchor in
-    // the middle, not relative constraints between the ends).
-    if (r.shear.change.max_m > s.opt.shear_flag_m &&
+    // Shear guards: pin each untouched segment that moved at its middle
+    // node, all six DoF, where the solve without edits had it (the
+    // regression-221 lesson: anchors in the middle, not relative
+    // constraints between the ends). Measured on house2: [x, y, yaw]
+    // anchors leave the vertical shear in place. Without such a segment the
+    // untouched node that moved most is pinned instead.
+    std::vector<std::pair<std::size_t, double>> guards; // index, moved
+    for (const auto &g : r.shear.segments) {
+      if (g.max_m <= s.opt.shear_flag_m)
+        continue;
+      std::vector<std::size_t> in;
+      for (std::size_t k = 0; k < s.ids.size(); ++k)
+        if (s.ids[k] >= g.first_node && s.ids[k] <= g.last_node &&
+            s.graph_index[k] >= 0)
+          in.push_back(k);
+      if (!in.empty())
+        guards.emplace_back(in[in.size() / 2], g.max_m);
+    }
+    if (guards.empty() && r.shear.change.max_m > s.opt.shear_flag_m &&
         r.shear.change.max_node >= 0) {
       const auto it =
           std::find(s.ids.begin(), s.ids.end(), r.shear.change.max_node);
-      const auto k = static_cast<std::size_t>(it - s.ids.begin());
+      guards.emplace_back(static_cast<std::size_t>(it - s.ids.begin()),
+                          r.shear.change.max_m);
+    }
+    for (const auto &[k, moved] : guards) {
       core::PoseEdit a;
       a.id = unique_id(fmt::format("a-{}", s.ids[k]));
       a.kind = core::PoseEditKind::anchor;
       a.nodes.first = a.nodes.last = s.ids[k];
       a.pose.source = core::PoseSpec::Source::given;
       a.pose.value = readable(to_doc * s.baseline[k]);
-      a.dofs = core::Dof::x | core::Dof::y | core::Dof::yaw;
       a.sigma_trans_m = 2.0 * kMoveSigmaM;
       a.sigma_rot_deg = 2.0 * kMoveSigmaDeg;
-      a.note = fmt::format("cycle {}: shear guard, node {} moved {:.3f} m "
-                           "from the no-edit solve although no edit names it",
-                           r.index, s.ids[k], r.shear.change.max_m);
+      a.note = fmt::format("cycle {}: shear guard, no edit names node {} "
+                           "but it or its segment moved {:.3f} m from the "
+                           "no-edit solve",
+                           r.index, s.ids[k], moved);
       const std::string comment =
-          fmt::format("  # shear guard: node {} moved {:.3f} m without an "
-                      "edit naming it; pin it where the no-edit solve "
+          fmt::format("  # shear guard: node {} (moved up to {:.3f} m without "
+                      "an edit naming it); pin it where the no-edit solve "
                       "had it\n",
-                      s.ids[k], r.shear.change.max_m);
+                      s.ids[k], moved);
       const std::string item = comment + edit_yaml(a);
       r.suggestion_items.push_back(item);
       yaml += item;
@@ -932,7 +950,7 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
     r.suggestions_yaml = yaml;
     out += "suggestions           (paste under `edits:`: ONE move per cycle, "
            "the first is the best -- each is measured against the others as "
-           "they are -- plus the shear guard if one is offered)\n";
+           "they are -- plus the shear guards when offered)\n";
     out +=
         yaml.empty() ? "  # none: no segment move lowers its residual\n" : yaml;
     j["suggestions_yaml"] = yaml;
@@ -993,8 +1011,6 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
       base.preview = preview;
       base.edits = edits;
       base.frame_quantile = 0.002;
-      if (s.plan)
-        base.plan = s.plan;
       if (drift)
         base.drift_heatmap =
             viz::drift_heatmap_from_json(slam::drift_report_to_json(*drift));
@@ -1032,6 +1048,11 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
         if (o.drift_heatmap) {
           o.layers = {viz::Layer::passes, viz::Layer::drift};
           write(prefix + "drift", o);
+        }
+        if (s.plan) { // its own panel: the filled spaces hide the passes
+          o.layers = {viz::Layer::passes};
+          o.plan = s.plan;
+          write(prefix + "plan", o);
         }
       }
       viz::RenderOptions o = base;

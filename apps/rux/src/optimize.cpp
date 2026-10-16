@@ -380,7 +380,7 @@ NOTES:
       ->needs(watch);
   sub->add_option("--render", opt->render,
                   "--watch: image path stem; writes <stem>.[s<storey>.]"
-                  "passes|graph|drift.png (plan cut per storey) and "
+                  "passes|graph|drift|plan.png (plan cut per storey) and "
                   "<stem>.front.png on every good solve")
       ->needs(watch);
   sub->add_option("--render-width", opt->render_width,
