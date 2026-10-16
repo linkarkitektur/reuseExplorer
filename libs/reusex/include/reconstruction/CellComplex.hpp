@@ -132,6 +132,28 @@ class CellComplex
   /// exceed this fails fast instead of hanging in the solver.
   static constexpr size_t default_max_cells = 5000;
 
+  /// Default for `min_section_overlap_m` (reusex-sba): a wall reaches a
+  /// section when its z-range overlaps the section by at least this much, or
+  /// by half the section's height for a section thinner than twice this (a
+  /// slab between storeys).
+  static constexpr double default_min_section_overlap_m = 0.3;
+
+  /**
+   * @param plane_z_ranges World z-range [lo, hi] of each plane, index-aligned
+   *   with @p planes (reusex-sba). When given, each horizontal section gets
+   *   its own 2D arrangement, built only from the vertical planes whose range
+   *   reaches into it, so one storey's walls no longer split every other
+   *   storey: the cell count is the sum of the per-section arrangements
+   *   instead of (faces of all walls) x (sections). The horizontal faces of a
+   *   level between two sections are the overlay of the two arrangements,
+   *   each shared by one cell below and one above. A range with lo > hi or a
+   *   NaN reaches every section. A section no wall reaches (a slab between
+   *   or around storeys) takes the walls of the sections next to it. Empty:
+   *   every vertical plane spans every section (the behaviour before sba).
+   * @param min_section_overlap_m See default_min_section_overlap_m.
+   * @throws std::invalid_argument if @p plane_z_ranges is neither empty nor
+   *   as long as @p planes.
+   */
   CellComplex(
       std::vector<Eigen::Vector4d, Eigen::aligned_allocator<Eigen::Vector4d>>
           &planes,
@@ -142,7 +164,9 @@ class CellComplex
           std::function<void(size_t, std::vector<std::array<double, 3>> const &,
                              std::vector<int> const &)>>
           viz_func = std::nullopt,
-      size_t max_cells = default_max_cells);
+      size_t max_cells = default_max_cells,
+      const std::vector<std::array<double, 2>> &plane_z_ranges = {},
+      double min_section_overlap_m = default_min_section_overlap_m);
 
   // Per-face coverage values are written to the "f:support_probability"
   // vertex property map and queried from there by downstream code.

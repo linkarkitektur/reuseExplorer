@@ -9,6 +9,7 @@
 
 // #include <CGAL/Arr_linear_traits_2.h>
 #include <CGAL/Arr_non_caching_segment_traits_2.h>
+#include <CGAL/Arr_walk_along_line_point_location.h>
 #include <CGAL/Arrangement_with_history_2.h>
 #include <CGAL/Boolean_set_operations_2.h>
 #include <CGAL/Exact_predicates_exact_constructions_kernel.h>
@@ -17,8 +18,12 @@
 #include <range/v3/view/transform.hpp>
 #include <range/v3/view/zip.hpp>
 
+#include <algorithm>
 #include <map>
+#include <memory>
 #include <optional>
+#include <stdexcept>
+#include <unordered_map>
 
 using Vd = reusex::geometry::CellComplex::Vertex;
 using Fd = reusex::geometry::CellComplex::Vertex;
@@ -35,8 +40,14 @@ CellComplex::CellComplex(
         std::function<void(size_t, std::vector<std::array<double, 3>> const &,
                            std::vector<int> const &)>>
         viz_func,
-    size_t max_cells)
+    size_t max_cells, const std::vector<std::array<double, 2>> &plane_z_ranges,
+    double min_section_overlap_m)
     : n_rooms(0), n_walls(pairs.size()) {
+
+  if (!plane_z_ranges.empty() && plane_z_ranges.size() != planes_vec.size())
+    throw std::invalid_argument(
+        fmt::format("CellComplex: {} plane z-ranges for {} planes",
+                    plane_z_ranges.size(), planes_vec.size()));
 
   using EPECK = CGAL::Exact_predicates_exact_constructions_kernel;
   using Traits = CGAL::Arr_non_caching_segment_traits_2<EPECK>;
@@ -53,10 +64,6 @@ CellComplex::CellComplex(
   using Direction_2 = Traits::Direction_2;
 
   using Curve_handle = Arrangement::Curve_handle;
-
-  using VertexMap =
-      std::unordered_map<Arrangement::Vertex_handle, std::vector<Vd>>;
-  using FaceMap = std::unordered_map<Arrangement::Face_handle, std::vector<Fd>>;
 
   // ── BEGIN coordinate recentering (issue #216) ───────────────────────────
   // CGAL's inexact-construction predicates lose precision on georeferenced
@@ -153,22 +160,24 @@ CellComplex::CellComplex(
     return std::get<Segment>(clipped.value());
   };
 
-  Arrangement arr;
-  std::unordered_map<Curve_handle, int> ch_map{};
+  // ── Wall segments ───────────────────────────────────────────────────────
+  // One clipped ground-plane segment per vertical plane that behaves as a
+  // wall; `kept` lists the positions (into `verticals`) of those that do.
+  std::vector<std::optional<Segment>> segments(verticals.size());
+  std::vector<size_t> kept;
   size_t dropped_non_vertical = 0;
   int example_dropped_plane = -1;
-  size_t inserted_verticals = 0;
-  for (auto const &id : verticals) {
-    auto seg = try_make_segment(planes_vec[id]);
-    if (!seg) {
+  for (size_t i = 0; i < verticals.size(); ++i) {
+    segments[i] = try_make_segment(planes_vec[verticals[i]]);
+    if (!segments[i]) {
       ++dropped_non_vertical;
       if (example_dropped_plane < 0)
-        example_dropped_plane = static_cast<int>(id);
+        example_dropped_plane = static_cast<int>(verticals[i]);
       continue;
     }
-    ch_map[insert(arr, *seg)] = static_cast<int>(id);
-    ++inserted_verticals;
+    kept.push_back(i);
   }
+  const size_t inserted_verticals = kept.size();
 
   // Report dropped non-vertical planes once, with a count and an example
   // (issue #213). This is loud (§5) because dropping planes silently changes
@@ -183,9 +192,43 @@ CellComplex::CellComplex(
         example_dropped_plane, ex[0], ex[1], ex[2], ex[3]);
   }
 
-  // Visualize arrangement
+  // One 2D arrangement per distinct set of walls, built once and shared by
+  // every section (and level) that uses the same set. Without z-ranges every
+  // section uses one set, the arrangement of all walls, as before reusex-sba.
+  using Walk_pl = CGAL::Arr_walk_along_line_point_location<Arrangement>;
+  struct ArrInfo {
+    Arrangement arr;
+    std::unordered_map<Curve_handle, int> ch_map;
+    size_t bounded = 0;
+    std::unique_ptr<Walk_pl> pl;
+  };
+  using WallSet = std::vector<size_t>; // sorted positions into `verticals`
+  std::map<WallSet, std::unique_ptr<ArrInfo>> arrangements;
+  auto arrangement_of = [&](const WallSet &set) -> ArrInfo * {
+    auto &slot = arrangements[set];
+    if (!slot) {
+      slot = std::make_unique<ArrInfo>();
+      for (size_t i : set)
+        slot->ch_map[insert(slot->arr, *segments[i])] =
+            static_cast<int>(verticals[i]);
+      for (auto fit = slot->arr.faces_begin(); fit != slot->arr.faces_end();
+           ++fit)
+        slot->bounded += fit->is_unbounded() ? 0 : 1;
+      slot->pl = std::make_unique<Walk_pl>(slot->arr);
+    }
+    return slot.get();
+  };
+  auto set_union = [](const WallSet &a, const WallSet &b) {
+    WallSet out;
+    std::set_union(a.begin(), a.end(), b.begin(), b.end(),
+                   std::back_inserter(out));
+    return out;
+  };
+
+  // Visualize the arrangement of every wall
   if (viz_func) {
     reusex::trace("Visualizing arrangement");
+    const auto &arr = arrangement_of(kept)->arr;
     size_t count = 0;
     for (auto fit = arr.faces_begin(); fit != arr.faces_end(); ++fit, ++count) {
       if (fit->is_unbounded())
@@ -217,99 +260,109 @@ CellComplex::CellComplex(
               const double h2 = CGAL::to_double(-Pb.d() * Pb.c());
               return h1 < h2;
             });
-
-  // INFO:Looging
-  // for (size_t i = 0; i < sorted_floors.size(); ++i) {
-  //  const auto id = sorted_floors[i];
-  //  const auto plane = planes[id];
-  //  auto height = -plane.d() * plane.c();
-  //  reusex::trace("Horizontal plane {} at height {:.3f} ", i, height);
-  //}
-
-  VertexMap point_map{};
-  reusex::trace("Initialize vertex map for {} floors", sorted_floors.size());
-  for (auto vit = arr.vertices_begin(); vit != arr.vertices_end(); ++vit) {
-    point_map[vit] = std::vector<Vd>(sorted_floors.size());
-  }
-  // Initialize face map
-  FaceMap face_map{};
-  reusex::trace("Initialize face map for {} floors", sorted_floors.size());
-  for (auto fit = arr.faces_begin(); fit != arr.faces_end(); ++fit) {
-    if (fit->is_unbounded())
-      continue;
-    face_map[fit] = std::vector<Fd>(sorted_floors.size());
+  const size_t n_levels = sorted_floors.size();
+  const size_t n_sections = n_levels < 2 ? 0 : n_levels - 1;
+  std::vector<double> level_z(n_levels);
+  for (size_t k = 0; k < n_levels; ++k) {
+    const auto &plane = planes[sorted_floors[k]];
+    level_z[k] = CGAL::to_double(-plane.d() * plane.c());
   }
 
-  reusex::trace("Create vertices");
-  for (size_t i = 0; i < sorted_floors.size(); ++i) {
-    const auto id = sorted_floors[i];
-    const auto plane = planes[id];
-    const double height = CGAL::to_double(-plane.d() * plane.c());
-
-    for (auto vit = arr.vertices_begin(); vit != arr.vertices_end(); ++vit)
-      point_map[vit][i] = this->add_vertex(
-          Eigen::Vector3d(CGAL::to_double(vit->point().x()),
-                          CGAL::to_double(vit->point().y()), height));
-  }
-
-  // Construct planar faces for each floor
-  reusex::trace("Create  horizontal faces");
-  for (auto fit = arr.faces_begin(); fit != arr.faces_end(); ++fit) {
-    if (fit->is_unbounded())
-      continue;
-
-    for (size_t i = 0; i < sorted_floors.size(); ++i) {
-
-      // Walk around the outer boundary
-      std::vector<Vd> verts{};
-      NT cx = 0, cy = 0;
-      // Eigen::Vector3d center(0, 0, 0);
-      // double cx = 0, cy = 0;
-      std::vector<Point_2> pts;
-
-      for (auto vit = fit->outer_ccb(), done = vit;;) {
-        auto v = vit->source();
-        cx += v->point().x();
-        cy += v->point().y();
-
-        verts.push_back(point_map[v][i]);
-        // auto pos = (*this)[point_map[v][i]].pos;
-        // center += pos;
-        pts.emplace_back(v->point().x(), v->point().y());
-
-        if (++vit == done)
-          break;
+  // ── Walls per section (reusex-sba) ──────────────────────────────────────
+  // A wall belongs to a section when its z-range overlaps the section by
+  // min_section_overlap_m, or by half the section for a thin one (a slab).
+  std::vector<WallSet> raw_sets(n_sections);
+  for (size_t s = 0; s < n_sections; ++s) {
+    const double h0 = level_z[s], h1 = level_z[s + 1];
+    const double need = std::min(min_section_overlap_m, 0.5 * (h1 - h0));
+    for (size_t i : kept) {
+      if (plane_z_ranges.empty()) {
+        raw_sets[s].push_back(i);
+        continue;
       }
-      // center /= static_cast<double>(verts.size());
-      cx /= static_cast<NT>(verts.size());
-      cy /= static_cast<NT>(verts.size());
-
-      NT area_nt;
-      CGAL::area_2(pts.begin(), pts.end(), area_nt);
-      double area = CGAL::to_double(area_nt);
-
-      // Set center of face at z = 0, will be updated later
-      auto f = this->add_face(
-          Eigen::Vector3d(CGAL::to_double(cx), CGAL::to_double(cy), 0.0), verts,
-          sorted_floors[i] /* plane id */);
-      face_map[fit][i] = f;
-      areas[f] = area;
+      const auto &r = plane_z_ranges[verticals[i]];
+      const double lo = r[0] - recenter.z(), hi = r[1] - recenter.z();
+      if (!(lo <= hi) || std::min(hi, h1) - std::max(lo, h0) >= need)
+        raw_sets[s].push_back(i);
     }
   }
+  std::vector<WallSet> sets(n_sections);
+  std::vector<ArrInfo *> section_arr(n_sections, nullptr);
+  for (size_t s = 0; s < n_sections; ++s) {
+    sets[s] = raw_sets[s];
+    if (arrangement_of(sets[s])->bounded == 0) {
+      // A section no wall line reaches (or too few to enclose a face): a
+      // slab between or around storeys, or an attic under oblique roof
+      // planes. It takes the walls of the nearest sections whose walls do
+      // enclose faces, so its cells line up with theirs: the window around
+      // it grows one section at a time until the union encloses a face.
+      // Only when no section does (no z-range reaches anywhere) does it
+      // fall back to every wall.
+      for (size_t r = 1; arrangement_of(sets[s])->bounded == 0; ++r) {
+        if (r > s && s + r >= n_sections) {
+          sets[s] = kept;
+          break;
+        }
+        if (r <= s)
+          sets[s] = set_union(sets[s], raw_sets[s - r]);
+        if (s + r < n_sections)
+          sets[s] = set_union(sets[s], raw_sets[s + r]);
+      }
+      reusex::debug("CellComplex: section {} ({:.2f}-{:.2f} m) encloses no "
+                    "face with its own {} wall line(s); using {} from the "
+                    "neighbouring sections",
+                    s, level_z[s] + recenter.z(), level_z[s + 1] + recenter.z(),
+                    raw_sets[s].size(), sets[s].size());
+    }
+    section_arr[s] = arrangement_of(sets[s]);
+  }
+  // Levels: the arrangement of a level is the overlay of the sections below
+  // and above it (the arrangement of the union of their walls).
+  std::vector<ArrInfo *> level_arr(n_levels, nullptr);
+  for (size_t k = 0; k < n_levels && n_sections > 0; ++k) {
+    WallSet set;
+    if (k > 0)
+      set = sets[k - 1];
+    if (k < n_sections)
+      set = set_union(set, sets[k]);
+    level_arr[k] = arrangement_of(set);
+  }
+  const bool uniform =
+      n_sections > 0 &&
+      std::all_of(section_arr.begin(), section_arr.end(),
+                  [&](ArrInfo *a) { return a == section_arr.front(); });
 
-  // Cell-count guard (issue #213). The number of volumetric cells is
-  // (# bounded 2D arrangement faces) x (# horizontal sections). Fail fast
-  // with an actionable message before the ~quadratic cell construction and
-  // the intractable MIP that would follow.
-  const size_t bounded_faces = face_map.size();
-  const size_t n_sections =
-      sorted_floors.empty() ? 0 : sorted_floors.size() - 1;
-  const size_t projected_cells = bounded_faces * n_sections;
-  reusex::info("Arrangement statistics: {} vertical planes in ({} kept), "
-               "{} horizontal planes, {} bounded faces, {} sections => "
-               "{} projected cells",
-               verticals.size(), inserted_verticals, sorted_floors.size(),
-               bounded_faces, n_sections, projected_cells);
+  // Cell-count guard (issue #213). The number of volumetric cells is the sum
+  // over sections of that section's bounded 2D arrangement faces. Fail fast
+  // with an actionable message before the cell construction and the
+  // intractable MIP that would follow.
+  size_t projected_cells = 0;
+  for (auto *a : section_arr)
+    projected_cells += a->bounded;
+  size_t max_section_faces = 0;
+  for (auto *a : section_arr)
+    max_section_faces = std::max(max_section_faces, a->bounded);
+  const size_t faces_for_report =
+      n_sections == 0 ? arrangement_of(kept)->bounded : max_section_faces;
+  if (uniform || n_sections == 0) {
+    reusex::info("Arrangement statistics: {} vertical planes in ({} kept), "
+                 "{} horizontal planes, {} bounded faces, {} sections => "
+                 "{} projected cells",
+                 verticals.size(), inserted_verticals, n_levels,
+                 faces_for_report, n_sections, projected_cells);
+  } else {
+    std::string per_section;
+    for (size_t s = 0; s < n_sections; ++s)
+      per_section += fmt::format("{}{}w/{}f", s ? ", " : "", sets[s].size(),
+                                 section_arr[s]->bounded);
+    reusex::info("Arrangement statistics (storey-local): {} vertical planes "
+                 "in ({} kept), {} horizontal planes, {} sections [{}] => {} "
+                 "projected cells (all walls in every section: {} faces x {} "
+                 "sections = {})",
+                 verticals.size(), inserted_verticals, n_levels, n_sections,
+                 per_section, projected_cells, arrangement_of(kept)->bounded,
+                 n_sections, arrangement_of(kept)->bounded * n_sections);
+  }
 
   // Zero-cell guard (issue reusex-qw0). A 0-cell complex is a structurally
   // degenerate arrangement, not a solver problem: feeding it to Solidifier
@@ -320,7 +373,7 @@ CellComplex::CellComplex(
   // counts, before Solidifier is ever constructed — so no solve is attempted.
   if (projected_cells == 0) {
     const std::string reason =
-        bounded_faces == 0
+        faces_for_report == 0
             ? "two vertical planes cannot enclose a cell"
             : "fewer than 2 horizontal planes bound no section to extrude "
               "cells into";
@@ -329,48 +382,174 @@ CellComplex::CellComplex(
         "kept) / {} horizontal planes, {} sections => 0 projected cells; {}. "
         "Check 'rux create planes' output (stronger region growing, more "
         "planes, or weaker merging) before retrying create mesh.",
-        bounded_faces, verticals.size(), inserted_verticals,
-        sorted_floors.size(), n_sections, reason));
+        faces_for_report, verticals.size(), inserted_verticals, n_levels,
+        n_sections, reason));
   }
 
   if (projected_cells > max_cells) {
     throw std::runtime_error(fmt::format(
         "CellComplex: projected cell count {} exceeds max_cells {} "
-        "({} bounded arrangement faces x {} horizontal sections; "
+        "({} sections, up to {} bounded arrangement faces in one section; "
         "{} vertical planes). The plane arrangement is over-fragmented; "
         "consider stronger plane merging, --filter to a subregion, or "
         "raising the limit.",
-        projected_cells, max_cells, bounded_faces, n_sections,
+        projected_cells, max_cells, n_sections, faces_for_report,
         inserted_verticals));
   }
 
+  // ── Vertices: one per arrangement vertex of each level ──────────────────
+  struct LessXY {
+    bool operator()(const Point_2 &a, const Point_2 &b) const {
+      return CGAL::compare_xy(a, b) == CGAL::SMALLER;
+    }
+  };
+  std::vector<std::map<Point_2, Vd, LessXY>> point_map(n_levels);
+  reusex::trace("Create vertices");
+  for (size_t k = 0; k < n_levels; ++k) {
+    const auto &arr = level_arr[k]->arr;
+    for (auto vit = arr.vertices_begin(); vit != arr.vertices_end(); ++vit)
+      point_map[k][vit->point()] = this->add_vertex(
+          Eigen::Vector3d(CGAL::to_double(vit->point().x()),
+                          CGAL::to_double(vit->point().y()), level_z[k]));
+  }
+
+  // ── Horizontal faces ────────────────────────────────────────────────────
+  // A face of level k lies in exactly one face of the section below it and
+  // one of the section above (each section's walls are a subset of the
+  // level's). bottom[s][f] / top[s][f]: the level faces covering face f of
+  // section s's arrangement from below / above.
+  using FaceKey = Arrangement::Face_const_handle;
+  using FaceLists = std::unordered_map<FaceKey, std::vector<Fd>>;
+  std::vector<FaceLists> bottom(n_sections), top(n_sections);
+
+  // The face of section s's arrangement that contains `face` of level k's.
+  auto parent_face = [&](size_t s, size_t k, FaceKey face,
+                         const Point_2 &inside) -> std::optional<FaceKey> {
+    if (section_arr[s] == level_arr[k])
+      return face;
+    auto obj = section_arr[s]->pl->locate(inside);
+    const auto *f = std::get_if<FaceKey>(&obj);
+    if (!f || (*f)->is_unbounded())
+      return std::nullopt;
+    return *f;
+  };
+
+  auto make_level_face = [&](size_t k, FaceKey fit) {
+    std::vector<Vd> verts{};
+    NT cx = 0, cy = 0;
+    std::vector<Point_2> pts;
+    for (auto vit = fit->outer_ccb(), done = vit;;) {
+      auto v = vit->source();
+      cx += v->point().x();
+      cy += v->point().y();
+      verts.push_back(point_map[k][v->point()]);
+      pts.emplace_back(v->point().x(), v->point().y());
+      if (++vit == done)
+        break;
+    }
+    cx /= static_cast<NT>(verts.size());
+    cy /= static_cast<NT>(verts.size());
+
+    // A bounded face of a line arrangement is convex, so the mean of its
+    // corners lies strictly inside it.
+    const Point_2 inside(cx, cy);
+    const auto below =
+        k > 0 ? parent_face(k - 1, k, fit, inside) : std::optional<FaceKey>{};
+    const auto above = k < n_sections ? parent_face(k, k, fit, inside)
+                                      : std::optional<FaceKey>{};
+    if (!below && !above)
+      return; // enclosed only by the two sections' walls together
+
+    NT area_nt;
+    CGAL::area_2(pts.begin(), pts.end(), area_nt);
+
+    auto f = this->add_face(
+        Eigen::Vector3d(CGAL::to_double(cx), CGAL::to_double(cy), level_z[k]),
+        verts, sorted_floors[k] /* plane id */);
+    areas[f] = CGAL::to_double(area_nt);
+    if (below)
+      top[k - 1][*below].push_back(f);
+    if (above)
+      bottom[k][*above].push_back(f);
+  };
+
+  reusex::trace("Create  horizontal faces");
+  if (uniform) {
+    // One arrangement for every level: faces in the order the code before
+    // reusex-sba created them (face-major), so the complex is unchanged.
+    const auto &arr = section_arr.front()->arr;
+    for (auto fit = arr.faces_begin(); fit != arr.faces_end(); ++fit) {
+      if (fit->is_unbounded())
+        continue;
+      for (size_t k = 0; k < n_levels; ++k)
+        make_level_face(k, fit);
+    }
+  } else {
+    for (size_t k = 0; k < n_levels; ++k) {
+      const auto &arr = level_arr[k]->arr;
+      for (auto fit = arr.faces_begin(); fit != arr.faces_end(); ++fit)
+        if (!fit->is_unbounded())
+          make_level_face(k, fit);
+    }
+  }
+
+  // Level-k vertices strictly inside an edge of section s's arrangement:
+  // where a finer section above or below meets this section's wall faces.
+  // A wall face takes them as extra corners, so the mesh has no T-junctions.
+  using EdgeKey = Arrangement::Halfedge_const_handle;
+  auto edge_points = [&](size_t s, size_t k) {
+    std::unordered_map<EdgeKey, std::vector<Point_2>> out;
+    if (section_arr[s] == level_arr[k])
+      return out;
+    const auto &arr = level_arr[k]->arr;
+    for (auto vit = arr.vertices_begin(); vit != arr.vertices_end(); ++vit) {
+      auto obj = section_arr[s]->pl->locate(vit->point());
+      if (const auto *he = std::get_if<EdgeKey>(&obj)) {
+        out[*he].push_back(vit->point());
+        out[(*he)->twin()].push_back(vit->point());
+      }
+    }
+    return out;
+  };
+  // The points of `on` on the edge from `a` to `b`, ordered from a.
+  auto between = [](const std::unordered_map<EdgeKey, std::vector<Point_2>> &on,
+                    EdgeKey he, const Point_2 &a) {
+    std::vector<Point_2> pts;
+    if (auto it = on.find(he); it != on.end())
+      pts = it->second;
+    std::sort(pts.begin(), pts.end(), [&a](const Point_2 &p, const Point_2 &q) {
+      return CGAL::has_smaller_distance_to_point(a, p, q);
+    });
+    return pts;
+  };
+
   reusex::trace("Creating cells");
-  for (size_t i = 0; i < sorted_floors.size() - 1; ++i) {
-    const auto id1 = sorted_floors[i];
-    const auto id2 = sorted_floors[i + 1];
-    const auto plane1 = planes[id1];
-    const auto plane2 = planes[id2];
-    const double h1 = CGAL::to_double(-plane1.d() * plane1.c());
-    const double h2 = CGAL::to_double(-plane2.d() * plane2.c());
+  for (size_t i = 0; i < n_sections; ++i) {
+    const double h1 = level_z[i];
+    const double h2 = level_z[i + 1];
     const double dist = h2 - h1;
     const double h = (h1 + h2) / 2.0;
     reusex::trace("Horizontal section thickness is {:.3}", dist);
 
+    const auto on_bottom = edge_points(i, i);
+    const auto on_top = edge_points(i, i + 1);
     std::unordered_map<Arrangement::Halfedge_handle, Fd> face_cache{};
 
+    auto &arr = section_arr[i]->arr;
     for (auto fit = arr.faces_begin(); fit != arr.faces_end(); ++fit) {
       if (fit->is_unbounded())
         continue;
       std::vector<Fd> fc{};
       fc.reserve(10);
-      fc.push_back(face_map[fit][i]);
-      fc.push_back(face_map[fit][i + 1]);
-
-      // Update z coordinate of horizontal faces
-      (*this)[face_map[fit][i]].pos[2] = h1;
-      (*this)[face_map[fit][i + 1]].pos[2] = h2;
+      const FaceKey key = fit;
+      for (auto f : bottom[i][key])
+        fc.push_back(f);
+      for (auto f : top[i][key])
+        fc.push_back(f);
 
       NT cx = 0, cy = 0;
+      size_t n_edges = 0;
+      std::vector<Point_2> corners;
 
       for (auto he : CGAL::Container_from_circulator(fit->outer_ccb())) {
 
@@ -386,8 +565,12 @@ CellComplex::CellComplex(
               "degenerate; check for duplicate or near-coincident planes.",
               i));
 
-        cx += he.source()->point().x();
-        cy += he.source()->point().y();
+        const Point_2 &src = he.source()->point();
+        const Point_2 &tgt = he.target()->point();
+        cx += src.x();
+        cy += src.y();
+        ++n_edges;
+        corners.push_back(src);
 
         // INFO: Reuse vertical faces
         if (face_cache.contains(self)) {
@@ -395,48 +578,48 @@ CellComplex::CellComplex(
           continue;
         }
 
-        const auto pts = std::array{
-            point_map[he.source()][i],
-            point_map[he.target()][i],
-            point_map[he.target()][i + 1],
-            point_map[he.source()][i + 1],
-        };
+        // Bottom edge from source to target, then the top edge back.
+        std::vector<Vd> pts{point_map[i][src]};
+        for (const auto &p : between(on_bottom, self, src))
+          pts.push_back(point_map[i][p]);
+        pts.push_back(point_map[i][tgt]);
+        pts.push_back(point_map[i + 1][tgt]);
+        for (const auto &p : between(on_top, self, tgt))
+          pts.push_back(point_map[i + 1][p]);
+        pts.push_back(point_map[i + 1][src]);
 
         // Compute center of vertical face
-        Eigen::Vector3d center =
-            ((*this)[pts[0]].pos + (*this)[pts[1]].pos) / 2.0;
+        const Eigen::Vector3d p_src = (*this)[point_map[i][src]].pos;
+        const Eigen::Vector3d p_tgt = (*this)[point_map[i][tgt]].pos;
+        Eigen::Vector3d center = (p_src + p_tgt) / 2.0;
         center[2] = h;
 
         int plane_id = -1;
         for (auto cit = arr.originating_curves_begin(self);
              cit != arr.originating_curves_end(self); ++cit) {
-          plane_id = ch_map[cit];
+          plane_id = section_arr[i]->ch_map[cit];
           break;
         }
 
         // Create vertical face
         auto f = this->add_face(center, pts, plane_id);
-
-        // Eigen vector length
-        areas[f] = dist * ((*this)[pts[0]].pos - (*this)[pts[1]].pos).norm();
-        // areas[f] = dist * std::sqrt(CGAL::squared_distance(
-        //                       he.source()->point(), he.target()->point()));
+        areas[f] = dist * (p_src - p_tgt).norm();
 
         face_cache[twin] = f; // Cache twin halfedge
         fc.push_back(f);
       }
 
       // Compute center of cell
-      cx /= static_cast<NT>(fc.size() - 2);
-      cy /= static_cast<NT>(fc.size() - 2);
+      cx /= static_cast<NT>(n_edges);
+      cy /= static_cast<NT>(n_edges);
       Eigen::Vector3d center(CGAL::to_double(cx), CGAL::to_double(cy), h);
-      // const auto Fb = face_map[fit][i];
-      // auto center = (*this)[Fb].pos;
-      // center[2] = h;
+
+      NT footprint;
+      CGAL::area_2(corners.begin(), corners.end(), footprint);
 
       // Create the cell
       auto c = this->add_cell(center, fc);
-      volumes[c] = dist * areas[face_map[fit][i]];
+      volumes[c] = dist * CGAL::to_double(footprint);
       sections[c] = static_cast<int>(i);
     }
   }
@@ -444,7 +627,7 @@ CellComplex::CellComplex(
   // Record the number of horizontal sections (storeys). Each section i spans
   // sorted_floors[i]..sorted_floors[i+1]; cells carry their section in
   // "c:section" (issue #226).
-  this->n_sections = sorted_floors.empty() ? 0 : sorted_floors.size() - 1;
+  this->n_sections = n_sections;
 
   // INFO: Assign wall ids to each cell
   reusex::info("Assigning wall ids to each cell");
@@ -455,12 +638,37 @@ CellComplex::CellComplex(
         CGAL::to_double(plane.c()), CGAL::to_double(plane.d()));
   };
 
+  // A wall pair whose faces are wall lines counts only in the sections those
+  // lines reach (reusex-sba): a big cell of a storey without that wall may
+  // have its centre between the two faces by chance. Pairs of other planes
+  // (floor / ceiling slabs) count everywhere, as before.
+  std::unordered_map<size_t, size_t> line_pos; // plane id -> kept position
+  for (size_t i : kept)
+    line_pos[verticals[i]] = i;
+  std::vector<std::vector<bool>> pair_in_section(
+      pairs.size(), std::vector<bool>(n_sections, true));
+  for (size_t p = 0; p < pairs.size(); ++p) {
+    const auto it1 = line_pos.find(pairs[p].first);
+    const auto it2 = line_pos.find(pairs[p].second);
+    if (it1 == line_pos.end() && it2 == line_pos.end())
+      continue;
+    for (size_t s = 0; s < n_sections; ++s) {
+      auto has = [&](auto it) {
+        return it != line_pos.end() &&
+               std::binary_search(sets[s].begin(), sets[s].end(), it->second);
+      };
+      pair_in_section[p][s] = has(it1) || has(it2);
+    }
+  }
+
   for (size_t i = 0; i < pairs.size(); ++i) {
     const auto &[id1, id2] = pairs[i];
     auto eigen_plane1 = toEigenPlane(planes[id1]);
     auto eigen_plane2 = toEigenPlane(planes[id2]);
 
     for (auto cit = this->cells_begin(); cit != this->cells_end(); ++cit) {
+      if (!pair_in_section[i][sections[*cit]])
+        continue;
       auto p = (*this)[*cit].pos;
       auto dist1 = dist_plane_point(eigen_plane1, p);
       if (dist1 > 0)

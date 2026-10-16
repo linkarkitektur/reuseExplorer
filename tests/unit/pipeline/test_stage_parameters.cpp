@@ -15,6 +15,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <reusex/pipeline/mesh_parameters.hpp>
 #include <reusex/pipeline/stage_parameters.hpp>
 #include <reusex/pipeline/stages.hpp>
 #include <reusex/reconstruction/mesh.hpp>
@@ -279,6 +280,17 @@ TEST_CASE("StageParameters_Mesh_MirrorMeshOptionsDefaults",
       *parameter_of(JobStage::mesh, "sectioned");
   REQUIRE(std::holds_alternative<bool>(sectioned.default_value));
   CHECK(std::get<bool>(sectioned.default_value) == d.sectioned);
+
+  // Storey sections (reusex-z1v.3.4) and storey-local walls (reusex-sba).
+  const ParameterDescriptor &storey_sections =
+      *parameter_of(JobStage::mesh, "storey_sections");
+  REQUIRE(std::holds_alternative<bool>(storey_sections.default_value));
+  CHECK(std::get<bool>(storey_sections.default_value) ==
+        reusex::pipeline::MeshStageOptions{}.use_storey_sections);
+  const ParameterDescriptor &storey_local =
+      *parameter_of(JobStage::mesh, "storey_local");
+  REQUIRE(std::holds_alternative<bool>(storey_local.default_value));
+  CHECK(std::get<bool>(storey_local.default_value) == d.storey_local);
 
   const ParameterDescriptor &solver = *parameter_of(JobStage::mesh, "solver");
   REQUIRE(std::holds_alternative<std::string>(solver.default_value));

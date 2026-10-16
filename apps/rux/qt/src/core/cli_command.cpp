@@ -95,6 +95,8 @@ const std::vector<StageSpec> &stage_specs() {
         {"structural_storey_clearance", "--structural-clearance", {}, {}},
         {"structural_footprint_overlap", "--structural-overlap", {}, {}},
         {"plane_classes", {}, "--plane-classes", {}},
+        {"storey_sections", {}, "--storey-sections", {}},
+        {"storey_local", {}, {}, "--no-storey-local"},
         {"filter", "--filter", {}, {}}}},
       {"optimize",
        {"optimize", {}},
