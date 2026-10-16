@@ -21,6 +21,7 @@
 #include "create/storeys.hpp"
 #include "create/survey.hpp"
 #include "create/texture.hpp"
+#include "create/walls_dev.hpp"
 #include "create/windows.hpp"
 
 void setup_subcommand_create(CLI::App &app,
@@ -85,6 +86,7 @@ NOTES:
   setup_subcommand_create_attributes(*sub, global_opt);
   setup_subcommand_create_gsplat(*sub, global_opt);
   setup_subcommand_create_segment_frame(*sub, global_opt);
+  setup_subcommand_create_walls_dev(*sub, global_opt);
 
   sub->require_subcommand(1);
 }
