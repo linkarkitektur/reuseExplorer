@@ -382,6 +382,13 @@ if(Python3_Interpreter_FOUND)
              COMMAND ${Python3_EXECUTABLE}
                      ${CMAKE_SOURCE_DIR}/scripts/test_bench_solid_compare.py)
     set_tests_properties(bench_solid_compare_selftest PROPERTIES LABELS bench)
+
+    # scripts/bench-poses-compare.py gates the pose-reference benchmark
+    # (reusex-rcv.1.6); its self-test needs only python3.
+    add_test(NAME bench_poses_compare_selftest
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_SOURCE_DIR}/scripts/test_bench_poses_compare.py)
+    set_tests_properties(bench_poses_compare_selftest PROPERTIES LABELS bench)
 endif()
 
 message(STATUS "Unit tests configured successfully")
