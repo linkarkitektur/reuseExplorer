@@ -36,11 +36,15 @@
 #include <Eigen/Core>
 
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
 namespace reusex {
 class ProjectDB;
+}
+namespace reusex::core {
+struct PoseEdits;
 }
 
 namespace reusex::geometry {
@@ -433,6 +437,17 @@ struct PlaneGraphOptions {
   /// (storeys, plan renders, RTABMap / MuSHRoom imports).
   ManhattanUp manhattan_up = ManhattanUp::z;
 
+  // --- Pose edits (reusex-rcv.1.3) ------------------------------------------
+  /// GNC-TLS inlier threshold of the pose-edit factors (PosePrior,
+  /// SurfaceConstraint), in the units of `gnc_inlier_cost` (0.5 * whitened
+  /// squared residual). Edits are NOT known inliers: a person or an agent said
+  /// so, but a contradictory edit must be reported rather than obeyed, so they
+  /// get this generous but finite threshold, like `loop_trust_inlier_cost`.
+  /// At an edit's own sigma, 200 admits a residual of 20 sigma. Under
+  /// --no-gnc the edits are plain Gaussian factors and an edit above the
+  /// threshold is still reported as not honoured.
+  float edit_inlier_cost = 200.0f;
+
   /// Memberwise, covering every field above AND every field of `surfel`
   /// (its own defaulted operator==).
   /// Relied on by CliCommandRoundTrip_OptimizeFlagDefaults_MatchTheStageBase
@@ -461,6 +476,72 @@ struct GraphEdge {
   bool known_inlier = false;
   /// Caller's tag, echoed in PoseGraphEdgeRecord::tag; -1 = none.
   int tag = -1;
+};
+
+/// An absolute prior on one frame's pose (a pose edit: `anchor`, or one node
+/// of a `move`). Optical convention, like FrameSurfels::world_pose.
+///
+/// Its residual is [roll, pitch, yaw, x, y, z] (GTSAM order: rotation
+/// first), all about / along `axes` (world -> residual axes; the edit
+/// document's frame): the position error of the camera centre, and the
+/// yaw / pitch / roll (Z-Y-X Euler) differences of the camera's LEVELLED
+/// frame, i.e. its rotation times the fixed body permutation that puts the
+/// target's most vertical body axis on z (prior_levelling(); this keeps a
+/// portrait or a downward-looking camera clear of gimbal lock). Euler
+/// components make a DoF mask exact: with only x, y and yaw selected, the
+/// target's z, roll and pitch exert no force at all. Masked-out entries of
+/// `information` are zero; the solver adds 1e-9 to the diagonal.
+struct PosePrior {
+  int i = -1;                                         ///< index into frames[]
+  Eigen::Matrix4d pose = Eigen::Matrix4d::Identity(); ///< target world_pose
+  Eigen::Matrix<double, 6, 6> information =
+      Eigen::Matrix<double, 6, 6>::Identity();
+  Eigen::Matrix3d axes = Eigen::Matrix3d::Identity(); ///< world -> residual
+  std::string tag; ///< the edit's id; residuals are reported per tag
+};
+
+/// The body permutation (a proper rotation) a PosePrior levels with: its z
+/// column is the body axis of @p R_target most aligned with the z of
+/// @p axes (sign included).
+Eigen::Matrix3d prior_levelling(const Eigen::Matrix3d &R_target,
+                                const Eigen::Matrix3d &axes);
+/// [roll, pitch, yaw] (rad) of world rotation @p R in a PosePrior's
+/// convention (levelling @p C, residual @p axes).
+Eigen::Vector3d prior_rpy(const Eigen::Matrix3d &R, const Eigen::Matrix3d &C,
+                          const Eigen::Matrix3d &axes);
+/// The world rotation with [roll, pitch, yaw] @p rpy: the inverse of
+/// prior_rpy().
+Eigen::Matrix3d prior_rotation(const Eigen::Vector3d &rpy,
+                               const Eigen::Matrix3d &C,
+                               const Eigen::Matrix3d &axes);
+
+/// A relative constraint between two frames whose information may be rank
+/// deficient (a pose edit: `same_surface`, `relative`): a BetweenFactor with
+/// measurement T_ij = pose(i)^-1 * pose(j) (optical convention) and an error
+/// in j's local frame, GTSAM order. A same-surface constraint carries
+/// information only along the surface normal and about the two in-surface
+/// axes; the solver adds 1e-9 to the diagonal.
+struct SurfaceConstraint {
+  int i = -1;
+  int j = -1;
+  Eigen::Matrix4d T_ij = Eigen::Matrix4d::Identity();
+  Eigen::Matrix<double, 6, 6> information =
+      Eigen::Matrix<double, 6, 6>::Identity();
+  std::string tag;
+};
+
+/// How well the solution honours one pose edit (all factors sharing a tag).
+struct EditResidual {
+  std::string tag;
+  /// Largest translation residual over the edit's factors (m), counting only
+  /// the directions the edit constrains (the range of its information).
+  double trans_m = 0.0;
+  double rot_deg = 0.0; ///< same, rotation (deg)
+  double chi2 = 0.0;    ///< sum of whitened squared residuals
+  /// GNC kept every factor of the edit (weight >= 0.5); without GNC, every
+  /// factor's error is within `edit_inlier_cost`.
+  bool gnc_inlier = true;
+  int factors = 0; ///< factors the edit lowered to
 };
 
 /// One pose-graph edge produced by the optimizer, indexed by position in the
@@ -522,6 +603,14 @@ struct PlaneGraphResult {
   /// measured from the world axis after `manhattan_up_axis` (x for z-up).
   double manhattan_axis_deg = 0.0;
   int manhattan_up_axis = -1; ///< 0 / 1 / 2 = world x / y / z; -1 = off
+  /// Pose edits (reusex-rcv.1.3), final round, in the order of their first
+  /// factor. Empty without edits.
+  std::vector<EditResidual> edit_residuals;
+  int edit_factors = 0; ///< PosePrior + SurfaceConstraint factors added
+  /// optimize_sensor_poses with edits: ids of edits read but not lowered
+  /// (on_plan_wall, for now) and stored edges left out by reject_edge.
+  std::vector<std::string> edits_skipped;
+  int edges_rejected_by_edits = 0;
 };
 
 /// Plane-landmark pose-graph optimizer operating purely in memory.
@@ -546,8 +635,17 @@ class PlaneGraphOptimizer {
   /// self-loop edges are skipped). The gauge prior still pins frame 0 at its
   /// world_pose. optimize() == optimize_graph(frames,
   /// legacy_graph_edges(frames, loop_edges)).
-  PlaneGraphResult optimize_graph(std::vector<FrameSurfels> &frames,
-                                  const std::vector<GraphEdge> &edges) const;
+  ///
+  /// @p priors and @p surfaces are pose edits (slam/pose_edit_lowering.hpp):
+  /// extra factors with the `edit_inlier_cost` GNC threshold, reported per
+  /// tag in PlaneGraphResult::edit_residuals. Without them the result is
+  /// bit-identical to a call that does not pass them. With them the graph is
+  /// solved even when no plane landmark survives.
+  PlaneGraphResult
+  optimize_graph(std::vector<FrameSurfels> &frames,
+                 const std::vector<GraphEdge> &edges,
+                 std::span<const PosePrior> priors = {},
+                 std::span<const SurfaceConstraint> surfaces = {}) const;
 
     private:
   PlaneGraphOptions options_;
@@ -575,9 +673,14 @@ legacy_graph_edges(const std::vector<FrameSurfels> &frames,
 /// @param db       Project database (read/write).
 /// @param options  Optimization parameters.
 /// @param dry_run  When true, compute and report statistics without writing.
+/// @param edits    Optional pose edits (docs/design/pose-edits.md), lowered
+///                 by slam::lower_pose_edits() over the solved frames; their
+///                 residuals land in PlaneGraphResult::edit_residuals. The
+///                 caller checks the edits' project_guid.
 /// @returns        Optimization statistics.
 PlaneGraphResult optimize_sensor_poses(ProjectDB &db,
                                        const PlaneGraphOptions &options,
-                                       bool dry_run = false);
+                                       bool dry_run = false,
+                                       const core::PoseEdits *edits = nullptr);
 
 } // namespace reusex::geometry

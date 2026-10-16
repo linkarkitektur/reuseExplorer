@@ -92,6 +92,13 @@ struct SubcommandOptimizeOptions {
       reusex::geometry::PlaneGraphOptions{}.manhattan_level_max_angle_deg;
   std::string manhattan_up = "z"; ///< auto | x | y | z
 
+  // Pose edits (reusex-rcv.1.3): a reusex.pose_edits.v1 file
+  // (docs/design/pose-edits.md); empty = none. Default mirrors
+  // PlaneGraphOptions.
+  std::string edits;
+  float edit_inlier_cost =
+      reusex::geometry::PlaneGraphOptions{}.edit_inlier_cost;
+
   // Surfel extraction (shared with `rux register`).
   float surfel_voxel = 0.03f;
   float min_distance = 0.0f;
