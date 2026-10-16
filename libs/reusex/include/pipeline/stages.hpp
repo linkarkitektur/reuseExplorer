@@ -51,6 +51,7 @@ enum class JobStage {
   graph_discover, ///< find loop edges and store them in the pose graph
   storeys,        ///< detect storeys and the level frame -> "storeys" table
   classify,       ///< classify each plane -> "plane_classes" table
+  walls,          ///< walls + their joins -> "walls" / "wall_joins" tables
 };
 
 /// Canonical lower-case stage name (the token used on the wire and the CLI).

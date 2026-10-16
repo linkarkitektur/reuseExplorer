@@ -45,7 +45,7 @@ subcommand makes, so a stage that validates cannot then be refused when run.
 - **Tables** are relational rows keyed by cloud name and id — `sensor_frames`,
   `segmentation_images`, `instances`, `instance_materials`,
   `building_components`, `meshes` — or, for the solid-model tables
-  (`storeys`, `plane_classes`, ...), by a stable GUID with `source` / `locked` columns: a
+  (`storeys`, `plane_classes`, `walls`, ...), by a stable GUID with `source` / `locked` columns: a
   re-run replaces the unlocked rows and keeps the locked ones, and a
   re-detected element keeps the GUID of the stored element it matches. New
   GUIDs are deterministic (`core::deterministic_guid` over the project GUID,
@@ -343,6 +343,59 @@ plane's point count no longer matches the new segmentation). `rux get
 plane_classes` (or `rux get clouds.planes.classes`) prints the table; `rux del
 plane_classes` removes it, and needs `--force` when any row is locked.
 
+### `walls` (`rux create walls`)
+
+Per storey, in its level frame (`reconstruction/walls.hpp`, `detect_walls`):
+the directions walls run in (axis families, from the normals of the planes
+whose role is `wall`), the faces of those planes' points from their offset
+profile, which two faces are the two sides of one wall (gap, an empty valley
+between them, co-visibility), its thickness at mid-height with a bootstrap
+CI and its lean, whether it is external (no room evidence beyond one face),
+and the bounded wall graph: faces snapped to their points, collinear walls
+bridged over doorways, corner and tee joins, and the share of each wall's
+face area that has evidence (`seen_share`). A wall seen from one side only is
+`assumed`: its thickness is `default_thickness_m` and its axis lies half of
+that behind the seen face.
+
+| | |
+|---|---|
+| Consumes | `cloud`, `planes`, `plane_normals`, `plane_classes`, `storeys` |
+| Produces | `walls` (table, schema v33: one row per wall, a stable GUID — see below), `wall_joins` (table, schema v33: corner / tee / collinear joins) |
+| Options  | `WallOptions` (`libs/reusex/include/reconstruction/walls.hpp`), parameter keys are its field names; plus `guid_match_m`, `guid_match_angle_deg`, `guid_min_overlap` (`core::WallIdentityOptions`, `core/wall_identity.hpp`). One table, `pipeline::wall_parameter_table()`, defines the keys, the CLI flags and their bounds |
+| Checks   | `cloud`/`planes` present + aligned; `plane_normals` present; ≥1 plane class; ≥1 storey |
+
+`use_normal_sign` is not a parameter: each side of a wall gets its own offset
+profile only when `plane_normals` (or `normals`) carries
+`"normal_orientation": "sensor"` (see `clouds`); without it the stage warns.
+The stage refuses (invalid input) plane classes whose `point_count` does not
+match the plane's inliers in `planes`: `planes` ran again after `classify`,
+so re-run `classify`.
+
+Each row: the axis `(x0, y0)–(x1, y1)` (the wall's centre line, level frame),
+`z_base` / `height` (the storey's floor and height), `thickness` with
+`thickness_ci_lo` / `thickness_ci_hi` (−1 when assumed), `lean_deg`,
+`is_external`, `assumed`, `seen_share` (−1 n/a), `face_a_points` /
+`face_b_points`, `co_visibility` (−1 for a one-sided wall), `axis_family`,
+`metadata` (`{"low_seen_share": true}` below `min_seen_share`). `storey` is the
+storey's `idx`, not a foreign key, as for `plane_classes`: re-run `walls` after
+`storeys`. `wall_joins` rows name two walls (by row id in the table, by GUID
+in the API) and where each meets the other (`start`, `end` or along its
+`path`); they go with their walls.
+
+Identity: a re-detected wall keeps the GUID of the stored wall of the same
+storey that it lies on — parallel within `guid_match_angle_deg` (10°), each
+axis within `guid_match_m` (0.25 m) of the other's midpoint, overlapping by
+`guid_min_overlap` (half) of the shorter — so a re-run on the same data gives
+the same GUIDs. Only an unmatched wall gets a fresh GUID,
+`uuid5(project_guid, "walls/<storey idx>/<x0>,<y0>,<x1>,<y1>")` with the axis
+endpoints rounded to 5 cm, suffixed until unique. Rows with `locked = 1`
+survive a re-run unchanged (a new wall that matches one is not written), and
+so do joins between two locked walls. `rux get walls` (or `rux get
+storeys.<idx>.walls`, `rux get wall_joins`) prints the tables; `rux del walls`
+removes walls and joins, and needs `--force` when any wall is locked.
+`io::load_solid_model` reads both, so `rux analyze solid --reference plan.yaml`
+scores a project's walls directly.
+
 ### `mesh` (`rux create mesh`)
 
 Solidify the cell complex into **one watertight envelope mesh** covering every
@@ -555,7 +608,7 @@ rasterizer.
 
 ```
 import → [graph_init] → [graph_discover] → (optimize|register) → clouds → planes → rooms → mesh → texture
-                                                                                   ↘ storeys → classify
+                                                                                   ↘ storeys → classify → walls
                                                     ↘ annotate → project → instances → windows
                                                     ↘ gsplat (leaf: produces `splat`)
 ```

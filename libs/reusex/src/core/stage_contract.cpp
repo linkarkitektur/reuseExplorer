@@ -45,6 +45,12 @@ const std::vector<Artifact> &artifacts() {
       {"plane_classes", ArtifactKind::table, Alignment::none,
        "plane_classes: orientation, majority class, role, storey and extent "
        "of each plane of `planes` (schema v31)"},
+      {"walls", ArtifactKind::table, Alignment::none,
+       "walls: axis, height, measured thickness with its CI, lean and "
+       "evidence of each wall, in its storey's level frame (schema v33)"},
+      {"wall_joins", ArtifactKind::table, Alignment::none,
+       "wall_joins: corner / tee / collinear joins between walls "
+       "(schema v33)"},
       {"mesh", ArtifactKind::mesh, Alignment::none,
        "the reconstructed watertight mesh"},
       {"textured_mesh", ArtifactKind::mesh, Alignment::none,
@@ -180,6 +186,20 @@ const std::vector<StageContract> &contracts() {
        // vote), so it is not declared, as for `survey`.
        {{{"cloud"}}, {{"planes"}}, {{"plane_normals"}}, {{"storeys"}}},
        {"plane_classes"}},
+
+      {PipelineStage::walls,
+       "walls",
+       {},
+       "rux create walls",
+       "walls with a measured thickness and the joins between them",
+       // Wall evidence = the inliers (`cloud` + `planes`) of the planes whose
+       // role is wall, with their normals, in each storey's level frame.
+       {{{"cloud"}},
+        {{"planes"}},
+        {{"plane_normals"}},
+        {{"plane_classes"}},
+        {{"storeys"}}},
+       {"walls", "wall_joins"}},
 
       {PipelineStage::mesh,
        "mesh",
