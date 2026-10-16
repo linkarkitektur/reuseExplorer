@@ -755,3 +755,75 @@ is within 0.013 of `optimize` on every cell (0.262 vs 0.275 on 48 full d1.0,
 
 Per-round logs, edits, blocks and PNGs: the scratch run
 `drift-loop-fix/cells/<cell>/r<k>/` of this session (not committed).
+
+### 9.8 Moves as junctions (2026-10-17, `reusex-9fx`): the mechanism is fixed, the loop is not
+
+**What the bead claimed.** "Best fast round vs final" in §9.7 (205 -> 248,
+521 -> 561 mm) paired the lowest-ATE fast round (which the loop cannot know)
+with the final solve of a *different* round's edits. Paired by the edits the
+policy actually kept, the fast -> full step of §9.7 was 317 -> 318
+(48 full d1.0), 63 -> 55 (50 full d0.25), 253 -> 248 (50 full d1.0),
+32 -> 29 (50 yaw) and 535 -> 561 mm (51 full d1.0): one real loss, not three.
+The mechanism behind it was real: an absolute move pins the block's
+*drifted* shape at a world place (its residual already 6 cm / 5.8 deg in the
+fast solve on 51 full d1.0) and pulls the chain before it (regression 221).
+
+**The change.** A `move` is now one relative factor from the node solved
+before the block to its first node, at `initial_p^-1 · delta · initial_a`,
+replacing the odometry into the block (§4.2, `docs/design/pose-edits.md`);
+`--watch` writes its suggested delta so that junction is the corrected
+candidate's offset. On a synthetic room with smooth drift and one break the
+full solve with the junction equals the solve of the unbroken odometry
+(48.3 mm rms, --fast 81 mm) where the absolute lowering ends at 101 mm, and
+nothing before the block moves (the absolute lowering bent it 7.7 cm).
+
+**The blind re-run** (same nine cells, seeds, policy scripts, harness;
+scores read after the last cell). ATE mm; "fast -> full" is the kept round's
+fast solve vs the full solve of the same edits.
+
+| cell | `optimize` | §9.7: fast -> full (kept edits) | junctions: best fast | junctions: fast -> full (kept edits) | verdict line | final vs optimize |
+|---|---|---|---|---|---|---|
+| 48 full d0.25 | 37.3 | (none kept) 37.3 | 36.2 | (none kept) 37.3 | the same | = |
+| 48 full d1.0 | 274.4 | 317.1 -> 318.1 | 274.4 | 300.8 -> **305.3** | better (-0.7) | worse |
+| 48 yaw d0.25 | 31.9 | (none kept) 31.9 | 31.9 | 34.1 -> 32.8 | the same | worse (+0.9) |
+| 50 full d0.25 | 73.9 | 62.6 -> 54.7 | 64.4 | 71.4 -> 74.3 | WORSE (+0.4) | = |
+| 50 full d1.0 | 258.5 | 252.9 -> 248.4 | 242.4 | 258.4 -> **294.6** | better (-8.4) | worse |
+| 50 yaw d0.25 | 46.8 | 32.4 -> 28.9 | 34.0 | 49.9 -> **59.1** | the same | worse |
+| 51 full d0.25 | 78.9 | (none kept) 78.9 | 75.5 | 86.4 -> 79.1 | the same | = |
+| 51 full d1.0 | 619.1 | 534.7 -> 561.4 | 536.0 | 628.7 -> 622.5 | WORSE (+0.1) | = |
+| 51 yaw d0.25 | 34.2 | (none kept) 34.2 | 33.1 | 33.1 -> 34.0 | better (-0.1) | = |
+
+- **Final <= optimize (within 1 mm) on 5 of 9, worse on 4** (§9.7: 8 of 9,
+  worse on 1). With the guide's last step (keep only a `better` verdict) the
+  loop keeps 48 full d1.0 and 50 full d1.0, both worse than `optimize` by
+  31 / 36 mm ATE: the verdict line is wrong on both (cross-segment 19.3 vs
+  20.0 and 27.1 vs 35.5 mm "better"). §9.7 under the same rule: never worse.
+- **The fast -> full step** is no longer a loss on 4 of the 8 cells that kept
+  edits, but it lost 36 mm (50 full d1.0) and 9 mm (50 yaw). The junctions
+  are honoured exactly in the full solve (residual < 2 mm / 0.01 deg), so
+  the loss is no longer a fight at the edit: a junction expresses the
+  correction at ONE node, and the full solve gives the block a different
+  shape and the node before it a different orientation than the
+  reference-linearised fast solve did; over a 155-frame block and its
+  carried tail that lever arm moves the block off the place segment ICP
+  measured. The absolute priors averaged over the block instead.
+- **The fast rounds themselves gain less.** Best fast ATE per cell moved
+  from 205 / 521 mm (§9.7, 50 / 51 full d1.0) to 242 / 536 mm: a suggestion
+  is now a junction that carries the whole tail, so a correct "segment k
+  into the rest" fit also moves k+1..n, which the ICP did not ask for.
+- **Renders** (`50 full d1.0`, r5 fast / r7 full vs `.ref.passes.png`): the
+  right-hand wall that the reference shows as two parallel bands (seg 11
+  yellow beside seg 8 orange) is one band in both loop cuts, and the
+  cross-segment median agrees (23.0 / 27.1 vs 35.5 mm) -- while true ATE is
+  258 / 295 vs 259 mm. The edits fold seg 11 onto the wrong copy; the cut
+  cannot tell, which is §9.4's heavy-drift caveat again.
+
+**Verdict.** The junction lowering removes the mechanism the bead named
+(upstream shear, a fight between absolute targets and the plane factors) and
+passes the synthetic test, but on the blind calibration the loop ends worse
+than §9.7 and its own verdict line approves two losses. It does not meet the
+bar (final >= fast-best on the d1.0 cells; never worse than `optimize`).
+Next candidates: a move held at its block's centroid frame relative to the
+node before it (the averaging of the absolute priors without their world
+pin), and exit junctions so a segment move does not carry the tail
+(`reusex-9fx` notes).
