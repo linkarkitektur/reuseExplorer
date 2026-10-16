@@ -119,7 +119,8 @@ struct SubcommandOptimizeOptions {
   int watch_interval_ms = 500;
   int watch_cycles = -1; ///< hidden: stop after N re-solves (-1 = never)
   bool apply = false;    ///< write `transform` on every good solve
-  bool fast = false;     ///< no plane factors: odometry + loops + edits
+  /// No plane factors: the edits bend the no-edit full solve (reusex-rcv.1.21)
+  bool fast = false;
   /// Image path stem: `<stem>.<panel>.png` per panel; empty = no images.
   fs::path render;
   int render_width = 1280;
@@ -132,8 +133,8 @@ struct SubcommandOptimizeOptions {
   int drift_depth_stride = reusex::slam::DriftDiagnosticsOptions{}.depth_stride;
   int drift_segments = reusex::slam::DriftDiagnosticsOptions{}.segments;
   int suggestions = 3; ///< ICP suggestions printed as YAML
-  /// Untouched nodes moving more than this vs the no-edit solve count as
-  /// shear (reusex-sb2).
+  /// An untouched segment moving more than this vs the no-edit full solve,
+  /// and fitting worse there, counts as shear (reusex-sb2, rcv.1.22).
   double shear_flag_m = 0.05;
 };
 

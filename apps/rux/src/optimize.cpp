@@ -374,9 +374,9 @@ NOTES:
                     "(never initial_transform). Default: in memory only")
           ->needs(watch);
   sub->add_flag("--fast", opt->fast,
-                "--watch: no plane factors (odometry + loop edges + edits "
-                "only) and no surfels, for second-scale cycles; solve the "
-                "final reference without it")
+                "--watch: second-scale cycles without plane factors, "
+                "solved on top of plain optimize (the no-edit full solve, "
+                "computed once at load); check the final file without it")
       ->needs(watch);
   sub->add_option("--render", opt->render,
                   "--watch: image path stem; writes <stem>.[s<storey>.]"
@@ -426,8 +426,8 @@ NOTES:
       ->check(CLI::NonNegativeNumber)
       ->needs(watch);
   sub->add_option("--shear-flag", opt->shear_flag_m,
-                  "--watch: an untouched node moving more than this (m) vs "
-                  "the no-edit solve counts as shear")
+                  "--watch: an untouched segment moving more than this (m) "
+                  "vs plain optimize, and fitting worse, counts as shear")
       ->default_val(opt->shear_flag_m)
       ->check(CLI::PositiveNumber)
       ->needs(watch);

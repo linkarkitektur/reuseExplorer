@@ -13,6 +13,14 @@
 //
 // The loop is a thin shell around OptimizeWatchSession::pass(), which tests
 // drive directly, without sleeping (like render_watch.hpp).
+//
+// The reference (reusex-rcv.1.21 / .24, calibration in
+// docs/research/visual-drift-loop.md §9): the no-edit FULL solve -- what
+// plain `rux optimize` gives -- is solved once at load. Every block compares
+// the candidate with it, the shear indicator and the shear guards measure
+// against it, and `--fast` cycles solve on top of it (fast_graph_at()), so
+// an edit corrects the plain-optimize trajectory instead of the drifted
+// odometry.
 
 #include "global-params.hpp"
 #include "optimize.hpp"
@@ -20,12 +28,14 @@
 #include <reusex/core/pose_edits.hpp>
 #include <reusex/core/solid_model.hpp>
 #include <reusex/slam/PlaneGraphOptimizer.hpp>
+#include <reusex/slam/drift_diagnostics.hpp>
 #include <reusex/visualize/drift_layers.hpp>
 
 #include <Eigen/Core>
 
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -41,21 +51,60 @@ struct PoseChange {
   double max_rot_deg = 0.0;
 };
 
-/// reusex-sb2: how far the nodes NO edit names moved against the solve
-/// without edits. A GT-free residual can improve because an edit shears the
-/// whole trajectory; this is the number that shows it.
+/// reusex-sb2 / reusex-rcv.1.22: how the nodes NO edit names moved against
+/// the reference (the no-edit FULL solve, i.e. plain `rux optimize`).
+///
+/// Movement alone is not shear. Drift accumulates from the gauge outward, so
+/// a correct move of segment k carries the tail after it rigidly
+/// (downstream) and spreads its correction over the links between the gauge
+/// and k (upstream); both are expected. Shear -- the regression-221 failure
+/// -- is an untouched part moved to where it fits the other passes WORSE
+/// than in the reference. So a segment no edit names counts as sheared only
+/// when it moved more than the flag AND its cross-segment residual got worse
+/// than the reference's by more than max(1 mm, 10%). Without residuals (no
+/// drift report) the upstream movement is flagged, conservatively.
 struct ShearIndicator {
   std::size_t untouched = 0; ///< nodes outside every edit's node set
-  PoseChange change;         ///< of those, vs the no-edit solve
-  std::size_t flagged = 0;   ///< moved more than shear_flag_m
-  /// Per drift segment with no edited node: the largest move.
+  PoseChange change;         ///< of those, vs the reference
+  /// Untouched nodes that moved more than the flag, by side of the last
+  /// edited node: before it (towards the gauge) / after it (carried tail).
+  std::size_t upstream_moved = 0, downstream_moved = 0;
+  std::size_t flagged = 0; ///< moved nodes of the sheared segments
+  /// Per drift segment with no edited node.
   struct Segment {
     int index = 0;
     std::int64_t first_node = 0, last_node = 0;
-    double max_m = 0.0;
+    double max_m = 0.0; ///< its largest move vs the reference
+    /// Median cross-segment residual of its pairs, candidate / reference.
+    std::optional<double> residual_m, reference_residual_m;
+    bool downstream = false; ///< after the last edited node
+    bool sheared = false;    ///< moved > flag and fits worse
   };
   std::vector<Segment> segments;
 };
+
+/// The input of shear_indicator(): one drift segment and its median
+/// cross-segment residual on the candidate and on the reference.
+struct ShearSegmentFit {
+  int index = 0;
+  std::int64_t first_node = 0, last_node = 0;
+  std::optional<double> residual_m, reference_residual_m;
+};
+
+/// The shear indicator of a candidate @p poses against the @p reference
+/// poses (both index-aligned with @p ids); @p untouched marks the nodes no
+/// edit names. See ShearIndicator for the rule.
+ShearIndicator shear_indicator(const std::vector<std::int64_t> &ids,
+                               const std::vector<Eigen::Matrix4d> &poses,
+                               const std::vector<Eigen::Matrix4d> &reference,
+                               const std::vector<bool> &untouched,
+                               const std::vector<ShearSegmentFit> &segments,
+                               double flag_m);
+
+/// Median residual of the cross-segment pairs (a != b) that involve each
+/// segment of @p report, by segment index.
+std::map<int, double>
+segment_cross_residuals(const reusex::slam::DriftReport &report);
 
 /// What one pass of the loop did and measured.
 struct OptimizeWatchPass {
@@ -74,6 +123,13 @@ struct OptimizeWatchPass {
   /// stored pose.
   std::vector<Eigen::Matrix4d> poses;
   std::optional<double> cross_segment_median_m;
+  /// reusex-rcv.1.24: the same numbers for the reference (the no-edit full
+  /// solve, what plain `rux optimize` gives), measured once at load.
+  std::optional<double> reference_cross_segment_median_m;
+  std::optional<double> reference_pass_to_pass_m;
+  /// The candidate against the reference: whether its cross-segment median
+  /// is lower (nullopt without both numbers).
+  std::optional<bool> beats_reference;
   ShearIndicator shear;
   /// The suggestions as a ready-to-paste YAML list (items of `edits:`).
   std::string suggestions_yaml;
@@ -145,6 +201,17 @@ std::vector<reusex::visualize::GraphLayerEdge>
 candidate_graph_edges(const reusex::geometry::StoredPoseGraph &graph,
                       const std::vector<std::string> &stored_status,
                       const reusex::geometry::PlaneGraphResult &result);
+
+/// reusex-rcv.1.21: the graph the `--fast` cycles solve. Seeded at
+/// @p reference (one pose per graph frame, `transform` convention: the
+/// no-edit full solve), every edge that enters a solve measuring the
+/// reference's relative pose, surfels dropped (no plane factors). Its
+/// no-edit solve is the reference itself; an edit bends the reference's
+/// shape instead of the drifted odometry's, so the shear guards and the
+/// final full solve no longer pull the trajectory back to the drift.
+reusex::geometry::StoredPoseGraph
+fast_graph_at(const reusex::geometry::StoredPoseGraph &graph,
+              const std::vector<Eigen::Matrix4d> &reference);
 
 /// Split the node ids @p nodes (node order) into runs of one storey: each
 /// camera position (@p positions, world) goes to the storey whose
