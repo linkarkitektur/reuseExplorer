@@ -360,6 +360,10 @@ StageResult run_band_rooms(ProjectDB &db, const StageContext &ctx,
       param_or(params, "band_wall_min_points", o.wall_min_points);
   o.footprint_close =
       param_or(params, "band_footprint_close", o.footprint_close);
+  o.use_wall_graph = param_or(params, "band_use_walls", o.use_wall_graph);
+  o.cut_at_doors = param_or(params, "band_cut_at_doors", o.cut_at_doors);
+  o.wall_graph_min_seen_share =
+      param_or(params, "band_wall_min_seen_share", o.wall_graph_min_seen_share);
   o.cancel_token = ctx.cancel_token;
   if (!(o.band_top > o.band_bottom))
     return StageResult::invalid(
@@ -387,17 +391,45 @@ StageResult run_band_rooms(ProjectDB &db, const StageContext &ctx,
   if (auto problem = resolve_filter(params, db, cloud->size(), filter))
     return StageResult::invalid(*problem);
 
+  // The walls and openings tables, when the walls / openings stages have
+  // run (recommended order walls -> openings -> rooms): the wall graph
+  // blocks the grid and the doors cut the rooms (W4.1, W5.4). Optional: the
+  // constriction watershed alone cuts the rooms without them.
+  geometry::BandRoomsPlan plan;
+  if (o.use_wall_graph || o.cut_at_doors) {
+    plan.walls = db.walls();
+    if (o.cut_at_doors)
+      plan.openings = db.openings();
+  }
+  if (plan.walls.empty())
+    info("rooms: no walls table (run `rux create walls` and `rux create "
+         "openings` before rooms to cut rooms at walls and doors); band "
+         "evidence only");
+  else if (o.cut_at_doors && plan.openings.empty())
+    info("rooms: {} wall(s) but no openings table (run `rux create "
+         "openings` before rooms to cut rooms at doors); constriction cuts "
+         "only",
+         plan.walls.size());
+
   auto r = geometry::segment_band_rooms(*cloud, *normals, storeys, o,
-                                        filter ? filter.get() : nullptr);
+                                        filter ? filter.get() : nullptr,
+                                        plan.walls.empty() ? nullptr : &plan);
   if (ctx.is_cancelled())
     return StageResult::cancel("room segmentation cancelled");
 
   db.save_point_cloud("rooms", *r.labels, "segment_rooms", ctx.parameters);
+  int graph_walls = 0;
+  int door_cuts = 0;
+  for (const auto &g : r.grids) {
+    graph_walls += g.graph_walls;
+    door_cuts += g.door_cuts;
+  }
   return StageResult::success(
       fmt::format("segmented {} room(s) in {} storey(s) from the {}-{} m "
-                  "band; {} of {} points unlabeled",
+                  "band, {} wall(s) and {} door cut(s) from the walls / "
+                  "openings tables; {} of {} points unlabeled",
                   r.rooms, r.grids.size(), o.band_bottom, o.band_top,
-                  r.unlabeled_points, cloud->size()),
+                  graph_walls, door_cuts, r.unlabeled_points, cloud->size()),
       {{"cloud", "rooms", static_cast<int64_t>(r.labels->size())}});
 }
 
@@ -1005,6 +1037,18 @@ StageResult run_walls(ProjectDB &db, const json &params, int log_id) {
     }
   }
 
+  // The capture path: evidence that a wide gap between collinear walls is
+  // a door (reusex-3e9).
+  std::vector<Eigen::Vector3d> path;
+  for (const int id : db.sensor_frame_ids()) {
+    if (!db.has_sensor_frame_pose(id))
+      continue;
+    const Eigen::Affine3d world =
+        geometry::to_affine(db.sensor_frame_pose(id)) *
+        geometry::to_affine(db.sensor_frame_intrinsics(id).local_transform);
+    path.push_back(world.translation());
+  }
+
   std::vector<core::WallRecord> walls;
   std::vector<core::WallJoinRecord> joins;
   int families = 0, faces = 0, pairs = 0, low_seen = 0;
@@ -1012,16 +1056,16 @@ StageResult run_walls(ProjectDB &db, const json &params, int log_id) {
     geometry::WallsResult r;
     try {
       r = geometry::detect_walls(*cloud, *planes, *normals, classes, st,
-                                 o.walls);
+                                 o.walls, path);
     } catch (const std::invalid_argument &e) {
       return StageResult::invalid(e.what());
     }
     auto [w, j] = geometry::wall_records(r.graph, st);
     info("walls: storey {}: {} axis famil{}, {} face(s), {} pair(s) ({} "
-         "rejected), {} wall(s), {} join(s)",
+         "rejected), {} wall(s), {} join(s), {} wide doorway(s) bridged",
          st.idx, r.families.size(), r.families.size() == 1 ? "y" : "ies",
          r.faces.size(), r.pairing.pairs.size(), r.pairing.rejected, w.size(),
-         j.size());
+         j.size(), r.graph.door_bridges);
     families += static_cast<int>(r.families.size());
     faces += static_cast<int>(r.faces.size());
     pairs += static_cast<int>(r.pairing.pairs.size());

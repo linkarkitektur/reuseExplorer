@@ -20,6 +20,7 @@
 #include <map>
 #include <random>
 #include <set>
+#include <string>
 #include <vector>
 
 using namespace reusex;
@@ -525,4 +526,326 @@ TEST_CASE("BandRooms_Scan_NoStoreys_Throws", "[segmentation][band_rooms]") {
   CloudN short_normals;
   CHECK_THROWS_AS(segment_band_rooms(cloud, short_normals, {s.storey()}),
                   std::invalid_argument);
+}
+
+// ===========================================================================
+// Wall graph and doorway cuts from the walls / openings tables
+// (W4.1 reusex-z1v.6.1, W5.4 reusex-z1v.7.4)
+// ===========================================================================
+
+namespace {
+
+core::WallRecord wall_rec(const std::string &guid, double x0, double y0,
+                          double x1, double y1, double thickness = 0.1,
+                          int storey = 0) {
+  core::WallRecord w;
+  w.guid = guid;
+  w.storey = storey;
+  w.x0 = x0;
+  w.y0 = y0;
+  w.x1 = x1;
+  w.y1 = y1;
+  w.height = 2.6;
+  w.thickness = thickness;
+  return w;
+}
+
+core::OpeningRecord opening_rec(const std::string &wall, const char *kind,
+                                double s0, double s1, double sill = 0.0,
+                                double head = 2.1) {
+  core::OpeningRecord o;
+  o.guid = wall + "/" + kind + "/" + std::to_string(s0);
+  o.wall = wall;
+  o.kind = kind;
+  o.s_start = s0;
+  o.s_end = s1;
+  o.z_sill = sill;
+  o.z_head = head;
+  return o;
+}
+
+/// Two 4 x 4 m rooms side by side, the shared wall at x = 4 with a
+/// 1.6 m wide doorway (y 1.2 .. 2.8): wider than 2 x core_radius, so the
+/// constriction watershed alone sees one room.
+Plan wide_door_plan() {
+  Plan p(-1, 10, -1, 5);
+  p.floor(0, 8, 0, 4);
+  p.wall(0, 0, 0, 4);
+  p.wall(8, 8, 0, 4);
+  p.wall(0, 8, 0, 0);
+  p.wall(0, 8, 4, 4);
+  p.wall(4, 4, 0, 1.2);
+  p.wall(4, 4, 2.8, 4);
+  return p;
+}
+
+/// The walls table of wide_door_plan(): the outline and the partition,
+/// bridged over the doorway as the walls stage leaves it.
+BandRoomsPlan wide_door_tables(const char *kind = "door") {
+  BandRoomsPlan t;
+  t.walls = {wall_rec("s", 0, 0, 8, 0), wall_rec("n", 0, 4, 8, 4),
+             wall_rec("w", 0, 0, 0, 4), wall_rec("e", 8, 0, 8, 4),
+             wall_rec("p", 4, 0, 4, 4)};
+  t.openings = {opening_rec("p", kind, 1.2, 2.8)};
+  return t;
+}
+
+} // namespace
+
+TEST_CASE("BandRooms_Grid_WideDoorway_WithoutTables_IsOneRoom",
+          "[segmentation][band_rooms][doors]") {
+  // The control: what the constriction cut alone does with a 1.6 m door.
+  Plan p = wide_door_plan();
+  CHECK(partition_room_grid(p.g, BandRoomsOptions{}) == 1);
+}
+
+TEST_CASE("BandRooms_Grid_WideDoorway_FromTheOpeningsTable_CutsTheRooms",
+          "[segmentation][band_rooms][doors]") {
+  // W5.4 acceptance: the door of the openings table splits the two rooms,
+  // with the door cut alone (no wall graph) and with the whole graph.
+  for (const bool graph : {false, true}) {
+    INFO("use_wall_graph = " << graph);
+    Plan p = wide_door_plan();
+    BandRoomsOptions o;
+    o.use_wall_graph = graph;
+    const size_t cells = rasterise_wall_graph(p.g, wide_door_tables(), o);
+    CHECK(cells > 0);
+    CHECK(p.g.door_cuts == 1);
+    CHECK(p.g.graph_walls == (graph ? 5 : 0));
+    CHECK(partition_room_grid(p.g, o) == 2);
+    const int32_t a = p.at(2, 2);
+    const int32_t b = p.at(6, 2);
+    CHECK(a > 0);
+    CHECK(b > 0);
+    CHECK(a != b);
+    // The cut lies in the door, and each room keeps nearly all its area.
+    CHECK(room_area(p.g, a) > 13.0);
+    CHECK(room_area(p.g, b) > 13.0);
+    for (int r = p.row(0.2); r < p.row(3.8); ++r)
+      for (int c = p.col(4.2); c < p.col(7.8); ++c)
+        CHECK(p.g.labels[p.g.index(c, r)] != a);
+  }
+}
+
+TEST_CASE("BandRooms_Grid_FloorReachingOpening_CutsButWindowDoesNot",
+          "[segmentation][band_rooms][doors]") {
+  {
+    Plan p = wide_door_plan();
+    BandRoomsOptions o;
+    rasterise_wall_graph(p.g, wide_door_tables("opening"), o);
+    CHECK(p.g.door_cuts == 1);
+    CHECK(partition_room_grid(p.g, o) == 2);
+  }
+  {
+    // A "window" in the gap is no doorway; without the wall graph nothing
+    // closes the gap.
+    Plan p = wide_door_plan();
+    BandRoomsOptions o;
+    o.use_wall_graph = false;
+    rasterise_wall_graph(p.g, wide_door_tables("window"), o);
+    CHECK(p.g.door_cuts == 0);
+    CHECK(partition_room_grid(p.g, o) == 1);
+  }
+}
+
+TEST_CASE("BandRooms_Grid_DoorCutsOff_LeavesTheDoorwayOpen",
+          "[segmentation][band_rooms][doors]") {
+  // The constriction fallback: with cut_at_doors off the wall graph skips
+  // the doorway, so the 1.6 m door joins the rooms as before.
+  Plan p = wide_door_plan();
+  BandRoomsOptions o;
+  o.cut_at_doors = false;
+  rasterise_wall_graph(p.g, wide_door_tables(), o);
+  CHECK(p.g.door_cuts == 0);
+  CHECK(p.g.graph_walls == 5);
+  CHECK(p.g.graph[p.g.index(p.col(4.0), p.row(2.0))] == 0);
+  CHECK(p.g.graph[p.g.index(p.col(4.0), p.row(0.6))] == 1);
+  CHECK(partition_room_grid(p.g, o) == 1);
+}
+
+TEST_CASE("BandRooms_Grid_WallGraph_ClosesAPartitionTheBandMissed",
+          "[segmentation][band_rooms][walls]") {
+  // W4.1: a glass partition at x = 4 the band saw nothing of, with a 0.9 m
+  // door in it. Without the walls table one room; with it the wall graph
+  // blocks the glass and the door (cut or constriction) splits the rooms.
+  auto plan = [] {
+    Plan p(-1, 10, -1, 5);
+    p.floor(0, 8, 0, 4);
+    p.wall(0, 0, 0, 4);
+    p.wall(8, 8, 0, 4);
+    p.wall(0, 8, 0, 0);
+    p.wall(0, 8, 4, 4);
+    return p;
+  };
+  BandRoomsPlan t;
+  t.walls = {wall_rec("p", 4, 0, 4, 4, -1.0)}; // one-sided, unknown thickness
+  t.openings = {opening_rec("p", "door", 1.5, 2.4)};
+  {
+    Plan p = plan();
+    CHECK(partition_room_grid(p.g, BandRoomsOptions{}) == 1);
+  }
+  for (const bool cut : {true, false}) {
+    INFO("cut_at_doors = " << cut);
+    Plan p = plan();
+    BandRoomsOptions o;
+    o.cut_at_doors = cut;
+    rasterise_wall_graph(p.g, t, o);
+    CHECK(partition_room_grid(p.g, o) == 2);
+    CHECK(p.at(2, 2) != p.at(6, 2));
+  }
+}
+
+TEST_CASE("BandRooms_Grid_WcStallsClosedByDoorCuts_KeepTheirOwnRooms",
+          "[segmentation][band_rooms][doors]") {
+  // The NarrowWcStalls plan above with its walls table: 0.9 m stalls have
+  // no core, but closed off by their door cuts each is a free-space
+  // component of its own, so each is a room (coreless).
+  Plan p(-1, 7, -1, 4.6);
+  p.floor(0, 6, 0, 3.6);
+  p.wall(0, 0, 0, 3.6);
+  p.wall(6, 6, 0, 3.6);
+  p.wall(0, 6, 0, 0);
+  p.wall(0, 6, 3.6, 3.6);
+  for (double x : {0.9, 1.8, 2.7, 4.3})
+    p.wall(x, x, 1.6, 3.6);
+  p.wall(0, 0.15, 1.6, 1.6);
+  p.wall(0.75, 1.05, 1.6, 1.6);
+  p.wall(1.65, 1.95, 1.6, 1.6);
+  p.wall(2.55, 2.85, 1.6, 1.6);
+  p.wall(3.45, 4.3, 1.6, 1.6);
+
+  BandRoomsPlan t;
+  t.walls.push_back(wall_rec("front", 0, 1.6, 4.3, 1.6));
+  for (double x : {0.9, 1.8, 2.7, 4.3})
+    t.walls.push_back(
+        wall_rec("part" + std::to_string(int(x * 10)), x, 1.6, x, 3.6));
+  for (double s : {0.15, 1.05, 1.95, 2.85})
+    t.openings.push_back(opening_rec("front", "door", s, s + 0.6));
+
+  BandRoomsOptions o;
+  rasterise_wall_graph(p.g, t, o);
+  CHECK(p.g.door_cuts == 4);
+  partition_room_grid(p.g, o);
+  const int32_t corridor = p.at(3, 0.8);
+  REQUIRE(corridor > 0);
+  std::set<int32_t> stalls;
+  for (double x : {0.45, 1.35, 2.25, 3.5}) {
+    const int32_t s = p.at(x, 2.6);
+    CHECK(s > 0);
+    CHECK(s != corridor);
+    stalls.insert(s);
+  }
+  CHECK(stalls.size() == 4);
+  CHECK(p.g.coreless == 3);
+  CHECK(p.g.rooms == 5);
+
+  // coreless_min_clearance = 0 keeps the old behaviour: no room.
+  BandRoomsOptions off = o;
+  off.coreless_min_clearance = 0.0;
+  partition_room_grid(p.g, off);
+  CHECK(p.g.coreless == 0);
+  CHECK(p.at(0.45, 2.6) == 0);
+}
+
+TEST_CASE("BandRooms_Grid_WallGraph_SkipsOtherStoreys_AndIsOrderFree",
+          "[segmentation][band_rooms][walls]") {
+  Plan p = wide_door_plan();
+  BandRoomsPlan t = wide_door_tables();
+  t.walls.push_back(wall_rec("up", 2, 0, 2, 4, 0.1, /*storey=*/1));
+  BandRoomsOptions o;
+  RoomGrid a = p.g;
+  rasterise_wall_graph(a, t, o);
+  CHECK(a.graph_walls == 5);
+  CHECK(a.graph[a.index(p.col(2.0), p.row(2.0))] == 0);
+
+  BandRoomsPlan r = t;
+  std::reverse(r.walls.begin(), r.walls.end());
+  std::reverse(r.openings.begin(), r.openings.end());
+  RoomGrid b = p.g;
+  rasterise_wall_graph(b, r, o);
+  CHECK(a.graph == b.graph);
+  partition_room_grid(a, o, 3);
+  partition_room_grid(b, o, 3);
+  CHECK(a.labels == b.labels);
+}
+
+TEST_CASE("BandRooms_Scan_WideDoorFromTheOpeningsTable_TwoRooms",
+          "[segmentation][band_rooms][doors]") {
+  // The full path: a 1.6 m doorway, in a tilted, rotated frame. Its lintel
+  // sits above the wall band (a lintel in the band closes the doorway by
+  // itself, like a wall).
+  Scan s;
+  s.slab(0, 8, 0, 4);
+  s.box(0, 8, 0, 4);
+  s.wall_x(4, 0, 1.2, 0, 2.6);
+  s.wall_x(4, 2.8, 4, 0, 2.6);
+  s.wall_x(4, 1.2, 2.8, 2.45, 2.6);
+  s.pose = Eigen::Translation3d(12.3, -7.1, 4.0) *
+           Eigen::AngleAxisd(0.52, Eigen::Vector3d::UnitZ()) *
+           Eigen::AngleAxisd(0.035, Eigen::Vector3d::UnitX());
+  auto [cloud, normals] = s.build();
+  CHECK(segment_band_rooms(cloud, normals, {s.storey()}).rooms == 1);
+
+  const BandRoomsPlan t = wide_door_tables();
+  const auto r =
+      segment_band_rooms(cloud, normals, {s.storey()}, {}, nullptr, &t);
+  CHECK(r.rooms == 2);
+  REQUIRE(r.grids.size() == 1);
+  CHECK(r.grids[0].door_cuts == 1);
+  const uint32_t a = floor_room(s, *r.labels, 0.5, 3.5, 0.5, 3.5);
+  const uint32_t b = floor_room(s, *r.labels, 4.5, 7.5, 0.5, 3.5);
+  CHECK(a > 0);
+  CHECK(b > 0);
+  CHECK(a != b);
+  CHECK(r.unlabeled_points == 0);
+}
+
+TEST_CASE("BandRooms_Grid_FootprintLeakCutOffByTheWallGraph_IsNoRoom",
+          "[segmentation][band_rooms][walls]") {
+  // A 4 x 4 m room whose footprint leaks 0.8 m out through a window in its
+  // east wall (the sensor looked through the glass). The wall graph closes
+  // the window; the leak beyond it has no core and opens onto the exterior,
+  // so it is no room (it stays with the room, through the point assignment).
+  Plan p(-1, 7, -1, 5);
+  p.floor(0, 4, 0, 4);
+  p.floor(4, 4.8, 0.5, 3.5);
+  p.wall(0, 0, 0, 4);
+  p.wall(0, 4, 0, 0);
+  p.wall(0, 4, 4, 4);
+  p.wall(4, 4, 0, 0.5);
+  p.wall(4, 4, 3.5, 4);
+  BandRoomsPlan t;
+  t.walls = {wall_rec("e", 4, 0, 4, 4)};
+  t.openings = {opening_rec("e", "window", 0.5, 3.5, 0.9, 2.1)};
+  BandRoomsOptions o;
+  rasterise_wall_graph(p.g, t, o);
+  CHECK(partition_room_grid(p.g, o) == 1);
+  CHECK(p.g.coreless == 0);
+  CHECK(p.at(4.4, 2) == 0);
+}
+
+TEST_CASE("BandRooms_Grid_BarelySeenWall_IsLeftOutWithItsDoors",
+          "[segmentation][band_rooms][walls]") {
+  // A wall the scan shows on 10 % of its face (a cabinet front, a drift
+  // artefact) with an "opening" over most of it must not cut a room.
+  Plan p(-1, 6, -1, 5);
+  p.floor(0, 5, 0, 4);
+  p.wall(0, 0, 0, 4);
+  p.wall(5, 5, 0, 4);
+  p.wall(0, 5, 0, 0);
+  p.wall(0, 5, 4, 4);
+  BandRoomsPlan t;
+  t.walls = {wall_rec("ghost", 2.5, 0, 2.5, 4)};
+  t.walls[0].seen_share = 0.1;
+  t.openings = {opening_rec("ghost", "opening", 0.3, 3.7, 0.0, 2.6)};
+  BandRoomsOptions o;
+  rasterise_wall_graph(p.g, t, o);
+  CHECK(p.g.graph_walls == 0);
+  CHECK(p.g.door_cuts == 0);
+  CHECK(partition_room_grid(p.g, o) == 1);
+  // Seen enough, it is a wall: two rooms.
+  t.walls[0].seen_share = 0.5;
+  rasterise_wall_graph(p.g, t, o);
+  CHECK(p.g.graph_walls == 1);
+  CHECK(partition_room_grid(p.g, o) == 2);
 }

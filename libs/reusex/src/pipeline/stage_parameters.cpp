@@ -249,6 +249,21 @@ const std::vector<ParameterDescriptor> &rooms_parameters() {
              "band: gaps in the floor/ceiling footprint up to about twice "
              "this are closed.",
              b.footprint_close, 0.0, 5.0),
+        boolean("band_use_walls", "Use the walls table",
+                "band: when `create walls` has run, its walls block the "
+                "grid like band walls (W4.1). Off uses the band evidence "
+                "only.",
+                b.use_wall_graph),
+        boolean("band_cut_at_doors", "Cut rooms at doors",
+                "band: when `create openings` has run, every door and "
+                "floor-reaching opening closes its doorway, so rooms are "
+                "cut at doors however wide (W5.4). Off cuts only where the "
+                "free space narrows.",
+                b.cut_at_doors),
+        dnum("band_wall_min_seen_share", "Least seen share of a wall",
+             "band: walls of the walls table with evidence on less of "
+             "their face than this are left out, with their doors.",
+             b.wall_graph_min_seen_share, 0.0, 1.0),
     };
   }();
   return table;
