@@ -57,6 +57,27 @@ struct SubcommandRenderOptions {
   /// Render the mesh-QA contact sheet instead of one view.
   bool qa = false;
 
+  // ── drift-loop layers (reusex-rcv.1.4) ────────────────────────────────
+  /// `rux analyze drift -o` JSON for the `drift` layer; empty = run the
+  /// drift diagnostics in-process with their defaults.
+  fs::path drift_report;
+  /// Draw only this storey's drift cells (default: the storey of the plan
+  /// cut, else every storey).
+  std::optional<int> drift_storey;
+  double drift_good_m = 0.0;
+  double drift_bad_m = 0.0;
+  /// The `passes` layer: segments, depth stride, frame step, voxel.
+  int pass_segments = 0;
+  int pass_depth_stride = 0;
+  int pass_frame_step = 0;
+  double pass_voxel_m = 0.0;
+  /// The `graph` layer: label every Nth node; odometry / rejected edges too.
+  int graph_label_every = 0;
+  bool graph_odometry = false;
+  bool graph_rejected = false;
+  /// Pose-edits file (YAML or JSON) drawn as pins by the `graph` layer.
+  fs::path edits;
+
   // ── --watch (reusex-yf4.2) ────────────────────────────────────────────
   /// Re-render (and re-score the --plan) whenever the plan file changes,
   /// until Ctrl-C / SIGTERM.

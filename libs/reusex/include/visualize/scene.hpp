@@ -19,6 +19,7 @@
 // that only needs SceneOptions/SceneInfo compiles no VTK header.
 
 #include "reusex/core/solid_model.hpp"
+#include "reusex/visualize/drift_layers.hpp"
 #include "reusex/visualize/render_view.hpp"
 
 #include <array>
@@ -200,6 +201,15 @@ struct SceneOptions {
   /// Measure the framing box in the display frame turned by this yaw [deg]
   /// (SceneInfo::display_bounds) — the yaw the camera will use.
   double frame_yaw_deg = 0.0;
+
+  // ── drift-loop layers (reusex-rcv.1.4, visualize/drift_layers.hpp) ──────
+  PreviewCloudOptions passes;                ///< `passes` (+ graph colours)
+  GraphLayerOptions graph;                   ///< `graph`
+  DriftLayerOptions drift;                   ///< `drift`
+  std::optional<DriftHeatmap> drift_heatmap; ///< `drift` input (required)
+  std::optional<core::PoseEdits> edits;      ///< `graph` pins
+  /// World poses replacing the stored ones (RenderOptions::poses).
+  std::vector<Eigen::Matrix4d> poses;
 };
 
 /// The `deviation` layer's colour of a point @p d metres from the mesh: the
@@ -235,6 +245,22 @@ inline constexpr const char *kPlanOverlayActorName = "reusex.plan_overlay";
 /// from the cut and the section slab like the plan overlay.
 inline constexpr const char *kSectionLineActorName = "reusex.section_line";
 
+/// vtkObject name of every `graph` layer actor. A horizontal cut does not
+/// cut it at z but keeps it within a slab around the cut
+/// (kGraphCutBelowM .. kGraphCutAboveM), so a plan shows the cameras of the
+/// cut storey -- they sit above the cut, at eye height -- and not those of
+/// the storey overhead.
+inline constexpr const char *kGraphActorName = "reusex.drift_graph";
+inline constexpr double kGraphCutAboveM = 1.2;
+inline constexpr double kGraphCutBelowM = 2.0;
+
+/// vtkObject name of the `passes` layer's actor. A horizontal cut keeps it
+/// within kPassesCutDepthM below the cut, so a plan shows the walls in
+/// section -- where a doubled wall reads as two parallel lines of two
+/// colours -- and not the floor, where the passes overdraw each other.
+inline constexpr const char *kPassesActorName = "reusex.drift_passes";
+inline constexpr double kPassesCutDepthM = 0.8;
+
 /// The actors one layer added, so an interactive viewer can toggle it.
 struct SceneLayer {
   Layer layer = Layer::cloud;
@@ -246,6 +272,9 @@ struct SceneLayer {
   std::size_t points = 0; ///< points drawn (per point layer)
   std::size_t faces = 0;  ///< mesh faces drawn
   std::size_t items = 0;  ///< frustums / panoramas / components drawn
+  /// `drift` layer only: the storey of each actor in @ref actors (-1 = world
+  /// cells), so a viewer can show one storey.
+  std::vector<int> actor_storeys;
   /// Mesh layer only: the mesh's surface poly-data, the source of
   /// add_mesh_section_line(). Owned by a surface actor in the renderer (a
   /// hidden one, not in @ref actors, under MeshStyle::edges).
@@ -281,7 +310,16 @@ struct SceneInfo {
   /// points of a segmented plane (see RenderInfo::deviation_planar).
   std::optional<DeviationStats> deviation;
   std::optional<DeviationStats> deviation_planar;
+  /// What the drift-loop layers drew (for their legends).
+  DriftLegendInfo drift_legend;
 };
+
+/// Show only the `drift` cells of the storey whose world z band contains
+/// @p z (all of them when none does, or the heatmap has no storeys), and
+/// record it in @p info's drift legend. For a plan cut at @p z.
+/// @return the storey shown, or std::nullopt for all.
+std::optional<int> show_drift_storey_at(SceneInfo &info, double z,
+                                        const SceneOptions &opts);
 
 /// Load @p opts' layers from @p db and add them to @p renderer.
 ///

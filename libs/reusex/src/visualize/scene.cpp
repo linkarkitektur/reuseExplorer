@@ -14,6 +14,7 @@
 #include "geometry/transform_utils.hpp"
 #include "reusex/visualize/highlight.hpp"
 #include "types/point_types.hpp"
+#include "visualize/drift_layers.hpp"
 
 #include <fmt/format.h>
 #include <pcl/PolygonMesh.h>
@@ -23,6 +24,7 @@
 #include <vtkActorCollection.h>
 #include <vtkCamera.h>
 #include <vtkCellArray.h>
+#include <vtkCellData.h>
 #include <vtkCleanPolyData.h>
 #include <vtkCutter.h>
 #include <vtkFeatureEdges.h>
@@ -43,6 +45,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <numbers>
 #include <stdexcept>
 #include <string>
@@ -136,6 +139,11 @@ std::string producing_command(Layer layer) {
     return "rux import 360";
   case Layer::deviation:
     return "rux create mesh";
+  case Layer::passes:
+  case Layer::graph:
+    return "rux import rtabmap (or another importer of posed depth frames)";
+  case Layer::drift:
+    return "rux analyze drift -o drift.json";
   }
   return "the corresponding rux create subcommand";
 }
@@ -986,6 +994,412 @@ double parallel_scale_for(double across, double up, double aspect,
   return std::max(half_up, 1e-6) * margin;
 }
 
+// ── Drift-loop layers (reusex-rcv.1.4) ───────────────────────────────────────
+
+/// One vtkVectorText label lying flat at @p at (see add_plan_label()), named
+/// @p name.
+/// Turned by @p yaw_deg clockwise about @p at, so it reads upright in a view
+/// turned counter-clockwise by that yaw (SceneOptions::frame_yaw_deg).
+vtkActor *add_flat_label(vtkRenderer *renderer, const std::string &text,
+                         const Eigen::Vector3d &at,
+                         const std::array<std::uint8_t, 3> &rgb, double height,
+                         const char *name, double yaw_deg) {
+  vtkActor *a = add_plan_label(renderer, text, at, rgb, height);
+  a->SetObjectName(name);
+  if (yaw_deg != 0.0) {
+    a->SetOrigin(at.x(), at.y(), at.z());
+    a->RotateZ(-yaw_deg);
+  }
+  return a;
+}
+
+/// World pose of every sensor frame (index-aligned with sensor_frame_ids()),
+/// from @p override when given; std::nullopt for an unposed frame.
+std::vector<std::optional<Eigen::Matrix4d>>
+frame_poses(const ProjectDB &db, const std::vector<int> &ids,
+            const std::vector<Eigen::Matrix4d> &override_poses) {
+  if (!override_poses.empty() && override_poses.size() != ids.size())
+    throw std::runtime_error(
+        "render: " + std::to_string(override_poses.size()) +
+        " override poses for " + std::to_string(ids.size()) + " sensor frames");
+  std::vector<std::optional<Eigen::Matrix4d>> out(ids.size());
+  for (std::size_t k = 0; k < ids.size(); ++k) {
+    if (!override_poses.empty())
+      out[k] = override_poses[k];
+    else if (db.has_sensor_frame_pose(ids[k]))
+      out[k] = geometry::to_affine(db.sensor_frame_pose(ids[k])).matrix();
+  }
+  return out;
+}
+
+/// The `passes` layer: the preview cloud, each point in its segment's
+/// colour.
+vtkActor *add_passes_actor(vtkRenderer *renderer, const ProjectDB &db,
+                           const SceneOptions &opts,
+                           const LabelPalette &palette, SceneBounds &bounds,
+                           SceneLayer &drawn, DriftLegendInfo &legend) {
+  if (db.sensor_frame_ids().empty())
+    throw std::runtime_error(
+        "render: layer 'passes' needs posed sensor frames with depth, and "
+        "this project has none — run `" +
+        producing_command(Layer::passes) + "` first");
+  const stopwatch timer;
+  PreviewCloud pc;
+  try {
+    pc = preview_cloud(db, opts.passes, opts.poses);
+  } catch (const std::invalid_argument &e) {
+    throw std::runtime_error(std::string("render: layer 'passes': ") +
+                             e.what());
+  } catch (const std::runtime_error &e) {
+    throw std::runtime_error(std::string("render: layer 'passes': ") +
+                             e.what() + " — run `" +
+                             producing_command(Layer::passes) + "` first");
+  }
+  if (static_cast<std::size_t>(opts.passes.segments) > palette.colors.size())
+    core::warn("render: {} pass segments but {} pass colours; segments {} "
+               "apart share a colour",
+               opts.passes.segments, palette.colors.size(),
+               palette.colors.size());
+  // A budget thins by an even stride (the preview has no Morton order).
+  const std::size_t n = pc.points.size();
+  const std::size_t step = opts.max_points > 0 && n > opts.max_points
+                               ? (n + opts.max_points - 1) / opts.max_points
+                               : 1;
+  vtkNew<vtkPoints> points;
+  points->SetDataTypeToFloat();
+  vtkNew<vtkUnsignedCharArray> rgb;
+  rgb->SetNumberOfComponents(3);
+  rgb->SetName("colors");
+  vtkNew<vtkCellArray> verts;
+  for (std::size_t i = 0; i < n; i += step) {
+    const auto &p = pc.points[i];
+    const vtkIdType id = points->InsertNextPoint(p.x(), p.y(), p.z());
+    const auto c = pass_color(palette, pc.frame_segment[pc.frame[i]]);
+    rgb->InsertNextTypedTuple(c.data());
+    verts->InsertNextCell(1, &id);
+    bounds.add(p.x(), p.y(), p.z());
+  }
+  vtkNew<vtkPolyData> poly;
+  poly->SetPoints(points);
+  poly->SetVerts(verts);
+  poly->GetPointData()->SetScalars(rgb);
+  drawn.points = static_cast<std::size_t>(points->GetNumberOfPoints());
+  legend.passes_drawn = true;
+  legend.pass_points = drawn.points;
+  legend.passes.clear();
+  for (const auto &s : pc.segments)
+    legend.passes.push_back({s.index, s.first_node, s.last_node,
+                             pass_color(palette, s.index), s.points});
+  core::info("render: passes — {} points of {} frames in {} segments "
+             "({:.2f}s)",
+             drawn.points, pc.node_ids.size(), pc.segments.size(),
+             timer.elapsed());
+  vtkActor *actor = add_points_actor(renderer, poly, opts.point_size);
+  actor->SetObjectName(kPassesActorName);
+  return actor;
+}
+
+/// The nodes an edit pins: the first and last of each node set it names.
+std::vector<std::int64_t> pinned_nodes(const core::PoseEdit &e) {
+  std::vector<std::int64_t> out;
+  for (const core::NodeRange *r : {&e.nodes, &e.nodes_b}) {
+    if (r->is_list()) {
+      out.push_back(r->list.front());
+      if (r->list.back() != r->list.front())
+        out.push_back(r->list.back());
+    } else if (r->first >= 0) {
+      out.push_back(r->first);
+      if (r->last >= 0 && r->last != r->first)
+        out.push_back(r->last);
+    }
+  }
+  return out;
+}
+
+/// The `graph` layer: trajectory, edges by residual, node labels, edit pins.
+void add_graph_actors(vtkRenderer *renderer, const ProjectDB &db,
+                      const SceneOptions &opts, const LabelPalette &palette,
+                      SceneBounds &bounds, SceneLayer &drawn,
+                      DriftLegendInfo &legend) {
+  const std::vector<int> ids = db.sensor_frame_ids();
+  const auto poses = frame_poses(db, ids, opts.poses);
+  // Segment of every frame: the one of its sampled frame (frame_step), the
+  // passes layer's rule, so the path and the passes share colours.
+  const std::size_t step =
+      static_cast<std::size_t>(std::max(opts.passes.frame_step, 1));
+  const std::size_t sampled = (ids.size() + step - 1) / step;
+  std::unordered_map<int, Eigen::Vector3d> where;
+  vtkNew<vtkPoints> path_points;
+  path_points->SetDataType(VTK_DOUBLE);
+  vtkNew<vtkUnsignedCharArray> path_rgb;
+  path_rgb->SetNumberOfComponents(3);
+  path_rgb->SetName("colors");
+  std::vector<std::pair<int, Eigen::Vector3d>> posed;
+  for (std::size_t k = 0; k < ids.size(); ++k) {
+    if (!poses[k])
+      continue;
+    const Eigen::Vector3d c = poses[k]->topRightCorner<3, 1>();
+    if (!c.allFinite())
+      continue;
+    where[ids[k]] = c;
+    posed.emplace_back(ids[k], c);
+    path_points->InsertNextPoint(c.x(), c.y(), c.z());
+    const auto rgb = pass_color(
+        palette, pass_segment(k / step, sampled, opts.passes.segments));
+    path_rgb->InsertNextTypedTuple(rgb.data());
+    bounds.add(c.x(), c.y(), c.z());
+  }
+  if (posed.empty())
+    throw std::runtime_error(
+        "render: layer 'graph' needs posed sensor frames, and this project "
+        "has none — run `" +
+        producing_command(Layer::graph) + "` first");
+  const auto name = [](vtkActor *a) {
+    a->SetObjectName(kGraphActorName);
+    return a;
+  };
+
+  // The trajectory, coloured by segment.
+  {
+    vtkNew<vtkCellArray> lines;
+    for (vtkIdType i = 0; i + 1 < path_points->GetNumberOfPoints(); ++i) {
+      const vtkIdType seg[2] = {i, i + 1};
+      lines->InsertNextCell(2, seg);
+    }
+    vtkNew<vtkPolyData> poly;
+    poly->SetPoints(path_points);
+    poly->SetLines(lines);
+    poly->GetPointData()->SetScalars(path_rgb);
+    vtkNew<vtkPolyDataMapper> mapper;
+    mapper->SetInputData(poly);
+    mapper->SetScalarModeToUsePointData();
+    mapper->SetColorModeToDirectScalars();
+    vtkNew<vtkActor> actor;
+    actor->SetMapper(mapper);
+    actor->GetProperty()->SetLineWidth(opts.graph.trajectory_width);
+    actor->GetProperty()->SetLighting(false);
+    renderer->AddActor(actor);
+    drawn.actors.push_back(name(actor));
+  }
+
+  // The stored edges, coloured by residual.
+  {
+    vtkNew<vtkPoints> pts;
+    pts->SetDataType(VTK_DOUBLE);
+    vtkNew<vtkCellArray> lines;
+    vtkNew<vtkUnsignedCharArray> rgb;
+    rgb->SetNumberOfComponents(3);
+    rgb->SetName("colors");
+    std::size_t missing = 0;
+    for (const auto &e : db.list_pose_graph_edges()) {
+      if (e.edge_type == "odometry" && !opts.graph.odometry_edges)
+        continue;
+      if (e.status == "rejected" && !opts.graph.rejected_edges)
+        continue;
+      const auto a = where.find(e.from_node_id);
+      const auto b = where.find(e.to_node_id);
+      if (a == where.end() || b == where.end()) {
+        ++missing;
+        continue;
+      }
+      const vtkIdType seg[2] = {
+          pts->InsertNextPoint(a->second.x(), a->second.y(), a->second.z()),
+          pts->InsertNextPoint(b->second.x(), b->second.y(), b->second.z())};
+      lines->InsertNextCell(2, seg);
+      const auto c = residual_color(e.residual, opts.graph);
+      rgb->InsertNextTypedTuple(c.data());
+      ++legend.graph_edges;
+      if (!std::isfinite(e.residual))
+        ++legend.graph_edges_unsolved;
+      else if (e.residual >= opts.graph.residual_bad)
+        ++legend.graph_edges_bad;
+    }
+    if (missing > 0)
+      core::warn("render: {} pose-graph edges name a frame without a pose; "
+                 "they are not drawn",
+                 missing);
+    if (lines->GetNumberOfCells() > 0) {
+      vtkNew<vtkPolyData> poly;
+      poly->SetPoints(pts);
+      poly->SetLines(lines);
+      poly->GetCellData()->SetScalars(rgb);
+      vtkNew<vtkPolyDataMapper> mapper;
+      mapper->SetInputData(poly);
+      mapper->SetScalarModeToUseCellData();
+      mapper->SetColorModeToDirectScalars();
+      vtkNew<vtkActor> actor;
+      actor->SetMapper(mapper);
+      actor->GetProperty()->SetLineWidth(opts.graph.edge_width);
+      actor->GetProperty()->SetLighting(false);
+      renderer->AddActor(actor);
+      drawn.actors.push_back(name(actor));
+    }
+  }
+
+  // Node-id labels along the path, a little to the side of it.
+  SceneBounds path;
+  for (const auto &[id, c] : posed)
+    path.add(c.x(), c.y(), c.z());
+  const double h =
+      opts.graph.label_height_m > 0.0
+          ? opts.graph.label_height_m
+          : std::max(0.15, 0.012 * std::max(path.extent(0), path.extent(1)));
+  const std::array<std::uint8_t, 3> ink{0xf0, 0xf0, 0xf0};
+  if (opts.graph.label_every > 0)
+    for (std::size_t i = 0; i < posed.size();
+         i += static_cast<std::size_t>(opts.graph.label_every)) {
+      const auto &[id, c] = posed[i];
+      drawn.actors.push_back(add_flat_label(
+          renderer, std::to_string(id), c + Eigen::Vector3d(0.0, h, 0.0), ink,
+          h, kGraphActorName, opts.frame_yaw_deg));
+    }
+
+  // Pose-edit pins: a short post at each pinned node, the edit id beside.
+  if (opts.edits) {
+    vtkNew<vtkPoints> pts;
+    pts->SetDataType(VTK_DOUBLE);
+    vtkNew<vtkCellArray> lines;
+    std::size_t unknown = 0;
+    for (const auto &e : opts.edits->edits)
+      for (const std::int64_t node : pinned_nodes(e)) {
+        const auto it = where.find(static_cast<int>(node));
+        if (it == where.end()) {
+          ++unknown;
+          continue;
+        }
+        const Eigen::Vector3d c = it->second;
+        const vtkIdType seg[2] = {
+            pts->InsertNextPoint(c.x(), c.y(), c.z()),
+            pts->InsertNextPoint(c.x(), c.y(), c.z() + 4.0 * h)};
+        lines->InsertNextCell(2, seg);
+        // A cross at the foot reads as a pin from above.
+        const vtkIdType xs[2] = {
+            pts->InsertNextPoint(c.x() - h, c.y() - h, c.z()),
+            pts->InsertNextPoint(c.x() + h, c.y() + h, c.z())};
+        lines->InsertNextCell(2, xs);
+        const vtkIdType ys[2] = {
+            pts->InsertNextPoint(c.x() - h, c.y() + h, c.z()),
+            pts->InsertNextPoint(c.x() + h, c.y() - h, c.z())};
+        lines->InsertNextCell(2, ys);
+        drawn.actors.push_back(add_flat_label(
+            renderer, e.id, c + Eigen::Vector3d(1.5 * h, -h, 0.0),
+            opts.graph.pin_rgb, h, kGraphActorName, opts.frame_yaw_deg));
+        ++legend.graph_pins;
+      }
+    if (unknown > 0)
+      core::warn("render: {} pose-edit pins name a node without a pose; "
+                 "they are not drawn",
+                 unknown);
+    if (lines->GetNumberOfCells() > 0)
+      drawn.actors.push_back(
+          name(add_lines_actor(renderer, pts, lines, opts.graph.pin_rgb, 3.0)));
+  }
+  legend.graph_drawn = true;
+  legend.graph_nodes = posed.size();
+  legend.graph = opts.graph;
+  drawn.items = posed.size();
+}
+
+/// World -> level frame of a heat storey.
+Eigen::Affine3d heat_level(const DriftHeatStorey &s) {
+  return geometry::to_affine(s.level_transform);
+}
+
+/// The `drift` layer: one actor of heat cells per storey shown.
+void add_drift_actors(vtkRenderer *renderer, const SceneOptions &opts,
+                      SceneBounds &bounds, SceneLayer &drawn,
+                      DriftLegendInfo &legend) {
+  if (!opts.drift_heatmap)
+    throw std::runtime_error(
+        "render: layer 'drift' needs a drift report — run `" +
+        producing_command(Layer::drift) +
+        "` and pass the file (rux render --drift-report)");
+  if (!(opts.drift.good_m > 0.0) || !(opts.drift.bad_m > opts.drift.good_m))
+    throw std::runtime_error(
+        "render: drift colour scale needs 0 < good < bad (got " +
+        std::to_string(opts.drift.good_m) + ", " +
+        std::to_string(opts.drift.bad_m) + ")");
+  const DriftHeatmap &hm = *opts.drift_heatmap;
+  std::map<int, const DriftHeatStorey *> storeys;
+  for (const auto &s : hm.storeys)
+    storeys[s.idx] = &s;
+  std::map<int, std::vector<const DriftHeatCell *>> groups;
+  for (const auto &c : hm.cells)
+    if (!opts.drift.storey || c.storey == *opts.drift.storey)
+      groups[c.storey].push_back(&c);
+  legend.drift_drawn = true;
+  legend.drift = opts.drift;
+  legend.noise_floor_m = hm.noise_floor_m;
+  legend.drift_storey = opts.drift.storey;
+  if (opts.drift.storey)
+    if (const auto it = storeys.find(*opts.drift.storey); it != storeys.end())
+      legend.drift_storey_name = it->second->name;
+  if (groups.empty()) {
+    core::warn("render: the drift report has {} cells{}; the drift layer "
+               "draws nothing",
+               hm.cells.size(),
+               opts.drift.storey
+                   ? fmt::format(", none of storey {}", *opts.drift.storey)
+                   : std::string());
+    return;
+  }
+  const double half = 0.5 * hm.cell_m;
+  for (const auto &[storey, cells] : groups) {
+    Eigen::Affine3d to_world = Eigen::Affine3d::Identity();
+    std::optional<double> floor;
+    if (storey >= 0) {
+      const auto it = storeys.find(storey);
+      if (it == storeys.end()) {
+        core::warn("render: {} drift cells name storey {}, which the report "
+                   "does not list; drawn in world coordinates",
+                   cells.size(), storey);
+      } else {
+        to_world = heat_level(*it->second).inverse(Eigen::Isometry);
+        floor = it->second->z_floor;
+      }
+    }
+    vtkNew<vtkPoints> pts;
+    pts->SetDataType(VTK_DOUBLE);
+    vtkNew<vtkCellArray> quads;
+    vtkNew<vtkUnsignedCharArray> rgb;
+    rgb->SetNumberOfComponents(3);
+    rgb->SetName("colors");
+    for (const DriftHeatCell *c : cells) {
+      const double z = (floor ? *floor : c->z_m) + opts.drift.lift_m;
+      vtkIdType q[4];
+      const double dx[4] = {-half, half, half, -half};
+      const double dy[4] = {-half, -half, half, half};
+      for (int k = 0; k < 4; ++k) {
+        const Eigen::Vector3d w =
+            to_world * Eigen::Vector3d(c->x + dx[k], c->y + dy[k], z);
+        q[k] = pts->InsertNextPoint(w.x(), w.y(), w.z());
+        bounds.add(w.x(), w.y(), w.z());
+      }
+      quads->InsertNextCell(4, q);
+      const auto col = drift_color(c->residual_m, opts.drift);
+      rgb->InsertNextTypedTuple(col.data());
+      ++legend.drift_cells;
+      legend.drift_max_m = std::max(legend.drift_max_m, c->residual_m);
+    }
+    vtkNew<vtkPolyData> poly;
+    poly->SetPoints(pts);
+    poly->SetPolys(quads);
+    poly->GetCellData()->SetScalars(rgb);
+    vtkNew<vtkPolyDataMapper> mapper;
+    mapper->SetInputData(poly);
+    mapper->SetScalarModeToUseCellData();
+    mapper->SetColorModeToDirectScalars();
+    vtkNew<vtkActor> actor;
+    actor->SetMapper(mapper);
+    actor->GetProperty()->SetOpacity(opts.drift.opacity);
+    actor->GetProperty()->SetLighting(false);
+    renderer->AddActor(actor);
+    drawn.actors.push_back(actor);
+    drawn.actor_storeys.push_back(storey);
+  }
+  drawn.items = legend.drift_cells;
+}
+
 } // namespace
 
 // ── Label palette and LOD ────────────────────────────────────────────────────
@@ -1138,7 +1552,7 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
     throw std::runtime_error(
         "render: no layers selected — pass at least one of "
         "cloud, labels, planes, rooms, instances, mesh, "
-        "components, frustums, panoramas, deviation");
+        "components, frustums, panoramas, deviation, passes, graph, drift");
   if (!(opts.deviation.within_m > 0.0) ||
       !(opts.deviation.uncovered_m > opts.deviation.within_m))
     throw std::runtime_error(
@@ -1232,7 +1646,8 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
     const bool with_points =
         std::any_of(opts.layers.begin(), opts.layers.end(), [](Layer l) {
           return l != Layer::mesh && l != Layer::components &&
-                 l != Layer::frustums && l != Layer::panoramas;
+                 l != Layer::frustums && l != Layer::panoramas &&
+                 l != Layer::graph && l != Layer::drift;
         });
     info.mesh_style = with_points ? MeshStyle::overlay : MeshStyle::solid;
   }
@@ -1424,6 +1839,20 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
       drawn.actors.push_back(
           add_panorama_actor(renderer, db, opts, bounds, drawn.items));
       break;
+
+    case Layer::passes:
+      drawn.actors.push_back(add_passes_actor(
+          renderer, db, opts, palette, bounds, drawn, info.drift_legend));
+      break;
+
+    case Layer::graph:
+      add_graph_actors(renderer, db, opts, palette, bounds, drawn,
+                       info.drift_legend);
+      break;
+
+    case Layer::drift:
+      add_drift_actors(renderer, opts, bounds, drawn, info.drift_legend);
+      break;
     }
     info.drawn_points += drawn.points;
     info.drawn_faces += drawn.faces;
@@ -1561,14 +1990,78 @@ void apply_cut_plane(vtkRenderer *renderer, double z) {
   plane->SetOrigin(0.0, 0.0, z);
   plane->SetNormal(0.0, 0.0, -1.0);
 
+  // The graph keeps a slab around the cut instead (kGraphActorName).
+  vtkNew<vtkPlane> graph_top;
+  graph_top->SetOrigin(0.0, 0.0, z + kGraphCutAboveM);
+  graph_top->SetNormal(0.0, 0.0, -1.0);
+  vtkNew<vtkPlane> graph_bottom;
+  graph_bottom->SetOrigin(0.0, 0.0, z - kGraphCutBelowM);
+  graph_bottom->SetNormal(0.0, 0.0, 1.0);
+  // ... and the passes a band below it (kPassesActorName).
+  vtkNew<vtkPlane> passes_bottom;
+  passes_bottom->SetOrigin(0.0, 0.0, z - kPassesCutDepthM);
+  passes_bottom->SetNormal(0.0, 0.0, 1.0);
+
   vtkActorCollection *actors = renderer->GetActors();
   actors->InitTraversal();
   while (vtkActor *actor = actors->GetNextActor()) {
     if (is_exempt_from_clipping(actor))
       continue; // a drawing over the section, not part of it
-    if (vtkMapper *mapper = actor->GetMapper())
+    vtkMapper *mapper = actor->GetMapper();
+    if (!mapper)
+      continue;
+    const std::string name = actor->GetObjectName();
+    if (name == kGraphActorName) {
+      mapper->AddClippingPlane(graph_top);
+      mapper->AddClippingPlane(graph_bottom);
+    } else {
       mapper->AddClippingPlane(plane);
+      if (name == kPassesActorName)
+        mapper->AddClippingPlane(passes_bottom);
+    }
   }
+}
+
+std::optional<int> show_drift_storey_at(SceneInfo &info, double z,
+                                        const SceneOptions &opts) {
+  std::optional<int> shown;
+  if (opts.drift_heatmap)
+    for (const auto &s : opts.drift_heatmap->storeys) {
+      const Eigen::Affine3d to_world =
+          geometry::to_affine(s.level_transform).inverse(Eigen::Isometry);
+      const double z0 = (to_world * Eigen::Vector3d(0, 0, s.z_floor)).z();
+      const double z1 = (to_world * Eigen::Vector3d(0, 0, s.z_ceiling)).z();
+      if (z >= std::min(z0, z1) && z <= std::max(z0, z1)) {
+        shown = s.idx;
+        info.drift_legend.drift_storey_name = s.name;
+        break;
+      }
+    }
+  for (auto &layer : info.layers) {
+    if (layer.layer != Layer::drift)
+      continue;
+    for (std::size_t i = 0; i < layer.actors.size(); ++i) {
+      const int st =
+          i < layer.actor_storeys.size() ? layer.actor_storeys[i] : -1;
+      layer.actors[i]->SetVisibility(!shown || st == *shown);
+    }
+  }
+  info.drift_legend.drift_storey = shown;
+  if (!shown)
+    info.drift_legend.drift_storey_name.clear();
+  // The legend counts what is visible now.
+  if (opts.drift_heatmap) {
+    auto &lg = info.drift_legend;
+    lg.drift_cells = 0;
+    lg.drift_max_m = 0.0;
+    for (const auto &c : opts.drift_heatmap->cells)
+      if ((!shown || c.storey == *shown) &&
+          (!opts.drift.storey || c.storey == *opts.drift.storey)) {
+        ++lg.drift_cells;
+        lg.drift_max_m = std::max(lg.drift_max_m, c.residual_m);
+      }
+  }
+  return shown;
 }
 
 void clear_cut_planes(vtkRenderer *renderer) {
