@@ -61,7 +61,13 @@ description: >-
   exterior was not scanned). Window sills/heads are read off elevations of the
   cloud and are approximate; door heads are assumed 2.05 m. 2026-10-15: walls
   flagged by the rux render --watch wall-support check re-measured (reusex-227;
-  decisions in the YAML comments).
+  decisions in the YAML comments). 2026-10-16 (reusex-mdu): per the maintainer
+  ("The stalls are fully enclosed rooms, so if our algorithm detects them as
+  such that is alright"), the former single "Bathroom" space was split into
+  the 3 WC stall spaces (s-wc-1/2/3) plus the shared washbasin/lobby space
+  (s-bathroom-lobby), using the existing stall partition walls (p-wc-1-2,
+  p-wc-2-3, p-wc-south, p-wc-east, p-office-south, p-corridor-east,
+  p-bath-printer, x-east) as boundaries; see the comments at each new space.
 
 storeys:
   - guid: "storey-0"
@@ -81,6 +87,7 @@ storeys:
       ceiling_world_z: 1.61
       plan_rotation_deg: 50.864
       room_layout: "follows the maintainer's description (2026-10-15, reusex-z1v.2.6); walls and openings remain agent-measured"
+      wc_stalls: "the 3 WC stalls are drawn as separate fully-enclosed spaces plus a shared washbasin/lobby space (2026-10-16, reusex-mdu), not as one 'Bathroom' space"
 
 walls:
   # PROVENANCE: inner pier face between the 12 window niches (niche backs sit
@@ -618,24 +625,85 @@ spaces:
     metadata:
       note: "desks and a glazed front to the corridor (frames 717-807)"
 
-  - guid: "s-bathroom"
+  # DECISION (reusex-mdu, 2026-10-16): the former single "Bathroom" space
+  # (one hexagon over the whole block) is split into these 4 spaces, per the
+  # maintainer: "The stalls are fully enclosed rooms, so if our algorithm
+  # detects them as such that is alright." Each polygon is the wall-face
+  # offset corner of the bounding walls (same convention as the rest of this
+  # file: inset by half thickness on walls with a measured thickness, inset
+  # by a nominal amount on p-wc-east (thickness unknown, one face scanned),
+  # and drawn on-axis on the exterior wall x-east, as the whole block already
+  # was). The 4 polygons do not quite tile the original hexagon exactly (the
+  # partition walls themselves, and small corner/inset mismatches, take up
+  # the remaining ~3.5% of its area) -- expected for a wall-face offset, not
+  # a defect.
+  - guid: "s-wc-1"
     storey: 0
-    name: "Bathroom"
+    name: "WC 1"
     kind: room
     polygon:
       outer:
-        - [15.965, 15.856]
-        - [18.68, 19.192]
-        - [17.28, 20.396]
-        - [17.407, 20.553]
-        - [15.579, 22.052]
+        - [14.483, 17.062]
+        - [15.25, 18.004]
+        - [13.466, 19.455]
         - [12.699, 18.513]
     z_floor: 0.0
     z_ceiling: 2.88
     source: manual
     locked: true
     metadata:
-      note: "polygon follows the re-measured walls 2026-10-15 (the WC row reaches x-east). One space: a shared washbasin area (b=-2.38..-0.6, double vanity, frames 2343, 2407) with three WC stalls along the closed office (b=-0.47..1.83), split by the thin walls p-wc-1-2, p-wc-2-3 and the stall fronts p-wc-south. The stall walls reach the ceiling, so a detector may split the stalls into rooms; this reference counts them as one room per the maintainer's description"
+      note: "first WC stall from the corridor/office corner (reusex-mdu, 2026-10-16): bounded by p-corridor-east (entrance side), p-wc-south (front, door o-wc1-door), p-wc-1-2 (partition with WC 2) and p-office-south (back)"
+
+  - guid: "s-wc-2"
+    storey: 0
+    name: "WC 2"
+    kind: room
+    polygon:
+      outer:
+        - [15.25, 18.004]
+        - [15.974, 18.894]
+        - [14.19, 20.346]
+        - [13.466, 19.455]
+    z_floor: 0.0
+    z_ceiling: 2.88
+    source: manual
+    locked: true
+    metadata:
+      note: "middle WC stall (reusex-mdu, 2026-10-16): bounded by p-wc-1-2 (partition with WC 1), p-wc-south (front, door o-wc2-door), p-wc-2-3 (partition with WC 3) and p-office-south (back)"
+
+  - guid: "s-wc-3"
+    storey: 0
+    name: "WC 3"
+    kind: room
+    polygon:
+      outer:
+        - [15.974, 18.894]
+        - [17.356, 20.594]
+        - [15.578, 22.051]
+        - [14.19, 20.346]
+    z_floor: 0.0
+    z_ceiling: 2.88
+    source: manual
+    locked: true
+    metadata:
+      note: "third WC stall, against the exterior wall (reusex-mdu, 2026-10-16): bounded by p-wc-2-3 (partition with WC 2), p-wc-south (front; no door currently drawn for this stall -- pre-existing gap, not part of reusex-mdu), x-east (back; the WC row reaches the exterior wall here, see p-wc-east's comment) and p-office-south. Wider than WC 1/2 because no wall separates it from the unscanned service-shaft pocket behind p-wc-east -- same footprint the single 'Bathroom' hexagon already covered there"
+
+  - guid: "s-bathroom-lobby"
+    storey: 0
+    name: "Bathroom lobby"
+    kind: room
+    polygon:
+      outer:
+        - [15.965, 15.856]
+        - [18.67, 19.181]
+        - [17.289, 20.304]
+        - [14.584, 16.98]
+    z_floor: 0.0
+    z_ceiling: 2.88
+    source: manual
+    locked: true
+    metadata:
+      note: "shared washbasin / entrance area (reusex-mdu, 2026-10-16): double vanity (frames 2343, 2407), bounded by p-corridor-east (entrance, door o-bath-door), p-bath-printer (north), p-wc-east (east, washbasin/service-shaft wall) and p-wc-south (south -- the stall fronts; the 3 stall doors open onto this space)"
 
   - guid: "s-printer-server"
     storey: 0
