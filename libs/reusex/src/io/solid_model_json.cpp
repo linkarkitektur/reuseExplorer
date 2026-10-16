@@ -760,6 +760,13 @@ core::SolidModel load_solid_model(const ProjectDB &db) {
   // rows mean it ran; none means n/a (or a scan with no plane at all).
   m.plane_classes = db.plane_classes("planes");
   m.provided.plane_classes = !m.plane_classes.empty();
+  // The walls stage writes walls and their joins (WP3). No rows means the
+  // stage has not run (n/a); a run that found no wall is logged at warn by
+  // the stage and still scores as n/a here, since the table cannot tell the
+  // two apart.
+  m.walls = db.walls();
+  m.wall_joins = db.wall_joins();
+  m.provided.walls = !m.walls.empty();
   return m;
 }
 

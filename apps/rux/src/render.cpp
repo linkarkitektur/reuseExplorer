@@ -210,6 +210,11 @@ EXAMPLES:
   # Check an authored solid-model plan against the cut cloud
   rux -p scan.rux render -o check.png --view plan:1.2 --plan ref.plan.json
 
+  # Detected walls (rux create walls) over the cut cloud, and against a
+  # reference plan's walls
+  rux -p scan.rux render -o walls.png --view plan --layers cloud,walls
+  rux -p scan.rux render -o vs.png --view plan --layers cloud,walls --plan ref.plan.yaml
+
   # Mesh over the cloud, seen from the west
   rux -p scan.rux render -o west.png --view left --layers cloud,mesh
 
@@ -254,6 +259,14 @@ MESH QA (reusex-8vx):
     cover). A legend with mean, P95 and the two shares is drawn in.
   - --qa writes a contact sheet: plan cut, four elevations, three sections
     (or the given --section ones) and a deviation plan.
+
+WALLS (reusex-z1v.5.6):
+  - The `walls` layer draws the walls table in blue: in plan and top views
+    as footprints (axis +/- half the thickness) on a sheet over the cut
+    cloud, in every other view as boxes from the floor to the storey
+    height. Walls seen from one side only (assumed thickness) or seen over
+    less than half their face are drawn dimmer. A --plan overlay draws the
+    reference's walls in green over them.
 
 NOTES:
   - Camera presets are derived from the geometry's bounding box, so the same

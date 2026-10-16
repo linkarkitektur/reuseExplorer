@@ -7,6 +7,7 @@
 #include "reusex/pipeline/mesh_parameters.hpp"
 #include "reusex/pipeline/stage_parameters.hpp"
 #include "reusex/pipeline/tile_index.hpp"
+#include "reusex/pipeline/wall_parameters.hpp"
 
 #include "reusex/core/ProjectDB.hpp"
 #include "reusex/core/class_role_map.hpp"
@@ -17,8 +18,10 @@
 #include "reusex/core/normal_orientation.hpp"
 #include "reusex/core/storey_identity.hpp"
 #include "reusex/core/validate.hpp"
+#include "reusex/core/wall_identity.hpp"
 #include "reusex/io/reusex.hpp"
 #include "reusex/reconstruction/mesh.hpp"
+#include "reusex/reconstruction/walls.hpp"
 #include "reusex/segmentation/band_rooms.hpp"
 #include "reusex/segmentation/classify_planes.hpp"
 #include "reusex/segmentation/level.hpp"
@@ -61,7 +64,7 @@ struct StageName {
 // used in `ruxd`'s HTTP contract (docs/gui/openapi.yaml, in its own repo) and
 // `contract` selects the input check run before the stage executes
 // (docs/CONTRACTS.md).
-constexpr std::array<StageName, 10> kStages{{
+constexpr std::array<StageName, 11> kStages{{
     {JobStage::clouds, "clouds", "cloud_reconstruction",
      core::PipelineStage::clouds, false},
     {JobStage::planes, "planes", "segment_planes", core::PipelineStage::planes,
@@ -104,6 +107,9 @@ constexpr std::array<StageName, 10> kStages{{
     // Not cancellable: one pass over the plane inliers and a sort per plane.
     {JobStage::classify, "classify", "classify", core::PipelineStage::classify,
      false},
+    // Not cancellable: per storey, histograms and bounded fits over the wall
+    // points; about a second on NewOffice (1.5 M points).
+    {JobStage::walls, "walls", "walls", core::PipelineStage::walls, false},
 }};
 
 const StageName &descriptor(JobStage stage) {
@@ -925,6 +931,145 @@ StageResult run_classify(ProjectDB &db, const json &params, int log_id) {
       {{"table", "plane_classes", static_cast<int64_t>(written)}});
 }
 
+StageResult run_walls(ProjectDB &db, const json &params, int log_id) {
+  WallStageOptions o;
+  try {
+    o = wall_options_from_parameters(params.dump());
+  } catch (const std::invalid_argument &e) {
+    return StageResult::invalid(e.what());
+  }
+
+  // Which way the plane normals face (reusex-0se): sensor-facing normals
+  // keep the two faces of a thin wall in separate offset profiles; legacy
+  // ones faced the world origin and their sign means nothing.
+  auto orientation = core::normal_orientation_of(
+      db.point_cloud_provenance("plane_normals").second);
+  if (!orientation && db.has_point_cloud("normals"))
+    orientation = core::normal_orientation_of(
+        db.point_cloud_provenance("normals").second);
+  o.walls.use_normal_sign =
+      orientation && *orientation == core::kNormalOrientationSensor;
+  if (o.walls.use_normal_sign)
+    info("walls: plane normals face their sensor; each side of a wall gets "
+         "its own offset profile");
+  else
+    warn("walls: the clouds carry no normal_orientation marker (made before "
+         "reusex-0se, or imported), so which side a face was seen from is "
+         "unknown and thin walls may merge into one face; re-run `rux create "
+         "clouds` and `rux create planes` to use it");
+
+  const auto storeys = db.storeys();
+  const auto classes = db.plane_classes("planes");
+  if (storeys.empty())
+    return StageResult::invalid(
+        "walls: the project has no storeys; run `rux create storeys`");
+  if (classes.empty())
+    return StageResult::invalid("walls: the planes have no plane_classes; run "
+                                "`rux create classify`");
+
+  const auto cloud = db.point_cloud_xyzrgb("cloud");
+  const auto planes = db.point_cloud_label("planes");
+  const auto normals = db.point_cloud_normal("plane_normals");
+
+  // The roles must describe these planes: a planes re-run after classify
+  // renumbers them, and a stale "wall" label would pick another plane's
+  // points as wall evidence.
+  {
+    std::map<int, int> inliers;
+    for (const auto &l : planes->points)
+      if (l.label >= 1)
+        ++inliers[static_cast<int>(l.label)];
+    for (const auto &c : classes) {
+      const auto it = inliers.find(c.plane_label);
+      const int have = it == inliers.end() ? 0 : it->second;
+      if (have != c.point_count)
+        return StageResult::invalid(fmt::format(
+            "walls: plane_classes says plane {} has {} point(s) but 'planes' "
+            "gives it {}: the classification is stale (planes ran again "
+            "after classify); re-run `rux create classify`",
+            c.plane_label, c.point_count, have));
+    }
+  }
+
+  std::vector<core::WallRecord> walls;
+  std::vector<core::WallJoinRecord> joins;
+  int families = 0, faces = 0, pairs = 0, low_seen = 0;
+  for (const auto &st : storeys) {
+    geometry::WallsResult r;
+    try {
+      r = geometry::detect_walls(*cloud, *planes, *normals, classes, st,
+                                 o.walls);
+    } catch (const std::invalid_argument &e) {
+      return StageResult::invalid(e.what());
+    }
+    auto [w, j] = geometry::wall_records(r.graph, st);
+    info("walls: storey {}: {} axis famil{}, {} face(s), {} pair(s) ({} "
+         "rejected), {} wall(s), {} join(s)",
+         st.idx, r.families.size(), r.families.size() == 1 ? "y" : "ies",
+         r.faces.size(), r.pairing.pairs.size(), r.pairing.rejected, w.size(),
+         j.size());
+    families += static_cast<int>(r.families.size());
+    faces += static_cast<int>(r.faces.size());
+    pairs += static_cast<int>(r.pairing.pairs.size());
+    low_seen += r.graph.low_seen;
+    walls.insert(walls.end(), w.begin(), w.end());
+    joins.insert(joins.end(), j.begin(), j.end());
+  }
+  if (walls.empty())
+    warn("walls: no wall on {} storey(s): {} axis families, {} faces, {} "
+         "pairs over {} plane class(es) ({} wall role); check `rux get "
+         "plane_classes` for wall planes",
+         storeys.size(), families, faces, pairs, classes.size(),
+         std::count_if(classes.begin(), classes.end(),
+                       [](const auto &c) { return c.role == "wall"; }));
+
+  // Stable identity (reusex-z1v, STANDARDS §6): a re-detected wall keeps the
+  // GUID of the stored wall it lies on, so openings/spaces referring to it
+  // and a locked (hand-edited) row survive a re-run; only an unmatched wall
+  // gets a fresh GUID from its 5 cm-rounded axis key (core/wall_identity.hpp).
+  const auto stored = db.walls();
+  core::WallIdentityResult ids;
+  try {
+    ids = core::assign_wall_guids(walls, joins, stored, db.project_guid(),
+                                  o.identity);
+  } catch (const std::invalid_argument &e) {
+    return StageResult::failure(e.what());
+  }
+  info("walls: {} matched a stored wall ({} locked, kept as stored), {} new "
+       "GUID(s)",
+       ids.matched, ids.locked_matched, ids.minted);
+
+  const size_t written = db.save_walls(walls, joins, log_id);
+  const auto rows = db.walls();
+  const auto stored_joins = db.wall_joins();
+  const auto locked_kept = static_cast<size_t>(std::count_if(
+      rows.begin(), rows.end(), [](const auto &w) { return w.locked; }));
+
+  const auto count = [&](auto pred) {
+    return std::count_if(walls.begin(), walls.end(), pred);
+  };
+  const auto kind_count = [&](std::string_view kind) {
+    return std::count_if(joins.begin(), joins.end(),
+                         [&](const auto &j) { return j.kind == kind; });
+  };
+  return StageResult::success(
+      fmt::format("{} wall(s) on {} storey(s): {} measured, {} assumed "
+                  "(one side seen), {} external, {} seen under {:.0f} %; {} "
+                  "corner, {} tee, {} collinear join(s); normals {}; {} "
+                  "row(s) written, {} locked row(s) kept",
+                  walls.size(), storeys.size(),
+                  count([](const auto &w) { return !w.assumed; }),
+                  count([](const auto &w) { return w.assumed; }),
+                  count([](const auto &w) { return w.is_external; }), low_seen,
+                  100.0 * o.walls.min_seen_share, kind_count("corner"),
+                  kind_count("tee"), kind_count("collinear"),
+                  o.walls.use_normal_sign ? "sensor-facing"
+                                          : "unoriented (legacy)",
+                  written, locked_kept),
+      {{"table", "walls", static_cast<int64_t>(written)},
+       {"table", "wall_joins", static_cast<int64_t>(stored_joins.size())}});
+}
+
 StageResult dispatch(ProjectDB &db, const StageContext &ctx, const json &params,
                      int log_id) {
   switch (ctx.stage) {
@@ -964,6 +1109,8 @@ StageResult dispatch(ProjectDB &db, const StageContext &ctx, const json &params,
     return run_storeys(db, params, log_id);
   case JobStage::classify:
     return run_classify(db, params, log_id);
+  case JobStage::walls:
+    return run_walls(db, params, log_id);
   }
   return StageResult::failure("unknown stage");
 }

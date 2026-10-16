@@ -395,6 +395,13 @@ if(Python3_Interpreter_FOUND)
              COMMAND ${Python3_EXECUTABLE}
                      ${CMAKE_CURRENT_SOURCE_DIR}/support/check_no_file_macro_paths.py)
     set_tests_properties(check_no_file_macro_paths PROPERTIES LABELS lint)
+
+    # scripts/bench-poses-compare.py gates the pose-reference benchmark
+    # (reusex-rcv.1.6); its self-test needs only python3.
+    add_test(NAME bench_poses_compare_selftest
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_SOURCE_DIR}/scripts/test_bench_poses_compare.py)
+    set_tests_properties(bench_poses_compare_selftest PROPERTIES LABELS bench)
 endif()
 
 message(STATUS "Unit tests configured successfully")

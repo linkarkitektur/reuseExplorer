@@ -12,6 +12,7 @@
 #include "export/rhino.hpp"
 #include "export/semantic_images.hpp"
 #include "export/speckle.hpp"
+#include "export/trajectory.hpp"
 
 void setup_subcommand_export(CLI::App &app,
                              std::shared_ptr<RuxOptions> global_opt) {
@@ -33,6 +34,8 @@ SUBCOMMANDS:
   csv              Export all elements (components + passports) to CSV
   semantic-images  Export segmentation images as Glasbey-colored PNGs
   colmap           Export sensor frames as a COLMAP sparse model (MVS/3DGS)
+  trajectory       Export sensor-frame poses as a TUM trajectory (for
+                   rux analyze poses / scripts/bench-poses.sh)
 
 EXAMPLES:
   rux export ply -o cloud.ply                # Export point cloud to PLY
@@ -60,6 +63,7 @@ NOTES:
   setup_subcommand_export_semantic_images(*sub, global_opt);
   setup_subcommand_export_speckle(*sub, global_opt);
   setup_subcommand_export_colmap(*sub, global_opt);
+  setup_subcommand_export_trajectory(*sub, global_opt);
 
   sub->require_subcommand(1);
 }

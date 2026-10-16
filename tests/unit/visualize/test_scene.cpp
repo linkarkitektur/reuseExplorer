@@ -560,3 +560,137 @@ TEST_CASE("PopulateScene_PlanOverlay_OpeningOnAMissingWall_IsSkippedLoudly",
   CHECK(info.plan.openings == 0);
   CHECK(info.plan.walls == 1);
 }
+
+// ── Walls layer (reusex-z1v.5.6) ─────────────────────────────────────────────
+
+namespace {
+
+/// Two walls on storey 0, whose level origin sits at world (10, 20, -1.5):
+/// a measured one (thickness 0.2, seen 0.9) and an assumed one.
+void seed_walls(ProjectDB &db) {
+  core::StoreyRecord s;
+  s.guid = "storey-0";
+  s.z_ceiling = 2.5;
+  s.level_transform = {1, 0, 0, -10, 0, 1, 0, -20, 0, 0, 1, 1.5, 0, 0, 0, 1};
+  db.save_storeys({s});
+  core::WallRecord a;
+  a.guid = "wall-a";
+  a.x0 = 0.0, a.y0 = 0.0, a.x1 = 4.0, a.y1 = 0.0;
+  a.height = 2.5;
+  a.thickness = 0.2;
+  a.seen_share = 0.9;
+  core::WallRecord b = a;
+  b.guid = "wall-b";
+  b.x0 = 4.0, b.y0 = 0.0, b.x1 = 4.0, b.y1 = 3.0;
+  b.thickness = 0.2;
+  b.assumed = true;
+  db.save_walls({a, b}, {{"wall-a", "wall-b", "corner", "end", "start"}});
+}
+
+std::vector<std::array<double, 3>> layer_points(const viz::SceneLayer &l) {
+  std::vector<std::array<double, 3>> out;
+  for (vtkActor *a : l.actors) {
+    auto *poly = vtkPolyData::SafeDownCast(a->GetMapper()->GetInput());
+    REQUIRE(poly != nullptr);
+    for (vtkIdType i = 0; i < poly->GetNumberOfPoints(); ++i) {
+      double p[3];
+      poly->GetPoint(i, p);
+      out.push_back({p[0], p[1], p[2]});
+    }
+  }
+  return out;
+}
+
+} // namespace
+
+TEST_CASE("PopulateScene_Walls_NoWalls_NamesTheStageToRun",
+          "[visualize][scene][walls]") {
+  TempPath tmp("test_scene_walls_missing");
+  ProjectDB db(tmp.path);
+  seed_cloud(db, 10);
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.layers = {viz::Layer::cloud, viz::Layer::walls};
+  CHECK_THROWS_WITH(viz::populate_scene(renderer, db, o),
+                    ContainsSubstring("rux create walls"));
+  CHECK(viz::layer_from_string("walls") == viz::Layer::walls);
+  CHECK(viz::to_string(viz::Layer::walls) == "walls");
+}
+
+TEST_CASE("PopulateScene_Walls_Level_AreBoxesInWorld",
+          "[visualize][scene][walls]") {
+  TempPath tmp("test_scene_walls_level");
+  ProjectDB db(tmp.path);
+  seed_walls(db);
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.layers = {viz::Layer::walls};
+  o.plan_placement = viz::PlanPlacement::level;
+  const auto info = viz::populate_scene(renderer, db, o);
+  REQUIRE(info.layers.size() == 1);
+  const auto &l = info.layers[0];
+  CHECK(l.layer == viz::Layer::walls);
+  CHECK(l.items == 2);
+  CHECK(l.dim == 1); // the assumed one
+  REQUIRE_FALSE(l.actors.empty());
+
+  double xmin = 1e9, xmax = -1e9, ymin = 1e9, zmin = 1e9, zmax = -1e9;
+  for (const auto &p : layer_points(l)) {
+    xmin = std::min(xmin, p[0]);
+    xmax = std::max(xmax, p[0]);
+    ymin = std::min(ymin, p[1]);
+    zmin = std::min(zmin, p[2]);
+    zmax = std::max(zmax, p[2]);
+  }
+  // Level -> world through the storey frame; footprint = axis +/- 0.1 m.
+  CHECK(xmin == Catch::Approx(10.0).margin(1e-9));
+  CHECK(xmax == Catch::Approx(14.1).margin(1e-9));
+  CHECK(ymin == Catch::Approx(19.9).margin(1e-9));
+  // From the storey floor (world z = -1.5, lifted a hair) to its height.
+  CHECK(zmin == Catch::Approx(-1.5).margin(0.05));
+  CHECK(zmax == Catch::Approx(1.0).margin(0.05));
+
+  // Measured walls in walls_rgb, the dim one in a paler shade of it.
+  bool full = false, paler = false;
+  for (vtkActor *a : l.actors) {
+    CHECK(std::string(a->GetObjectName()) == viz::kWallsActorName);
+    double rgb[3];
+    a->GetProperty()->GetColor(rgb);
+    if (std::abs(rgb[2] * 255.0 - o.walls_rgb[2]) < 0.5)
+      full = true;
+    else
+      paler = true;
+  }
+  CHECK(full);
+  CHECK(paler);
+
+  // In 3D the walls are cut with the scene.
+  viz::apply_cut_plane(renderer, 0.0);
+  for (vtkActor *a : l.actors)
+    CHECK(a->GetMapper()->GetNumberOfClippingPlanes() == 1);
+}
+
+TEST_CASE("PopulateScene_Walls_AboveScene_AreFootprintsOverTheCut",
+          "[visualize][scene][walls]") {
+  TempPath tmp("test_scene_walls_plan");
+  ProjectDB db(tmp.path);
+  seed_cloud(db, 10); // z in [0, 0.5]
+  seed_walls(db);
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  // walls listed first: still drawn last, on a sheet over the cloud
+  o.layers = {viz::Layer::walls, viz::Layer::cloud};
+  o.plan_placement = viz::PlanPlacement::above_scene;
+  const auto info = viz::populate_scene(renderer, db, o);
+  REQUIRE(info.layers.size() == 2);
+  const auto &l = info.layers[0];
+  CHECK(l.layer == viz::Layer::walls);
+  CHECK(l.items == 2);
+  const auto pts = layer_points(l);
+  REQUIRE_FALSE(pts.empty());
+  for (const auto &p : pts)
+    CHECK(p[2] >= 0.5);
+  viz::apply_cut_plane(renderer, 0.2);
+  for (vtkActor *a : l.actors)
+    CHECK(a->GetMapper()->GetNumberOfClippingPlanes() == 0);
+}

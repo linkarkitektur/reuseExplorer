@@ -202,6 +202,18 @@ changelog — that history is the point of keeping it in the repo.
 
 ## Direction changelog
 
+- **2026-10-16** — **Solid model WP3 landed: walls with a measured
+  thickness** (`reusex-z1v.5`). `rux create walls` stores a bounded wall
+  graph per storey (schema v33 `walls` / `wall_joins`, deterministic GUIDs
+  kept across re-runs, locked rows kept), drawn by the `walls` layer in
+  `rux render` and the Qt 3D page; the hidden `walls-dev` driver is gone.
+  First bench line (`bench-solid.sh`, storeys → classify → walls): wall
+  recall / precision / position RMS / thickness error mean — NewOffice
+  0.62 / 0.18 / 161 mm / 43 mm, house1 0.83 / 0.59 / 102 mm / 7 mm, house2
+  0.59 / 0.50 / 126 mm / 62 mm. Most walls are seen from one side (82–90 %
+  assumed), and the one-sided axis convention against the references is
+  still open (`reusex-v8p`).
+
 - **2026-10-13** — **Qt client: Posegraf becomes Rediger** ([spec](design/2026-10-13-pose-graph-editor-design.md), P4).
   The rail is Start · Oversigt · 3D · Rediger · Pipeline · Log. Oversigt
   (formerly Database) is read-only; every pose-graph edit happens in Rediger:
