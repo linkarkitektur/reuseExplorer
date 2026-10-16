@@ -74,11 +74,38 @@ Mask morph(const Mask &m, int ns, int nz, int r, bool erode) {
   return out;
 }
 
+/// The wall as a slab symmetric about its axis: a one-sided wall of unknown
+/// thickness (thickness <= 0, points on one face only) has its axis on its
+/// seen face (reusex-v8p), so its body, unknown_half_thickness_m * 2 deep,
+/// lies behind that face; the result has the axis moved to the body's
+/// middle and that thickness. s along the axis is unchanged.
+core::WallRecord body_of(const core::WallRecord &w, const OpeningOptions &opt) {
+  if (w.thickness > 0.0 || (w.face_a_points > 0) == (w.face_b_points > 0))
+    return w;
+  const Eigen::Vector2d a(w.x0, w.y0), b(w.x1, w.y1);
+  const double len = (b - a).norm();
+  if (!(len > 0.0) || !std::isfinite(len))
+    return w; // axis_frame() reports it
+  const Eigen::Vector2d d = (b - a) / len;
+  const Eigen::Vector2d n(-d.y(), d.x());
+  // Seen from +n (side a): the body lies on -n.
+  const double h = opt.unknown_half_thickness_m;
+  const Eigen::Vector2d shift = (w.face_a_points > 0 ? -h : h) * n;
+  core::WallRecord out = w;
+  out.x0 += shift.x();
+  out.y0 += shift.y();
+  out.x1 += shift.x();
+  out.y1 += shift.y();
+  out.thickness = 2.0 * h;
+  return out;
+}
+
 } // namespace
 
 FaceLevels face_levels(const std::vector<Eigen::Vector3d> &points,
-                       const core::WallRecord &wall, double z_floor,
+                       const core::WallRecord &wall_in, double z_floor,
                        double z_ceiling, const OpeningOptions &opt) {
+  const core::WallRecord wall = body_of(wall_in, opt);
   FaceLevels out;
   out.z_floor = z_floor;
   out.z_ceiling = z_ceiling;
@@ -142,8 +169,9 @@ FaceLevels face_levels(const std::vector<Eigen::Vector3d> &points,
 }
 
 FaceRaster face_raster(const std::vector<Eigen::Vector3d> &points,
-                       const core::WallRecord &wall, double z_floor,
+                       const core::WallRecord &wall_in, double z_floor,
                        double z_ceiling, const OpeningOptions &opt) {
+  const core::WallRecord wall = body_of(wall_in, opt);
   if (!(opt.cell_m > 0.0))
     throw std::invalid_argument("face_raster: cell_m must be positive");
   const AxisFrame f = axis_frame(wall);
@@ -510,8 +538,9 @@ trajectory_crossings(const std::vector<Eigen::Vector3d> &trajectory,
 }
 
 DoorLeaf door_leaf(const std::vector<Eigen::Vector3d> &points,
-                   const core::WallRecord &wall, const OpeningRect &rect,
+                   const core::WallRecord &wall_in, const OpeningRect &rect,
                    const OpeningOptions &opt) {
+  const core::WallRecord wall = body_of(wall_in, opt);
   DoorLeaf best;
   const AxisFrame f = axis_frame(wall);
   const double half = wall.thickness > 0.0 ? 0.5 * wall.thickness
@@ -608,7 +637,9 @@ detect_openings(const OpeningEvidence &ev,
   for (const auto &wall : walls) {
     if (wall.storey != storey.idx)
       continue;
-    const AxisFrame f = axis_frame(wall);
+    // The body's frame for the evidence band; the raster, levels and leaf
+    // take the record (body_of() inside them).
+    const AxisFrame f = axis_frame(body_of(wall, opt));
     const double half = wall.thickness > 0.0 ? 0.5 * wall.thickness
                                              : opt.unknown_half_thickness_m;
     // The points near this wall: what the raster, the evidence and the leaf

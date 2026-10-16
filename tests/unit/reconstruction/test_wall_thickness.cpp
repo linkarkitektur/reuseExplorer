@@ -107,8 +107,7 @@ TEST_CASE("MeasureThickness_TooFewCells_IsNotOk", "[walls][thickness]") {
   CHECK_FALSE(measure_thickness(a, b, 0.0, 1.0).ok);
 }
 
-TEST_CASE("MeasureWalls_OneSidedFace_AssumedWithDefaultThickness",
-          "[walls][thickness]") {
+TEST_CASE("MeasureWalls_OneSidedFace_AxisOnTheSeenFace", "[walls][thickness]") {
   // An outer wall seen only from inside (from +x), room floor at x > 1.
   auto wp = storey_points();
   add_face(wp, {1.0, 0}, {1.0, 4}, {1, 0}, 0.0, 2.5, 0.003, 18);
@@ -124,9 +123,10 @@ TEST_CASE("MeasureWalls_OneSidedFace_AssumedWithDefaultThickness",
   CHECK_THAT(w.thickness, WithinAbs(o.default_thickness_m, 1e-12));
   CHECK_THAT(w.face_hi, WithinAbs(1.0, 0.003));
   CHECK_FALSE(std::isfinite(w.face_lo));
-  // The body lies behind the seen face, away from the room.
-  CHECK_THAT(w.axis_offset,
-             WithinAbs(1.0 - 0.5 * o.default_thickness_m, 0.003));
+  // The axis is the seen face (reusex-v8p): the thickness is unknown, so
+  // a centre line half a guessed thickness behind it would be a guess too.
+  // The reference plans draw external walls the same way.
+  CHECK_THAT(w.axis_offset, WithinAbs(1.0, 0.003));
   CHECK(w.is_external);
 }
 

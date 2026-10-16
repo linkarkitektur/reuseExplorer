@@ -132,7 +132,9 @@ struct WallOptions {
   int bootstrap_samples = 200;
   unsigned seed = 0;
   double ci_level = 0.95;
-  /// Thickness given to a wall seen from one side only (assumed) [m].
+  /// Body assumed behind a wall seen from one side only, for its seen share,
+  /// the external test and the graph's collinearity [m]. Its axis is the
+  /// seen face and its record's thickness -1 (unknown; reusex-v8p).
   double default_thickness_m = 0.2;
   /// External test: a strip from near to far beyond each face [m]...
   double external_strip_near_m = 0.1, external_strip_far_m = 0.6;
@@ -151,6 +153,17 @@ struct WallOptions {
   /// wall (a doorway, a window, an occluded stretch) [m]...
   double bridge_gap_m = 1.5;
   double bridge_offset_m = 0.05;
+  /// A wider gap, up to door_bridge_gap_m, is bridged too when it is an
+  /// opening (reusex-3e9: house1's 2.1 m patio door): the face is seen over
+  /// the gap above lintel_min_z_m over the floor in at least
+  /// lintel_min_share of its cell_m columns (a lintel, a header), or the
+  /// capture path (WallPoints::trajectory) crosses the face line in the gap
+  /// with steps no longer than crossing_max_step_m (someone walked
+  /// through) [m].
+  double door_bridge_gap_m = 3.0;
+  double lintel_min_z_m = 1.8;
+  double lintel_min_share = 0.5;
+  double crossing_max_step_m = 1.5;
   /// ...unless both thicknesses are measured and differ by more than this;
   /// then they meet end to end (a collinear join) [m].
   double bridge_thickness_m = 0.05;
@@ -159,6 +172,20 @@ struct WallOptions {
   /// shorter at most this long, are one wall with a recess (window niches
   /// between piers): they merge onto the face with more points [m].
   double recess_max_length_m = 1.0;
+  /// Two parallel walls overlapping along the axis by at least
+  /// duplicate_min_overlap of the shorter one, or by duplicate_min_overlap_m
+  /// (a long facade and its drifted copy that run on past each other), are
+  /// one wall seen twice (pose
+  /// drift, a face split in two, reusex-1wp) when both are one-sided, seen
+  /// from the same side, with faces within duplicate_max_offset_m (a sensor
+  /// cannot see a face through another standing in front of it over the
+  /// same stretch); when both are measured and their bodies overlap; or
+  /// when a one-sided face lies within bridge_offset_m of a two-sided
+  /// wall's face on its side. The dominant one (measured, else more points,
+  /// else longer) is kept over the union of the extents.
+  double duplicate_min_overlap = 0.8;
+  double duplicate_min_overlap_m = 3.0;
+  double duplicate_max_offset_m = 0.45;
   /// Two non-parallel walls whose nearer ends both lie within corner_m of
   /// the crossing of their axes meet there (a corner) [m]...
   double corner_m = 0.9;
@@ -235,6 +262,9 @@ struct WallPoints {
   /// the valley and external tests (W3.3) look at.
   std::vector<Eigen::Vector3d> others;
   double z_floor = 0.0, z_ceiling = 0.0; ///< the storey's height range
+  /// Camera centres in capture order, level frame (empty: none): evidence
+  /// that a gap between collinear walls is a door (join_walls).
+  std::vector<Eigen::Vector3d> trajectory;
 };
 
 /// One point of a face in its family's coordinates: s = p . t along the axis
@@ -350,13 +380,17 @@ ThicknessFit measure_thickness(const WallFace &lo, const WallFace &hi,
 struct WallSegment {
   int family = 0;                               ///< AxisFamily::index
   Eigen::Vector2d d = Eigen::Vector2d::UnitX(); ///< the family's normal
-  double axis_offset = 0.0;                     ///< centre line: p . d [m]
+  /// The axis, p . d [m]: the centre line of a wall with two faces (or a
+  /// crossed pair), the seen face of a one-sided wall (reusex-v8p).
+  double axis_offset = 0.0;
   double s0 = 0.0, s1 = 0.0; ///< extent along t = d rotated +90 deg [m]
   /// The faces at mid-height [m]; NaN for a side that was not seen.
   double face_lo = std::numeric_limits<double>::quiet_NaN();
   double face_hi = std::numeric_limits<double>::quiet_NaN();
   int face_lo_index = -1, face_hi_index = -1; ///< into the faces, -1 none
-  double thickness = 0.0; ///< measured, or default_thickness_m if assumed
+  /// Measured, or default_thickness_m if assumed (a one-sided wall's body
+  /// behind its face; its record says -1).
+  double thickness = 0.0;
   double thickness_ci_lo = -1.0, thickness_ci_hi = -1.0; ///< -1: none
   double lean_deg = 0.0;
   bool assumed = false;             ///< one side seen: thickness defaulted
@@ -370,10 +404,11 @@ struct WallSegment {
 /// The walls of a storey from its faces and their pairing (W3.3): a pair is
 /// a wall with a measured thickness (measure_thickness; when it cannot fit,
 /// the profile peaks and no CI); a crossed pair a wall halfway between its
-/// faces with an assumed thickness; a one-sided stretch is an assumed wall of
-/// default_thickness_m whose body lies behind the seen face (away from the
-/// side it was seen from; with no normal sign, away from the side with
-/// more floor-level evidence). External test: a strip from
+/// faces with an assumed thickness; a one-sided stretch is an assumed wall
+/// whose axis is the seen face (reusex-v8p) and whose body, default_thickness_m
+/// deep, lies behind it (away from the side it was seen from; with no
+/// normal sign, away from the side with more floor-level evidence). External
+/// test: a strip from
 /// external_strip_near_m to external_strip_far_m beyond each face, below
 /// external_max_z_m above the floor, holding fewer than min_room_density
 /// non-wall points per m^2 on either side.
@@ -404,6 +439,8 @@ struct WallGraph {
   std::vector<WallSegment> walls;
   std::vector<WallJoin> joins;
   int low_seen = 0; ///< walls flagged WallSegment::low_seen
+  /// Gaps wider than bridge_gap_m bridged as openings (reusex-3e9).
+  int door_bridges = 0;
 };
 
 /// The bounded wall graph of a storey (W3.4):
@@ -412,13 +449,18 @@ struct WallGraph {
 ///     parallel to its family;
 ///  2. snapping: each seen face moves to the median offset of the raw wall
 ///     points seen from its side within snap_wide_m, then snap_narrow_m;
-///  3. bridging: collinear walls with a gap up to bridge_gap_m merge
-///     (a measured thickness wins over an assumed one); when both are
-///     measured and differ by more than bridge_thickness_m they meet in the
-///     middle of the gap instead (a collinear join); a short one-sided wall
-///     seen from the same side as a neighbour and standing within max_gap_m
-///     behind or before it is a recess of that wall and merges into it
-///     (recess_max_length_m);
+///  3. duplicates: parallel walls standing in one another over most of the
+///     shorter one (duplicate_min_overlap, duplicate_max_offset_m) merge
+///     into the dominant one (reusex-1wp), checked whenever nothing is left
+///     to bridge;
+///     bridging: collinear walls with a gap up to bridge_gap_m merge (up
+///     to door_bridge_gap_m when a lintel or a camera path crossing says
+///     the gap is an opening, reusex-3e9) (a measured thickness wins over an
+///     assumed one); when both are measured and differ by more than
+///     bridge_thickness_m they meet in the middle of the gap instead (a
+///     collinear join); a short one-sided wall seen from the same side as a
+///     neighbour and standing within max_gap_m behind or before it is a recess
+///     of that wall and merges into it (recess_max_length_m);
 ///  4. corners and tees: non-parallel pairs, nearest crossing first; a
 ///     corner moves both ends to the crossing of the axes, a tee moves one
 ///     end onto the other wall's axis; each end joins at most once and a
@@ -442,20 +484,25 @@ struct WallsResult {
 
 /// Steps 1-4 on one storey: axis_families() from the plane classes,
 /// wall_points() from the clouds, then wall_faces(), pair_faces(),
-/// measure_walls() and join_walls(). Logs (reusex::warn) when a storey
-/// yields no family or no wall, with the numbers.
+/// measure_walls() and join_walls(). @p camera_path (world frame, capture
+/// order; may be empty) is taken into the level frame as
+/// WallPoints::trajectory. Logs (reusex::warn) when a storey yields no
+/// family or no wall, with the numbers.
 WallsResult
 detect_walls(const Cloud &cloud, const CloudL &planes,
              const CloudN &plane_normals,
              const std::vector<core::PlaneClassRecord> &plane_classes,
-             const core::StoreyRecord &storey, const WallOptions &opt = {});
+             const core::StoreyRecord &storey, const WallOptions &opt = {},
+             const std::vector<Eigen::Vector3d> &camera_path = {});
 
 /// The walls and joins of @p graph as core records in @p storey's level
 /// frame. The guid is the stable key W3.5 hashes into a deterministic GUID:
 /// "walls/<storey idx>/<x0>,<y0>,<x1>,<y1>" with the axis endpoints rounded
 /// to 5 cm (a "#n" suffix keeps two walls that round alike apart). z_base /
-/// height are the storey's floor and height; an assumed wall carries
-/// default thickness and no CI; a flagged wall carries
+/// height are the storey's floor and height; a one-sided wall has its axis
+/// on its seen face and thickness -1 (unknown, reusex-v8p), any other
+/// assumed wall the default thickness; assumed walls carry no CI; a flagged
+/// wall carries
 /// {"low_seen_share": true} as metadata.
 std::pair<std::vector<core::WallRecord>, std::vector<core::WallJoinRecord>>
 wall_records(const WallGraph &graph, const core::StoreyRecord &storey);
