@@ -185,6 +185,17 @@ The stage records this in the parameters of `cloud` and `normals` as
 has normals whose sign means nothing a stage may rely on; `classify` then
 ignores which way a plane faces.
 
+The stage also stamps `cloud`'s (and `normals`'/`labels`') parameters with
+`"pose_fingerprint"` (`core/pose_fingerprint.hpp`): a cheap hash of every
+sensor frame's pose at reconstruction time. Every stage below that consumes
+`cloud` re-checks it against the project's CURRENT poses
+(`core::check_stale_cloud_poses()`, wired into `check_stage_inputs()`) and
+warns when they differ — most commonly because `rux optimize`/`rux register`
+ran after `rux create clouds` — naming `rux create clouds` as the fix. A cloud
+with no stamp (legacy, predates reusex-rcv.1.15) is reported as `unknown`, not
+`stale`: no warning, only an info-level note from
+`core::warn_if_cloud_poses_stale()`.
+
 ### `annotate` (`rux create annotate`)
 
 Run a semantic segmentation model over the stored frames.
