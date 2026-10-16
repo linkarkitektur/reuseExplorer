@@ -17,8 +17,9 @@
 //   - the outer boundary stays watertight (no T-junctions, no degenerate
 //     triangles) where a coarse section meets a finer one;
 //   - a single storey is unchanged, and so is any input without z-ranges;
-//   - select_section_planes() keeps storey floors/ceilings, drops a table
-//     top, and leaves the horizontals alone without (matching) storeys;
+//   - select_section_planes() keeps every horizontal inside the building
+//     (storeys, split levels, an attic under the roof) and drops those
+//     outside it, and the horizontals alone without (matching) storeys;
 //   - wall_z_ranges() measures a wall's height from its inliers and gives an
 //     invented back face its partner's range.
 
@@ -634,27 +635,59 @@ TEST_CASE("StoreyArrangement_ProjectedCellsGuard_UsesStoreyLocalCount",
   CHECK_NOTHROW(build(house, 10));
 }
 
-TEST_CASE("SelectSectionPlanes_KeepsStoreyLevels_DropsTableTop",
+TEST_CASE("SelectSectionPlanes_KeepsSplitLevelAndAttic_DropsOutsideBuilding",
           "[geometry][mesh][storey_sections]") {
+  // Two storeys [0, 2.5] and [2.75, 5.25] from the storeys table, a split
+  // level at 1.2 m (with its invented underside at 0.95), an attic ceiling
+  // at 6.5 m under a roof that reaches 6.4 m, a plane at 9 m and one at
+  // -3 m that nothing of the building reaches (on NewOffice: tilted planes
+  // force_orthogonal_planes moved out of the building), and the invented
+  // faces of the outermost floor (-0.25) and attic ceiling (6.75). Only the
+  // horizontals outside the building go (reusex-x8s).
   reusex::EigenVectorContainer<double, 4> planes;
-  for (double z : {0.0, 0.75, 2.6, 2.85, 5.2})
+  std::vector<reusex::IndicesPtr> inliers;
+  std::vector<Range> z_ranges;
+  std::vector<size_t> horizontals;
+  auto horizontal = [&](double z, bool measured) {
     planes.emplace_back(0, 0, 1, -z);
-  planes.emplace_back(0, 0, -1, 2.6); // ceiling face, normal down
-  const std::vector<size_t> horizontals{0, 1, 2, 3, 4, 5};
+    inliers.push_back(std::make_shared<reusex::Indices>(
+        measured ? reusex::Indices{0} : reusex::Indices{}));
+    z_ranges.push_back({kNaN, kNaN});
+    horizontals.push_back(planes.size() - 1);
+  };
+  for (double z : {0.0, 2.5, 2.75, 5.25, 1.2, 6.5, 9.0, -3.0})
+    horizontal(z, true); // 0..7
+  for (double z : {-0.25, 6.75, 0.95})
+    horizontal(z, false);          // 8..10
+  planes.emplace_back(1, 0, 0, 0); // a wall over both storeys
+  inliers.push_back(std::make_shared<reusex::Indices>(reusex::Indices{0}));
+  z_ranges.push_back({0.0, 5.25});
+  const double s = std::sqrt(0.5);
+  planes.emplace_back(s, 0, -s, 0); // the roof, up to 6.4 m
+  inliers.push_back(std::make_shared<reusex::Indices>(reusex::Indices{0}));
+  z_ranges.push_back({5.25, 6.4});
+  const std::vector<double> heights{0.05, 2.45, 2.8, 5.2};
 
-  SECTION("storey heights pick floors and ceilings within tolerance") {
-    const auto got = select_section_planes(planes, horizontals,
-                                           {0.05, 2.55, 2.9, 5.25}, 0.15);
-    CHECK(got == std::vector<size_t>{0, 2, 3, 4, 5});
+  SECTION("split level, attic and inner invented faces stay") {
+    const auto got = select_section_planes(planes, horizontals, heights, 0.15,
+                                           z_ranges, inliers);
+    CHECK(got == std::vector<size_t>{0, 1, 2, 3, 4, 5, 10});
+  }
+  SECTION("without the roof's range the attic ceiling is outside too") {
+    auto no_roof = z_ranges;
+    no_roof.back() = {kNaN, kNaN};
+    const auto got = select_section_planes(planes, horizontals, heights, 0.15,
+                                           no_roof, inliers);
+    CHECK(got == std::vector<size_t>{0, 1, 2, 3, 4, 10});
   }
   SECTION("no storey heights: every horizontal stays") {
-    CHECK(select_section_planes(planes, horizontals, {}, 0.15) == horizontals);
+    CHECK(select_section_planes(planes, horizontals, {}, 0.15, z_ranges,
+                                inliers) == horizontals);
   }
-  SECTION("heights matching fewer than two planes: every horizontal stays") {
-    CHECK(select_section_planes(planes, horizontals, {10.0, 20.0}, 0.15) ==
-          horizontals);
-    CHECK(select_section_planes(planes, horizontals, {0.75}, 0.15) ==
-          horizontals);
+  SECTION("fewer than two planes inside: every horizontal stays") {
+    std::vector<size_t> two{6, 7}; // 9 m and -3 m only
+    CHECK(select_section_planes(planes, two, heights, 0.15, z_ranges,
+                                inliers) == two);
   }
 }
 

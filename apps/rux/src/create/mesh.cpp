@@ -149,12 +149,16 @@ NOTES:
                 "clutter out of the cell complex (reusex-z1v.4.3). Off by "
                 "default; no effect before `rux create classify` has run.");
 
-  sub->add_flag("--storey-sections", opt->use_storey_sections,
-                "Use only the storey floors and ceilings of the storeys table "
-                "as section planes of the cell complex, instead of every "
-                "horizontal plane (reusex-z1v.3.4). Off by default: it also "
-                "drops split levels and attics the storeys table does not "
-                "describe. No effect before `rux create storeys` has run.");
+  sub->add_flag("--storey-sections,!--no-storey-sections",
+                opt->use_storey_sections,
+                "Use only the horizontal planes inside the building as "
+                "section planes of the cell complex: storey floors and "
+                "ceilings, split levels and an attic ceiling under the roof, "
+                "not planes outside the building's height or the slab faces "
+                "under its lowest floor and over its top ceiling "
+                "(reusex-z1v.3.4, reusex-x8s). On by default; "
+                "--no-storey-sections uses every horizontal plane. No effect "
+                "before `rux create storeys` has run.");
 
   sub->add_flag("!--no-storey-local", opt->storey_local,
                 "Extend every wall through every section instead of giving "
