@@ -79,32 +79,53 @@ struct MeshOptions {
 
   /// World z of every storey floor and ceiling (reusex-z1v.3.4), from the
   /// storeys table through LevelFrame::world_z_at (pipeline::
-  /// mesh_section_heights()). When non-empty, only horizontal planes within
-  /// section_tolerance_m of one of these heights become section planes of
-  /// the cell complex (select_section_planes()): table tops, shelves and the
-  /// slab faces make_pairs invents no longer slice the building. Empty =
-  /// every horizontal plane is a section (legacy).
+  /// mesh_section_heights()). When non-empty, only the horizontal planes
+  /// inside the building become section planes of the cell complex
+  /// (select_section_planes(), reusex-x8s): storey floors and ceilings,
+  /// split levels and an attic ceiling under the roof stay; planes outside
+  /// the building's height and the invented slab faces below its lowest
+  /// floor and above its top ceiling go. Empty = every horizontal plane is
+  /// a section (legacy).
   std::vector<double> section_heights{};
   double section_tolerance_m = 0.15;
 };
 
 /**
- * @brief The horizontal planes that become section planes (reusex-z1v.3.4).
+ * @brief The horizontal planes that become section planes (reusex-z1v.3.4,
+ * reusex-x8s): the ones inside the building.
+ *
+ * The building's height is the span of the storey floors and ceilings and
+ * of every plane z-range in @p z_ranges (walls and roof slopes measured from
+ * their inliers, wall_z_ranges()), so an attic under the roof is inside
+ * although the storeys table ends at the top storey's ceiling. A measured
+ * horizontal (one with inliers) is kept when it lies within @p tolerance_m
+ * of that span: storey floors and ceilings, split levels and the attic
+ * ceiling stay; a plane outside it (NewOffice: tilted planes that
+ * force_orthogonal_planes moved metres away from their own points) goes. A
+ * face make_pairs invented (no inliers) is kept only between the lowest and
+ * highest kept measured planes: the underside of the lowest floor and the
+ * top of the highest ceiling are outside the building, a slab face between
+ * two storeys is not.
  *
  * @param planes Plane coefficients (n . x + d = 0, unit n).
  * @param horizontals Indices into @p planes of the horizontal planes.
  * @param section_heights World z of the storey floors and ceilings.
- * @param tolerance_m A plane within this distance of a height is kept.
- * @return The horizontals within @p tolerance_m of a storey height, in input
- *   order. Returns @p horizontals unchanged when @p section_heights is empty,
- *   or (logged at warn) when fewer than two planes match: a stale storeys
- *   table must not silence the mesh stage.
+ * @param tolerance_m Margin around the building's height.
+ * @param z_ranges World z-range per plane, index-aligned with @p planes
+ *   ({NaN, NaN}: none); may be empty.
+ * @param inliers Inliers per plane, index-aligned with @p planes.
+ * @return The kept horizontals, in input order. Returns @p horizontals
+ *   unchanged when @p section_heights is empty, or (logged at warn) when
+ *   fewer than two planes are kept: a stale storeys table must not silence
+ *   the mesh stage.
  */
 std::vector<size_t>
 select_section_planes(const EigenVectorContainer<double, 4> &planes,
                       const std::vector<size_t> &horizontals,
                       const std::vector<double> &section_heights,
-                      double tolerance_m);
+                      double tolerance_m,
+                      const std::vector<std::array<double, 2>> &z_ranges,
+                      const std::vector<IndicesPtr> &inliers);
 
 /**
  * @brief World z-range of each wall plane, from its inliers (reusex-sba).
@@ -113,9 +134,10 @@ select_section_planes(const EigenVectorContainer<double, 4> &planes,
  * the 2nd to 98th percentile of its inliers' z, so a few stray points do not
  * stretch a wall into the next storey. The two faces of a wall pair (@p
  * pairs, from make_pairs) share the union of their ranges, so a face
- * make_pairs invented (no inliers) takes its partner's. Planes that are not
- * vertical, and walls with no inliers on either face, get {NaN, NaN}: they
- * reach every section.
+ * make_pairs invented (no inliers) takes its partner's. Oblique planes (roof
+ * slopes, reusex-e6z) get their range the same way, shared with their
+ * invented back face. Floors and ceilings, and planes with no inliers on
+ * either face, get {NaN, NaN}: a wall without one reaches every section.
  *
  * @return One range per plane, index-aligned with @p planes.
  */

@@ -17,14 +17,18 @@
 //   - the outer boundary stays watertight (no T-junctions, no degenerate
 //     triangles) where a coarse section meets a finer one;
 //   - a single storey is unchanged, and so is any input without z-ranges;
-//   - select_section_planes() keeps storey floors/ceilings, drops a table
-//     top, and leaves the horizontals alone without (matching) storeys;
+//   - select_section_planes() keeps every horizontal inside the building
+//     (storeys, split levels, an attic under the roof) and drops those
+//     outside it, and the horizontals alone without (matching) storeys;
 //   - wall_z_ranges() measures a wall's height from its inliers and gives an
 //     invented back face its partner's range.
 
 #include <reusex/reconstruction/CellComplex.hpp>
 #include <reusex/reconstruction/Solidifier.hpp>
 #include <reusex/reconstruction/mesh.hpp>
+
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -330,9 +334,11 @@ TEST_CASE("StoreyArrangement_SectionWithoutFaces_TakesNearestWalls",
           "[geometry][cellcomplex][storey_local]") {
   // A storey [0, 2.5], a slab [2.5, 2.75] no wall reaches, and an attic
   // [2.75, 4] with one wall of its own (its roof is oblique). Neither the
-  // slab nor the attic encloses a face alone, so both take the storey's
+  // slab nor the attic encloses a face alone. The slab takes the storey's
   // walls (plus the attic wall), not every wall: the stray wall at x = 4,
-  // whose range reaches no section, cuts nothing.
+  // whose range reaches no section, does not cut it. The attic, thick
+  // enough to be a room, takes every wall while the cell count allows
+  // (reusex-e6z), and the nearest walls when it does not.
   House h;
   auto wall = [&](Eigen::Vector4d p, Range r) {
     h.planes.push_back(p);
@@ -352,13 +358,271 @@ TEST_CASE("StoreyArrangement_SectionWithoutFaces_TakesNearestWalls",
     h.horizontals.push_back(h.planes.size() - 1);
     h.z_ranges.push_back({kNaN, kNaN});
   }
-  auto cc = build(h);
+  auto count = [&h](size_t max_cells) {
+    auto copy = h;
+    auto cc = build(copy, max_cells);
+    auto section = cc->property_map<CellComplex::Vertex, int>("c:section");
+    std::map<int, int> per_section;
+    for (auto c = cc->cells_begin(); c != cc->cells_end(); ++c)
+      ++per_section[section[*c]];
+    return per_section;
+  };
+  // Storey: x = 0, 2, 8 -> 2 faces. Slab: x = 0, 2, 6, 8 -> 3. Attic: every
+  // wall, x = 0, 2, 4, 6, 8 -> 4.
+  CHECK(count(5000) == std::map<int, int>{{0, 2}, {1, 3}, {2, 4}});
+  // 9 cells would exceed a limit of 8: the attic keeps the nearest walls.
+  CHECK(count(8) == std::map<int, int>{{0, 2}, {1, 3}, {2, 3}});
+}
+
+namespace {
+
+// A one-storey 8 x 6 m house [0, 2.5] (split by a wall at x = 4) under a
+// pitched roof (reusex-e6z): the ceiling slab [2.5, 2.75] and an attic
+// [2.75, 4.0] whose only walls of their own are the two gables (y = 0,
+// y = 6). The roof planes rise at 45 degrees from the eaves at x = 0 and
+// x = 8 (z = 2.75) towards the ridge, so at the attic's mid-height
+// (z = 3.375) they stand at x = 0.625 and x = 7.375.
+struct AtticHouse : House {
+  size_t roof_left = 0, roof_right = 0;
+  std::vector<size_t> obliques;
+};
+
+AtticHouse make_attic_house() {
+  AtticHouse h;
+  auto wall = [&](Eigen::Vector4d p, Range r) {
+    h.planes.push_back(p);
+    h.verticals.push_back(h.planes.size() - 1);
+    h.z_ranges.push_back(r);
+  };
+  const Range storey{0.0, 2.5}, gable{0.0, 4.0};
+  wall({1, 0, 0, 0}, storey);
+  wall({1, 0, 0, -8}, storey);
+  wall({1, 0, 0, -4}, storey);
+  wall({0, 1, 0, 0}, gable);
+  wall({0, 1, 0, -6}, gable);
+  const double s = std::sqrt(0.5);
+  // Left roof: z - 2.75 = x, normal pointing down into the attic.
+  h.planes.emplace_back(s, 0, -s, 2.75 * s);
+  h.roof_left = h.planes.size() - 1;
+  h.z_ranges.push_back({2.75, 4.0});
+  // Right roof: z - 2.75 = 8 - x.
+  h.planes.emplace_back(-s, 0, -s, 10.75 * s);
+  h.roof_right = h.planes.size() - 1;
+  h.z_ranges.push_back({2.75, 4.0});
+  h.obliques = {h.roof_left, h.roof_right};
+  for (double z : {0.0, 2.5, 2.75, 4.0}) {
+    h.planes.emplace_back(0, 0, 1, -z);
+    h.horizontals.push_back(h.planes.size() - 1);
+    h.z_ranges.push_back({kNaN, kNaN});
+  }
+  return h;
+}
+
+std::shared_ptr<CellComplex> build_attic(AtticHouse &h, bool with_roof) {
+  return std::make_shared<CellComplex>(
+      h.planes, h.verticals, h.horizontals, h.pairs,
+      std::array<double, 2>{-1.0, -1.0}, std::array<double, 2>{9.0, 7.0},
+      std::nullopt, 5000, h.z_ranges,
+      CellComplex::default_min_section_overlap_m,
+      with_roof ? h.obliques : std::vector<size_t>{});
+}
+
+} // namespace
+
+TEST_CASE("StoreyArrangement_AtticUnderObliqueRoof_TakesRoofLines",
+          "[geometry][cellcomplex][storey_local][attic]") {
+  // The attic encloses no face with its gables alone, so it takes the
+  // storey's walls (x = 0, 4, 8). Those put its outer cells under the eaves,
+  // where the roof leaves no room, and nothing marks where the roof is: the
+  // MIP found no attic it could select on house2 (reusex-e6z). The roof
+  // planes that reach the attic now cut it where they cross its mid-height.
+  auto h = make_attic_house();
+  auto without = build_attic(h, false);
+  auto section0 = without->property_map<CellComplex::Vertex, int>("c:section");
+  std::map<int, int> before;
+  for (auto c = without->cells_begin(); c != without->cells_end(); ++c)
+    ++before[section0[*c]];
+  CHECK(before == std::map<int, int>{{0, 2}, {1, 2}, {2, 2}});
+
+  auto h2 = make_attic_house();
+  auto cc = build_attic(h2, true);
   auto section = cc->property_map<CellComplex::Vertex, int>("c:section");
   std::map<int, int> per_section;
-  for (auto c = cc->cells_begin(); c != cc->cells_end(); ++c)
+  std::vector<double> attic_xs;
+  for (auto c = cc->cells_begin(); c != cc->cells_end(); ++c) {
     ++per_section[section[*c]];
-  // Storey: x = 0, 2, 8 -> 2 faces. Slab and attic: x = 0, 2, 6, 8 -> 3.
-  CHECK(per_section == std::map<int, int>{{0, 2}, {1, 3}, {2, 3}});
+    if (section[*c] == 2)
+      attic_xs.push_back((*cc)[*c].pos.x());
+  }
+  // Storey and slab unchanged (the roof does not reach the slab); the attic
+  // is cut at x = 0.625 and x = 7.375: 0 | 0.625 | 4 | 7.375 | 8.
+  CHECK(per_section == std::map<int, int>{{0, 2}, {1, 2}, {2, 4}});
+
+  // The attic's wall faces on the roof lines carry the roof planes, so face
+  // coverage reads the roof's inliers there.
+  std::set<int> roof_faces;
+  for (auto f = cc->faces_begin(); f != cc->faces_end(); ++f) {
+    const int id = std::get<FaceData>((*cc)[*f].data).plane_id;
+    if (id != static_cast<int>(h2.roof_left) &&
+        id != static_cast<int>(h2.roof_right))
+      continue;
+    roof_faces.insert(id);
+    const double x = (*cc)[*f].pos.x();
+    CHECK((std::abs(x - 0.625) < 1e-6 || std::abs(x - 7.375) < 1e-6));
+    CHECK((*cc)[*f].pos.z() == Approx(3.375));
+  }
+  CHECK(roof_faces.size() == 2);
+
+  // Still watertight with every cell solid.
+  std::shared_ptr<const CellComplex> ccc = cc;
+  Solidifier solidifier(ccc);
+  auto [V, F] = solidifier.toMesh([](CellComplex::Vertex) { return true; });
+  for (const auto &[edge, n] : edge_uses(F))
+    CHECK(n == 2);
+}
+
+namespace {
+
+// A scanned one-storey house with a pitched-roof attic, for a full solve:
+// planes with their invented back faces (wall pairs), inliers, z-ranges, and
+// a labelled cloud (storey = room 1, attic = room 2). The same geometry as
+// make_attic_house(), without the interior wall, plus a flat collar ceiling
+// at z = 4 between the roof slopes (x = 1.25 .. 6.75).
+struct ScannedAttic {
+  PlaneVec planes;
+  std::vector<size_t> verticals, horizontals, obliques;
+  std::vector<std::pair<size_t, size_t>> pairs;
+  std::vector<Range> z_ranges;
+  std::vector<reusex::IndicesPtr> inliers;
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud{
+      new pcl::PointCloud<pcl::PointXYZRGB>};
+  pcl::PointCloud<pcl::Normal>::Ptr normals{new pcl::PointCloud<pcl::Normal>};
+  pcl::PointCloud<pcl::Label>::Ptr labels{new pcl::PointCloud<pcl::Label>};
+
+  size_t add_plane(Eigen::Vector4d p, Range r, std::vector<size_t> &kind) {
+    planes.push_back(p);
+    z_ranges.push_back(r);
+    inliers.push_back(std::make_shared<reusex::Indices>());
+    kind.push_back(planes.size() - 1);
+    return planes.size() - 1;
+  }
+  // A face and its invented back face 0.25 m behind it.
+  void add_pair(Eigen::Vector4d p, Range r, std::vector<size_t> &kind) {
+    const size_t a = add_plane(p, r, kind);
+    const size_t b =
+        add_plane(Eigen::Vector4d(-p[0], -p[1], -p[2], -p[3] - 0.25), r, kind);
+    pairs.emplace_back(a, b);
+  }
+  void add_point(size_t plane, const Eigen::Vector3d &x, std::uint32_t room) {
+    pcl::PointXYZRGB q;
+    q.x = static_cast<float>(x.x());
+    q.y = static_cast<float>(x.y());
+    q.z = static_cast<float>(x.z());
+    cloud->push_back(q);
+    const auto &n = planes[plane];
+    normals->push_back(pcl::Normal(static_cast<float>(n[0]),
+                                   static_cast<float>(n[1]),
+                                   static_cast<float>(n[2])));
+    pcl::Label l;
+    l.label = room;
+    labels->push_back(l);
+    inliers[plane]->push_back(static_cast<int>(cloud->size() - 1));
+  }
+};
+
+ScannedAttic make_scanned_attic() {
+  ScannedAttic h;
+  const double s = std::sqrt(0.5);
+  const Range storey{0.0, 2.5}, gable{0.0, 4.0}, roof{2.75, 4.0};
+  // Inner faces, normals into the building.
+  h.add_pair({1, 0, 0, 0}, storey, h.verticals);        // 0: x = 0
+  h.add_pair({-1, 0, 0, 8}, storey, h.verticals);       // 2: x = 8
+  h.add_pair({0, 1, 0, 0}, gable, h.verticals);         // 4: y = 0
+  h.add_pair({0, -1, 0, 6}, gable, h.verticals);        // 6: y = 6
+  h.add_pair({s, 0, -s, 2.75 * s}, roof, h.obliques);   // 8: left roof
+  h.add_pair({-s, 0, -s, 10.75 * s}, roof, h.obliques); // 10: right roof
+  const Range none{kNaN, kNaN};
+  h.add_plane({0, 0, 1, 0}, none, h.horizontals);     // 12: floor
+  h.add_plane({0, 0, -1, 2.5}, none, h.horizontals);  // 13: storey ceiling
+  h.add_plane({0, 0, 1, -2.75}, none, h.horizontals); // 14: attic floor
+  h.add_plane({0, 0, -1, 4.0}, none, h.horizontals);  // 15: collar ceiling
+
+  const double st = 0.1;
+  for (double x = 0; x <= 8 + 1e-9; x += st)
+    for (double y = 0; y <= 6 + 1e-9; y += st) {
+      h.add_point(12, {x, y, 0.0}, 1);
+      h.add_point(13, {x, y, 2.5}, 1);
+      h.add_point(14, {x, y, 2.75}, 2);
+      if (x >= 1.25 && x <= 6.75)
+        h.add_point(15, {x, y, 4.0}, 2);
+      if (x <= 1.25)
+        h.add_point(8, {x, y, x + 2.75}, 2);
+      if (x >= 6.75)
+        h.add_point(10, {x, y, 10.75 - x}, 2);
+    }
+  for (double z = 0; z <= 2.5 + 1e-9; z += st) {
+    for (double y = 0; y <= 6 + 1e-9; y += st) {
+      h.add_point(0, {0.0, y, z}, 1);
+      h.add_point(2, {8.0, y, z}, 1);
+    }
+    for (double x = 0; x <= 8 + 1e-9; x += st) {
+      h.add_point(4, {x, 0.0, z}, 1);
+      h.add_point(6, {x, 6.0, z}, 1);
+    }
+  }
+  // The gables above the attic floor, inside the roof profile.
+  for (double z = 2.75; z <= 4.0 + 1e-9; z += st)
+    for (double x = z - 2.75; x <= 10.75 - z + 1e-9; x += st) {
+      h.add_point(4, {x, 0.0, z}, 2);
+      h.add_point(6, {x, 6.0, z}, 2);
+    }
+  return h;
+}
+
+} // namespace
+
+TEST_CASE("StoreyArrangement_AtticUnderObliqueRoof_IsSelectedUnderTheRoof",
+          "[geometry][cellcomplex][storey_local][attic][solidifier]") {
+  // The attic is the scan's second room. Solved per section, it is selected
+  // and ends at the roof lines (x = 0.625 / 7.375 at its mid-height), not
+  // at the storey's outer walls under the eaves (reusex-e6z).
+  auto h = make_scanned_attic();
+  auto cc = std::make_shared<CellComplex>(
+      h.planes, h.verticals, h.horizontals, h.pairs,
+      std::array<double, 2>{-1.0, -1.0}, std::array<double, 2>{9.0, 7.0},
+      std::nullopt, 5000, h.z_ranges,
+      CellComplex::default_min_section_overlap_m, h.obliques);
+  REQUIRE(cc->n_sections == 3);
+  cc->compute_room_probabilities<pcl::PointXYZRGB, pcl::Normal, pcl::Label>(
+      h.cloud, h.normals, h.labels);
+  cc->compute_face_coverage<pcl::PointXYZRGB>(h.cloud, h.planes, h.inliers);
+
+  SolidifierOptions opt;
+  opt.sectioned_threshold = 0; // per section, like a multi-storey scan
+  opt.solver = SolverChoice::highs;
+  Solidifier solidifier(cc, opt);
+  const auto result = solidifier.solve();
+  REQUIRE(result.has_value());
+  const auto &rooms = result->first;
+
+  auto section = cc->property_map<CellComplex::Vertex, int>("c:section");
+  auto volume = cc->property_map<CellComplex::Vertex, double>("c:volume");
+  double attic = 0.0, storey = 0.0;
+  for (auto c = cc->cells_begin(); c != cc->cells_end(); ++c) {
+    if (rooms.at(*c) <= 0)
+      continue;
+    const double x = (*cc)[*c].pos.x();
+    if (section[*c] == 2) {
+      attic += volume[*c];
+      CHECK(x > 0.625);
+      CHECK(x < 7.375);
+    } else if (section[*c] == 0) {
+      storey += volume[*c];
+    }
+  }
+  CHECK(storey == Approx(8.0 * 6.0 * 2.5));
+  // Between the roof lines at mid-height: 6.75 x 6 x 1.25 m.
+  CHECK(attic == Approx(6.75 * 6.0 * 1.25));
 }
 
 TEST_CASE("StoreyArrangement_ProjectedCellsGuard_UsesStoreyLocalCount",
@@ -371,27 +635,59 @@ TEST_CASE("StoreyArrangement_ProjectedCellsGuard_UsesStoreyLocalCount",
   CHECK_NOTHROW(build(house, 10));
 }
 
-TEST_CASE("SelectSectionPlanes_KeepsStoreyLevels_DropsTableTop",
+TEST_CASE("SelectSectionPlanes_KeepsSplitLevelAndAttic_DropsOutsideBuilding",
           "[geometry][mesh][storey_sections]") {
+  // Two storeys [0, 2.5] and [2.75, 5.25] from the storeys table, a split
+  // level at 1.2 m (with its invented underside at 0.95), an attic ceiling
+  // at 6.5 m under a roof that reaches 6.4 m, a plane at 9 m and one at
+  // -3 m that nothing of the building reaches (on NewOffice: tilted planes
+  // force_orthogonal_planes moved out of the building), and the invented
+  // faces of the outermost floor (-0.25) and attic ceiling (6.75). Only the
+  // horizontals outside the building go (reusex-x8s).
   reusex::EigenVectorContainer<double, 4> planes;
-  for (double z : {0.0, 0.75, 2.6, 2.85, 5.2})
+  std::vector<reusex::IndicesPtr> inliers;
+  std::vector<Range> z_ranges;
+  std::vector<size_t> horizontals;
+  auto horizontal = [&](double z, bool measured) {
     planes.emplace_back(0, 0, 1, -z);
-  planes.emplace_back(0, 0, -1, 2.6); // ceiling face, normal down
-  const std::vector<size_t> horizontals{0, 1, 2, 3, 4, 5};
+    inliers.push_back(std::make_shared<reusex::Indices>(
+        measured ? reusex::Indices{0} : reusex::Indices{}));
+    z_ranges.push_back({kNaN, kNaN});
+    horizontals.push_back(planes.size() - 1);
+  };
+  for (double z : {0.0, 2.5, 2.75, 5.25, 1.2, 6.5, 9.0, -3.0})
+    horizontal(z, true); // 0..7
+  for (double z : {-0.25, 6.75, 0.95})
+    horizontal(z, false);          // 8..10
+  planes.emplace_back(1, 0, 0, 0); // a wall over both storeys
+  inliers.push_back(std::make_shared<reusex::Indices>(reusex::Indices{0}));
+  z_ranges.push_back({0.0, 5.25});
+  const double s = std::sqrt(0.5);
+  planes.emplace_back(s, 0, -s, 0); // the roof, up to 6.4 m
+  inliers.push_back(std::make_shared<reusex::Indices>(reusex::Indices{0}));
+  z_ranges.push_back({5.25, 6.4});
+  const std::vector<double> heights{0.05, 2.45, 2.8, 5.2};
 
-  SECTION("storey heights pick floors and ceilings within tolerance") {
-    const auto got = select_section_planes(planes, horizontals,
-                                           {0.05, 2.55, 2.9, 5.25}, 0.15);
-    CHECK(got == std::vector<size_t>{0, 2, 3, 4, 5});
+  SECTION("split level, attic and inner invented faces stay") {
+    const auto got = select_section_planes(planes, horizontals, heights, 0.15,
+                                           z_ranges, inliers);
+    CHECK(got == std::vector<size_t>{0, 1, 2, 3, 4, 5, 10});
+  }
+  SECTION("without the roof's range the attic ceiling is outside too") {
+    auto no_roof = z_ranges;
+    no_roof.back() = {kNaN, kNaN};
+    const auto got = select_section_planes(planes, horizontals, heights, 0.15,
+                                           no_roof, inliers);
+    CHECK(got == std::vector<size_t>{0, 1, 2, 3, 4, 10});
   }
   SECTION("no storey heights: every horizontal stays") {
-    CHECK(select_section_planes(planes, horizontals, {}, 0.15) == horizontals);
+    CHECK(select_section_planes(planes, horizontals, {}, 0.15, z_ranges,
+                                inliers) == horizontals);
   }
-  SECTION("heights matching fewer than two planes: every horizontal stays") {
-    CHECK(select_section_planes(planes, horizontals, {10.0, 20.0}, 0.15) ==
-          horizontals);
-    CHECK(select_section_planes(planes, horizontals, {0.75}, 0.15) ==
-          horizontals);
+  SECTION("fewer than two planes inside: every horizontal stays") {
+    std::vector<size_t> two{6, 7}; // 9 m and -3 m only
+    CHECK(select_section_planes(planes, two, heights, 0.15, z_ranges,
+                                inliers) == two);
   }
 }
 

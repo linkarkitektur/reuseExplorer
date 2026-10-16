@@ -355,12 +355,14 @@ const std::vector<ParameterDescriptor> &mesh_parameters() {
                 "called furniture or clutter (reusex-z1v.4.3). Off (the "
                 "default) uses every plane.",
                 pipeline::MeshStageOptions{}.use_plane_classes),
-        boolean("storey_sections", "Storey sections only",
-                "When `create storeys` has run, only the storey floors and "
-                "ceilings become section planes of the cell complex; table "
-                "tops and invented slab faces no longer slice the building "
-                "(reusex-z1v.3.4). Off by default: it also drops split "
-                "levels and attics the storeys table does not describe.",
+        boolean("storey_sections", "Sections inside the building",
+                "When `create storeys` has run, only the horizontal planes "
+                "inside the building become section planes of the cell "
+                "complex: storey floors and ceilings, split levels and an "
+                "attic ceiling under the roof stay; planes outside the "
+                "building's height and the slab faces under its lowest floor "
+                "and over its top ceiling go (reusex-z1v.3.4, reusex-x8s). "
+                "Off uses every horizontal plane.",
                 pipeline::MeshStageOptions{}.use_storey_sections),
         boolean("storey_local", "Storey-local walls",
                 "Give each section of the cell complex only the walls whose "
