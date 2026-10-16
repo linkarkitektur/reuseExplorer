@@ -1005,6 +1005,18 @@ StageResult run_walls(ProjectDB &db, const json &params, int log_id) {
     }
   }
 
+  // The capture path: evidence that a wide gap between collinear walls is
+  // a door (reusex-3e9).
+  std::vector<Eigen::Vector3d> path;
+  for (const int id : db.sensor_frame_ids()) {
+    if (!db.has_sensor_frame_pose(id))
+      continue;
+    const Eigen::Affine3d world =
+        geometry::to_affine(db.sensor_frame_pose(id)) *
+        geometry::to_affine(db.sensor_frame_intrinsics(id).local_transform);
+    path.push_back(world.translation());
+  }
+
   std::vector<core::WallRecord> walls;
   std::vector<core::WallJoinRecord> joins;
   int families = 0, faces = 0, pairs = 0, low_seen = 0;
@@ -1012,16 +1024,16 @@ StageResult run_walls(ProjectDB &db, const json &params, int log_id) {
     geometry::WallsResult r;
     try {
       r = geometry::detect_walls(*cloud, *planes, *normals, classes, st,
-                                 o.walls);
+                                 o.walls, path);
     } catch (const std::invalid_argument &e) {
       return StageResult::invalid(e.what());
     }
     auto [w, j] = geometry::wall_records(r.graph, st);
     info("walls: storey {}: {} axis famil{}, {} face(s), {} pair(s) ({} "
-         "rejected), {} wall(s), {} join(s)",
+         "rejected), {} wall(s), {} join(s), {} wide doorway(s) bridged",
          st.idx, r.families.size(), r.families.size() == 1 ? "y" : "ies",
          r.faces.size(), r.pairing.pairs.size(), r.pairing.rejected, w.size(),
-         j.size());
+         j.size(), r.graph.door_bridges);
     families += static_cast<int>(r.families.size());
     faces += static_cast<int>(r.faces.size());
     pairs += static_cast<int>(r.pairing.pairs.size());

@@ -1121,15 +1121,18 @@ std::vector<WallSegment> measure_walls(const std::vector<WallFace> &faces,
                                    opt)
                  ? 1
                  : -1;
+    // The axis is the seen face (reusex-v8p): the thickness is unknown, and
+    // the reference plans draw a one-sided wall on its seen face too. The
+    // assumed body (default_thickness_m) lies behind it, away from the side
+    // it was seen from; body() and the external test use that.
+    w.axis_offset = o;
     if (side > 0) { // seen from +d: the wall's body lies below the face
       w.face_hi = o;
-      w.axis_offset = o - 0.5 * t;
       w.points_hi = samples_in(f, sp.s0, sp.s1);
       w.face_hi_index = sp.face;
       w.is_external = external(fam, o - t, o, w.s0, w.s1);
     } else {
       w.face_lo = o;
-      w.axis_offset = o + 0.5 * t;
       w.points_lo = samples_in(f, sp.s0, sp.s1);
       w.face_lo_index = sp.face;
       w.is_external = external(fam, o, o + t, w.s0, w.s1);
@@ -1145,23 +1148,36 @@ std::vector<WallSegment> measure_walls(const std::vector<WallFace> &faces,
 
 namespace {
 
-/// The face offsets a wall occupies: [lo, hi] (a one-sided wall's unseen
-/// face sits a default thickness behind the seen one).
+/// The face offsets a wall occupies: [lo, hi]. A one-sided wall's unseen
+/// face sits its (default) thickness behind the seen one; a wall with no
+/// face (a crossed pair) is its axis +- half its thickness.
 std::pair<double, double> body(const WallSegment &w) {
-  const double lo =
-      std::isfinite(w.face_lo) ? w.face_lo : w.axis_offset - 0.5 * w.thickness;
-  const double hi =
-      std::isfinite(w.face_hi) ? w.face_hi : w.axis_offset + 0.5 * w.thickness;
-  return {lo, hi};
+  const bool lo_seen = std::isfinite(w.face_lo);
+  const bool hi_seen = std::isfinite(w.face_hi);
+  if (lo_seen && hi_seen)
+    return {w.face_lo, w.face_hi};
+  if (hi_seen)
+    return {w.face_hi - w.thickness, w.face_hi};
+  if (lo_seen)
+    return {w.face_lo, w.face_lo + w.thickness};
+  return {w.axis_offset - 0.5 * w.thickness, w.axis_offset + 0.5 * w.thickness};
 }
 
+/// The middle of a wall's body: its centre line, whatever its axis is.
+double body_centre(const WallSegment &w) {
+  const auto [lo, hi] = body(w);
+  return 0.5 * (lo + hi);
+}
+
+/// The axis from the faces: the middle of two, the one seen face of a
+/// one-sided wall (reusex-v8p); unchanged with none.
 void set_axis_from_faces(WallSegment &w) {
   if (std::isfinite(w.face_lo) && std::isfinite(w.face_hi))
     w.axis_offset = 0.5 * (w.face_lo + w.face_hi);
   else if (std::isfinite(w.face_hi))
-    w.axis_offset = w.face_hi - 0.5 * w.thickness;
+    w.axis_offset = w.face_hi;
   else if (std::isfinite(w.face_lo))
-    w.axis_offset = w.face_lo + 0.5 * w.thickness;
+    w.axis_offset = w.face_lo;
 }
 
 /// Median offset of the family's wall evidence seen from @p side within
@@ -1180,7 +1196,9 @@ double median_offset(const EvidenceIndex &ev, size_t fam, int side, double o0,
 /// a wide pass, then a narrow one around the result.
 void snap(WallSegment &w, const EvidenceIndex &ev, size_t fam,
           const WallOptions &opt) {
-  const double axis = w.axis_offset;
+  // A face never snaps past the middle of the body (a one-sided wall's
+  // axis is its face, so the axis cannot be the bound).
+  const double axis = body_centre(w);
   for (const double r : {opt.snap_wide_m, opt.snap_narrow_m}) {
     if (std::isfinite(w.face_lo)) {
       const double m = median_offset(ev, fam, -1, w.face_lo - r,
@@ -1204,13 +1222,14 @@ void snap(WallSegment &w, const EvidenceIndex &ev, size_t fam,
 }
 
 /// Are two walls of one family on the same line? Compare a face both saw,
-/// else the axes.
+/// else the middles of their bodies (one wall seen from opposite sides in
+/// two stretches).
 bool collinear(const WallSegment &a, const WallSegment &b, double tol) {
   if (std::isfinite(a.face_lo) && std::isfinite(b.face_lo))
     return std::abs(a.face_lo - b.face_lo) <= tol;
   if (std::isfinite(a.face_hi) && std::isfinite(b.face_hi))
     return std::abs(a.face_hi - b.face_hi) <= tol;
-  return std::abs(a.axis_offset - b.axis_offset) <= tol;
+  return std::abs(body_centre(a) - body_centre(b)) <= tol;
 }
 
 /// The one face a one-sided wall was seen on: +1 its face_hi, -1 its
@@ -1249,6 +1268,127 @@ void merge_recess(WallSegment &a, const WallSegment &b) {
   a = out;
 }
 
+/// Are @p a and @p b one wall seen twice (reusex-1wp)? Parallel and
+/// overlapping along the axis by duplicate_min_overlap of the shorter (or
+/// by duplicate_min_overlap_m), and
+///  - both one-sided, seen from the same side, faces within
+///    duplicate_max_offset_m: the nearer face would hide the farther one
+///    over the shared stretch, so drift put one face in two places;
+///  - both measured with overlapping bodies (a crossed pair's body is a
+///    guess, so it never decides);
+///  - one of each, the one-sided face within bridge_offset_m of the
+///    two-sided wall's face on its side (the same face, seen twice).
+/// A one-sided face near but not on a two-sided wall stays apart: the
+/// two-sided wall's pairing may be wrong, and merging would move a
+/// well-placed face onto it. So do two two-sided walls with a gap between
+/// their bodies (a duct) and faces looking at each other (a corridor).
+bool is_duplicate(const WallSegment &a, const WallSegment &b,
+                  const WallOptions &opt) {
+  if (a.family != b.family)
+    return false;
+  const double shorter = std::min(a.s1 - a.s0, b.s1 - b.s0);
+  const double overlap = std::min(a.s1, b.s1) - std::max(a.s0, b.s0);
+  if (!(shorter > 0.0) || !(overlap > 0.0) ||
+      (overlap < opt.duplicate_min_overlap * shorter &&
+       overlap < opt.duplicate_min_overlap_m))
+    return false;
+  const int sa = seen_side(a), sb = seen_side(b);
+  auto face = [](const WallSegment &w, int side) {
+    return side > 0 ? w.face_hi : w.face_lo;
+  };
+  if (sa != 0 && sb != 0)
+    return sa == sb &&
+           std::abs(face(a, sa) - face(b, sb)) <= opt.duplicate_max_offset_m;
+  if (sa == 0 && sb == 0) {
+    if (a.assumed || b.assumed)
+      return false;
+    const auto [alo, ahi] = body(a);
+    const auto [blo, bhi] = body(b);
+    return std::min(ahi, bhi) > std::max(alo, blo);
+  }
+  const WallSegment &one = sa != 0 ? a : b, &two = sa != 0 ? b : a;
+  const int side = sa != 0 ? sa : sb;
+  const double f = face(one, side);
+  const auto [lo, hi] = body(two);
+  return std::abs(f - (side > 0 ? hi : lo)) <= opt.bridge_offset_m;
+}
+
+/// Does @p a dominate its duplicate @p b: measured over assumed, then more
+/// points, then longer?
+bool dominates(const WallSegment &a, const WallSegment &b) {
+  auto rank = [](const WallSegment &w) {
+    return std::make_tuple(!w.assumed, w.points_lo + w.points_hi, w.s1 - w.s0);
+  };
+  return rank(a) >= rank(b);
+}
+
+/// Merge duplicate @p minor into @p dom (reusex-1wp): the dominant wall
+/// keeps its faces over the union of the two extents -- a straight wall
+/// scanned twice with drift, not two walls -- and takes the minor's points
+/// when both were seen from the same side(s).
+void merge_duplicate(WallSegment &dom, const WallSegment &minor) {
+  dom.s0 = std::min(dom.s0, minor.s0);
+  dom.s1 = std::max(dom.s1, minor.s1);
+  if (std::isfinite(dom.face_lo) == std::isfinite(minor.face_lo) &&
+      std::isfinite(dom.face_hi) == std::isfinite(minor.face_hi)) {
+    dom.points_lo += minor.points_lo;
+    dom.points_hi += minor.points_hi;
+  }
+}
+
+/// Is the gap between collinear walls @p a and @p b an opening (reusex-3e9)?
+/// The face line they share (the face both saw, else the middle of their
+/// bodies) is seen over the gap above lintel_min_z_m in lintel_min_share
+/// of its columns -- a lintel over a door -- or the capture path crosses
+/// that line in the gap.
+bool gap_is_opening(const WallSegment &a, const WallSegment &b,
+                    const EvidenceIndex &ev, size_t fam, const WallPoints &wp,
+                    const WallOptions &opt) {
+  const double g0 = std::min(a.s1, b.s1), g1 = std::max(a.s0, b.s0);
+  if (!(g1 > g0))
+    return false;
+  double f = 0.5 * (body_centre(a) + body_centre(b));
+  int side = 0;
+  if (std::isfinite(a.face_hi) && std::isfinite(b.face_hi)) {
+    f = 0.5 * (a.face_hi + b.face_hi);
+    side = 1;
+  } else if (std::isfinite(a.face_lo) && std::isfinite(b.face_lo)) {
+    f = 0.5 * (a.face_lo + b.face_lo);
+    side = -1;
+  }
+  // Lintel: wall evidence on the face line over the gap, above the door.
+  const int c0 = cell_index(g0, opt.cell_m), c1 = cell_index(g1, opt.cell_m);
+  std::set<int> cols;
+  const double band = opt.snap_wide_m;
+  const auto [lo, hi] = offset_range(ev.wall[fam], f - band, f + band);
+  for (auto q = lo; q != hi; ++q)
+    if ((side == 0 || q->side == 0 || q->side == side) && q->s > g0 &&
+        q->s < g1 && q->z >= wp.z_floor + opt.lintel_min_z_m &&
+        q->z <= wp.z_ceiling)
+      cols.insert(cell_index(q->s, opt.cell_m));
+  const double ncols = std::max(1, c1 - c0 + 1);
+  if (static_cast<double>(cols.size()) >= opt.lintel_min_share * ncols)
+    return true;
+  // The capture path walking through the gap.
+  const Eigen::Vector2d t = tangent(a.d);
+  for (size_t k = 0; k + 1 < wp.trajectory.size(); ++k) {
+    const Eigen::Vector3d &p = wp.trajectory[k], &q = wp.trajectory[k + 1];
+    if (!p.allFinite() || !q.allFinite())
+      continue;
+    if ((q.head<2>() - p.head<2>()).norm() > opt.crossing_max_step_m)
+      continue;
+    const double op = p.head<2>().dot(a.d) - f, oq = q.head<2>().dot(a.d) - f;
+    if (op * oq > 0.0 || op == oq)
+      continue;
+    const double u = op / (op - oq);
+    const double sc = (1.0 - u) * p.head<2>().dot(t) + u * q.head<2>().dot(t);
+    const double zc = (1.0 - u) * p.z() + u * q.z();
+    if (sc >= g0 && sc <= g1 && zc >= wp.z_floor && zc <= wp.z_ceiling + 0.5)
+      return true;
+  }
+  return false;
+}
+
 /// Merge @p b into @p a (collinear, close along the axis).
 void merge_into(WallSegment &a, const WallSegment &b) {
   const double la = a.s1 - a.s0, lb = b.s1 - b.s0;
@@ -1284,11 +1424,10 @@ void merge_into(WallSegment &a, const WallSegment &b) {
   a.s1 = std::max(a.s1, b.s1);
   a.points_lo += b.points_lo;
   a.points_hi += b.points_hi;
-  if (a.assumed) {
-    a.axis_offset = wa * a.axis_offset + wb * b.axis_offset;
-  } else {
+  if (std::isfinite(a.face_lo) || std::isfinite(a.face_hi))
     set_axis_from_faces(a);
-  }
+  else // crossed pairs: no face, the axis is all there is
+    a.axis_offset = wa * a.axis_offset + wb * b.axis_offset;
 }
 
 } // namespace
@@ -1317,7 +1456,24 @@ WallGraph join_walls(std::vector<WallSegment> walls,
     snap(w, ev, family_pos(w.family), opt);
 
   // 3. Bridge collinear gaps: merge, or join end to end when the measured
-  //    thicknesses disagree. Bounded: every merge removes a wall.
+  //    thicknesses disagree; and merge duplicates -- one wall seen twice
+  //    (drift, a split face) -- into their dominant copy (reusex-1wp). Both
+  //    in one loop: a facade broken by windows only overlaps its drifted
+  //    copy once its pieces are bridged, so duplicates are merged only when
+  //    nothing is left to bridge (and bridging resumes after). Bounded: every
+  //    merge removes a wall.
+  auto merge_duplicates = [&] {
+    for (size_t i = 0; i < walls.size(); ++i)
+      for (size_t j = i + 1; j < walls.size(); ++j)
+        if (is_duplicate(walls[i], walls[j], opt)) {
+          const bool keep_i = dominates(walls[i], walls[j]);
+          const size_t d = keep_i ? i : j, m = keep_i ? j : i;
+          merge_duplicate(walls[d], walls[m]);
+          walls.erase(walls.begin() + static_cast<std::ptrdiff_t>(m));
+          return true;
+        }
+    return false;
+  };
   for (bool merged = true; merged;) {
     merged = false;
     std::stable_sort(walls.begin(), walls.end(),
@@ -1332,8 +1488,21 @@ WallGraph join_walls(std::vector<WallSegment> walls,
         if (a.family != b.family)
           continue;
         const double gap = std::max(a.s0, b.s0) - std::min(a.s1, b.s1);
-        if (gap > opt.bridge_gap_m)
+        if (gap > opt.bridge_gap_m) {
+          // A wider gap only over an opening, between collinear walls whose
+          // thicknesses agree (reusex-3e9).
+          if (gap > opt.door_bridge_gap_m ||
+              !collinear(a, b, opt.bridge_offset_m) ||
+              (!a.assumed && !b.assumed &&
+               std::abs(a.thickness - b.thickness) > opt.bridge_thickness_m) ||
+              !gap_is_opening(a, b, ev, family_pos(a.family), wp, opt))
+            continue;
+          merge_into(a, b);
+          walls.erase(walls.begin() + static_cast<std::ptrdiff_t>(j));
+          merged = true;
+          ++g.door_bridges;
           continue;
+        }
         if (is_recess(a, b, opt)) {
           merge_recess(a, b);
           walls.erase(walls.begin() + static_cast<std::ptrdiff_t>(j));
@@ -1349,6 +1518,8 @@ WallGraph join_walls(std::vector<WallSegment> walls,
         walls.erase(walls.begin() + static_cast<std::ptrdiff_t>(j));
         merged = true;
       }
+    if (!merged)
+      merged = merge_duplicates();
   }
   // Collinear walls of different measured thickness meet in the gap middle.
   std::vector<std::array<bool, 2>> end_used(walls.size(), {false, false});
@@ -1520,7 +1691,8 @@ WallsResult
 detect_walls(const Cloud &cloud, const CloudL &planes,
              const CloudN &plane_normals,
              const std::vector<core::PlaneClassRecord> &plane_classes,
-             const core::StoreyRecord &storey, const WallOptions &opt) {
+             const core::StoreyRecord &storey, const WallOptions &opt,
+             const std::vector<Eigen::Vector3d> &camera_path) {
   WallsResult r;
   r.families = axis_families(plane_classes, plane_normals, storey, opt);
   if (r.families.empty()) {
@@ -1529,8 +1701,12 @@ detect_walls(const Cloud &cloud, const CloudL &planes,
          storey.idx, plane_classes.size());
     return r;
   }
-  const WallPoints wp =
+  WallPoints wp =
       wall_points(cloud, planes, plane_normals, plane_classes, storey, opt);
+  const Eigen::Affine3d T = to_affine(storey.level_transform);
+  wp.trajectory.reserve(camera_path.size());
+  for (const auto &c : camera_path)
+    wp.trajectory.push_back(T * c);
   r.faces = wall_faces(wp, r.families, opt);
   r.pairing = pair_faces(r.faces, wp, r.families, opt);
   r.graph = join_walls(measure_walls(r.faces, r.pairing, wp, r.families, opt),
@@ -1564,7 +1740,9 @@ wall_records(const WallGraph &graph, const core::StoreyRecord &storey) {
     w.y1 = b.y();
     w.z_base = storey.z_floor;
     w.height = storey.z_ceiling - storey.z_floor;
-    w.thickness = g.thickness;
+    // One-sided: the axis is the seen face and the thickness unknown
+    // (reusex-v8p); the default thickness was only the body the graph used.
+    w.thickness = seen_side(g) != 0 ? -1.0 : g.thickness;
     w.thickness_ci_lo = g.assumed ? -1.0 : g.thickness_ci_lo;
     w.thickness_ci_hi = g.assumed ? -1.0 : g.thickness_ci_hi;
     w.lean_deg = g.lean_deg;
