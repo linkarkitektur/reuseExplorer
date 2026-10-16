@@ -82,6 +82,20 @@ void check_sibling_cloud_sizes(const ProjectDB &db,
 void check_unstamped_semantic_clouds(const ProjectDB &db,
                                      std::vector<ValidationIssue> &out);
 
+/// The stored `cloud` was reconstructed from sensor-frame poses the project no
+/// longer has — most commonly because `rux optimize`/`rux register` ran after
+/// `rux create clouds` (reusex-rcv.1.15). Every geometry stage downstream of
+/// `cloud` (planes, rooms, storeys, mesh, ...) is then built from a pose set
+/// that no longer matches `sensor_frames`, silently. Reported as a warning:
+/// the cloud is still usable, just possibly stale.
+///
+/// A cloud with no stamped fingerprint (legacy, predates this check) is NOT
+/// reported here — core::warn_if_cloud_poses_stale()
+/// (core/pose_fingerprint.hpp) logs an info-level note for that case instead,
+/// so an older project does not get a warning storm it cannot fix.
+void check_stale_cloud_poses(const ProjectDB &db,
+                             std::vector<ValidationIssue> &out);
+
 /// Run every check and aggregate the findings.
 ValidationReport validate_project(const ProjectDB &db);
 
