@@ -592,9 +592,12 @@ void PipelineWorkspace::rebuild_form() {
       break;
     }
     case pl::ParameterType::string: {
-      if (d.key == "solver") {
+      if (d.key == "solver" || d.key == "method") {
         auto *c = new QComboBox;
-        c->addItems({"auto", "highs", "cuopt"});
+        if (d.key == "solver")
+          c->addItems({"auto", "highs", "cuopt"});
+        else
+          c->addItems({"leiden", "band"});
         c->setCurrentText(qs(std::get<std::string>(d.default_value)));
         connect(c, &QComboBox::currentTextChanged, this,
                 [this] { refresh_command(); });

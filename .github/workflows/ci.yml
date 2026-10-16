@@ -20,6 +20,15 @@
 # The local equivalents of this workflow are:
 #   scripts/check.sh                          (fast incremental build + ctest)
 #   nix build .#checks.x86_64-linux.tests     (hermetic build + ctest)
+#   scripts/ci-local.sh                       (the same, then push the pass
+#                                              stamp to Cachix for this job)
+#
+# CI is meant to *confirm*, not to build (reusex-37v). checks.tests' output
+# is a small pass stamp (flake.nix). Run scripts/ci-local.sh on the commit
+# you push and it lands in reusex.cachix.org; this job then evaluates the
+# same derivation, substitutes the stamp and compiles nothing. Only when no
+# one pushed a stamp for this exact derivation does it fall back to the full
+# hermetic build (~25-45 min on a 4-vCPU runner).
 
 name: CI
 
@@ -54,9 +63,10 @@ jobs:
     # The environment carries no protection rules and no branch policy, so
     # this neither gates nor delays the run.
     environment: CI
-    # Warm (dependency closure already in Cachix) this is dominated by the
-    # ReUseX compile itself on a 4-vCPU runner. The ceiling is generous so a
-    # cold run — one where an overlay bump invalidated a big dependency — can
+    # A substituted run takes a couple of minutes. A full build, warm
+    # (dependency closure already in Cachix), is dominated by the ReUseX
+    # compile itself on a 4-vCPU runner. The ceiling is generous so a cold
+    # run — one where an overlay bump invalidated a big dependency — can
     # still finish and repopulate the cache rather than being killed halfway.
     timeout-minutes: 120
     steps:
@@ -68,6 +78,14 @@ jobs:
       # is what will show it.
       - uses: actions/checkout@v4
         with:
+          # On a pull request, test the branch head, not GitHub's synthetic
+          # refs/pull/N/merge commit: the head is what scripts/ci-local.sh
+          # built locally, so only its derivation can be a cache hit. The
+          # source is lib.fileset-narrowed (default.nix), so the merge commit
+          # gives the same derivation anyway whenever main has not touched a
+          # build-relevant file since the branch point; when it has, the merge
+          # is tested on main after merging (push event below).
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           # tests/fixtures/** binaries (.pcd/.db/.e57/.rux) are LFS-tracked and
           # ctest reads them, so pointer files would fail the suite.
           lfs: true
@@ -81,27 +99,50 @@ jobs:
         with:
           name: reusex
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          # Read from the cache everywhere; write only from main.
-          #
-          # Two reasons this is not just "push when the token exists":
-          #  - the cache is on the 5 GB free tier, and `src = ./.` in
-          #    default.nix is unfiltered, so *every* PR produces a distinct
-          #    ReUseX-tests output. Pushing all of them would exhaust the
-          #    quota in a few dozen PRs for no reuse benefit.
-          #  - fork PRs get no secrets at all, so pushing could never work
-          #    there anyway. Reads are unaffected: the cache is public.
+          # Read from the cache everywhere; write only from main. PRs get
+          # their pass stamp into the cache from scripts/ci-local.sh, not
+          # from here; fork PRs get no secrets, so pushing could never work
+          # there anyway. Reads are unaffected: the cache is public.
           skipPush: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
 
-      # Builds the CPU variant (WITH_CUDA=OFF — the runners have no GPU) with
-      # BUILD_TESTS=ON and runs ctest inside the sandbox. Fails the job on any
-      # test failure.
+      # Prints the derivation and output path first, so a local
+      # `nix path-info --derivation .#checks.x86_64-linux.tests` on the same
+      # commit can be compared against this log.
       #
-      # Build output is teed to build-warnings.log so the warning-sync step
-      # below can parse compiler diagnostics without a second compile.  The
-      # log is kept even on failure so warnings from a broken build are still
-      # tracked.
-      - name: Build and run tests
-        run: nix build .#checks.x86_64-linux.tests --print-build-logs 2>&1 | tee build-warnings.log
+      # Then tries a substitute-only realisation (`--max-jobs 0`: nix may
+      # download, never build). That succeeds when scripts/ci-local.sh pushed
+      # this derivation's pass stamp, and the job is done in seconds. On a
+      # miss it falls back to the full build: CPU variant (WITH_CUDA=OFF, the
+      # runners have no GPU), BUILD_TESTS=ON, ctest and the package install
+      # check inside the sandbox.
+      #
+      # `shell: bash` matters: GitHub's *default* shell is `bash -e {0}`,
+      # without pipefail, and with it `nix build ... | tee` exited 0 whatever
+      # nix did. That is how bench_solid_compare_selftest failed on every run
+      # (main included) while the job stayed green, until reusex-37v.
+      #
+      # The full build's output is teed to build-warnings.log so the
+      # warning-sync step below can parse compiler diagnostics without a
+      # second compile.
+      - name: Build and run tests (substitute if ci-local.sh pushed it)
+        id: tests
+        shell: bash
+        run: |
+          attr='.#checks.x86_64-linux.tests'
+          drv=$(nix path-info --derivation "$attr")
+          out=$(nix eval --raw "$attr.outPath")
+          echo "commit:     $(git rev-parse HEAD)"
+          echo "derivation: $drv"
+          echo "output:     $out"
+          if nix build "$attr" --max-jobs 0 --no-link --print-build-logs; then
+            echo "built=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=checks.tests substituted::$out came from reusex.cachix.org (pushed by scripts/ci-local.sh); nothing was compiled or re-run here."
+            cat "$out/passed"
+          else
+            echo "built=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=checks.tests built::No pass stamp for $drv in the cache; running the full build + ctest. Run scripts/ci-local.sh before pushing to skip this."
+            nix build "$attr" --no-link --print-build-logs 2>&1 | tee build-warnings.log
+          fi
 
       # The installable CPU package (headers + libs + CMake config) is what
       # downstream repos (ReUse-X/ruxd) build against. Build it exactly the
@@ -115,8 +156,10 @@ jobs:
       # Parse GCC/Clang warning lines from the build log and sync them to
       # GitHub issues (create new, close fixed, skip existing).  Only runs on
       # main-branch pushes — PRs and fork runs do not write issues.
+      # Skipped when the result was substituted: there is no build log then,
+      # and an empty log would read as "every warning fixed" and close them.
       - name: Sync warning issues
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.tests.outputs.built == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/file_build_warnings.py build-warnings.log

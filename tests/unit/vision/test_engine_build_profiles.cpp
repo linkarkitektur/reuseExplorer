@@ -18,6 +18,8 @@
 #include <string>
 #include <vector>
 
+#include "../../support/source_dir.hpp"
+
 using reusex::vision::sam3::EngineBuildProfiles;
 using reusex::vision::sam3::EngineProfile;
 
@@ -100,8 +102,7 @@ TEST_CASE("EngineBuildProfiles rejects malformed documents", "[vision][sam3]") {
 // SAM 3.1 engines present.
 TEST_CASE("canonical engine-build.json is valid and fp32-safe",
           "[vision][sam3]") {
-#ifdef REUSEX_SOURCE_DIR
-  const std::filesystem::path path = std::filesystem::path(REUSEX_SOURCE_DIR) /
+  const std::filesystem::path path = reusex::test_support::source_dir() /
                                      "python" / "reusex_sam3" /
                                      "engine-build.json";
   if (!std::filesystem::exists(path))
@@ -121,9 +122,6 @@ TEST_CASE("canonical engine-build.json is valid and fp32-safe",
     INFO("engine: " << name);
     CHECK(profiles.find(name).has_value());
   }
-#else
-  SKIP("REUSEX_SOURCE_DIR not defined");
-#endif
 }
 
 TEST_CASE("EngineBuildProfiles reads recipe_version, defaulting to 1",

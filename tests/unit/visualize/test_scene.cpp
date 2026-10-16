@@ -19,6 +19,7 @@
 #include <rux_qt/tokens.hpp>
 
 #include "../../support/pose_fixture.hpp"
+#include "../../support/source_dir.hpp"
 #include "../../support/temp_path.hpp"
 
 #include <vtkActor.h>
@@ -98,8 +99,9 @@ TEST_CASE("LabelPalette_Default_MatchesTheDesignTokens",
   // The library cannot read tokens.css at run time; this pins its copy of the
   // --label-* scale to the file, so a design sync that changes the scale
   // fails here until the table follows (and render, web and Qt keep agreeing).
-  const std::string css = read_file(std::string(REUSEX_SOURCE_DIR) +
-                                    "/apps/rux/qt/theme/tokens.css");
+  const std::string css = read_file(
+      (reusex::test_support::source_dir() / "apps/rux/qt/theme/tokens.css")
+          .string());
   REQUIRE_FALSE(css.empty());
   for (const auto mode :
        {rux::qt::ThemeMode::light, rux::qt::ThemeMode::dark}) {

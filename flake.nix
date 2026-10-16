@@ -143,6 +143,15 @@
       # used so the check needs no GPU (works in CI and on any machine).
       # Run with: nix build .#checks.x86_64-linux.tests  (or nix flake check)
       # For the fast incremental dev loop use scripts/check.sh instead.
+      #
+      # The output is a pass stamp, not the package (reusex-37v): once the
+      # build, ctest and the install check have passed, $out is replaced by
+      # the ctest log. Its existence in a store means "this exact derivation
+      # passed". scripts/ci-local.sh builds it locally and pushes it to
+      # reusex.cachix.org; CI on the same commit then substitutes the stamp
+      # (a few KiB, no runtime closure) and compiles nothing. Keeping the
+      # installed package out of the output is what makes pushing one per PR
+      # affordable on the 5 GB Cachix tier. The package itself is .#cpu.
       checks.tests = self.packages.${system}.cpu.overrideAttrs (old: {
         pname = old.pname + "-tests";
         doCheck = true;
@@ -154,8 +163,17 @@
           # --parallel: the suite is dominated by per-process loader
           # overhead, so this is a near-linear speedup (#268). Safe since
           # #262 gave temp files pid-unique names.
-          ctest --output-on-failure --parallel "''${NIX_BUILD_CORES:-1}"
+          ctest --output-on-failure --parallel "''${NIX_BUILD_CORES:-1}" \
+            --output-log "$TMPDIR/ctest.log"
           runHook postCheck
+        '';
+        # Last hook of the last phase that needs the installed package.
+        postInstallCheck = ''
+          rm -rf "$out"
+          mkdir -p "$out"
+          cp "$TMPDIR/ctest.log" "$out/ctest.log"
+          echo "${old.pname}-${old.version}: build, ctest and install check passed" \
+            > "$out/passed"
         '';
       });
 

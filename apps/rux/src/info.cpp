@@ -6,6 +6,7 @@
 #include "exit_status.hpp"
 #include <nlohmann/json.hpp>
 #include <reusex/core/ProjectDB.hpp>
+#include <reusex/core/pose_fingerprint.hpp>
 #include <spdlog/spdlog.h>
 
 #include <fmt/color.h>
@@ -324,6 +325,12 @@ int run_subcommand_info(SubcommandInfoOptions const &opt,
 
     // Get project summary
     auto summary = db.project_summary();
+
+    // A stale cloud (built from poses `rux optimize`/`rux register` has since
+    // superseded) is not visible in any of the counts above — warn
+    // separately (reusex-rcv.1.15). Logged, not printed, so it never corrupts
+    // `rux info --json` for a script piping it to jq.
+    reusex::core::warn_if_cloud_poses_stale(db, "cloud");
 
     // Format output
     if (opt.json_output) {
