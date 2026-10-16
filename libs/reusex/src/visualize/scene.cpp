@@ -144,6 +144,8 @@ std::string producing_command(Layer layer) {
     return "rux import rtabmap (or another importer of posed depth frames)";
   case Layer::drift:
     return "rux analyze drift -o drift.json";
+  case Layer::walls:
+    return "rux create walls";
   }
   return "the corresponding rux create subcommand";
 }
@@ -980,6 +982,119 @@ PlanOverlayInfo add_plan_overlay_to(vtkRenderer *renderer,
   return info;
 }
 
+// ── Walls layer (reusex-z1v.5.6) ─────────────────────────────────────────────
+//
+// The `walls` table drawn from its axes, thicknesses and heights, in each
+// wall's storey frame mapped to world (the plan overlay's PlanBuilder). In 3D
+// (PlanPlacement::level) a wall is a box from z_base to z_base + height; in
+// plan (PlanPlacement::above_scene, `rux render --view plan|top`) its
+// footprint on a sheet over the cut cloud, exempt from the cut.
+
+/// A wall that is assumed or seen over less than half its face: drawn dimmer.
+bool wall_is_dim(const core::WallRecord &w) {
+  return w.assumed || (w.seen_share >= 0.0 && w.seen_share < 0.5);
+}
+
+/// Half-width a wall of unknown thickness is drawn with [m].
+constexpr double kUnknownWallHalfM = 0.05;
+
+std::vector<vtkActor *> add_walls_layer(vtkRenderer *renderer,
+                                        const ProjectDB &db,
+                                        const SceneOptions &opts,
+                                        SceneBounds &bounds,
+                                        SceneLayer &drawn) {
+  const auto walls = db.walls();
+  if (walls.empty())
+    throw std::runtime_error("render: project has no walls — run `" +
+                             producing_command(Layer::walls) + "` first");
+  core::SolidModel frames;
+  frames.storeys = db.storeys();
+  const bool sheet = opts.plan_placement == PlanPlacement::above_scene;
+  PlanBuilder b(frames, opts.plan_placement, bounds, opts.plan_sheet_z);
+  PlanGeometry fill, fill_dim, outline, outline_dim, axis;
+  std::size_t skipped = 0;
+  for (const auto &w : walls) {
+    const Eigen::Vector2d p0(w.x0, w.y0), p1(w.x1, w.y1);
+    const double len = (p1 - p0).norm();
+    if (!(len > 0.0) || !std::isfinite(len)) {
+      ++skipped;
+      continue;
+    }
+    const bool dim = wall_is_dim(w);
+    PlanGeometry &f = dim ? fill_dim : fill;
+    PlanGeometry &o = dim ? outline_dim : outline;
+    const Eigen::Vector2d d = (p1 - p0) / len;
+    const Eigen::Vector2d n(-d.y(), d.x());
+    const double h = w.thickness > 0.0 ? 0.5 * w.thickness : kUnknownWallHalfM;
+    const std::array<Eigen::Vector2d, 4> c{p0 + n * h, p1 + n * h, p1 - n * h,
+                                           p0 - n * h};
+    const double z0 = w.z_base;
+    const double z1 = w.z_base + std::max(w.height, 0.0);
+    const auto at = [&](const Eigen::Vector2d &q, double z) {
+      return b.world(w.storey, q.x(), q.y(), z);
+    };
+    if (sheet) {
+      b.ring(o, &f, {at(c[0], z0), at(c[1], z0), at(c[2], z0), at(c[3], z0)});
+      b.segment(axis, at(p0, z0), at(p1, z0));
+    } else {
+      std::array<Eigen::Vector3d, 8> v;
+      for (std::size_t i = 0; i < 4; ++i) {
+        v[i] = at(c[i], z0);
+        v[i + 4] = at(c[i], z1);
+      }
+      // Outline: bottom and top rings, four vertical edges.
+      b.ring(o, nullptr, {v[0], v[1], v[2], v[3]});
+      b.ring(o, nullptr, {v[4], v[5], v[6], v[7]});
+      for (std::size_t i = 0; i < 4; ++i)
+        b.segment(o, v[i], v[i + 4]);
+      // Faces: the four sides and the top (the bottom lies on the floor).
+      const auto quad = [&](std::size_t a0, std::size_t a1, std::size_t a2,
+                            std::size_t a3) {
+        std::vector<vtkIdType> ids;
+        for (const std::size_t k : {a0, a1, a2, a3})
+          ids.push_back(b.add(f, v[k]));
+        f.polys->InsertNextCell(4, ids.data());
+      };
+      quad(0, 1, 5, 4);
+      quad(1, 2, 6, 5);
+      quad(2, 3, 7, 6);
+      quad(3, 0, 4, 7);
+      quad(4, 5, 6, 7);
+    }
+    ++drawn.items;
+    if (dim)
+      ++drawn.dim;
+  }
+  if (skipped > 0)
+    core::warn("render: {} of {} walls have a zero-length or non-finite axis; "
+               "not drawn",
+               skipped, walls.size());
+
+  const auto &rgb = opts.walls_rgb;
+  const std::array<std::uint8_t, 3> grey{0x80, 0x80, 0x80};
+  const auto dim_rgb = lerp_rgb(rgb, grey, 0.5);
+  std::vector<vtkActor *> actors;
+  const auto add = [&](PlanGeometry &g, const std::array<std::uint8_t, 3> &c,
+                       double width, double opacity) {
+    if (g.empty())
+      return;
+    vtkActor *a = add_plan_actor(renderer, g, c, width, opacity);
+    if (!sheet)
+      a->SetObjectName(kWallsActorName); // cut with the scene in 3D
+    actors.push_back(a);
+  };
+  // Translucent fills first, so the outlines draw over them.
+  add(fill_dim, dim_rgb, 1.0, sheet ? 0.18 : 0.12);
+  add(fill, rgb, 1.0, sheet ? 0.45 : 0.35);
+  add(outline_dim, dim_rgb, 1.5, 0.7);
+  add(outline, rgb, 2.5, 1.0);
+  add(axis, rgb, 1.0, 1.0);
+  b.extend(bounds);
+  core::info("render: walls: {} drawn, {} dimmer (assumed or seen under 50 %)",
+             drawn.items, drawn.dim);
+  return actors;
+}
+
 /// Parallel scale (half the viewport height in world units) that exactly fits
 /// an @p across x @p up rectangle into an image of the given aspect ratio.
 ///
@@ -1563,7 +1678,8 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
     throw std::runtime_error(
         "render: no layers selected — pass at least one of "
         "cloud, labels, planes, rooms, instances, mesh, "
-        "components, frustums, panoramas, deviation, passes, graph, drift");
+        "components, frustums, panoramas, deviation, passes, graph, drift, "
+        "walls");
   if (!(opts.deviation.within_m > 0.0) ||
       !(opts.deviation.uncovered_m > opts.deviation.within_m))
     throw std::runtime_error(
@@ -1658,11 +1774,12 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
         std::any_of(opts.layers.begin(), opts.layers.end(), [](Layer l) {
           return l != Layer::mesh && l != Layer::components &&
                  l != Layer::frustums && l != Layer::panoramas &&
-                 l != Layer::graph && l != Layer::drift;
+                 l != Layer::graph && l != Layer::drift && l != Layer::walls;
         });
     info.mesh_style = with_points ? MeshStyle::overlay : MeshStyle::solid;
   }
 
+  std::optional<std::size_t> walls_layer;
   for (const Layer layer : opts.layers) {
     SceneLayer drawn;
     drawn.layer = layer;
@@ -1864,10 +1981,21 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
     case Layer::drift:
       add_drift_actors(renderer, opts, bounds, drawn, info.drift_legend);
       break;
+
+    case Layer::walls:
+      // Drawn after every other layer: in plan its sheet sits above all of
+      // them (PlanBuilder measures the bounds when it is made).
+      walls_layer = info.layers.size();
+      break;
     }
     info.drawn_points += drawn.points;
     info.drawn_faces += drawn.faces;
     info.layers.push_back(std::move(drawn));
+  }
+
+  if (walls_layer) {
+    SceneLayer &drawn = info.layers[*walls_layer];
+    drawn.actors = add_walls_layer(renderer, db, opts, bounds, drawn);
   }
 
   if (opts.plan)

@@ -354,6 +354,24 @@ TEST_CASE("CliCommandRoundTrip_MeshAndOptimize_ShareTheStageReader",
     CHECK(pl::mesh_options_from_parameters(on.params.dump()).use_plane_classes);
   }
   {
+    // Storey sections (reusex-z1v.3.4): off by default, on by flag.
+    // Storey-local walls (reusex-sba): on by default, off by flag.
+    const auto dflt =
+        parse_through_cli(rux::qt::build_cli_command("mesh", "p.rux", {}).args);
+    const auto d = pl::mesh_options_from_parameters(dflt.params.dump());
+    CHECK_FALSE(d.use_storey_sections);
+    CHECK(d.options.storey_local);
+    const auto flipped = parse_through_cli(
+        rux::qt::build_cli_command(
+            "mesh", "p.rux",
+            {{"storey_sections", CliValueKind::boolean, "true"},
+             {"storey_local", CliValueKind::boolean, "false"}})
+            .args);
+    const auto o = pl::mesh_options_from_parameters(flipped.params.dump());
+    CHECK(o.use_storey_sections);
+    CHECK_FALSE(o.options.storey_local);
+  }
+  {
     const auto cmd = rux::qt::build_cli_command(
         "optimize", "p.rux",
         {{"min_observations", CliValueKind::integer, "7"},

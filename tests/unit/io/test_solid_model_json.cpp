@@ -5,6 +5,7 @@
 // The solid-model JSON document (reusex-z1v.2.5): one format for authored
 // reference plans and detected models.
 
+#include "../../support/source_dir.hpp"
 #include "../../support/temp_path.hpp"
 
 #include <reusex/core/ProjectDB.hpp>
@@ -38,11 +39,8 @@ std::string read_file(const std::filesystem::path &p) {
 }
 
 std::filesystem::path fixture(const char *name) {
-  return std::filesystem::path(__FILE__)
-             .parent_path()
-             .parent_path()
-             .parent_path() /
-         "fixtures" / "solid_model" / name;
+  return reusex::test_support::source_dir() / "tests" / "fixtures" /
+         "solid_model" / name;
 }
 
 /// A minimal valid document; tests mutate it to provoke one error each.

@@ -43,6 +43,9 @@ struct SubcommandMeshOptions {
   /// (reusex-z1v.4.3, opt-in). Default mirrors MeshStageOptions.
   bool use_plane_classes =
       reusex::pipeline::MeshStageOptions{}.use_plane_classes;
+  bool use_storey_sections =
+      reusex::pipeline::MeshStageOptions{}.use_storey_sections;
+  bool storey_local = reusex::geometry::MeshOptions{}.storey_local;
 
   std::string filter_expr; ///< Filter expression to limit processing
 };

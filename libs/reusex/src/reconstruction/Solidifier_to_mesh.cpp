@@ -17,6 +17,10 @@
 */
 #include <range/v3/view/enumerate.hpp>
 
+#include <algorithm>
+#include <array>
+#include <numeric>
+
 // using Kernel = CGAL::Exact_predicates_inexact_constructions_kernel;
 // using Kernel = CGAL::Simple_cartesian<double>;
 // using Point = Kernel::Point_3;
@@ -31,6 +35,71 @@ toMesh_impl(const std::shared_ptr<const CellComplex> &cc,
 }
 
 namespace reusex::geometry {
+
+namespace {
+
+/// Triangles over a convex planar polygon, as corner indices in its winding.
+///
+/// A fan from corner 0, as before, unless a fan triangle would be degenerate.
+/// That happens when the polygon has collinear corners: a wall face of a
+/// storey-local cell complex (reusex-sba) carries the vertices where a finer
+/// section above or below meets it, so the mesh has no T-junctions there.
+/// Such a polygon is ear-clipped instead, only ever at a true corner and
+/// never down to a sliver, so every triangle has area.
+std::vector<std::array<size_t, 3>>
+triangulate_convex(const std::vector<Eigen::Vector3d> &p) {
+  std::vector<std::array<size_t, 3>> out;
+  const size_t n = p.size();
+  if (n < 3)
+    return out;
+  double extent = 0.0;
+  for (const auto &q : p)
+    extent = std::max(extent, (q - p[0]).norm());
+  const double eps = 1e-9 * extent * extent; // on twice the triangle area
+  auto twice_area = [&](size_t a, size_t b, size_t c) {
+    return (p[b] - p[a]).cross(p[c] - p[a]).norm();
+  };
+
+  bool fan_ok = true;
+  for (size_t i = 1; i + 1 < n && fan_ok; ++i)
+    fan_ok = twice_area(0, i, i + 1) > eps;
+  if (fan_ok) {
+    for (size_t i = 1; i + 1 < n; ++i)
+      out.push_back({0, i, i + 1});
+    return out;
+  }
+
+  std::vector<size_t> ring(n);
+  std::iota(ring.begin(), ring.end(), size_t{0});
+  auto ring_area = [&](const std::vector<size_t> &r) {
+    Eigen::Vector3d s = Eigen::Vector3d::Zero();
+    for (size_t i = 0; i < r.size(); ++i)
+      s += p[r[i]].cross(p[r[(i + 1) % r.size()]]);
+    return s.norm();
+  };
+  while (ring.size() > 3) {
+    const double whole = ring_area(ring);
+    bool clipped = false;
+    for (size_t i = 0; i < ring.size() && !clipped; ++i) {
+      const size_t a = ring[(i + ring.size() - 1) % ring.size()];
+      const size_t b = ring[i];
+      const size_t c = ring[(i + 1) % ring.size()];
+      const double ear = twice_area(a, b, c);
+      if (ear <= eps || whole - ear <= eps)
+        continue; // not a corner, or clipping it leaves a sliver
+      out.push_back({a, b, c});
+      ring.erase(ring.begin() + static_cast<std::ptrdiff_t>(i));
+      clipped = true;
+    }
+    if (!clipped)
+      return out; // the rest is degenerate: nothing with area left
+  }
+  if (twice_area(ring[0], ring[1], ring[2]) > eps)
+    out.push_back({ring[0], ring[1], ring[2]});
+  return out;
+}
+
+} // namespace
 
 std::pair<Eigen::MatrixXd, Eigen::MatrixXi>
 Solidifier::toMesh(std::function<bool(const Cd)> filter) {
@@ -170,13 +239,13 @@ toMesh_impl(const std::shared_ptr<const CellComplex> &_cc,
       if (flip)
         std::reverse(verts.begin(), verts.end());
 
-      for (size_t i = 1; i + 1 < verts.size(); ++i) {
-        Eigen::Vector3i face{};
-        face[0] = (*_cc)[verts[0]].id;
-        face[1] = (*_cc)[verts[i]].id;
-        face[2] = (*_cc)[verts[i + 1]].id;
-        faces.push_back(face);
-      }
+      std::vector<Eigen::Vector3d> corners;
+      corners.reserve(verts.size());
+      for (auto v : verts)
+        corners.push_back((*_cc)[v].pos.template head<3>());
+      for (const auto &[a, b, c] : triangulate_convex(corners))
+        faces.emplace_back((*_cc)[verts[a]].id, (*_cc)[verts[b]].id,
+                           (*_cc)[verts[c]].id);
 
     } // end for faces
   } // end for cells

@@ -149,6 +149,18 @@ NOTES:
                 "clutter out of the cell complex (reusex-z1v.4.3). Off by "
                 "default; no effect before `rux create classify` has run.");
 
+  sub->add_flag("--storey-sections", opt->use_storey_sections,
+                "Use only the storey floors and ceilings of the storeys table "
+                "as section planes of the cell complex, instead of every "
+                "horizontal plane (reusex-z1v.3.4). Off by default: it also "
+                "drops split levels and attics the storeys table does not "
+                "describe. No effect before `rux create storeys` has run.");
+
+  sub->add_flag("!--no-storey-local", opt->storey_local,
+                "Extend every wall through every section instead of giving "
+                "each section only the walls whose height reaches into it "
+                "(reusex-sba). Storey-local is on by default.");
+
   sub->add_option("--solver", opt->solver,
                   "MIP backend: 'auto' (primary backend with HiGHS CPU "
                   "fallback on GPU error/OOM), 'cuopt' (force GPU), or 'highs' "
@@ -207,6 +219,8 @@ std::string mesh_stage_parameters(SubcommandMeshOptions const &opt) {
       .set("structural_storey_clearance", opt.structural.min_storey_clearance_m)
       .set("structural_footprint_overlap", opt.structural.min_footprint_overlap)
       .set("plane_classes", opt.use_plane_classes)
+      .set("storey_sections", opt.use_storey_sections)
+      .set("storey_local", opt.storey_local)
       .set_if(!opt.filter_expr.empty(), "filter", opt.filter_expr)
       .dump();
 }
@@ -253,9 +267,7 @@ int run_subcommand_mesh(SubcommandMeshOptions const &opt,
     try {
       const auto stage_opts =
           reusex::pipeline::mesh_options_from_parameters(params);
-      options = stage_opts.options;
-      if (stage_opts.use_plane_classes)
-        options.plane_roles = reusex::pipeline::mesh_plane_roles(db, inliers);
+      options = reusex::pipeline::mesh_options_for(db, stage_opts, inliers);
     } catch (const std::invalid_argument &e) {
       spdlog::error("{}", e.what());
       db.log_pipeline_end(logId, false, e.what());

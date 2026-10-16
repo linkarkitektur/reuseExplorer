@@ -504,6 +504,11 @@ and deleted the shims. `include/geometry/` now holds only the real
 - `mesh.hpp`, `texture_mesh.hpp`, `regularization.hpp`, `create_windows.hpp`
 - `SceneGraph.hpp` / `Registry.hpp`: spatial relationships and object hierarchies
 - `quality_metrics.hpp` / `accuracy_metrics.hpp`: backing `rux analyze`
+- `walls.hpp`: walls with a measured thickness (WP3): axis families, faces
+  from the offset profile, face pairing + Theil-Sen thickness with a
+  bootstrap CI, the bounded wall graph (`detect_walls`, `wall_records`);
+  stored by the `walls` stage, whose parameters (keys, CLI flags, bounds)
+  all come from one table, `pipeline/wall_parameters.hpp`
 - `solid_metrics.hpp`: the solid-model benchmark (`rux analyze solid`,
   `scripts/bench-solid.sh`): a detected `core::SolidModel` vs a reference plan
   in the solid-model JSON format (`io/solid_model_json.hpp`,
@@ -642,7 +647,12 @@ tree — if a doc mentions `RTABMapDatabase`, that doc is stale.
   Schema v32 adds `sample_part_links` (sample ↔ survey part, FK-cascading
   on both sides; `SampleRecord::part_codes`, `set_sample_part_links`): a
   part-linked sample bears on the type the part is filed under now, so
-  `samples_for_type` / `core::environment_statuses` roll it up there
+  `samples_for_type` / `core::environment_statuses` roll it up there.
+  Schema v33 adds `walls` and `wall_joins` (`core::WallRecord` /
+  `WallJoinRecord`, `save_walls` / `walls()` / `wall_joins()`; written by
+  `rux create walls`, `JobStage::walls`; `storey` is the storey idx, a
+  re-detected wall keeps the GUID of the stored wall it lies on,
+  `core/wall_identity.hpp`)
 - Migrating schema; `LATEST_SCHEMA_VERSION` is defined in
   `src/core/ProjectDB.cpp` — read it there rather than trusting a doc (it moves
   most releases)
@@ -708,7 +718,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | Command | Sub-commands | Source |
 |---|---|---|
 | `import` | `rtabmap`, `mushroom`, `arkitscenes`, `e57`, `ply`, `gsplat`, `materialepas`, `csv`, `360`, `photos` | `src/import/` |
-| `create` | `clouds`, `dense`, `annotate`, `annotate-360`, `material`, `project`, `planes`, `rooms`, `instances`, `storeys`, `classify`, `materials`, `survey`, `mesh`, `texture`, `windows` | `src/create/` |
+| `create` | `clouds`, `dense`, `annotate`, `annotate-360`, `material`, `project`, `planes`, `rooms`, `instances`, `storeys`, `classify`, `walls`, `materials`, `survey`, `mesh`, `texture`, `windows` | `src/create/` |
 | `export` | `ply`, `e57`, `materialepas`, `csv`, `rhino`, `semantic-images`, `speckle`, `colmap`, `pdf` | `src/export/` |
 | `align` | `360` (content-based panorama pose refinement) | `src/align/` |
 | `edit` | `downsample`, `perturb-poses` (drift synthesis, #338) | `src/edit/` |
@@ -721,7 +731,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | `info` | — (project summary) | `src/info.cpp` |
 | `log` | — (pipeline execution history) | `src/log.cpp` |
 | `view` | — (interactive viewer, needs a display; `--plan gt.yaml --watch` = hot-reloading ground-truth workbench over `populate_scene`, `view/plan_workbench.hpp`) | `src/view/` |
-| `render` | — (headless render to PNG: `--view top\|plan[:h]\|front\|back\|left\|right\|orbit:N\|frame:<id>`, `--section x=<m>\|y=<m>\|<x0>,<y0>:<x1>,<y1>`; layers incl. `frustums`, `panoramas`, `deviation` (cloud coloured by distance to the mesh); label layers on the `--label-*` token scale; `--qa` writes the mesh-QA contact sheet, `visualize/qa_sheet.hpp`; `--plan gt.yaml --watch` re-renders and prints plan scores on every save, `render_watch.hpp`) | `src/render.cpp` |
+| `render` | — (headless render to PNG: `--view top\|plan[:h]\|front\|back\|left\|right\|orbit:N\|frame:<id>`, `--section x=<m>\|y=<m>\|<x0>,<y0>:<x1>,<y1>`; layers incl. `frustums`, `panoramas`, `deviation` (cloud coloured by distance to the mesh), `walls` (the walls table: footprints on a sheet over the cut in plan/top, boxes in 3D; assumed or < 50 % seen dimmer — also a Qt 3D layer, "Vægge"); label layers on the `--label-*` token scale; `--qa` writes the mesh-QA contact sheet, `visualize/qa_sheet.hpp`; `--plan gt.yaml --watch` re-renders and prints plan scores on every save, `render_watch.hpp`) | `src/render.cpp` |
 | `assemble` | — (multi-scan assembly) | `src/assemble.cpp` |
 
 With **no** subcommand, `rux` launches the Qt client (help without a display).

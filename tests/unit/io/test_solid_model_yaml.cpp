@@ -7,6 +7,7 @@
 // `solid_model_from_json` / `solid_model_to_json` read and write, lossless
 // with the JSON text and the `core::SolidModel` records.
 
+#include "../../support/source_dir.hpp"
 #include "../../support/temp_path.hpp"
 
 #include <reusex/core/solid_model.hpp>
@@ -33,11 +34,8 @@ using reusex::io::solid_model_to_yaml;
 namespace {
 
 std::filesystem::path fixture(const char *name) {
-  return std::filesystem::path(__FILE__)
-             .parent_path()
-             .parent_path()
-             .parent_path() /
-         "fixtures" / "solid_model" / name;
+  return reusex::test_support::source_dir() / "tests" / "fixtures" /
+         "solid_model" / name;
 }
 
 /// A minimal valid document, the YAML twin of test_solid_model_json.cpp's

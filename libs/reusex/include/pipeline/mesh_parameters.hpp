@@ -37,6 +37,19 @@ struct MeshStageOptions {
   /// NewOffice it left the uncovered share unchanged (36.9% -> 37.3%) while
   /// adding a third section (5020 cells, over the 5000 default limit).
   bool use_plane_classes = false;
+  /// Only storey floors and ceilings become section planes of the cell
+  /// complex when the project has a storeys table (key "storey_sections";
+  /// reusex-z1v.3.4): MeshOptions::section_heights from
+  /// mesh_section_heights(). No effect without storeys.
+  ///
+  /// Off by default: measured 2026-10-16 (reusex-sba) it drops planes the
+  /// storeys table does not describe but the mesh needs. On house1 it left
+  /// out the split-level floor (mean deviation 12.2 -> 16.6 cm, unsupported
+  /// mesh 24.6% -> 34.8% against storey-local walls alone); on house2 it cut
+  /// the attic above the top storey's ceiling off the mesh (P95 deviation
+  /// 86 -> 127 cm). It does make NewOffice fit max_cells (16659 -> 1851
+  /// cells) by dropping horizontals at 6-10 m and over the ceiling.
+  bool use_storey_sections = false;
 };
 
 /// Read the mesh stage's JSON parameters ("" = defaults). Unknown keys are
@@ -55,5 +68,18 @@ MeshStageOptions mesh_options_from_parameters(std::string_view parameters);
 /// logged at warn, naming the first mismatch.
 std::vector<core::PlaneRole>
 mesh_plane_roles(const ProjectDB &db, const std::vector<IndicesPtr> &inliers);
+
+/// World z of every storey floor and ceiling in the storeys table, for
+/// MeshOptions::section_heights (reusex-z1v.3.4): each storey's z_floor and
+/// z_ceiling through its own level frame (LevelFrame::world_z_at). Empty
+/// when the project has no storeys.
+std::vector<double> mesh_section_heights(const ProjectDB &db);
+
+/// The mesh stage's options for @p db: MeshOptions::plane_roles and
+/// MeshOptions::section_heights filled from the project as @p stage asks.
+/// `rux create mesh` and the pipeline's mesh stage both go through here.
+geometry::MeshOptions mesh_options_for(const ProjectDB &db,
+                                       const MeshStageOptions &stage,
+                                       const std::vector<IndicesPtr> &inliers);
 
 } // namespace reusex::pipeline

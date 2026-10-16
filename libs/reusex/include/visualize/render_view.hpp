@@ -73,6 +73,7 @@ enum class Layer {
   passes,     ///< back-projected depth coloured by capture segment
   graph,      ///< trajectory + pose-graph edges by residual + edit pins
   drift,      ///< drift-report residual cells as a heatmap (per storey)
+  walls,      ///< `walls` table: footprints in plan, boxes in 3D (WP3)
 };
 
 /// Parse a layer name as accepted by `rux render --layers`.
