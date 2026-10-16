@@ -140,11 +140,24 @@ const std::vector<StageContract> &contracts() {
        {{{"cloud"}}, {{"normals"}}},
        {"planes", "plane_centroids", "plane_normals"}},
 
+      {PipelineStage::storeys,
+       "storeys",
+       {},
+       "rux create storeys",
+       "detect storeys and the measured vertical (level frame)",
+       // Horizontal planes give the floor/ceiling fits and the height
+       // histogram; `cloud` + `planes` carry their inlier points.
+       {{{"cloud"}}, {{"planes"}}, {{"plane_centroids"}}, {{"plane_normals"}}},
+       {"storeys"}},
+
       {PipelineStage::rooms,
        "rooms",
        {},
        "rux create rooms",
        "partition the plane graph into rooms",
+       // `normals` and `storeys` are inputs of `method = band` only (checked
+       // by the stage, which says to run `rux create storeys`), so they are
+       // not declared; `storeys` sits earlier in this table all the same.
        {{{"cloud"}}, {{"planes"}}, {{"plane_centroids"}}, {{"plane_normals"}}},
        {"rooms"}},
 
@@ -158,16 +171,6 @@ const std::vector<StageContract> &contracts() {
        // was never annotated.
        {{{"cloud"}}, {{"labels", "planes"}}},
        {"instances"}},
-
-      {PipelineStage::storeys,
-       "storeys",
-       {},
-       "rux create storeys",
-       "detect storeys and the measured vertical (level frame)",
-       // Horizontal planes give the floor/ceiling fits and the height
-       // histogram; `cloud` + `planes` carry their inlier points.
-       {{{"cloud"}}, {{"planes"}}, {{"plane_centroids"}}, {{"plane_normals"}}},
-       {"storeys"}},
 
       {PipelineStage::classify,
        "classify",

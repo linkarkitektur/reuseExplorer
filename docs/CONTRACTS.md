@@ -222,14 +222,33 @@ Detect planar surfaces (noise-adaptive region growing).
 
 ### `rooms` (`rux create rooms`)
 
-Partition the plane graph into rooms (Leiden clustering).
+Partition the scan into rooms. `method = band` (default since the maintainer
+decision of 2026-10-16, reusex-icg) finds rooms per storey in 2D: wall cells
+from vertical points in a clutter-free height band above the storey floor,
+footprint from floor and ceiling points, exterior flooded from the grid
+border, rooms = watershed of the free-space distance transform, cut where
+the free space narrows below 2 x `band_core_radius`. Every point within
+`assign_margin` of a storey's interior takes the room of the nearest room
+cell; others stay 0. `method = leiden` (`--method leiden`) instead clusters
+the plane visibility graph and does not need storeys.
+
+The band method also reads `normals` and the `storeys` table (level frames,
+floor and ceiling heights); they are not declared inputs because Leiden does
+not need them, so the stage checks them itself (`storeys` precedes `rooms`
+in the stage table all the same). When the method *resolves to band only
+because it is the default* (no explicit `--method`) and the project has no
+storeys rows, the stage logs a warning naming the reason and both fixes
+(`rux create storeys`, or `--method leiden` to silence it) and falls back to
+Leiden for that run, recording the fallback in the result message. An
+*explicit* `--method band` without storeys still refuses as invalid input —
+asking for band by name is an instruction, not a preference.
 
 | | |
 |---|---|
 | Consumes | `cloud`, `planes`, `plane_centroids`, `plane_normals` |
 | Produces | `rooms` (`Label`) |
-| Options  | `SegmentRoomsOptions` (`libs/reusex/include/segmentation/segment_rooms.hpp`) |
-| Checks   | `cloud`/`planes` present + aligned; `plane_centroids`/`plane_normals` present + aligned |
+| Options  | `SegmentRoomsOptions` (`libs/reusex/include/segmentation/segment_rooms.hpp`); `band`: `BandRoomsOptions` (`segmentation/band_rooms.hpp`), parameter keys `band_*` |
+| Checks   | `cloud`/`planes` present + aligned; `plane_centroids`/`plane_normals` present + aligned; `band`: `storeys` has rows (refused if explicit, else falls back to leiden with a warning) and `normals` is aligned with `cloud` (checked by the stage) |
 
 ### `instances` (`rux create instances`)
 
@@ -554,11 +573,17 @@ rasterizer.
 ## Typical pipeline order
 
 ```
-import → [graph_init] → [graph_discover] → (optimize|register) → clouds → planes → rooms → mesh → texture
+import → [graph_init] → [graph_discover] → (optimize|register) → clouds → planes → [storeys] → rooms → mesh → texture
                                                                                    ↘ storeys → classify
                                                     ↘ annotate → project → instances → windows
                                                     ↘ gsplat (leaf: produces `splat`)
 ```
+
+`[storeys]` before `rooms` matters because `rooms` defaults to `method =
+band`, which needs it; without storeys the default falls back to `leiden`
+(with a warning) rather than failing, but `rooms --method band` explicitly
+still refuses. The stage table lists `storeys` before `rooms` for that
+reason.
 
 Stage order in the table is load-bearing and asserted by a test: an input may
 only be produced by a **strictly earlier** stage. That invariant is what lets a
