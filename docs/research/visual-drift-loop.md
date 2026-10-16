@@ -54,6 +54,12 @@ layer) and a scored benchmark (`rux analyze solid`, `scripts/bench-solid.sh`)
   through-wall crossings, plan support), never a start-end gap or planarity
   alone. Before trusting it, calibrate the loop where the truth is known
   (ARKitScenes + `rux edit perturb-poses`).
+- **Calibration (§9, 2026-10-16): the loop as it stands does not move poses
+  toward the truth.** On nine ARKitScenes drift cells it left ATE at
+  0.92-1.04x the drifted start where plain `rux optimize` halved it; its
+  shear guards pin the drift in place and its shear indicator flags the
+  correct fix. Watch the cross-segment median (Spearman +0.47 with true ATE)
+  and always compare with plain `optimize` before keeping an edit.
 - **Most promising whacky ideas** (§5): wall doubling as an explicit factor,
   the floor plan as fixed landmarks, rigid sub-maps glued by overlap.
   Measured: per-frame plan fitting is too noisy to anchor anything by itself;
@@ -472,3 +478,200 @@ intrinsics and `local_transform`). Back-projection: optical point
 `((u-cx) z/fx, (v-cy) z/fy, z)`, world = `transform · local_transform · p`.
 Parameters are given in each subsection; the measure bead `reusex-rcv.1.1` ports
 them to C++ with acceptance tests pinned to the numbers above.
+
+## 9. Calibration where the truth is known (2026-10-16, `reusex-rcv.1.7`)
+
+**Question.** Before a loop-made pose reference for house2 or NewOffice can be
+trusted, does the loop move poses toward the truth, and do its GT-free
+numbers (pass-to-pass residual, cross-segment median, shear) track the true
+error?
+
+**Answer: no, not as the loop and its guide stand today.** Driven by the
+guide's own policy, from the renders and the metrics block only, the loop
+left the true error where the drift put it (final ATE 0.92-1.04x the drifted
+start on all six full-drift cells), while plain `rux optimize` halved it. Its
+one good move per yaw cell was flagged as SHEAR and then undone by the
+suggested shear guards. Of the GT-free numbers, the cross-segment median is
+the one to watch (Spearman with true ATE +0.47 over the loop rounds, +0.57
+over all solves, +0.65 pooled as relative change), but it misleads at heavy
+drift and on small differences, and nothing in the block compares the edits
+with doing nothing. The fixes are filed as `reusex-rcv.1.21`-`.29`.
+
+### 9.1 Setup
+
+- Scenes 41069048 / 41069050 / 41069051 (ARKitScenes, 1974 / 1860 / 3845
+  frames, 1.8-2.6 m extent, one revisited room each), copies only.
+- Drift: `rux edit perturb-poses --seed 1` at `--drift-scale 0.25` and `1.0`
+  (the #338 model, all six DoF, tilt-dominated), plus a new heading-only
+  mode, `--mode yaw` (`DriftMode::yaw`, `reusex-xka`): each step rotates only
+  about world z and translates only horizontally, so tilt and camera height
+  stay on the seed. Yaw at scale 1.0 needs 56-130 deg of heading error to
+  reach the ratio on these small rooms (implausible, the tool warns past
+  60 deg), so the yaw cells run at 0.25 only (13-33 deg max). Injected camera
+  error, median / max: full d0.25 0.10-0.13 / 0.18-0.35 m; full d1.0
+  0.37-0.59 / 0.68-1.51 m; yaw d0.25 0.10-0.15 / 0.26-0.63 m.
+- Truth: the undrifted seed (`rux export trajectory` before perturbing) and
+  the `3dod_mesh` for F@50mm. Scores went to a `hidden/` directory and were
+  read only after the last cell (`scripts/bench-drift-loop.sh`, below).
+- The loop: `rux optimize --edits e.yaml --watch --fast` (one cycle per round,
+  frame step 1, depth stride 8, 12 segments), at most 6 edit rounds, then one
+  full solve (plane factors on) with the best round's edits. Edits were the
+  watch block's own suggestions, applied by the authoring guide's rules:
+  paste the top move (dropping the move it `REPLACES`) plus any offered shear
+  guards; a round that sheared without a gain gets its guards first; a round
+  whose cross-segment median is worse than the best so far is reverted and
+  the next untried suggestion is taken from the best round. I looked at the
+  passes / drift / graph / front PNGs every round; they never overruled the
+  metric (§9.4 says why). Every round's edits file and metrics block are
+  kept (`<cell>/r<k>/`), so the run can be replayed.
+- Plain `rux optimize` (no edits) is the baseline; the watch session's
+  no-edit full solve reproduces it exactly (same ATE to 0.1 mm on all nine
+  cells).
+
+### 9.2 Results
+
+ATE = translation RMSE vs the seed, no alignment (frame 0 is the gauge in
+both). "loop" = the final full solve with the kept edits; "best fast" = the
+lowest true ATE any fast round reached (which the loop could not know).
+
+| cell | start ATE mm | `optimize` | loop: best fast / final | final / start | final <= optimize | edits kept | loop wall s | F@50mm start / optimize / loop |
+|---|---|---|---|---|---|---|---|---|
+| 48 full d0.25 | 124.1 | 37.3 | 118.6 / 116.4 | 0.94 | no | 16 | 182 | 0.464 / 0.793 / 0.466 |
+| 48 full d1.0 | 482.4 | 274.4 | 471.5 / 482.5 | 1.00 | no | 12 | 219 | 0.229 / 0.275 / 0.195 |
+| 48 yaw d0.25 | 155.5 | 31.9 | 90.7 / 45.7 | 0.29 | no | 2 | 195 | 0.422 / 0.848 / 0.680 |
+| 50 full d0.25 | 119.3 | 73.9 | 108.8 / 110.0 | 0.92 | no | 13 | 182 | 0.539 / 0.638 / 0.510 |
+| 50 full d1.0 | 452.4 | 258.5 | 440.7 / 439.2 | 0.97 | no | 14 | 271 | 0.197 / 0.298 / 0.155 |
+| 50 yaw d0.25 | 149.2 | 46.8 | 73.4 / 55.8 | 0.37 | no | 2 | 222 | 0.412 / 0.811 / 0.492 |
+| 51 full d0.25 | 175.0 | 78.9 | 172.0 / 181.4 | 1.04 | no | 5 | 390 | 0.418 / 0.761 / 0.427 |
+| 51 full d1.0 | 737.4 | 619.1 | 733.7 / 727.4 | 0.99 | no | 13 | 290 | 0.217 / 0.231 / 0.211 |
+| 51 yaw d0.25 | 284.1 | 34.2 | 264.5 / 34.2 | 0.12 | yes | 0 | 292 | 0.368 / 0.871 / 0.871 |
+
+Acceptance (1) of the bead (ATE(loop) <= 0.5x drifted AND <= optimize on
+>= 4 of 6 cells): **1 of 9**, and that one kept no edit at all (the final
+solve is plain `optimize`). Edits: 6 rounds on every cell (the loop never
+converged early except 51 yaw, which found nothing to keep), 0-16 edit items
+kept, of which most are shear guards. Wall time is machine time only (cycle
+20-50 s; 3-6.5 min per scan), not the reading time between cycles.
+
+Per round (Spearman of a GT-free number against true ATE over the 7 fast
+rounds of a cell; "all" adds the final and the no-edit full solve):
+
+| cell | cross-segment | pass-to-pass median | pass-to-pass p90 | shear flagged | cross-segment, all |
+|---|---|---|---|---|---|
+| 48 full d0.25 | +0.79 | +0.14 | +0.86 | +0.80 | +0.90 |
+| 48 full d1.0 | -0.04 | +0.71 | +0.36 | +0.46 | +0.27 |
+| 48 yaw d0.25 | +0.79 | -0.18 | +0.04 | **-0.93** | +0.90 |
+| 50 full d0.25 | +0.71 | -0.04 | -0.46 | -0.02 | +0.82 |
+| 50 full d1.0 | +0.61 | +0.71 | +0.61 | -0.11 | +0.50 |
+| 50 yaw d0.25 | +1.00 | +0.59 | +0.63 | **-0.93** | +0.98 |
+| 51 full d0.25 | +0.18 | +0.57 | +0.54 | -0.11 | +0.27 |
+| 51 full d1.0 | +0.36 | +0.79 | +0.86 | +0.04 | +0.03 |
+| 51 yaw d0.25 | -0.20 | +0.45 | +0.42 | -0.08 | +0.44 |
+| **mean** | **+0.47** | +0.42 | +0.43 | -0.10 | +0.57 |
+
+Acceptance (2), target rho >= 0.7: not met by any single metric. The
+cross-segment median comes closest and is the one to watch; pooled over all
+72 rounds and solves as the relative change against each cell's round 0 it
+reaches +0.65.
+
+### 9.3 Why the loop did not help
+
+1. **The gauge segment.** On 5 of 6 full-drift cells the top suggestion was
+   segment 0, which holds frame 0's gauge prior. Its 155-165 move priors
+   outvote the one gauge prior, so the whole trajectory followed rigidly
+   (1535-1809 nodes flagged): no GT-free gain (20.5 -> 20.5, 31.3 -> 32.6,
+   48.4 -> 50.1 mm) and a true loss (124 -> 188, 119 -> 166, 482 -> 613 mm).
+   The guide then says to add the shear guards, which costs a round to get
+   back to where the drift was (`reusex-rcv.1.23`).
+2. **The guards freeze the drift.** A shear guard pins an untouched node
+   "where the no-edit solve had it", and in `--fast` the no-edit solve is the
+   drifted odometry. After the guards, every fast round moved true ATE by a
+   few percent at most. In the final full solve the guards fight the plane
+   factors that would have removed the drift: untouched nodes sit 0.09-0.41 m
+   from the no-edit full solve, and final ATE stays at the start
+   (`reusex-rcv.1.21`).
+3. **The shear indicator punishes the right fix.** Drift accumulates from
+   the gauge outward, so a correct move of segment k must carry k+1..n with
+   it. On both yaw cells the single best round of the whole session was
+   round 1 (one move, ATE 155 -> 91 and 149 -> 79 mm), flagged
+   `948 / 1018 moved > 0.05 m <- SHEAR`; the guards offered next undid it
+   (-> 121 and 115 mm). Spearman(shear flagged, ATE) = -0.93 there. The
+   regression-221 shear is the upstream side only (`reusex-rcv.1.22`).
+4. **Rigid segment moves cannot undo integrated drift.** Drift here is
+   smooth along the whole chain; a 12-segment rigid move set fixes it piece
+   by piece at best, and each move's own residual grew as guards and moves
+   competed (0.002 -> 0.094 m). Suggestions then chase their tail:
+   `m-2565-2884` -> `-2` (REPLACES) -> `m-2565-2884` (REPLACES `-2`), each
+   predicting 8-9 -> 5 mm, none realised, while a block 0.12 m / 6.6 deg off
+   its target is still printed `honoured` (`reusex-rcv.1.28`). On the fanned
+   yaw room (51 yaw) segment ICP proposed nothing above 1 mm of gain
+   (`reusex-rcv.1.29`).
+5. **Plain `optimize` was never on screen.** The block compares with the
+   no-edit `--fast` solve only. The no-edit full solve's cross-segment median
+   was lower than the loop's final on 6 of 9 cells (7.0 vs 13.3, 7.6 vs 12.1,
+   9.8 vs 16.8 mm, ...), and its passes plan cut shows single walls where the
+   loop's shows doubled ones (48 full d0.25, r9 vs r7). A person who saw that
+   line would have kept no edit, which is the right answer on every cell here
+   (`reusex-rcv.1.24`).
+
+### 9.4 Where the GT-free numbers mislead
+
+- **Heavy drift (d1.0).** Once the passes stop overlapping, the cross-segment
+  median saturates near 30-35 mm and stops ranking: it prefers the loop
+  (32.9 / 32.8 mm) over plain `optimize` (35.5 / 34.9 mm) on 50 and 51 d1.0,
+  while true ATE is 439 vs 259 and 727 vs 619 mm. Absolute values do not
+  compare across cells either (51 full d1.0: 36 mm cross-segment at 737 mm
+  ATE; 50 full d0.25: 31 mm at 119 mm).
+- **Pass-to-pass collapses.** Its sample shrinks to "0 of 0" / "0 of 3"
+  frames under drift, the pooled value stays 2-6 mm across 30-740 mm of ATE,
+  and the drift heatmap covers 6-7 cells in the middle of the scan, missing
+  the 60-135 mm segment pairs on the walls (`reusex-rcv.1.25`).
+- **Small differences.** 50 yaw: loop final 7.6 mm cross-segment vs 8.3 mm
+  for plain `optimize`, true ATE 55.8 vs 46.8 mm. A 1 mm cross-segment gain
+  is noise at this sampling.
+- **The renders.** Tilt drift (the full mode) shows in a 1.2 m plan cut as
+  smeared, thick walls, not as clean copies; the front elevation is a full
+  projection that overprints 12 passes into a block (`reusex-rcv.1.27`); the
+  graph panel's node labels overprint into a blob at 2k nodes
+  (`reusex-rcv.1.26`); seg 3 and seg 11 share a colour (`reusex-rcv.1.19`).
+  The images confirmed doubled walls where the numbers said so, but never
+  showed a person which segment to move: every round followed the metric.
+
+### 9.5 What this means for house2 / NewOffice references
+
+- Do not freeze a loop-made trajectory as a reference until
+  `reusex-rcv.1.21`, `.22` and `.24` are fixed and this calibration is
+  re-run: on scans where the truth is known the loop, as it stands, makes a
+  trajectory no better than its input, and its GT-free metrics would have
+  called several of those rounds improvements.
+- Always compare the candidate with plain `rux optimize` on the same
+  sampling (cross-segment median, and the passes plan cut side by side)
+  before keeping any edit; keep none if `optimize` is better.
+- Watch the cross-segment median, ranked within one scan at fixed sampling,
+  never across scans, and only while the drift is small enough for the
+  passes to overlap (below ~0.15 m median here). Do not use pass-to-pass or
+  the shear count as acceptance numbers.
+- The yaw mode is the house1/house2 failure mode in miniature, and plain
+  `optimize` already handles it on these scans (156 -> 32, 149 -> 47,
+  284 -> 34 mm ATE; F@50mm 0.85 / 0.81 / 0.87): a good sign for the plane
+  factors, and a reason the Manhattan adjudication (`reusex-xka`) should
+  include the yaw cells.
+
+### 9.6 Reproducing
+
+```bash
+# per cell: copy, export the seed as truth (hidden/), perturb
+scripts/bench-drift-loop.sh setup <out> 41069048 0.25 full 1
+scripts/bench-drift-loop.sh baseline <out>/41069048-full-d0.25 --accuracy
+# each round: edit <cell>/e.yaml, then (prints the block, scores blindly)
+scripts/bench-drift-loop.sh round <out>/41069048-full-d0.25 0
+scripts/bench-drift-loop.sh round <out>/41069048-full-d0.25 7 --full --accuracy
+# the no-edit full solve (empty e.yaml), then unblind
+scripts/bench-drift-loop.sh round <out>/41069048-full-d0.25 9 --full
+scripts/bench-drift-loop.sh report <out>
+```
+
+`DATA=<dir>` points the harness at a directory of `.rux` copies (it never
+opens the originals beyond `cp`). The session log holds one JSON line per
+round (edits hash, metrics, wall time), so a run is replayable from the
+edits files under `<cell>/r<k>/edits.yaml`.

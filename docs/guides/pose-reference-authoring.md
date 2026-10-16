@@ -225,3 +225,14 @@ with what `rux edit perturb-poses` itself reports (`median_position_error`,
 `max_position_error`) -- the same consistency check this bead's acceptance
 criteria run, and a sanity check worth re-running whenever either tool
 changes.
+
+The first calibration (2026-10-16, nine cells, `scripts/bench-drift-loop.sh`,
+[visual-drift-loop.md §9](../research/visual-drift-loop.md#9-calibration-where-the-truth-is-known-2026-10-16-reusex-rcv17))
+found that the loop above, driven by its own rules, does **not** yet beat
+plain `rux optimize`: the shear guards pin untouched nodes at their drifted
+`--fast` poses, the shear indicator flags a correct downstream correction,
+and suggestions on the gauge segment move the whole trajectory
+(`reusex-rcv.1.21`-`.24`). Until those are fixed: run the no-edit full solve
+(an empty edits file without `--fast`) next to every candidate and keep no
+edit that does not beat it on the cross-segment median and in the passes
+plan cut, and treat any loop-made reference as unproven.

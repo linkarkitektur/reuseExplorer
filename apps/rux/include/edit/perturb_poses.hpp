@@ -7,6 +7,7 @@
 
 #include <CLI/CLI.hpp>
 #include <memory>
+#include <string>
 
 /// Options for `rux edit perturb-poses` (issue #338). Defaults mirror
 /// reusex::geometry::PoseDriftOptions exactly (docs/STANDARDS.md §4) — the CLI
@@ -21,6 +22,8 @@ struct SubcommandEditPerturbPosesOptions {
   double trans_bias_gain = 0.020;
   double trans_walk_gain = 0.010;
   double bias_correlation_length = 5.0;
+  /// "full" or "yaw" (reusex::geometry::DriftMode).
+  std::string mode = "full";
   bool dry_run = false;
   /// Required acknowledgement that the target project is a disposable copy.
   bool yes = false;

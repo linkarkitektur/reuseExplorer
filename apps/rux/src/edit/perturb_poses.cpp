@@ -59,6 +59,10 @@ EXAMPLES:
   rux -p copy.rux edit perturb-poses --seed 1 --drift-scale 0.25 --yes
       A mild capture: still several times the 50 mm F-score threshold.
 
+  rux -p copy.rux edit perturb-poses --seed 1 --drift-scale 1.0 --mode yaw --yes
+      Heading drift only (reusex-xka): roll, pitch and camera height stay on
+      the seed, as on a capture whose IMU keeps gravity honest.
+
   rux -p copy.rux edit perturb-poses --seed 1 --drift-scale 4 --yes
       The office scan's own (pathological) 80%-of-extent regime.
 
@@ -100,6 +104,13 @@ NOTES:
   sub->add_option("--bias-correlation-length", opt->bias_correlation_length,
                   "Correlation length of the bias process (m)")
       ->default_val(opt->bias_correlation_length);
+  sub->add_option("--mode", opt->mode,
+                  "Drift axes: 'full' (all six DoF, the #338 model; "
+                  "tilt-dominated on a single room) or 'yaw' (heading about "
+                  "world z + horizontal translation only; tilt and height "
+                  "stay on the seed, the houses' failure mode)")
+      ->default_val(opt->mode)
+      ->check(CLI::IsMember({"full", "yaw"}));
   sub->add_flag("--dry-run", opt->dry_run,
                 "Measure and report without writing any pose back");
   sub->add_flag("--yes", opt->yes,
@@ -138,9 +149,11 @@ int run_subcommand_edit_perturb_poses(
     dopt.trans_bias_gain = opt.trans_bias_gain;
     dopt.trans_walk_gain = opt.trans_walk_gain;
     dopt.bias_correlation_length = opt.bias_correlation_length;
+    dopt.mode = opt.mode == "yaw" ? reusex::geometry::DriftMode::yaw
+                                  : reusex::geometry::DriftMode::full;
 
-    spdlog::info("Perturbing poses in {} (seed {}, drift-scale {})",
-                 project_path.string(), opt.seed, opt.drift_scale);
+    spdlog::info("Perturbing poses in {} (seed {}, drift-scale {}, mode {})",
+                 project_path.string(), opt.seed, opt.drift_scale, opt.mode);
 
     const auto r =
         reusex::geometry::perturb_sensor_poses(db, dopt, opt.dry_run);
