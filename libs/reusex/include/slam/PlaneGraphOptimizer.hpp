@@ -35,6 +35,7 @@
 
 #include <Eigen/Core>
 
+#include <cstddef>
 #include <optional>
 #include <span>
 #include <string>
@@ -682,5 +683,60 @@ PlaneGraphResult optimize_sensor_poses(ProjectDB &db,
                                        const PlaneGraphOptions &options,
                                        bool dry_run = false,
                                        const core::PoseEdits *edits = nullptr);
+
+/// The stored pose graph of a project, loaded once so it can be solved many
+/// times (`rux optimize --watch`, reusex-rcv.1.5): the per-frame surfels are
+/// the expensive part and do not depend on the poses or the edits.
+/// optimize_sensor_poses() is load_stored_pose_graph() +
+/// solve_stored_pose_graph() + the write.
+struct StoredPoseGraph {
+  /// Frames with surfels, node order; world_pose = the INITIAL pose (the
+  /// seed every solve starts from), optical convention.
+  std::vector<FrameSurfels> frames;
+  std::vector<Eigen::Matrix4d> local;       ///< per frame: localTf
+  std::vector<Eigen::Matrix4d> seed_stored; ///< per frame: initial, worldTf
+  /// One per stored edge row (plus the in-memory odometry of a graph without
+  /// any), in ProjectDB::list_pose_graph_edges() order.
+  struct Edge {
+    int from_node_id = 0, to_node_id = 0;
+    std::string edge_type;
+    /// The measurement, worldTf convention; nullopt = none stored.
+    std::optional<Eigen::Matrix4d> measurement;
+    /// The factor it becomes (tag = its index here); nullopt when it does
+    /// not enter a solve (rejected, no measurement, frame not solved).
+    std::optional<GraphEdge> solver;
+    bool panorama = false;
+  };
+  std::vector<Edge> edges;
+  /// The project has no usable odometry: it was derived from the initial
+  /// poses in memory (nothing written).
+  bool odometry_in_memory = false;
+  std::size_t frames_total = 0; ///< sensor frames in the project
+};
+
+/// Load the stored pose graph of @p db for repeated solves. Read-only: a
+/// graph without odometry gets it in memory (slam::odometry_init_edges).
+/// Warns (STANDARDS §5) about skipped edges and frames, as the solve does.
+/// @throws std::runtime_error with fewer than 2 frames that yield surfels.
+StoredPoseGraph load_stored_pose_graph(const ProjectDB &db,
+                                       const PlaneGraphOptions &options);
+
+/// One solve of a loaded graph.
+struct StoredGraphSolve {
+  PlaneGraphResult result;
+  /// Solved poses, sensor_frames.transform convention, parallel to
+  /// StoredPoseGraph::frames. Equal to the seeds when nothing constrained
+  /// the solve (no landmark, loop edge or edit).
+  std::vector<Eigen::Matrix4d> poses;
+};
+
+/// Solve @p graph from its initial poses with @p edits (lowered over the
+/// graph's frames against @p db). Never writes; deterministic: the same
+/// graph, options and edits give bit-identical poses (STANDARDS §6).
+/// @throws std::runtime_error naming the edit when an edit cannot be lowered.
+StoredGraphSolve
+solve_stored_pose_graph(const ProjectDB &db, const StoredPoseGraph &graph,
+                        const PlaneGraphOptions &options,
+                        const core::PoseEdits *edits = nullptr);
 
 } // namespace reusex::geometry

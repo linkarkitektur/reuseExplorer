@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #pragma once
+#include "reusex/reconstruction/CellComplex.hpp"
 #include "reusex/reconstruction/Solidifier.hpp"
 #include "reusex/reconstruction/structural_planes.hpp"
 #include "reusex/types.hpp"
@@ -10,7 +11,9 @@
 #include <pcl/PolygonMesh.h>
 #include <pcl/common/common.h>
 
+#include <array>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace reusex::geometry {
@@ -64,7 +67,62 @@ struct MeshOptions {
   /// left out before regularisation (reusex-z1v.4.3, see
   /// drop_planes_by_role()). Empty: no classification, every plane is used.
   std::vector<core::PlaneRole> plane_roles{};
+
+  /// Storey-local arrangement (reusex-sba): give each horizontal section of
+  /// the cell complex only the walls whose inlier z-range reaches into it
+  /// (wall_z_ranges()), so one storey's walls no longer cut every other
+  /// storey. Off: every wall spans every section (the behaviour before sba).
+  bool storey_local = true;
+  /// A wall reaches a section when its z-range overlaps it by this much [m]
+  /// (by half the section for a thinner one, i.e. a slab).
+  double section_overlap_m = CellComplex::default_min_section_overlap_m;
+
+  /// World z of every storey floor and ceiling (reusex-z1v.3.4), from the
+  /// storeys table through LevelFrame::world_z_at (pipeline::
+  /// mesh_section_heights()). When non-empty, only horizontal planes within
+  /// section_tolerance_m of one of these heights become section planes of
+  /// the cell complex (select_section_planes()): table tops, shelves and the
+  /// slab faces make_pairs invents no longer slice the building. Empty =
+  /// every horizontal plane is a section (legacy).
+  std::vector<double> section_heights{};
+  double section_tolerance_m = 0.15;
 };
+
+/**
+ * @brief The horizontal planes that become section planes (reusex-z1v.3.4).
+ *
+ * @param planes Plane coefficients (n . x + d = 0, unit n).
+ * @param horizontals Indices into @p planes of the horizontal planes.
+ * @param section_heights World z of the storey floors and ceilings.
+ * @param tolerance_m A plane within this distance of a height is kept.
+ * @return The horizontals within @p tolerance_m of a storey height, in input
+ *   order. Returns @p horizontals unchanged when @p section_heights is empty,
+ *   or (logged at warn) when fewer than two planes match: a stale storeys
+ *   table must not silence the mesh stage.
+ */
+std::vector<size_t>
+select_section_planes(const EigenVectorContainer<double, 4> &planes,
+                      const std::vector<size_t> &horizontals,
+                      const std::vector<double> &section_heights,
+                      double tolerance_m);
+
+/**
+ * @brief World z-range of each wall plane, from its inliers (reusex-sba).
+ *
+ * For CellComplex's storey-local arrangement. A vertical plane's range is
+ * the 2nd to 98th percentile of its inliers' z, so a few stray points do not
+ * stretch a wall into the next storey. The two faces of a wall pair (@p
+ * pairs, from make_pairs) share the union of their ranges, so a face
+ * make_pairs invented (no inliers) takes its partner's. Planes that are not
+ * vertical, and walls with no inliers on either face, get {NaN, NaN}: they
+ * reach every section.
+ *
+ * @return One range per plane, index-aligned with @p planes.
+ */
+std::vector<std::array<double, 2>>
+wall_z_ranges(const EigenVectorContainer<double, 4> &planes,
+              const std::vector<IndicesPtr> &inliers, CloudConstPtr cloud,
+              const std::vector<std::pair<size_t, size_t>> &pairs);
 
 /**
  * @brief Generate a mesh from point cloud and geometric primitives.

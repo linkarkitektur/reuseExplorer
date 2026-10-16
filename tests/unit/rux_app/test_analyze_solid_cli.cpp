@@ -14,6 +14,7 @@
 #include <reusex/core/ProjectDB.hpp>
 #include <reusex/io/solid_model_json.hpp>
 
+#include "../../support/source_dir.hpp"
 #include "../../support/temp_path.hpp"
 
 #include <CLI/CLI.hpp>
@@ -36,11 +37,8 @@ using Catch::Matchers::WithinAbs;
 namespace {
 
 std::filesystem::path fixture(const char *name) {
-  return std::filesystem::path(__FILE__)
-             .parent_path()
-             .parent_path()
-             .parent_path() /
-         "fixtures" / "solid_model" / name;
+  return reusex::test_support::source_dir() / "tests" / "fixtures" /
+         "solid_model" / name;
 }
 
 /// Parse and run `rux -p <project> analyze solid <args...>`; the exit code.

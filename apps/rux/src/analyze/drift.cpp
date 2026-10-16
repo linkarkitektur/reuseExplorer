@@ -128,7 +128,10 @@ DESCRIPTION:
     pass break that the pooled numbers cannot see shows here.
   - per-segment suggestions: each segment rigidly aligned (robust
     point-to-plane ICP) to all the others, with the residual before/after.
-  - a per-cell map of the residual (the drift heatmap, JSON "cells").
+  - a per-cell map of the residual (the drift heatmap, JSON "cells"), one
+    per storey (plan or project storeys, x/y in that storey's level frame;
+    world x/y over all heights with none, or with --world-cells).
+    `rux render --layers drift --drift-report <this -o file>` draws it.
   - with --plan: camera steps that cross a plan wall away from its openings
     (drift OR a plan error: a place to look).
   - doubled-wall patches on the fused cloud (needs storeys: the plan's or
@@ -191,6 +194,8 @@ NOTES:
   sub->add_option("--cell", d.cell_m, "Heatmap cell size [m]")
       ->default_val(d.cell_m)
       ->check(CLI::PositiveNumber);
+  sub->add_flag("--world-cells",
+                "Heatmap cells in world x/y over all heights, not per storey");
   sub->add_flag("--no-doubled-walls", "Skip the doubled-wall patches");
   sub->add_option("--top", opt->top, "Rows of the worst-pairs table")
       ->default_val(opt->top)
@@ -202,6 +207,7 @@ NOTES:
   sub->callback([opt, global_opt, sub]() {
     spdlog::trace("calling analyze drift subcommand");
     opt->diag.doubled_walls = sub->count("--no-doubled-walls") == 0;
+    opt->diag.cells_by_storey = sub->count("--world-cells") == 0;
     opt->diag.pose_source = opt->initial
                                 ? reusex::slam::DriftPoseSource::initial
                                 : reusex::slam::DriftPoseSource::current;

@@ -20,7 +20,13 @@
 // #include <thread>
 
 #include <fmt/color.h>
+#include <fmt/ranges.h>
 #include <fmt/std.h>
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
 
 namespace reusex::geometry {
 
@@ -64,6 +70,88 @@ pcl::PolygonMeshPtr eigen_to_polygon_mesh(const Eigen::MatrixXd &vertices,
 }
 
 } // anonymous namespace
+
+std::vector<size_t>
+select_section_planes(const EigenVectorContainer<double, 4> &planes,
+                      const std::vector<size_t> &horizontals,
+                      const std::vector<double> &section_heights,
+                      double tolerance_m) {
+  if (section_heights.empty())
+    return horizontals;
+  std::vector<size_t> out;
+  std::vector<double> dropped;
+  for (size_t id : horizontals) {
+    const auto &p = planes[id];
+    const double z = -p[3] / p[2]; // n . x + d = 0 with n ~ (0, 0, +-1)
+    const bool near =
+        std::any_of(section_heights.begin(), section_heights.end(),
+                    [&](double h) { return std::abs(z - h) <= tolerance_m; });
+    if (near)
+      out.push_back(id);
+    else
+      dropped.push_back(z);
+  }
+  if (out.size() < 2) {
+    reusex::warn("mesh: {} of {} horizontal plane(s) lie within {:.2f} m of "
+                 "the {} storey floor/ceiling height(s) [{:.2f}]; the storeys "
+                 "table does not describe these planes, so every horizontal "
+                 "plane stays a section plane. Re-run `rux create storeys`",
+                 out.size(), horizontals.size(), tolerance_m,
+                 section_heights.size(), fmt::join(section_heights, ", "));
+    return horizontals;
+  }
+  reusex::info("mesh: {} of {} horizontal plane(s) are storey floors or "
+               "ceilings and become section planes; {} left out at z = "
+               "[{:.2f}] m",
+               out.size(), horizontals.size(), dropped.size(),
+               fmt::join(dropped, ", "));
+  return out;
+}
+
+std::vector<std::array<double, 2>>
+wall_z_ranges(const EigenVectorContainer<double, 4> &planes,
+              const std::vector<IndicesPtr> &inliers, CloudConstPtr cloud,
+              const std::vector<std::pair<size_t, size_t>> &pairs) {
+  constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+  constexpr double kVerticalEps = 0.1; // |n_z| below this: a wall
+  constexpr double kTrim = 0.02;       // percentile cut at each end
+  std::vector<std::array<double, 2>> out(planes.size(), {nan, nan});
+  if (planes.size() != inliers.size())
+    throw std::invalid_argument(
+        fmt::format("wall_z_ranges: {} planes but {} inlier lists",
+                    planes.size(), inliers.size()));
+  std::vector<bool> wall(planes.size(), false);
+  for (size_t i = 0; i < planes.size(); ++i) {
+    wall[i] = std::abs(planes[i][2]) < kVerticalEps;
+    if (!wall[i] || !inliers[i] || inliers[i]->empty() || !cloud)
+      continue;
+    std::vector<float> z;
+    z.reserve(inliers[i]->size());
+    for (int idx : *inliers[i])
+      z.push_back(cloud->points[static_cast<size_t>(idx)].z);
+    std::sort(z.begin(), z.end());
+    const auto last = static_cast<double>(z.size() - 1);
+    const auto lo = static_cast<size_t>(std::floor(kTrim * last));
+    const auto hi = static_cast<size_t>(std::ceil((1.0 - kTrim) * last));
+    out[i] = {z[lo], z[hi]};
+  }
+  // The two faces of a wall share one range.
+  for (const auto &[a, b] : pairs) {
+    if (a >= out.size() || b >= out.size() || !wall[a] || !wall[b])
+      continue;
+    const auto ra = out[a], rb = out[b];
+    if (std::isnan(ra[0]) && std::isnan(rb[0]))
+      continue;
+    const double lo = std::isnan(ra[0])   ? rb[0]
+                      : std::isnan(rb[0]) ? ra[0]
+                                          : std::min(ra[0], rb[0]);
+    const double hi = std::isnan(ra[1])   ? rb[1]
+                      : std::isnan(rb[1]) ? ra[1]
+                                          : std::max(ra[1], rb[1]);
+    out[a] = out[b] = {lo, hi};
+  }
+  return out;
+}
 
 pcl::PolygonMeshPtr mesh(CloudConstPtr cloud, CloudNConstPtr normals,
                          EigenVectorContainer<double, 4> &planes,
@@ -127,6 +215,17 @@ pcl::PolygonMeshPtr mesh(CloudConstPtr cloud, CloudNConstPtr normals,
   reusex::debug("Number of plane pairs: {}", pairs.size());
 
   auto [vertical, horizontal] = separate_planes(planes);
+
+  // Storey floors and ceilings only as section planes, when the storeys
+  // table gave their heights (reusex-z1v.3.4).
+  if (!opt.section_heights.empty())
+    horizontal = select_section_planes(planes, horizontal, opt.section_heights,
+                                       opt.section_tolerance_m);
+
+  // Each section gets only the walls that reach into it (reusex-sba).
+  std::vector<std::array<double, 2>> z_ranges;
+  if (opt.storey_local)
+    z_ranges = wall_z_ranges(planes, inliers, cloud, pairs);
   reusex::debug("Number indices in inliers [{}]",
                 fmt::join(inliers | ranges::views::transform([](auto const &i) {
                             return i->size();
@@ -169,7 +268,8 @@ pcl::PolygonMeshPtr mesh(CloudConstPtr cloud, CloudNConstPtr normals,
   std::shared_ptr<CellComplex> cc = std::make_shared<CellComplex>(
       planes, vertical, horizontal, pairs,
       std::array<double, 2>{min.x - 1, min.y - 1},
-      std::array<double, 2>{max.x + 1, max.y + 1}, std::nullopt, opt.max_cells);
+      std::array<double, 2>{max.x + 1, max.y + 1}, std::nullopt, opt.max_cells,
+      z_ranges, opt.section_overlap_m);
 
   reusex::debug("Cell complex: {}", *cc);
 
