@@ -17,6 +17,14 @@
 ///     solid, connected components, a rectangle fit per component, kept when
 ///     big, full and seen-through enough and framed by wall on both sides
 ///     (W5.1).
+///  3. merge_mullions(), classify_opening(): one opening split by a mullion
+///     is merged; door / window / floor-to-ceiling opening by sill and
+///     height (W5.2).
+///  4. detect_openings(): 1-3 on every wall of a storey plus the evidence --
+///     semantic labels and instances on the rectangle, glass images, the
+///     camera path walking through it (trajectory_crossings()), the open
+///     door leaf (door_leaf()) for state and swing -- as core records
+///     (W5.2).
 ///
 /// Everything is in the level frame of the wall's storey
 /// (core::StoreyRecord::level_transform): z up, s along the wall axis from
@@ -32,6 +40,8 @@
 #include <Eigen/Core>
 
 #include <cstdint>
+#include <functional>
+#include <string>
 #include <vector>
 
 namespace reusex::geometry {
@@ -59,6 +69,20 @@ struct OpeningOptions {
   int min_wall_points = 1;
   /// A cell is occluded with at least this many points in front of it.
   int min_occluder_points = 2;
+
+  /// Measure the floor and ceiling in front of each wall (face_levels())
+  /// instead of taking the storey's: a scan whose rooms drifted apart
+  /// vertically has its floor tens of centimetres off the storey's level in
+  /// some rooms (house1: 0.65 m), which would put every door's sill there.
+  bool local_levels = true;
+  /// A rectangle whose sill is at most this above the floor stands on it
+  /// (only a threshold, or floor noise, is below it) [m].
+  double sill_snap_m = 0.15;
+  /// face_levels() looks this far above the storey floor / below its
+  /// ceiling (and half as far beyond them) for the local level [m]...
+  double level_search_m = 1.0;
+  /// ...and takes the densest 2 cm layer with at least this many points.
+  int min_level_points = 50;
 
   // --- W5.1 rectangle fit -------------------------------------------------
   /// Radius of the square structuring element of the morphological opening
@@ -88,6 +112,57 @@ struct OpeningOptions {
   /// A rectangle standing on the floor lower than this is the gap under a
   /// radiator, a desk or a shelf, not an opening [m].
   double min_floor_height_m = 1.2;
+  // --- W5.2 classification -------------------------------------------------
+  /// A door's sill is below this above the floor, its height in
+  /// [door_min_height_m, door_max_height_m] [m]...
+  double door_max_sill_m = 0.3;
+  double door_min_height_m = 1.7;
+  double door_max_height_m = 2.4;
+  /// ...a low-silled rectangle whose head is within this of the ceiling is a
+  /// floor-to-ceiling `opening`; everything else is a `window` [m].
+  double full_height_tol_m = 0.15;
+  /// Two rectangles of one face at most this far apart along the wall,
+  /// whose sills and heads agree within mullion_max_dz_m, are one opening
+  /// split by a mullion (or a door leaf edge) [m].
+  double mullion_max_gap_m = 0.25;
+  double mullion_max_dz_m = 0.15;
+
+  // --- W5.2 evidence -------------------------------------------------------
+  /// Points within this beyond the slab count as on the face for the
+  /// semantic evidence (a window frame, a door leaf standing in it) [m].
+  double evidence_band_m = 0.3;
+  /// A semantic class supports an opening when at least this share of the
+  /// labelled points on its rectangle carry it...
+  double min_class_share = 0.2;
+  /// ...and an instance when it has at least this many points there and
+  /// that is at least min_class_share of the labelled points.
+  int min_instance_points = 20;
+  /// Glass (glass_confidence_images) supports a window when at least this
+  /// share of its rectangle is suppressed as glass.
+  double min_glass_share = 0.3;
+  /// Camera path crossings (the operator walked through: a door, research
+  /// §4.4): steps longer than this are jumps, not walks [m]...
+  double crossing_max_step_m = 1.5;
+  /// ...a crossing within this of an opening's extent supports it [m]...
+  double crossing_tol_m = 0.25;
+  /// ...a rectangle the path crosses whose sill is at most this above the
+  /// floor reaches the floor (nobody walks through a window: its lower part
+  /// was hidden by a leaf or a chair) and is classified again [m]...
+  double crossing_door_max_sill_m = 1.0;
+  /// ...and a camera belongs to the storey when its height is within
+  /// (z_floor - below, z_ceiling + above) [m].
+  double crossing_storey_below_m = 0.5;
+  double crossing_storey_above_m = 0.3;
+
+  // --- W5.2 door state -----------------------------------------------------
+  /// Leaf points: in the quarter-cylinder a leaf of the door's width sweeps
+  /// on either side, at least this far above the sill and below the head [m]
+  double leaf_margin_m = 0.2;
+  /// A leaf: at least this many points in one leaf_bin_deg angular bin
+  /// about a hinge, between leaf_min_radius_share and 1 of the width out.
+  int min_leaf_points = 30;
+  double leaf_bin_deg = 10.0;
+  double leaf_min_radius_share = 0.3;
 };
 
 /// What one cell of a face raster saw.
@@ -130,6 +205,22 @@ FaceRaster face_raster(const std::vector<Eigen::Vector3d> &points,
                        const core::WallRecord &wall, double z_floor,
                        double z_ceiling, const OpeningOptions &opt = {});
 
+/// The floor and ceiling in front of a wall (W5.1).
+struct FaceLevels {
+  double z_floor = 0.0, z_ceiling = 0.0;
+  bool floor_measured = false, ceiling_measured = false;
+};
+
+/// The floor and ceiling heights in front of @p wall: of the points of
+/// @p points (level frame) beyond its slab but within front_m of it, over
+/// its length, the lowest 2 cm layer within level_search_m above
+/// @p z_floor (half that below it) holding min_level_points and 30 % of the
+/// densest one, and likewise the highest below @p z_ceiling; the storey's value
+/// where none is found (or with OpeningOptions::local_levels off).
+FaceLevels face_levels(const std::vector<Eigen::Vector3d> &points,
+                       const core::WallRecord &wall, double z_floor,
+                       double z_ceiling, const OpeningOptions &opt = {});
+
 /// A rectangle of open face.
 struct OpeningRect {
   double s_start = 0.0, s_end = 0.0; ///< along the axis from (x0, y0) [m]
@@ -157,5 +248,102 @@ struct OpeningRect {
 std::vector<OpeningRect> fit_openings(const FaceRaster &raster, double z_floor,
                                       double z_ceiling,
                                       const OpeningOptions &opt = {});
+
+/// Merge rectangles of one face split by a mullion (W5.2): neighbours along
+/// the wall at most mullion_max_gap_m apart whose sills and heads agree
+/// within mullion_max_dz_m become their union (fill = the cell-weighted
+/// mean, the outer jambs, at_floor / at_ceiling of either). Input and output
+/// sorted by s_start.
+std::vector<OpeningRect> merge_mullions(std::vector<OpeningRect> rects,
+                                        const OpeningOptions &opt = {});
+
+/// The kind of an opening from its sill and head (W5.2): a sill within
+/// door_max_sill_m of @p z_floor with the head within full_height_tol_m of
+/// @p z_ceiling is a floor-to-ceiling "opening"; with a height in
+/// [door_min_height_m, door_max_height_m] a "door"; anything else a
+/// "window".
+std::string classify_opening(const OpeningRect &rect, double z_floor,
+                             double z_ceiling, const OpeningOptions &opt = {});
+
+/// What a semantic class says a point is, for opening evidence.
+enum class OpeningClass : std::uint8_t { none, door, window, glass };
+
+/// An instance of the `instances` cloud, for opening evidence.
+struct OpeningInstance {
+  std::string guid;
+  OpeningClass kind = OpeningClass::none;
+};
+
+/// The evidence of one storey, in its level frame.
+struct OpeningEvidence {
+  std::vector<Eigen::Vector3d> points; ///< every point of the storey
+  /// Per point (index-aligned, or empty: no semantic labels): what its
+  /// semantic class says.
+  std::vector<OpeningClass> classes;
+  /// Per point (index-aligned, or empty): index into @ref instances, -1 none.
+  std::vector<int> instance;
+  std::vector<OpeningInstance> instances;
+  /// Camera centres in capture order (empty: no trajectory).
+  std::vector<Eigen::Vector3d> trajectory;
+  /// Share of an opening's rectangle the glass_confidence_images suppress as
+  /// glass, -1 when no frame sees it (null: no images).
+  std::function<double(const core::WallRecord &, const OpeningRect &)> glass;
+};
+
+/// Where the camera path crosses @p wall's axis: s of each crossing, for
+/// steps no longer than crossing_max_step_m whose ends both lie in the
+/// storey (W5.2; the idea of slam::trajectory_wall_crossings, research
+/// §4.4: house1's 16 crossings all lie at reference openings).
+std::vector<double>
+trajectory_crossings(const std::vector<Eigen::Vector3d> &trajectory,
+                     const core::WallRecord &wall, double z_floor,
+                     double z_ceiling, const OpeningOptions &opt = {});
+
+/// A door leaf found standing open (door_leaf()).
+struct DoorLeaf {
+  bool found = false;
+  bool hinge_at_start = true; ///< hinged at s_start (else at s_end)
+  /// The side it swings to: +1 = +t (the wall's side a, face_a_points),
+  /// -1 = -t (side b).
+  int side = 0;
+  double angle_deg = 0.0; ///< from the wall face, 0..90
+  int points = 0;
+};
+
+/// The open leaf of door @p rect on @p wall (W5.2): about each jamb and on
+/// each side, the points (of @p points, level frame) in the quarter-cylinder
+/// of radius = the door's width beyond the slab, between the sill and the
+/// head (leaf_margin_m clear of both); their angle about the hinge binned by
+/// leaf_bin_deg. The densest bin with min_leaf_points whose points span at
+/// least half the radial range (a sheet running out from the hinge) and do
+/// not run on past the width (a wall leaving the jamb) is the leaf.
+DoorLeaf door_leaf(const std::vector<Eigen::Vector3d> &points,
+                   const core::WallRecord &wall, const OpeningRect &rect,
+                   const OpeningOptions &opt = {});
+
+/// One opening found on a wall, with its evidence.
+struct DetectedOpening {
+  /// guid = the natural key "openings/<wall guid>/<s_start rounded 5 cm>";
+  /// wall = the host's guid; kind, extent, state, is_external,
+  /// source_instance_guid, confidence and metadata (the evidence) filled.
+  core::OpeningRecord record;
+  OpeningRect rect;
+  double geometry_confidence = 0.0;
+  double door_share = 0.0, window_share = 0.0, glass_label_share = 0.0;
+  double glass_share = -1.0; ///< from the images, -1 none
+  int crossings = 0;
+  DoorLeaf leaf;
+};
+
+/// Steps 1-2 and the classification on every wall of @p storey (W5.1 +
+/// W5.2): face raster, rectangles, mullions merged, kind, evidence (semantic
+/// classes, the instance with most points on it -> source_instance_guid,
+/// glass, camera crossings), door state and swing, is_external = the host
+/// wall's (until spaces exist, W4). Confidence: from the geometry alone
+/// (fill, jambs; at most 0.7), raised by each piece of evidence that agrees
+/// with the kind. Walls of other storeys are skipped.
+std::vector<DetectedOpening> detect_openings(
+    const OpeningEvidence &evidence, const std::vector<core::WallRecord> &walls,
+    const core::StoreyRecord &storey, const OpeningOptions &opt = {});
 
 } // namespace reusex::geometry

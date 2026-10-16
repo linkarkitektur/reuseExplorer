@@ -20,6 +20,7 @@
 #include <spdlog/spdlog.h>
 
 #include <cmath>
+#include <cstdlib>
 #include <map>
 #include <vector>
 
@@ -119,45 +120,89 @@ int run_subcommand_create_openings_dev(
     if (!opt.raster_dir.empty())
       std::filesystem::create_directories(opt.raster_dir);
 
+    // Semantic classes (W5.2 evidence) when 'labels' is aligned with
+    // 'cloud', and the camera path; instances and glass are the stage's.
+    std::vector<reusex::geometry::OpeningClass> classes;
+    if (db.has_point_cloud("labels")) {
+      std::map<int, reusex::geometry::OpeningClass> by_label;
+      for (const auto &[label, name] : db.label_definitions("labels")) {
+        std::string l = name;
+        for (auto &c : l)
+          c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        by_label[label] = l.find("glass") != std::string::npos
+                              ? reusex::geometry::OpeningClass::glass
+                          : l.find("door") != std::string::npos
+                              ? reusex::geometry::OpeningClass::door
+                          : l.find("window") != std::string::npos
+                              ? reusex::geometry::OpeningClass::window
+                              : reusex::geometry::OpeningClass::none;
+      }
+      const auto labels = db.point_cloud_label("labels");
+      if (labels->size() == cloud->size()) {
+        classes.assign(cloud->size(), reusex::geometry::OpeningClass::none);
+        for (std::size_t i = 0; i < cloud->size(); ++i)
+          if (auto it =
+                  by_label.find(static_cast<int>(labels->points[i].label));
+              it != by_label.end())
+            classes[i] = it->second;
+      }
+    }
+    std::vector<Eigen::Vector3d> path;
+    for (const int id : db.sensor_frame_ids())
+      if (db.has_sensor_frame_pose(id)) {
+        const auto pose = reusex::geometry::to_affine(db.sensor_frame_pose(id));
+        path.push_back(pose.translation());
+      }
+
     for (const auto &st : model.storeys) {
       const Eigen::Affine3d T = reusex::geometry::to_affine(st.level_transform);
-      std::vector<Eigen::Vector3d> pts;
-      for (const auto &p : cloud->points) {
+      reusex::geometry::OpeningEvidence ev;
+      for (std::size_t i = 0; i < cloud->size(); ++i) {
+        const auto &p = cloud->points[i];
         if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z))
           continue;
         const Eigen::Vector3d q = T * Eigen::Vector3d(p.x, p.y, p.z);
-        if (q.z() >= st.z_floor - 0.1 && q.z() <= st.z_ceiling + 0.1)
-          pts.push_back(q);
-      }
-      int n = 0;
-      for (const auto &w : model.walls) {
-        if (w.storey != st.idx)
+        if (q.z() < st.z_floor - 0.2 || q.z() > st.z_ceiling + 0.2)
           continue;
-        const auto raster = reusex::geometry::face_raster(
-            pts, w, st.z_floor, st.z_ceiling, opt.openings);
-        const auto rects = reusex::geometry::fit_openings(
-            raster, st.z_floor, st.z_ceiling, opt.openings);
-        if (!opt.raster_dir.empty())
-          write_raster_png(opt.raster_dir / fmt::format("{}.png", w.id), raster,
-                           rects, st.z_floor);
-        for (const auto &r : rects) {
-          reusex::core::OpeningRecord o;
-          o.guid = fmt::format("o-{}-{}", w.id, n++);
-          o.wall = w.guid;
-          o.kind = "opening";
-          o.s_start = r.s_start;
-          o.s_end = r.s_end;
-          o.z_sill = r.z_sill;
-          o.z_head = r.z_head;
-          o.confidence = r.fill;
-          o.metadata = fmt::format(
-              R"({{"fill":{:.3f},"jamb_start":{:.3f},"jamb_end":{:.3f}}})",
-              r.fill, r.jamb_start, r.jamb_end);
-          model.openings.push_back(o);
-        }
+        ev.points.push_back(q);
+        if (!classes.empty())
+          ev.classes.push_back(classes[i]);
       }
+      for (const auto &c : path)
+        ev.trajectory.push_back(T * c);
+      if (!opt.raster_dir.empty())
+        for (const auto &w : model.walls) {
+          if (w.storey != st.idx)
+            continue;
+          const auto lv = reusex::geometry::face_levels(
+              ev.points, w, st.z_floor, st.z_ceiling, opt.openings);
+          const auto raster = reusex::geometry::face_raster(
+              ev.points, w, lv.z_floor, lv.z_ceiling, opt.openings);
+          if (const char *dbg = std::getenv("OPENINGS_DEV_WALL");
+              dbg && std::to_string(w.id) == dbg)
+            for (int iz = 0; iz < raster.nz; ++iz) {
+              int wp = 0, op = 0;
+              for (int is = 0; is < raster.ns; ++is) {
+                wp +=
+                    raster
+                        .wall_points[static_cast<size_t>(iz * raster.ns + is)];
+                op += raster.occluder_points[static_cast<size_t>(
+                    iz * raster.ns + is)];
+              }
+              spdlog::info("row {} z {:.2f}: wall {} occluder {}", iz,
+                           raster.z0 + iz * raster.cell, wp, op);
+            }
+          write_raster_png(opt.raster_dir / fmt::format("{}.png", w.id), raster,
+                           reusex::geometry::fit_openings(
+                               raster, lv.z_floor, lv.z_ceiling, opt.openings),
+                           st.z_floor);
+        }
+      const auto found =
+          reusex::geometry::detect_openings(ev, model.walls, st, opt.openings);
+      for (const auto &d : found)
+        model.openings.push_back(d.record);
       spdlog::info("openings-dev: storey {}: {} points, {} opening(s)", st.idx,
-                   pts.size(), n);
+                   ev.points.size(), found.size());
     }
     model.provided.openings = true;
     if (!opt.output.empty()) {
