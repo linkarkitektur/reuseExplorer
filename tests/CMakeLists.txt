@@ -170,11 +170,17 @@ target_include_directories(reusex_unit_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/libs/reusex/src
 )
 
-# tests/unit/core/test_stage_contract.cpp asserts that docs/CONTRACTS.md still
-# says what the stage contract table says (#246). Reading the checked-in
-# markdown needs the source tree, which a test binary otherwise cannot locate.
-target_compile_definitions(reusex_unit_tests
-    PRIVATE REUSEX_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+# Tests that read checked-in files (docs/CONTRACTS.md for the stage contract
+# #246, the report template, tokens.css, engine-build.json) locate the source
+# tree through reusex::test_support::source_dir() (tests/support/source_dir.hpp).
+# The absolute path is a definition on that one TU only, never on the targets:
+# a target-wide -DREUSEX_SOURCE_DIR="/abs/path" sits in every test TU's
+# command line, which ccache hashes verbatim, so no test object could be
+# shared between two worktrees (reusex-37v). Both executables compile it.
+set(TEST_SUPPORT_SOURCE_DIR_TU "${CMAKE_CURRENT_SOURCE_DIR}/support/source_dir.cpp")
+set_source_files_properties("${TEST_SUPPORT_SOURCE_DIR_TU}" PROPERTIES
+    COMPILE_DEFINITIONS "REUSEX_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
+target_sources(reusex_unit_tests PRIVATE "${TEST_SUPPORT_SOURCE_DIR_TU}")
 
 # Vision tests: these genuinely need the ML backends, so they carry the full
 # dependency closure.
@@ -200,9 +206,9 @@ if(HEAVY_TEST_SOURCES)
     )
 
     # Lets tests locate checked-in reference assets (e.g. the canonical
-    # python/reusex_sam3/engine-build.json parsed by test_engine_build_profiles).
-    target_compile_definitions(reusex_unit_tests_vision
-        PRIVATE REUSEX_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    # python/reusex_sam3/engine-build.json parsed by test_engine_build_profiles);
+    # see TEST_SUPPORT_SOURCE_DIR_TU above.
+    target_sources(reusex_unit_tests_vision PRIVATE "${TEST_SUPPORT_SOURCE_DIR_TU}")
 
     # configure_ml_backends() links torch PRIVATE to reusex_vision, so neither
     # the torch headers nor its ABI flags reach a consumer of the umbrella
@@ -376,6 +382,13 @@ if(Python3_Interpreter_FOUND)
              COMMAND ${Python3_EXECUTABLE}
                      ${CMAKE_SOURCE_DIR}/scripts/test_bench_solid_compare.py)
     set_tests_properties(bench_solid_compare_selftest PROPERTIES LABELS bench)
+
+    # scripts/bench-poses-compare.py gates the pose-reference benchmark
+    # (reusex-rcv.1.6); its self-test needs only python3.
+    add_test(NAME bench_poses_compare_selftest
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_SOURCE_DIR}/scripts/test_bench_poses_compare.py)
+    set_tests_properties(bench_poses_compare_selftest PROPERTIES LABELS bench)
 endif()
 
 message(STATUS "Unit tests configured successfully")

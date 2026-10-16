@@ -8,6 +8,7 @@
 // against both the reader and docs/design/pose-edits.schema.json.
 
 #include "../../support/json_schema_lite.hpp"
+#include "../../support/source_dir.hpp"
 #include "../../support/temp_path.hpp"
 
 #include <reusex/core/pose_edits.hpp>
@@ -160,7 +161,8 @@ void require_error(const std::string &yaml, const std::string &edit_id,
 /// The ```yaml blocks of the design doc that are whole documents.
 std::vector<std::string> doc_examples() {
   const std::string md =
-      slurp(std::string(REUSEX_SOURCE_DIR) + "/docs/design/pose-edits.md");
+      slurp((reusex::test_support::source_dir() / "docs/design/pose-edits.md")
+                .string());
   std::vector<std::string> out;
   const std::regex block("```yaml\\n([\\s\\S]*?)```");
   for (std::sregex_iterator it(md.begin(), md.end(), block), end; it != end;
@@ -174,8 +176,10 @@ std::vector<std::string> doc_examples() {
 }
 
 test_support::JsonSchemaLite schema() {
-  return test_support::JsonSchemaLite(nlohmann::json::parse(slurp(
-      std::string(REUSEX_SOURCE_DIR) + "/docs/design/pose-edits.schema.json")));
+  return test_support::JsonSchemaLite(
+      nlohmann::json::parse(slurp((reusex::test_support::source_dir() /
+                                   "docs/design/pose-edits.schema.json")
+                                      .string())));
 }
 
 } // namespace

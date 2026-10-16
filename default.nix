@@ -119,6 +119,19 @@ in
         ./tests
         # Accessed at test runtime via REUSEX_SOURCE_DIR (test_stage_contract.cpp)
         ./docs/CONTRACTS.md
+        # Read by test_pose_edits.cpp (every doc example must parse + match the schema)
+        ./docs/design/pose-edits.md
+        ./docs/design/pose-edits.schema.json
+        # Run by the bench_solid_compare_selftest ctest (tests/CMakeLists.txt).
+        # Missing from this set it failed every nix check with "can't open
+        # file" — unnoticed, because ci.yml piped `nix build` into `tee`
+        # without pipefail (reusex-37v).
+        ./scripts/bench-solid-compare.py
+        ./scripts/test_bench_solid_compare.py
+        # Run by the bench_poses_compare_selftest ctest (reusex-rcv.1.6),
+        # same reason as the bench-solid pair above.
+        ./scripts/bench-poses-compare.py
+        ./scripts/test_bench_poses_compare.py
         # Embedded into a generated header by reusexLibrary.cmake (the native
         # TensorRT EngineBuilder's default SAM 3.1 recipe)
         ./python/reusex_sam3/engine-build.json

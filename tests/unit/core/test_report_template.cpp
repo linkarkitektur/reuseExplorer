@@ -14,6 +14,7 @@
 #include <core/ProjectDB.hpp>
 #include <core/report_generator.hpp>
 
+#include "../../support/source_dir.hpp"
 #include "../../support/survey_fixture.hpp"
 #include "../../support/temp_path.hpp"
 #include "../../support/typst.hpp"
@@ -98,8 +99,8 @@ std::vector<std::string> entries(const fs::path &dir) {
 TEST_CASE("ReportTemplate_EmbeddedCopy_MatchesFileOnDisk", "[report][typst]") {
   // One read guards the CMake embedding: the generated header must hold
   // apps/rux/resources/report.typ byte for byte, comments included.
-  const auto on_disk =
-      slurp(fs::path(REUSEX_SOURCE_DIR) / "apps/rux/resources/report.typ");
+  const auto on_disk = slurp(reusex::test_support::source_dir() /
+                             "apps/rux/resources/report.typ");
   CHECK(std::string(reusex::core::detail::kDefaultReportTemplate) == on_disk);
 }
 
@@ -400,7 +401,7 @@ TEST_CASE("ReportPdf_ProjectWithThumbnail_Compiles", "[report][typst]") {
 
 namespace {
 const fs::path kSampleDir =
-    fs::path(REUSEX_SOURCE_DIR) / "apps/rux/resources/report-sample";
+    reusex::test_support::source_dir() / "apps/rux/resources/report-sample";
 }
 
 TEST_CASE("ReportSample_DataJson_ExercisesTheTemplate", "[report][sample]") {

@@ -19,6 +19,7 @@
 #include "reusex/core/validate.hpp"
 #include "reusex/io/reusex.hpp"
 #include "reusex/reconstruction/mesh.hpp"
+#include "reusex/segmentation/band_rooms.hpp"
 #include "reusex/segmentation/classify_planes.hpp"
 #include "reusex/segmentation/level.hpp"
 #include "reusex/segmentation/reconcile_instances.hpp"
@@ -324,8 +325,97 @@ StageResult run_planes(ProjectDB &db, const StageContext &ctx,
         static_cast<int64_t>(plane_normals->size())}});
 }
 
+/// `rooms` with `method = band`: rooms from the clutter-free height band
+/// (segmentation/band_rooms.hpp, reusex-rqn.2). Needs the storeys table for
+/// the level frame and the floor / ceiling heights, and the per-point
+/// "normals" cloud.
+StageResult run_band_rooms(ProjectDB &db, const StageContext &ctx,
+                           const json &params) {
+  geometry::BandRoomsOptions o;
+  o.cell_size = param_or(params, "band_cell_size", o.cell_size);
+  o.band_bottom = param_or(params, "band_bottom", o.band_bottom);
+  o.band_top = param_or(params, "band_top", o.band_top);
+  o.core_radius = param_or(params, "band_core_radius", o.core_radius);
+  o.min_room_area = param_or(params, "band_min_room_area", o.min_room_area);
+  o.wall_min_points =
+      param_or(params, "band_wall_min_points", o.wall_min_points);
+  o.footprint_close =
+      param_or(params, "band_footprint_close", o.footprint_close);
+  o.cancel_token = ctx.cancel_token;
+  if (!(o.band_top > o.band_bottom))
+    return StageResult::invalid(
+        fmt::format("band_top ({} m) must lie above band_bottom ({} m)",
+                    o.band_top, o.band_bottom));
+
+  const auto storeys = db.storeys();
+  if (storeys.empty())
+    return StageResult::invalid(
+        "rooms --method band needs the storeys table (level frame, floor "
+        "and ceiling heights); run `rux create storeys` first");
+  if (!db.has_point_cloud("normals"))
+    return StageResult::invalid(
+        "rooms --method band needs the 'normals' cloud; run `rux create "
+        "clouds` first");
+
+  auto cloud = db.point_cloud_xyzrgb("cloud");
+  auto normals = db.point_cloud_normal("normals");
+  if (normals->size() != cloud->size())
+    return StageResult::invalid(
+        fmt::format("Point cloud size mismatch: cloud={}, normals={}",
+                    cloud->size(), normals->size()));
+
+  IndicesConstPtr filter;
+  if (auto problem = resolve_filter(params, db, cloud->size(), filter))
+    return StageResult::invalid(*problem);
+
+  auto r = geometry::segment_band_rooms(*cloud, *normals, storeys, o,
+                                        filter ? filter.get() : nullptr);
+  if (ctx.is_cancelled())
+    return StageResult::cancel("room segmentation cancelled");
+
+  db.save_point_cloud("rooms", *r.labels, "segment_rooms", ctx.parameters);
+  return StageResult::success(
+      fmt::format("segmented {} room(s) in {} storey(s) from the {}-{} m "
+                  "band; {} of {} points unlabeled",
+                  r.rooms, r.grids.size(), o.band_bottom, o.band_top,
+                  r.unlabeled_points, cloud->size()),
+      {{"cloud", "rooms", static_cast<int64_t>(r.labels->size())}});
+}
+
 StageResult run_rooms(ProjectDB &db, const StageContext &ctx,
                       const json &params) {
+  const bool method_specified =
+      params.contains("method") && !params.at("method").is_null();
+  auto method = param_or<std::string>(
+      params, "method", std::string(geometry::kDefaultRoomsMethod));
+  if (method != geometry::kRoomsMethodBand &&
+      method != geometry::kRoomsMethodLeiden)
+    return StageResult::invalid(
+        fmt::format("unknown rooms method '{}' (expected '{}' or '{}')", method,
+                    geometry::kRoomsMethodLeiden, geometry::kRoomsMethodBand));
+
+  // Band is the default (reusex-icg), but it needs the storeys table. An
+  // explicit `--method band` without storeys still refuses below
+  // (run_band_rooms) — that is a user asking for something the project
+  // cannot do yet. The *default* degrades instead of breaking every
+  // `clouds -> planes -> rooms` pipeline that has not run `create storeys`:
+  // fall back to Leiden, with a warning naming the reason and both fixes.
+  std::string fallback_note;
+  if (method == geometry::kRoomsMethodBand && !method_specified &&
+      db.storeys().empty()) {
+    warn("rooms: default method 'band' needs the storeys table, but the "
+         "project has none; falling back to 'leiden' for this run. Run `rux "
+         "create storeys` first to use band, or pass --method leiden to "
+         "silence this warning.");
+    method = geometry::kRoomsMethodLeiden;
+    fallback_note =
+        " (method defaulted to band, but the project has no storeys; fell "
+        "back to leiden - run `rux create storeys` or pass --method leiden)";
+  }
+
+  if (method == geometry::kRoomsMethodBand)
+    return run_band_rooms(db, ctx, params);
+
   geometry::SegmentRoomsOptions options;
   options.grid_size = param_or(params, "grid_size", options.grid_size);
   options.resolution = param_or(params, "resolution", options.resolution);
@@ -383,7 +473,7 @@ StageResult run_rooms(ProjectDB &db, const StageContext &ctx,
   // `count` is points written, not rooms found — the room count is in the
   // summary. One cloud was written, so one artifact is reported.
   return StageResult::success(
-      fmt::format("segmented {} room(s)", unique.size()),
+      fmt::format("segmented {} room(s){}", unique.size(), fallback_note),
       {{"cloud", "rooms", static_cast<int64_t>(labels->size())}});
 }
 

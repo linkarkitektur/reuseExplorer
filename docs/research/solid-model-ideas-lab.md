@@ -165,6 +165,28 @@ office at the desk-screen rows and along both corridor edges (the
 `reusex-5l7` symptom); with the 2D rooms only one spurious box around a
 desk-screen cluster on the east side remains.
 
+**C++ port (`reusex-rqn.2`, 2026-10-16):** `rux create rooms --method band`
+(`segmentation/band_rooms.hpp`, needs `rux create storeys`). Same algorithm,
+grid anchored to the level-frame origin, points above the top storey's
+ceiling take the room below. Scored from the stored `rooms` cloud (5 cm
+cells take their points' majority room, polygonised as the prototype; this
+scorer gives the prototype's injected cloud 0.671 / 0.694 / 0.502), against
+the Leiden rooms of `main` after the rooms-5l7 merge, meshes on today's
+`main` (sectioned cuOpt solve, `--max-cells 20000`):
+
+| | NewOffice Leiden → band | house1 | house2 |
+|---|---|---|---|
+| room IoU / count err | 0.604 / +13 → **0.663 / +2** | 0.636 / -1 → **0.695 / -2** | 0.466 / 0 → **0.503 / -3** |
+| fake interior wall [m²] | 34.8 → 25.1 | 42.0 → 46.0 | 78.9 → 71.3 |
+| unsupported share (0.25 m) | 0.098 → 0.103 | 0.277 → 0.262 | 0.273 → 0.269 |
+| fit mean [m] | 0.313 → 0.298 | 0.213 → **0.140** | 0.276 → 0.272 |
+
+The large mesh gain of the table above is mostly gone: today's mesh stage
+with the rooms-5l7 merge already removes the desk-row walls on NewOffice
+(238 → 35 m² fake wall). The extra NewOffice room is a 1.7 m² strip inside
+meeting room 1 that appears with the origin-anchored grid phase (the
+prototype run on the same anchoring gives it too).
+
 ### 4.2 (a) Structure-only cloud
 
 - 2D band at 0.3-2.3 m, NewOffice: furniture in 0.322; old furniture labels

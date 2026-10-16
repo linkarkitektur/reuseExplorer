@@ -23,6 +23,8 @@
 #include <string>
 #include <vector>
 
+#include "../../support/source_dir.hpp"
+
 using reusex::core::Alignment;
 using reusex::core::ArtifactKind;
 using reusex::core::find_artifact;
@@ -46,8 +48,8 @@ const std::vector<PipelineStage> &all_stages() {
       PipelineStage::graph_discover, PipelineStage::optimize,
       PipelineStage::clouds,         PipelineStage::annotate,
       PipelineStage::project,        PipelineStage::planes,
-      PipelineStage::rooms,          PipelineStage::instances,
-      PipelineStage::storeys,        PipelineStage::classify,
+      PipelineStage::storeys,        PipelineStage::rooms,
+      PipelineStage::instances,      PipelineStage::classify,
       PipelineStage::mesh,           PipelineStage::texture,
       PipelineStage::windows,        PipelineStage::materials,
       PipelineStage::survey,         PipelineStage::attributes,
@@ -331,7 +333,7 @@ std::map<std::string, DocStage> parse_contracts_doc(const std::string &text) {
 TEST_CASE("ContractsDoc_StageSections_MatchContractTable",
           "[core][contract][docs]") {
   const std::filesystem::path doc =
-      std::filesystem::path(REUSEX_SOURCE_DIR) / "docs" / "CONTRACTS.md";
+      reusex::test_support::source_dir() / "docs" / "CONTRACTS.md";
   REQUIRE(std::filesystem::exists(doc));
 
   std::ifstream in(doc);
