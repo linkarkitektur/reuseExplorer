@@ -39,6 +39,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <random>
 #include <string>
@@ -158,6 +159,9 @@ SubcommandOptimizeOptions watch_options(const fs::path &edits) {
   o.fast = true;
   o.drift_depth_stride = 2;
   o.drift_segments = 2; // one per pass
+  // No plane landmark can form: the reference (the no-edit full solve,
+  // reusex-rcv.1.21) keeps the break, so these tests see it to fix it.
+  o.min_plane_inliers = 1000000;
   return o;
 }
 
@@ -360,6 +364,172 @@ TEST_CASE("OptimizeWatchSession: suggestion pastes, re-solves, keeps the last "
 
   // The project was never written (no --apply).
   CHECK(stored_poses(project) == before);
+}
+
+TEST_CASE("shear_indicator: a carried tail or a better fit is not shear",
+          "[rux_app][optimize][watch]") {
+  // 30 nodes on a line, three segments of ten; an edit names 11..20.
+  std::vector<std::int64_t> ids;
+  std::vector<Eigen::Matrix4d> ref;
+  for (int k = 1; k <= 30; ++k) {
+    ids.push_back(k);
+    Eigen::Matrix4d m = Eigen::Matrix4d::Identity();
+    m(0, 3) = 0.1 * k;
+    ref.push_back(m);
+  }
+  std::vector<bool> untouched(30, true);
+  for (int k = 10; k < 20; ++k)
+    untouched[static_cast<std::size_t>(k)] = false;
+  auto shifted = [&](int lo, int hi, double dy) {
+    auto out = ref;
+    for (int k = lo; k <= hi; ++k)
+      out[static_cast<std::size_t>(k - 1)](1, 3) += dy;
+    return out;
+  };
+  auto fits = [](std::optional<double> up, std::optional<double> up_ref,
+                 std::optional<double> down, std::optional<double> down_ref) {
+    return std::vector<rux::ShearSegmentFit>{{0, 1, 10, up, up_ref},
+                                             {1, 11, 20, 0.005, 0.005},
+                                             {2, 21, 30, down, down_ref}};
+  };
+
+  SECTION("the tail after the move is carried: expected, not shear") {
+    const auto sh =
+        rux::shear_indicator(ids, shifted(11, 30, 0.1), ref, untouched,
+                             fits(0.005, 0.005, 0.005, 0.005), 0.05);
+    CHECK(sh.untouched == 20);
+    CHECK(sh.downstream_moved == 10);
+    CHECK(sh.upstream_moved == 0);
+    CHECK(sh.flagged == 0);
+    REQUIRE(sh.segments.size() == 2);
+    CHECK(sh.segments[1].downstream);
+    CHECK_FALSE(sh.segments[1].sheared);
+  }
+  SECTION("upstream moved to a worse fit: shear") {
+    const auto sh =
+        rux::shear_indicator(ids, shifted(1, 10, 0.1), ref, untouched,
+                             fits(0.009, 0.005, 0.005, 0.005), 0.05);
+    CHECK(sh.upstream_moved == 10);
+    CHECK(sh.flagged == 10);
+    REQUIRE(sh.segments.size() == 2);
+    CHECK(sh.segments[0].sheared);
+    CHECK_FALSE(sh.segments[0].downstream);
+  }
+  SECTION("upstream moved to a better fit: a spread correction, not shear") {
+    const auto sh =
+        rux::shear_indicator(ids, shifted(1, 10, 0.1), ref, untouched,
+                             fits(0.004, 0.005, 0.005, 0.005), 0.05);
+    CHECK(sh.upstream_moved == 10);
+    CHECK(sh.flagged == 0);
+  }
+  SECTION("worse by less than 1 mm is noise") {
+    const auto sh =
+        rux::shear_indicator(ids, shifted(1, 10, 0.1), ref, untouched,
+                             fits(0.0058, 0.005, 0.005, 0.005), 0.05);
+    CHECK(sh.flagged == 0);
+  }
+  SECTION("without residuals the upstream movement is flagged") {
+    const auto sh = rux::shear_indicator(ids, shifted(1, 30, 0.1), ref,
+                                         untouched, {}, 0.05);
+    CHECK(sh.upstream_moved == 10);
+    CHECK(sh.downstream_moved == 10);
+    CHECK(sh.flagged == 10);
+  }
+}
+
+TEST_CASE("fast_graph_at: the no-edit fast solve is the reference",
+          "[rux_app][optimize][watch]") {
+  TempDir dir("optimize_watch_fast_graph");
+  const fs::path project = dir.path / "p.rux";
+  make_project(project);
+  reusex::ProjectDB db(project, /*readOnly=*/true);
+  SubcommandOptimizeOptions o;
+  auto options = plane_graph_options(o);
+  const auto graph = reusex::geometry::load_stored_pose_graph(db, options);
+  // The reference: the true poses (the break undone).
+  std::vector<Eigen::Matrix4d> reference;
+  for (const auto &f : graph.frames)
+    reference.push_back(true_pose(f.node_id - 1));
+  const auto fast = rux::fast_graph_at(graph, reference);
+  REQUIRE(fast.frames.size() == graph.frames.size());
+  CHECK(fast.seed_stored == reference);
+  for (const auto &f : fast.frames)
+    CHECK((f.points == nullptr || f.points->empty()));
+  options.use_plane_factors = false;
+  options.manhattan = false;
+  const auto solve =
+      reusex::geometry::solve_stored_pose_graph(db, fast, options);
+  REQUIRE(solve.poses.size() == reference.size());
+  double worst = 0.0;
+  for (std::size_t k = 0; k < reference.size(); ++k)
+    worst =
+        std::max(worst, (solve.poses[k] - reference[k]).cwiseAbs().maxCoeff());
+  CHECK(worst < 1e-6);
+}
+
+TEST_CASE("OptimizeWatchSession: --fast starts from plain optimize, shows it, "
+          "never suggests the gauge segment",
+          "[rux_app][optimize][watch]") {
+  TempDir dir("optimize_watch_reference");
+  const fs::path project = dir.path / "p.rux";
+  const fs::path edits = dir.path / "e.yaml";
+  make_project(project);
+  write(edits, kHeader + "edits: []\n");
+  RuxOptions global;
+  global.project_db = project;
+
+  // Plane factors on (the default): the reference is plain optimize.
+  auto opt = watch_options(edits);
+  opt.min_plane_inliers = SubcommandOptimizeOptions{}.min_plane_inliers;
+  auto full_opt = opt;
+  full_opt.fast = false;
+  rux::OptimizeWatchSession full(full_opt, global);
+  const auto f0 = full.pass(true);
+  INFO(f0.report);
+  REQUIRE(f0.solved);
+  rux::OptimizeWatchSession fast(opt, global);
+  const auto p0 = fast.pass(true);
+  INFO(p0.report);
+  REQUIRE(p0.solved);
+  // reusex-rcv.1.21: the fast no-edit solve IS the full one, not the drift.
+  REQUIRE(p0.poses.size() == f0.poses.size());
+  double worst = 0.0;
+  for (std::size_t k = 0; k < p0.poses.size(); ++k)
+    worst = std::max(worst, (p0.poses[k].topRightCorner<3, 1>() -
+                             f0.poses[k].topRightCorner<3, 1>())
+                                .norm());
+  CHECK(worst < 1e-4);
+  // reusex-rcv.1.24: the reference is on every block.
+  CHECK_THAT(p0.report, ContainsSubstring("vs plain optimize"));
+  REQUIRE(p0.reference_cross_segment_median_m);
+  REQUIRE(p0.cross_segment_median_m);
+  CHECK(std::abs(*p0.reference_cross_segment_median_m -
+                 *p0.cross_segment_median_m) < 1e-3);
+  CHECK(p0.shear.change.max_m < 1e-4);
+
+  // reusex-rcv.1.23: with the break kept (no plane landmark), segment 0 --
+  // which holds the gauge, node 1 -- is never suggested.
+  rux::OptimizeWatchSession drifted(watch_options(edits), global);
+  const auto d0 = drifted.pass(true);
+  INFO(d0.report);
+  REQUIRE(d0.solved);
+  REQUIRE_FALSE(d0.suggestion_items.empty());
+  for (const auto &item : d0.suggestion_items)
+    CHECK_THAT(item, !ContainsSubstring("nodes: [1, "));
+  CHECK_THAT(d0.report, ContainsSubstring("holds the gauge"));
+  REQUIRE(d0.beats_reference);
+  CHECK_FALSE(*d0.beats_reference); // no edits: equal, not better
+
+  // The verdict against the reference follows the cross-segment median.
+  write(edits, kHeader + "edits:\n" + d0.suggestion_items.front());
+  const auto d1 = drifted.pass(true);
+  INFO(d1.report);
+  REQUIRE(d1.solved);
+  REQUIRE(d1.reference_cross_segment_median_m);
+  REQUIRE(d1.cross_segment_median_m);
+  REQUIRE(d1.beats_reference);
+  CHECK(*d1.beats_reference ==
+        (*d1.cross_segment_median_m < *d1.reference_cross_segment_median_m));
 }
 
 TEST_CASE("candidate_graph_edges colours by the candidate solve",
