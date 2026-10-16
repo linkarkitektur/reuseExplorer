@@ -32,6 +32,7 @@ void RoomGrid::resize(int w, int h) {
   const size_t n = static_cast<size_t>(w) * static_cast<size_t>(h);
   wall.assign(n, 0);
   footprint.assign(n, 0);
+  graph.assign(n, 0);
   interior.assign(n, 0);
   clearance.assign(n, 0.0F);
   labels.assign(n, 0);
@@ -189,7 +190,7 @@ int partition_room_grid(RoomGrid &g, const BandRoomsOptions &o,
   g.interior.assign(n, 0);
   g.clearance.assign(n, 0.0F);
   g.labels.assign(n, 0);
-  g.cores = g.rooms = g.dropped_regions = 0;
+  g.cores = g.rooms = g.dropped_regions = g.coreless = 0;
   g.interior_area = 0.0;
   if (n == 0)
     return 0;
@@ -223,6 +224,11 @@ int partition_room_grid(RoomGrid &g, const BandRoomsOptions &o,
     cv::Mat dst = view(wall_d, w, h);
     cv::dilate(src, dst, disk(cells(o.wall_dilate, cell)));
   }
+  // The wall graph and door cuts are blocked as they are: their width is
+  // the wall's already.
+  if (g.graph.size() == n)
+    for (size_t i = 0; i < n; ++i)
+      wall_d[i] = static_cast<uint8_t>(wall_d[i] | g.graph[i]);
   std::vector<uint8_t> free(n, 0);
   for (size_t i = 0; i < n; ++i)
     free[i] = (g.interior[i] && !wall_d[i]) ? 1 : 0;
@@ -276,6 +282,74 @@ int partition_room_grid(RoomGrid &g, const BandRoomsOptions &o,
 
   watershed_on_clearance(g.clearance, free, w, h, g.labels);
 
+  // Free space no core reached: a component closed off by walls and door
+  // cuts that is too narrow for a core (a WC stall). It is a room of its
+  // own when it is wide enough somewhere; numbered after the cores, in
+  // raster order of the component's first cell.
+  if (o.coreless_min_clearance > 0.0) {
+    std::vector<uint8_t> left(n, 0);
+    for (size_t i = 0; i < n; ++i)
+      left[i] = (free[i] && g.labels[i] == 0) ? 1 : 0;
+    cv::Mat lbl;
+    const int nl = cv::connectedComponents(view(left, w, h), lbl, 4, CV_32S,
+                                           cv::CCL_DEFAULT);
+    // Per component: its widest point, and what its boundary cells are --
+    // outside the interior (open to the exterior: a footprint leak beyond a
+    // window, cut off by the wall graph) or blocked (walls, door cuts).
+    std::vector<float> widest(static_cast<size_t>(nl), 0.0F);
+    std::vector<size_t> open_edge(static_cast<size_t>(nl), 0);
+    std::vector<size_t> closed_edge(static_cast<size_t>(nl), 0);
+    for (int r = 0; r < h; ++r) {
+      const int *row = lbl.ptr<int>(r);
+      for (int c = 0; c < w; ++c) {
+        const int l = row[c];
+        if (l <= 0)
+          continue;
+        const auto k = static_cast<size_t>(l);
+        widest[k] = std::max(widest[k], g.clearance[g.index(c, r)]);
+        auto edge = [&](int cc, int rr) {
+          if (cc < 0 || rr < 0 || cc >= w || rr >= h) {
+            ++open_edge[k];
+            return;
+          }
+          if (lbl.at<int>(rr, cc) == l)
+            return;
+          ++(g.interior[g.index(cc, rr)] ? closed_edge[k] : open_edge[k]);
+        };
+        edge(c - 1, r);
+        edge(c + 1, r);
+        edge(c, r - 1);
+        edge(c, r + 1);
+      }
+    }
+    auto enclosed = [&](size_t k) {
+      const size_t total = open_edge[k] + closed_edge[k];
+      return total > 0 &&
+             static_cast<double>(open_edge[k]) <=
+                 o.coreless_max_open_share * static_cast<double>(total);
+    };
+    std::vector<int32_t> id_of(static_cast<size_t>(nl), -1);
+    for (int r = 0; r < h; ++r) {
+      const int *row = lbl.ptr<int>(r);
+      for (int c = 0; c < w; ++c) {
+        const int l = row[c];
+        if (l == 0)
+          continue;
+        auto &m = id_of[static_cast<size_t>(l)];
+        if (m == -1) {
+          m = widest[static_cast<size_t>(l)] >=
+                          static_cast<float>(o.coreless_min_clearance) &&
+                      enclosed(static_cast<size_t>(l))
+                  ? ++next
+                  : 0;
+          if (m > 0)
+            ++g.coreless;
+        }
+        g.labels[g.index(c, r)] = m;
+      }
+    }
+  }
+
   // Regions below min_room_area are dropped; the rest renumbered in order.
   std::vector<size_t> area(static_cast<size_t>(next) + 1, 0);
   for (int32_t l : g.labels)
@@ -287,8 +361,11 @@ int partition_room_grid(RoomGrid &g, const BandRoomsOptions &o,
     if (static_cast<double>(area[static_cast<size_t>(l)]) * cell_area >=
         o.min_room_area)
       final_id[static_cast<size_t>(l)] = id++;
-    else
+    else {
       ++g.dropped_regions;
+      if (l > g.cores)
+        --g.coreless;
+    }
   }
   for (auto &l : g.labels)
     l = l > 0 ? final_id[static_cast<size_t>(l)] : 0;
@@ -296,10 +373,114 @@ int partition_room_grid(RoomGrid &g, const BandRoomsOptions &o,
   return g.rooms;
 }
 
+namespace {
+
+/// A door or a floor-reaching opening: the rooms either side meet there.
+bool is_doorway(const core::OpeningRecord &o) {
+  return o.kind == "door" || o.kind == "opening";
+}
+
+/// Set the cells of @p g.graph whose centre lies within @p half of the
+/// stretch [s0, s1] of the axis a -> a + len * u.
+size_t stamp_segment(RoomGrid &g, const Eigen::Vector2d &a,
+                     const Eigen::Vector2d &u, double s0, double s1,
+                     double half) {
+  if (!(s1 > s0))
+    return 0;
+  const double cell = g.cell_size;
+  const Eigen::Vector2d n(-u.y(), u.x());
+  const Eigen::Vector2d p0 = a + s0 * u;
+  const Eigen::Vector2d p1 = a + s1 * u;
+  const double pad = half + cell;
+  const auto lo = [&](double v, int origin) {
+    return static_cast<int>(std::floor(v / cell)) - origin;
+  };
+  const int c0 = std::max(0, lo(std::min(p0.x(), p1.x()) - pad, g.col0));
+  const int c1 =
+      std::min(g.width - 1, lo(std::max(p0.x(), p1.x()) + pad, g.col0));
+  const int r0 = std::max(0, lo(std::min(p0.y(), p1.y()) - pad, g.row0));
+  const int r1 =
+      std::min(g.height - 1, lo(std::max(p0.y(), p1.y()) + pad, g.row0));
+  size_t set = 0;
+  for (int r = r0; r <= r1; ++r)
+    for (int c = c0; c <= c1; ++c) {
+      const Eigen::Vector2d q((g.col0 + c + 0.5) * cell,
+                              (g.row0 + r + 0.5) * cell);
+      const Eigen::Vector2d d = q - a;
+      const double s = d.dot(u);
+      if (s < s0 || s > s1 || std::abs(d.dot(n)) > half)
+        continue;
+      auto &v = g.graph[g.index(c, r)];
+      if (v == 0) {
+        v = 1;
+        ++set;
+      }
+    }
+  return set;
+}
+
+} // namespace
+
+size_t rasterise_wall_graph(RoomGrid &g, const BandRoomsPlan &plan,
+                            const BandRoomsOptions &o) {
+  const size_t n = static_cast<size_t>(g.width) * static_cast<size_t>(g.height);
+  if (g.graph.size() != n)
+    g.graph.assign(n, 0);
+  g.graph_walls = 0;
+  g.door_cuts = 0;
+  if (n == 0 || !(o.use_wall_graph || o.cut_at_doors))
+    return 0;
+  const double min_half = std::max(o.wall_graph_half_width, 0.75 * g.cell_size);
+  size_t set = 0;
+  for (const auto &w : plan.walls) {
+    if (w.storey != g.storey_idx)
+      continue;
+    if (w.seen_share >= 0.0 && w.seen_share < o.wall_graph_min_seen_share)
+      continue;
+    const Eigen::Vector2d a(w.x0, w.y0);
+    const Eigen::Vector2d d(w.x1 - w.x0, w.y1 - w.y0);
+    const double len = d.norm();
+    if (!(len > 1e-6) || !std::isfinite(len))
+      continue;
+    const Eigen::Vector2d u = d / len;
+    const double half =
+        std::max(min_half, w.thickness > 0.0 ? 0.5 * w.thickness : 0.0);
+    // The doorways of this wall, as [s0, s1] clamped to the axis, sorted.
+    std::vector<std::pair<double, double>> doors;
+    for (const auto &op : plan.openings)
+      if (op.wall == w.guid && is_doorway(op)) {
+        const double s0 = std::max(0.0, std::min(op.s_start, op.s_end));
+        const double s1 = std::min(len, std::max(op.s_start, op.s_end));
+        if (s1 > s0)
+          doors.emplace_back(s0, s1);
+      }
+    std::sort(doors.begin(), doors.end());
+    if (o.use_wall_graph) {
+      ++g.graph_walls;
+      // The axis, capped by its half-width at both ends so joins close;
+      // with cut_at_doors the doorways are part of it, else skipped.
+      double from = -half;
+      if (!o.cut_at_doors)
+        for (const auto &[s0, s1] : doors) {
+          set += stamp_segment(g, a, u, from, s0, half);
+          from = std::max(from, s1);
+        }
+      set += stamp_segment(g, a, u, from, len + half, half);
+    }
+    if (o.cut_at_doors)
+      for (const auto &[s0, s1] : doors) {
+        ++g.door_cuts;
+        set += stamp_segment(g, a, u, s0 - o.door_cut_overlap,
+                             s1 + o.door_cut_overlap, half);
+      }
+  }
+  return set;
+}
+
 auto segment_band_rooms(const Cloud &cloud, const CloudN &normals,
                         const std::vector<core::StoreyRecord> &storeys,
-                        const BandRoomsOptions &o, const pcl::Indices *evidence)
-    -> BandRoomsResult {
+                        const BandRoomsOptions &o, const pcl::Indices *evidence,
+                        const BandRoomsPlan *plan) -> BandRoomsResult {
   if (storeys.empty())
     throw std::invalid_argument(
         "band rooms need the storeys table (level frame, floor and ceiling "
@@ -446,6 +627,8 @@ auto segment_band_rooms(const Cloud &cloud, const CloudN &normals,
       fp_cells += g.footprint[i];
     }
 
+    const size_t graph_cells = plan ? rasterise_wall_graph(g, *plan, o) : 0;
+
     const int rooms = partition_room_grid(g, o, next_label);
 
     // Points take the room of the nearest room cell within the interior
@@ -477,11 +660,13 @@ auto segment_band_rooms(const Cloud &cloud, const CloudN &normals,
 
     info("band rooms: storey {}: {} x {} cells of {} m, band {:.2f}-{:.2f} "
          "m; {} wall cells ({} points), footprint {} cells ({} points), "
-         "interior {:.1f} m^2; {} core(s), {} room(s), {} region(s) below "
-         "{} m^2 dropped; {} of {} storey points labelled",
+         "interior {:.1f} m^2; wall graph {} wall(s), {} door cut(s), {} "
+         "cells; {} core(s), {} room(s) ({} without a core), {} region(s) "
+         "below {} m^2 dropped; {} of {} storey points labelled",
          st.idx, g.width, g.height, cell, band_lo - zf, band_hi - zf,
-         wall_cells, n_wall_pts, fp_cells, n_fp_pts, g.interior_area, g.cores,
-         rooms, g.dropped_regions, o.min_room_area, labelled, members.size());
+         wall_cells, n_wall_pts, fp_cells, n_fp_pts, g.interior_area,
+         g.graph_walls, g.door_cuts, graph_cells, g.cores, rooms, g.coreless,
+         g.dropped_regions, o.min_room_area, labelled, members.size());
     if (rooms == 0)
       warn("band rooms: storey {} produced no room: {} wall cells, footprint "
            "{} cells, interior {:.1f} m^2, {} core(s) farther than {} m from "

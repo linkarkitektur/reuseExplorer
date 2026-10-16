@@ -18,10 +18,13 @@
 #include <reusex/pipeline/stages.hpp>
 #include <reusex/types/point_types.hpp>
 
+#include <Eigen/Core>
+
 #include "../../support/temp_path.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -37,11 +40,17 @@ namespace {
 /// floor to 2.1 m) through the partition and a window (x 2.5 .. 3.5, z 0.9
 /// .. 2.0) in the south wall. Every face is its own plane, as `create planes`
 /// leaves them; the plane classes are written as `create classify` would.
-void seed_rooms(ProjectDB &db) {
+/// @p door_y0 .. @p door_y1 move the door's jambs and @p door_head its head
+/// (RoomsStage_AfterWallsAndOpenings_CutsAtAWideDoor: a doorway wider than
+/// the band's constriction cut, its lintel above the wall band).
+void seed_rooms(ProjectDB &db, double door_y0 = 1.0, double door_y1 = 1.9,
+                double door_head = 2.1) {
   const bool oriented = true;
   Cloud cloud;
   CloudL planes;
   CloudN normals;
+  CloudN point_normals; // per point: its plane's normal (the band reads it)
+  pcl::PointCloud<pcl::PointXYZ> centroids;
   std::vector<core::PlaneClassRecord> classes;
   uint32_t label = 0;
   const double step = 0.05;
@@ -49,6 +58,11 @@ void seed_rooms(ProjectDB &db) {
                    double ny, double nz, auto &&points) {
     ++label;
     int n = 0;
+    NormalT nn;
+    nn.normal_x = float(nx);
+    nn.normal_y = float(ny);
+    nn.normal_z = float(nz);
+    Eigen::Vector3d sum = Eigen::Vector3d::Zero();
     points([&](double x, double y, double z) {
       PointT p;
       p.x = float(x);
@@ -58,13 +72,14 @@ void seed_rooms(ProjectDB &db) {
       LabelT l;
       l.label = label;
       planes.push_back(l);
+      point_normals.push_back(nn);
+      sum += Eigen::Vector3d(x, y, z);
       ++n;
     });
-    NormalT nn;
-    nn.normal_x = float(nx);
-    nn.normal_y = float(ny);
-    nn.normal_z = float(nz);
     normals.push_back(nn);
+    const Eigen::Vector3d mean = sum / std::max(n, 1);
+    centroids.push_back(
+        pcl::PointXYZ(float(mean.x()), float(mean.y()), float(mean.z())));
     core::PlaneClassRecord c;
     c.plane_label = static_cast<int>(label);
     c.guid = core::deterministic_guid(
@@ -91,8 +106,8 @@ void seed_rooms(ProjectDB &db) {
         for (double z = 0.5 * step; z < 2.5; z += step) {
           const double x = x0 + (x1 - x0) * s / len;
           const double y = y0 + (y1 - y0) * s / len;
-          const bool door =
-              std::abs(x - 2.0) < 0.1 && y > 1.0 && y < 1.9 && z < 2.1;
+          const bool door = std::abs(x - 2.0) < 0.1 && y > door_y0 &&
+                            y < door_y1 && z < door_head;
           const bool window =
               y < 0.01 && x > 2.5 && x < 3.5 && z > 0.9 && z < 2.0;
           if (!door && !window)
@@ -114,6 +129,8 @@ void seed_rooms(ProjectDB &db) {
   db.save_point_cloud("cloud", cloud, "reconstruct", marker);
   db.save_point_cloud("planes", planes, "segment_planes", "{}");
   db.save_point_cloud("plane_normals", normals, "segment_planes", marker);
+  db.save_point_cloud("normals", point_normals, "reconstruct", marker);
+  db.save_point_cloud("plane_centroids", centroids, "segment_planes", "{}");
 
   core::StoreyRecord s;
   s.guid = core::deterministic_guid(db.project_guid(), "storeys/z0");
@@ -295,4 +312,67 @@ TEST_CASE("OpeningsStage_LockedRow_SurvivesARerun",
   REQUIRE(kept.has_value());
   CHECK(kept->locked);
   CHECK_THAT(kept->z_head, WithinAbs(2.2, 1e-12));
+}
+
+TEST_CASE("RoomsStage_AfterWallsAndOpenings_CutsAtAWideDoor",
+          "[pipeline][stages][openings][band_rooms]") {
+  // W5.4 acceptance (reusex-z1v.7.4): the two rooms joined by a 1.4 m
+  // doorway up to 2.35 m -- wider than 2 x band_core_radius, its lintel
+  // above the wall band, so the band alone sees one room -- are two once
+  // walls -> openings have run before rooms.
+  TempPath project("test_rooms_after_openings");
+  ProjectDB db(project.path);
+  seed_rooms(db, 0.8, 2.2, 2.35);
+  auto rooms = [&](const std::string &params) {
+    const auto r = run(db, project, JobStage::rooms, params);
+    INFO(r.message);
+    REQUIRE(r.ok);
+    const auto labels = db.point_cloud_label("rooms");
+    std::set<uint32_t> ids;
+    for (const auto &l : labels->points)
+      if (l.label > 0)
+        ids.insert(l.label);
+    return ids.size();
+  };
+  CHECK(rooms("{}") == 1); // no walls / openings tables yet
+
+  {
+    const auto r = run(db, project, JobStage::walls);
+    INFO(r.message);
+    REQUIRE(r.ok);
+  }
+  {
+    const auto r = run(db, project, JobStage::openings);
+    INFO(r.message);
+    REQUIRE(r.ok);
+  }
+  const auto rows = db.openings();
+  // A door or, its head this close to the ceiling, a floor-to-ceiling
+  // opening: either is a doorway.
+  REQUIRE(std::any_of(rows.begin(), rows.end(), [](const auto &o) {
+    return o.kind == "door" || o.kind == "opening";
+  }));
+
+  CHECK(rooms("{}") == 2);
+  // The door cut is what splits them: both tables ignored, one room again;
+  // the door cut alone, without the wall graph, two.
+  CHECK(rooms(R"({"band_use_walls": false, "band_cut_at_doors": false})") == 1);
+  CHECK(rooms(R"({"band_use_walls": false})") == 2);
+  // Each side of the partition is one room, a different one.
+  CHECK(rooms("{}") == 2);
+  const auto cloud = db.point_cloud_xyzrgb("cloud");
+  const auto labels = db.point_cloud_label("rooms");
+  std::set<uint32_t> west;
+  std::set<uint32_t> east;
+  for (size_t i = 0; i < cloud->size(); ++i) {
+    const auto &p = cloud->points[i];
+    if (std::abs(p.z) > 1e-3 || std::abs(p.x - 2.0f) < 0.3f)
+      continue; // floor points away from the partition
+    (p.x < 2.0f ? west : east).insert((*labels)[i].label);
+  }
+  REQUIRE(west.size() == 1);
+  REQUIRE(east.size() == 1);
+  CHECK(*west.begin() > 0);
+  CHECK(*east.begin() > 0);
+  CHECK(*west.begin() != *east.begin());
 }

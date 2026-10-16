@@ -491,7 +491,10 @@ and deleted the shims. `include/geometry/` now holds only the real
   `noise_estimate.hpp` supplies the adaptive thresholds)
 - `band_rooms.hpp`: room partitioning from a clutter-free height band per
   storey (2D free-space watershed); `rooms`' default method
-  (`kDefaultRoomsMethod`, reusex-icg); needs the `storeys` table
+  (`kDefaultRoomsMethod`, reusex-icg); needs the `storeys` table, and uses
+  the `walls` / `openings` tables when present (wall graph blocks the grid,
+  doors cut rooms; optional contract inputs, so run walls -> openings ->
+  rooms)
 - `segment_rooms.hpp`: room partitioning via Leiden clustering (igraph);
   `rooms --method leiden`, selectable without storeys
 - `segment_instances.hpp` / `reconcile_instances.hpp`: semantic → spatial instances

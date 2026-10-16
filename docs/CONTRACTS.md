@@ -16,10 +16,14 @@ dependencies between pipeline stages.
 > [`libs/reusex/include/core/stage_contract.hpp`](../libs/reusex/include/core/stage_contract.hpp)
 > (table in `src/core/stage_contract.cpp`), and everything that enforces the
 > contract reads *that*: `core::check_stage_inputs()`, every `rux create`
-> subcommand, and the refusal path of `pipeline::run_stage()`. The **Consumes**
-> and **Produces** rows below are asserted against the table by
+> subcommand, and the refusal path of `pipeline::run_stage()`. The **Consumes**,
+> **Optional** and **Produces** rows below are asserted against the table by
 > `tests/unit/core/test_stage_contract.cpp`, so this page cannot silently drift
 > — but when the two disagree, the table wins and this page is the bug (#246).
+> An **Optional** input (`StageInput::optional`) is used when present and is
+> no issue when missing (no refusal, no hint), but like any input it is
+> produced by an earlier stage, so the table order is the recommended run
+> order.
 
 Each stage is a `rux` subcommand that reads named point clouds / tables from the
 project, does its work, and writes named point clouds / tables back. The names
@@ -230,36 +234,6 @@ Detect planar surfaces (noise-adaptive region growing).
 | Produces | `planes` (`Label`), `plane_centroids` (`PointXYZ`), `plane_normals` (`Normal`) |
 | Options  | `SegmentPlanesOptions` (`libs/reusex/include/segmentation/segment_planes.hpp`) |
 | Checks   | `cloud`, `normals` present and index-aligned |
-
-### `rooms` (`rux create rooms`)
-
-Partition the scan into rooms. `method = band` (default since the maintainer
-decision of 2026-10-16, reusex-icg) finds rooms per storey in 2D: wall cells
-from vertical points in a clutter-free height band above the storey floor,
-footprint from floor and ceiling points, exterior flooded from the grid
-border, rooms = watershed of the free-space distance transform, cut where
-the free space narrows below 2 x `band_core_radius`. Every point within
-`assign_margin` of a storey's interior takes the room of the nearest room
-cell; others stay 0. `method = leiden` (`--method leiden`) instead clusters
-the plane visibility graph and does not need storeys.
-
-The band method also reads `normals` and the `storeys` table (level frames,
-floor and ceiling heights); they are not declared inputs because Leiden does
-not need them, so the stage checks them itself (`storeys` precedes `rooms`
-in the stage table all the same). When the method *resolves to band only
-because it is the default* (no explicit `--method`) and the project has no
-storeys rows, the stage logs a warning naming the reason and both fixes
-(`rux create storeys`, or `--method leiden` to silence it) and falls back to
-Leiden for that run, recording the fallback in the result message. An
-*explicit* `--method band` without storeys still refuses as invalid input —
-asking for band by name is an instruction, not a preference.
-
-| | |
-|---|---|
-| Consumes | `cloud`, `planes`, `plane_centroids`, `plane_normals` |
-| Produces | `rooms` (`Label`) |
-| Options  | `SegmentRoomsOptions` (`libs/reusex/include/segmentation/segment_rooms.hpp`); `band`: `BandRoomsOptions` (`segmentation/band_rooms.hpp`), parameter keys `band_*` |
-| Checks   | `cloud`/`planes` present + aligned; `plane_centroids`/`plane_normals` present + aligned; `band`: `storeys` has rows (refused if explicit, else falls back to leiden with a warning) and `normals` is aligned with `cloud` (checked by the stage) |
 
 ### `instances` (`rux create instances`)
 
@@ -483,6 +457,48 @@ needs `--force` when any opening is locked. `io::load_solid_model` reads it,
 so `rux analyze solid --reference plan.yaml` scores a project's openings
 directly. Replaces `windows` (deprecated, removed with the WP6 solids).
 
+### `rooms` (`rux create rooms`)
+
+Partition the scan into rooms. `method = band` (default since the maintainer
+decision of 2026-10-16, reusex-icg) finds rooms per storey in 2D: wall cells
+from vertical points in a clutter-free height band above the storey floor,
+footprint from floor and ceiling points, exterior flooded from the grid
+border, rooms = watershed of the free-space distance transform, cut where
+the free space narrows below 2 x `band_core_radius`. Every point within
+`assign_margin` of a storey's interior takes the room of the nearest room
+cell; others stay 0. `method = leiden` (`--method leiden`) instead clusters
+the plane visibility graph and does not need storeys.
+
+When the `walls` and `openings` stages have run — the recommended order is
+**walls -> openings -> rooms** — band uses their tables too (W4.1
+reusex-z1v.6.1, W5.4 reusex-z1v.7.4): every wall of a storey is rasterised
+into the blocked cells (`band_use_walls`, `--no-wall-graph` to turn off), so
+a wall the band saw too sparsely (glass, drift) still separates rooms, and
+every door and floor-reaching opening closes its doorway (`band_cut_at_doors`,
+`--no-door-cuts`), so rooms are cut at doors however wide. A free-space
+component no core reaches but that walls and door cuts close off (a WC
+stall) becomes a room of its own. Without those tables the constriction
+watershed alone cuts the rooms, as before; a later `walls` or `openings`
+re-run does not update `rooms` until `rooms` runs again.
+
+The band method also reads `normals` and the `storeys` table (level frames,
+floor and ceiling heights); they are optional inputs because Leiden does not
+need them, so the stage checks them itself. When the method *resolves to band only
+because it is the default* (no explicit `--method`) and the project has no
+storeys rows, the stage logs a warning naming the reason and both fixes
+(`rux create storeys`, or `--method leiden` to silence it) and falls back to
+Leiden for that run, recording the fallback in the result message. An
+*explicit* `--method band` without storeys still refuses as invalid input —
+asking for band by name is an instruction, not a preference.
+
+| | |
+|---|---|
+| Consumes | `cloud`, `planes`, `plane_centroids`, `plane_normals` |
+| Optional | `normals`, `storeys` (band), `walls`, `openings` (band: wall graph and door cuts) |
+| Produces | `rooms` (`Label`) |
+| Options  | `SegmentRoomsOptions` (`libs/reusex/include/segmentation/segment_rooms.hpp`); `band`: `BandRoomsOptions` (`segmentation/band_rooms.hpp`), parameter keys `band_*` (incl. `band_use_walls`, `band_cut_at_doors`) |
+| Checks   | `cloud`/`planes` present + aligned; `plane_centroids`/`plane_normals` present + aligned; `band`: `storeys` has rows (refused if explicit, else falls back to leiden with a warning) and `normals` is aligned with `cloud` (checked by the stage) |
+
 ### `mesh` (`rux create mesh`)
 
 Solidify the cell complex into **one watertight envelope mesh** covering every
@@ -696,17 +712,18 @@ rasterizer.
 ## Typical pipeline order
 
 ```
-import → [graph_init] → [graph_discover] → (optimize|register) → clouds → planes → [storeys] → rooms → mesh → texture
-                                                                                   ↘ storeys → classify → walls → openings
+import → [graph_init] → [graph_discover] → (optimize|register) → clouds → planes → [storeys → classify → walls → openings] → rooms → mesh → texture
                                                     ↘ annotate → project → instances → windows
                                                     ↘ gsplat (leaf: produces `splat`)
 ```
 
-`[storeys]` before `rooms` matters because `rooms` defaults to `method =
-band`, which needs it; without storeys the default falls back to `leiden`
-(with a warning) rather than failing, but `rooms --method band` explicitly
-still refuses. The stage table lists `storeys` before `rooms` for that
-reason.
+`[storeys → classify → walls → openings]` before `rooms` matters because
+`rooms` defaults to `method = band`, which needs storeys and cuts rooms at
+the walls and doors of the walls / openings tables when they exist (optional
+inputs). Without storeys the default falls back to `leiden` (with a warning)
+rather than failing, but `rooms --method band` explicitly still refuses;
+without walls / openings band cuts at constrictions only. The stage table
+lists `storeys`, `walls` and `openings` before `rooms` for that reason.
 
 Stage order in the table is load-bearing and asserted by a test: an input may
 only be produced by a **strictly earlier** stage. That invariant is what lets a

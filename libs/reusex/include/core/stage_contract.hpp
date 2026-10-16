@@ -45,11 +45,12 @@ enum class PipelineStage {
   planes,         ///< detect planar surfaces
   storeys,        ///< storeys and the measured vertical (level frame);
                   ///< before rooms: `rooms --method band` reads them
-  rooms,          ///< partition into rooms
   instances,      ///< separate semantic labels into spatial instances
   classify,       ///< the role of each plane (wall, floor, ceiling, ...)
   walls,          ///< walls with a measured thickness and their joins
   openings,       ///< doors, windows and openings in the walls' faces
+  rooms,          ///< partition into rooms; after walls -> openings, whose
+                  ///< walls and doors cut the band rooms (optional inputs)
   mesh,           ///< generate the reconstructed mesh
   texture,        ///< texture-map the reconstructed mesh
   windows,        ///< derive window building components
@@ -104,6 +105,13 @@ struct StageInput {
   /// for the `sensor_frames` table; 0 disables the check. Pose refinement is
   /// depth-driven and silently produces nothing without it.
   int min_depth_frames = 0;
+  /// An optional input: the stage uses it when present and runs without it
+  /// (the `rooms` stage cuts at the doors of `openings` when that has run).
+  /// A missing optional input is no issue for check_stage_inputs() and pulls
+  /// no producer into the resolution hints, but the ordering rule holds for
+  /// it all the same: it must be produced by a strictly earlier stage, so
+  /// the table order is the recommended run order.
+  bool optional = false;
 };
 
 /// The full input/output contract of one pipeline stage.

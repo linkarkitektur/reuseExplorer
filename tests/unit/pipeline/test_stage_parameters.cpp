@@ -218,6 +218,12 @@ TEST_CASE("StageParameters_Rooms_MirrorBandRoomsOptionsDefaults",
         b.wall_min_points);
   CHECK(std::get<double>(find("band_footprint_close").default_value) ==
         b.footprint_close);
+  CHECK(std::get<bool>(find("band_use_walls").default_value) ==
+        b.use_wall_graph);
+  CHECK(std::get<bool>(find("band_cut_at_doors").default_value) ==
+        b.cut_at_doors);
+  CHECK(std::get<double>(find("band_wall_min_seen_share").default_value) ==
+        b.wall_graph_min_seen_share);
 }
 
 TEST_CASE("StageParameters_Instances_MirrorSegmentInstancesRequestDefaults",

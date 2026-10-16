@@ -48,9 +48,9 @@ const std::vector<PipelineStage> &all_stages() {
       PipelineStage::graph_discover, PipelineStage::optimize,
       PipelineStage::clouds,         PipelineStage::annotate,
       PipelineStage::project,        PipelineStage::planes,
-      PipelineStage::storeys,        PipelineStage::rooms,
-      PipelineStage::instances,      PipelineStage::classify,
-      PipelineStage::walls,          PipelineStage::openings,
+      PipelineStage::storeys,        PipelineStage::instances,
+      PipelineStage::classify,       PipelineStage::walls,
+      PipelineStage::openings,       PipelineStage::rooms,
       PipelineStage::mesh,           PipelineStage::texture,
       PipelineStage::windows,        PipelineStage::materials,
       PipelineStage::survey,         PipelineStage::attributes,
@@ -291,6 +291,8 @@ std::set<std::string> artifact_tokens(const std::string &line) {
 
 struct DocStage {
   std::set<std::string> consumes;
+  /// The `| Optional |` row: inputs the stage uses when present.
+  std::set<std::string> optional;
   std::set<std::string> produces;
   /// Whether the section's table carries an `| External |` row. Its *content*
   /// is deliberately not compared: `external_outputs` is prose, and requiring
@@ -321,6 +323,8 @@ std::map<std::string, DocStage> parse_contracts_doc(const std::string &text) {
       continue;
     if (line.rfind("| Consumes ", 0) == 0)
       stages[current].consumes = artifact_tokens(line);
+    else if (line.rfind("| Optional ", 0) == 0)
+      stages[current].optional = artifact_tokens(line);
     else if (line.rfind("| Produces ", 0) == 0)
       stages[current].produces = artifact_tokens(line);
     else if (line.rfind("| External ", 0) == 0)
@@ -352,14 +356,16 @@ TEST_CASE("ContractsDoc_StageSections_MatchContractTable",
     REQUIRE(it != documented.end());
 
     std::set<std::string> consumes;
+    std::set<std::string> optional;
     for (const auto &input : contract.inputs)
       for (const auto &artifact : input.any_of)
-        consumes.insert(std::string(artifact));
+        (input.optional ? optional : consumes).insert(std::string(artifact));
     std::set<std::string> produces;
     for (const auto &output : contract.outputs)
       produces.insert(std::string(output));
 
     CHECK(it->second.consumes == consumes);
+    CHECK(it->second.optional == optional);
     CHECK(it->second.produces == produces);
 
     // A stage with an external product must document it, and only such a stage
@@ -375,4 +381,26 @@ TEST_CASE("ContractsDoc_StageSections_MatchContractTable",
     INFO("documented stage '" << name << "'");
     CHECK(parse_pipeline_stage(name).has_value());
   }
+}
+
+TEST_CASE("StageContract_Rooms_TakesWallsAndOpeningsAsOptionalInputs",
+          "[core][contract]") {
+  // W5.4 (reusex-z1v.7.4): the band rooms are cut at the walls and doors of
+  // the walls / openings tables when those stages have run. Optional inputs,
+  // so rooms runs without them, but the table orders walls -> openings ->
+  // rooms (the DAG rule above holds for optional inputs too).
+  const auto &rooms = stage_contract(PipelineStage::rooms);
+  std::set<std::string> optional;
+  std::set<std::string> required;
+  for (const auto &input : rooms.inputs)
+    for (const auto &name : input.any_of)
+      (input.optional ? optional : required).insert(std::string(name));
+  CHECK(optional ==
+        std::set<std::string>{"normals", "storeys", "walls", "openings"});
+  CHECK(required == std::set<std::string>{"cloud", "planes", "plane_centroids",
+                                          "plane_normals"});
+  CHECK(stage_index(PipelineStage::walls) < stage_index(PipelineStage::rooms));
+  CHECK(stage_index(PipelineStage::openings) <
+        stage_index(PipelineStage::rooms));
+  CHECK(stage_index(PipelineStage::rooms) < stage_index(PipelineStage::mesh));
 }
