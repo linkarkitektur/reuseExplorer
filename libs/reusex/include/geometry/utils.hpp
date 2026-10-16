@@ -51,14 +51,23 @@ auto make_pairs(EigenVectorContainer<double, 4> &planes,
  * @brief Force planes to be orthogonal to a reference direction.
  *
  * Adjusts plane normals to be either parallel or perpendicular to the up
- * vector.
+ * vector. A snapped plane is then re-offset to pass through its own inlier
+ * centroid: rotating the normal in place while keeping the old `d` would
+ * instead pivot the plane about whichever point is closest to the origin,
+ * which can move it metres away from the points it was fit to (reusex-8vj).
  *
  * @param planes Plane coefficients to adjust.
+ * @param centroids Each plane's inlier centroid, index-aligned with @p
+ * planes. A snapped plane's offset is recomputed through this point; a plane
+ * left untouched (neither near-vertical nor near-horizontal) keeps its
+ * original offset regardless of this value.
  * @param threshold Angular threshold for orthogonality. Default 0.1.
  * @param up Reference up vector. Default (0, 0, 1).
  * @return Adjusted plane coefficients.
+ * @throws std::invalid_argument if `planes.size() != centroids.size()`.
  */
 auto force_orthogonal_planes(EigenVectorContainer<double, 4> &planes,
+                             const EigenVectorContainer<double, 3> &centroids,
                              const double threshold = 0.1,
                              const Eigen::Matrix<double, 3, 1> &up =
                                  Eigen::Matrix<double, 3, 1>(0, 0, 1))

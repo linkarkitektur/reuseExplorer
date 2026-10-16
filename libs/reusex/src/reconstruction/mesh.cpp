@@ -236,7 +236,7 @@ pcl::PolygonMeshPtr mesh(CloudConstPtr cloud, CloudNConstPtr normals,
       merge_planes(planes, inliers, centroids, cloud);
   reusex::debug("Number of planes after merging: {}", planes.size());
 
-  planes = force_orthogonal_planes(planes);
+  planes = force_orthogonal_planes(planes, centroids);
   reusex::debug("Number of planes after forcing orthogonality: {}",
                 planes.size());
 
