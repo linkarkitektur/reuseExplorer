@@ -18,6 +18,7 @@
 #include <reusex/pipeline/stage_parameters.hpp>
 #include <reusex/pipeline/stages.hpp>
 #include <reusex/reconstruction/mesh.hpp>
+#include <reusex/segmentation/band_rooms.hpp>
 #include <reusex/segmentation/reconstruct.hpp>
 #include <reusex/segmentation/segment_instances.hpp>
 #include <reusex/segmentation/segment_planes.hpp>
@@ -190,6 +191,32 @@ TEST_CASE("StageParameters_Rooms_MirrorSegmentRoomsOptionsDefaults",
         d.propagate_max_radius);
   CHECK(float_default(JobStage::rooms, "min_room_area") == d.min_room_area);
   CHECK(float_default(JobStage::rooms, "merge_affinity") == d.merge_affinity);
+}
+
+TEST_CASE("StageParameters_Rooms_MirrorBandRoomsOptionsDefaults",
+          "[pipeline][stage_parameters]") {
+  const reusex::geometry::BandRoomsOptions b{};
+  const auto &table = stage_parameters(JobStage::rooms);
+  auto find = [&](std::string_view key) -> const ParameterDescriptor & {
+    for (const auto &p : table)
+      if (p.key == key)
+        return p;
+    FAIL("rooms has no parameter " << key);
+    return table.front();
+  };
+  CHECK(std::get<std::string>(find("method").default_value) ==
+        reusex::geometry::kDefaultRoomsMethod);
+  CHECK(std::get<double>(find("band_bottom").default_value) == b.band_bottom);
+  CHECK(std::get<double>(find("band_top").default_value) == b.band_top);
+  CHECK(std::get<double>(find("band_cell_size").default_value) == b.cell_size);
+  CHECK(std::get<double>(find("band_core_radius").default_value) ==
+        b.core_radius);
+  CHECK(std::get<double>(find("band_min_room_area").default_value) ==
+        b.min_room_area);
+  CHECK(std::get<long long>(find("band_wall_min_points").default_value) ==
+        b.wall_min_points);
+  CHECK(std::get<double>(find("band_footprint_close").default_value) ==
+        b.footprint_close);
 }
 
 TEST_CASE("StageParameters_Instances_MirrorSegmentInstancesRequestDefaults",

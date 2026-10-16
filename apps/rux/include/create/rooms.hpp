@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 
+#include <reusex/segmentation/band_rooms.hpp>
 #include <reusex/segmentation/segment_rooms.hpp>
 
 namespace fs = std::filesystem;
@@ -37,6 +38,20 @@ struct SubcommandSegRoomsOptions {
   float merge_affinity = reusex::geometry::SegmentRoomsOptions{}.merge_affinity;
 
   std::string filter_expr; ///< Filter expression to limit processing
+
+  /// "leiden" (plane visibility graph) or "band" (2D free-space watershed).
+  std::string method = reusex::geometry::kDefaultRoomsMethod;
+  /// Band method (reusex::geometry::BandRoomsOptions).
+  double band_bottom = reusex::geometry::BandRoomsOptions{}.band_bottom;
+  double band_top = reusex::geometry::BandRoomsOptions{}.band_top;
+  double band_cell_size = reusex::geometry::BandRoomsOptions{}.cell_size;
+  double band_core_radius = reusex::geometry::BandRoomsOptions{}.core_radius;
+  double band_min_room_area =
+      reusex::geometry::BandRoomsOptions{}.min_room_area;
+  int band_wall_min_points =
+      reusex::geometry::BandRoomsOptions{}.wall_min_points;
+  double band_footprint_close =
+      reusex::geometry::BandRoomsOptions{}.footprint_close;
 };
 
 /**

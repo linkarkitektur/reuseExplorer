@@ -137,6 +137,8 @@ std::string changed_value(const pl::ParameterDescriptor &d) {
       return "planes in [1, 2]";
     if (d.key == "solver")
       return "highs";
+    if (d.key == "method")
+      return "band";
     if (d.key == "loop_proposal")
       return "spatial";
     return "x_" + d.key;
