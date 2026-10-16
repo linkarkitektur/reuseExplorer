@@ -7,6 +7,7 @@
 #include "render_watch.hpp"
 
 #include <reusex/core/ProjectDB.hpp>
+#include <reusex/core/pose_fingerprint.hpp>
 #include <reusex/io/solid_model_json.hpp>
 #include <reusex/visualize/qa_sheet.hpp>
 #include <reusex/visualize/render_view.hpp>
@@ -412,6 +413,12 @@ render_to_files(SubcommandRenderOptions const &opt,
     render_opts.plan = plan;
 
     reusex::ProjectDB db(global_opt.project_db, /* readOnly */ true);
+
+    // Everything rendered below — the cloud itself, and anything derived from
+    // it (planes, rooms, a mesh) — is only as current as the poses it was
+    // built from; warn once up front rather than silently showing stale
+    // geometry (reusex-rcv.1.15).
+    reusex::core::warn_if_cloud_poses_stale(db, "cloud");
 
     // ── Camera selection ────────────────────────────────────────────────
     // An explicit --cut-height cuts whatever view was asked for; `--view

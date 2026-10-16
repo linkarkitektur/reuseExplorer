@@ -65,7 +65,8 @@ ReUseX is a C++20/CUDA project for processing 3D point cloud scans of building i
 - Pose refinement: plane-landmark pose-graph optimization (GTSAM) and joint
   pairwise registration
 - Planar segmentation (noise-adaptive region growing) and room segmentation
-  (Leiden clustering over a plane graph, via igraph)
+  (2D band watershed per storey, default; or Leiden clustering over a plane
+  graph, via igraph)
 - Semantic segmentation via YOLO / SAM3 models (TensorRT, ONNX Runtime, LibTorch),
   including SAM3 on 360° panoramas via perspective tiling
 - Cell complex 3D reconstruction with a MIP solve (HiGHS CPU / cuOpt GPU)
@@ -455,7 +456,11 @@ and deleted the shims. `include/geometry/` now holds only the real
 - `reconstruct.hpp`: pinhole back-projection of depth frames into clouds
 - `segment_planes.hpp`: planar detection (noise-adaptive region growing;
   `noise_estimate.hpp` supplies the adaptive thresholds)
-- `segment_rooms.hpp`: room partitioning via Leiden clustering (igraph)
+- `band_rooms.hpp`: room partitioning from a clutter-free height band per
+  storey (2D free-space watershed); `rooms`' default method
+  (`kDefaultRoomsMethod`, reusex-icg); needs the `storeys` table
+- `segment_rooms.hpp`: room partitioning via Leiden clustering (igraph);
+  `rooms --method leiden`, selectable without storeys
 - `segment_instances.hpp` / `reconcile_instances.hpp`: semantic → spatial instances
 - `depth_filters.hpp`, `downsample.hpp`, `sync_downsample.hpp`, `densify.hpp`
 - `Surfel.hpp` / `surfel_extraction.hpp`: surfels shared with `slam`
@@ -510,6 +515,11 @@ and deleted the shims. `include/geometry/` now holds only the real
   (`stage_executor_with_optimize()`), compiled into `rux` and, in its own
   repo, `ruxd`, because `reusex_pipeline` must not link GTSAM (#464)
 - `PanoramaAlignment.hpp`: content-based 360 pose refinement, `rux align 360`
+- `drift_diagnostics.hpp`: `rux analyze drift` (reusex-rcv.1.1): GT-free
+  drift measures over the back-projected depth (pass-to-pass residual vs the
+  noise floor, segment x segment matrix, per-segment rigid ICP suggestions,
+  drift cells, through-wall crossings against a plan, doubled-wall patches);
+  numbers depend on --frame-step / --depth-stride, compare like with like.
 - `PanoramaLoopEdges.hpp`: wide-baseline `LoopEdge`s derived from 360
   panoramas (`rux graph discover --use-panoramas`, #236). Each panorama is
   resected INDEPENDENTLY against every frame it matches, in that frame's own
@@ -682,7 +692,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | `export` | `ply`, `e57`, `materialepas`, `csv`, `rhino`, `semantic-images`, `speckle`, `colmap`, `pdf` | `src/export/` |
 | `align` | `360` (content-based panorama pose refinement) | `src/align/` |
 | `edit` | `downsample`, `perturb-poses` (drift synthesis, #338) | `src/edit/` |
-| `analyze` | `quality`, `accuracy`, `solid` (typed model vs a reference plan) | `src/analyze/` |
+| `analyze` | `quality`, `accuracy`, `solid` (typed model vs a reference plan), `drift` (where the stored poses disagree: pass-to-pass residual vs noise floor, segment pairs + ICP suggestions, through-wall crossings) | `src/analyze/` |
 | `optimize` | — (solves the stored pose graph) | `src/optimize.cpp` |
 | `graph` | `init`, `discover`, `prune` (stored pose graph) | `src/graph/` |
 | `register` | — (joint pairwise registration) | `src/register.cpp` |
@@ -962,6 +972,7 @@ rux -p scan.rux create clouds -g 0.05
 
 # 4. Geometry pipeline
 rux -p scan.rux create planes
+rux -p scan.rux create storeys          # rooms defaults to --method band, which needs this
 rux -p scan.rux create rooms
 rux -p scan.rux create mesh --solver auto
 
