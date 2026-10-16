@@ -801,6 +801,41 @@ class ProjectDB {
   /// user action).
   void delete_plane_classes(std::string_view cloud = "planes");
 
+  // --- Walls (schema v33, solid-model WP3) ---
+
+  /// Store the walls of one detection run and the joins between them
+  /// (IfcRelConnectsPathElements). Replaces every wall whose `locked` is 0
+  /// by @p walls; their joins go with them (ON DELETE CASCADE). A locked
+  /// wall is never touched: a record whose guid a locked row holds is
+  /// skipped (the locked row wins), a locked row with no match is kept, and
+  /// so is a join between two locked walls. @p joins name walls by guid,
+  /// either in @p walls or locked in the table; a join already stored
+  /// between the same two walls is kept as it is. One SAVEPOINT, so a
+  /// refused call leaves both tables as they were. `storey` is the storey's
+  /// idx (not a foreign key, as for plane_classes: a storeys re-run replaces
+  /// those rows). @p run_id is the pipeline_log row that produced them
+  /// (-1 = none).
+  /// @returns the number of walls written.
+  /// @throws std::invalid_argument for an empty guid, a source other than
+  ///         detected | manual | imported, two walls sharing a guid, a join
+  ///         whose kind is not corner | tee | collinear, whose at_a / at_b is
+  ///         not start | end | path, that joins a wall to itself or that
+  ///         names a wall that is neither in @p walls nor locked;
+  ///         std::runtime_error on a read-only or pre-v33 project.
+  size_t save_walls(const std::vector<core::WallRecord> &walls,
+                    const std::vector<core::WallJoinRecord> &joins,
+                    int run_id = -1);
+  /// Every stored wall, storey ascending, then row id. Empty for a pre-v33
+  /// project.
+  std::vector<core::WallRecord> walls() const;
+  std::optional<core::WallRecord> wall_by_guid(std::string_view guid) const;
+  bool has_walls() const;
+  /// Every stored join, by guid, in the order of its walls' row ids.
+  std::vector<core::WallJoinRecord> wall_joins() const;
+  /// Delete every wall and join, locked ones included (an explicit user
+  /// action).
+  void delete_walls();
+
   // --- Scans (multi-session import, #129) ---
 
   /// One row of the `scans` table.  Each `rux import` creates one record;

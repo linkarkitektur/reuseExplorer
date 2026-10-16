@@ -19,6 +19,8 @@ namespace rux::database {
  * - storeys.<idx>.<prop>  → one field: guid, idx, name, z_floor, z_ceiling,
  *                           level_transform, source, locked, confidence,
  *                           metadata
+ * - storeys.<idx>.walls   → the walls standing on that storey (walls table,
+ *                           `rux create walls`)
  *
  * `rux del storeys` deletes every storey; when some are locked (hand-made
  * or hand-fixed) it needs --force. The rows are written by

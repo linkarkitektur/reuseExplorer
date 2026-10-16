@@ -61,6 +61,7 @@ enum class Layer {
   frustums,   ///< camera frustums of the posed sensor frames (subsampled)
   panoramas,  ///< a marker at each placed 360 panorama
   deviation,  ///< `cloud` coloured by distance to the mesh (mesh QA)
+  walls,      ///< `walls` table: footprints in plan, boxes in 3D (WP3)
 };
 
 /// Parse a layer name as accepted by `rux render --layers`.

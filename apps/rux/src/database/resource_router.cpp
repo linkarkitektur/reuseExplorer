@@ -15,6 +15,7 @@
 #include "database/plane_class_router.hpp"
 #include "database/project_router.hpp"
 #include "database/storey_router.hpp"
+#include "database/wall_router.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -36,6 +37,8 @@ RouterRegistry::RouterRegistry(std::shared_ptr<reusex::ProjectDB> db)
   routers_["plane_classes"] = std::make_unique<PlaneClassRouter>(db);
   routers_["projects"] = std::make_unique<ProjectRouter>(db);
   routers_["storeys"] = std::make_unique<StoreyRouter>(db);
+  routers_["walls"] = std::make_unique<WallRouter>(db);
+  routers_["wall_joins"] = std::make_unique<WallJoinRouter>(db);
 
   spdlog::trace("Initialized router registry with {} routers", routers_.size());
 }

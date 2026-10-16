@@ -426,9 +426,11 @@ class ProjectDB::Impl {
   bool hasPlaneClassesTable = false;
   /// sample_part_links exists (v32).
   bool hasSamplePartLinks = false;
+  /// walls and wall_joins exist (v33).
+  bool hasWallsTable = false;
 
   // cppcheck-suppress unusedStructMember
-  static constexpr int LATEST_SCHEMA_VERSION = 32;
+  static constexpr int LATEST_SCHEMA_VERSION = 33;
 
   // How long one statement waits for a lock another connection holds before
   // failing with SQLITE_BUSY. sqlite's default is not to wait at all.
@@ -554,6 +556,7 @@ class ProjectDB::Impl {
     hasStoreysTable = tableExists("storeys");
     hasPlaneClassesTable = tableExists("plane_classes");
     hasSamplePartLinks = tableExists("sample_part_links");
+    hasWallsTable = tableExists("walls") && tableExists("wall_joins");
   }
 
   /// True the first time this process opens dbPath read-only at schema
@@ -865,6 +868,10 @@ class ProjectDB::Impl {
 
     if (current < 32) {
       migrateToV32();
+    }
+
+    if (current < 33) {
+      migrateToV33();
     }
 
     reusex::trace("Schema version: {}", getCurrentSchemaVersion());
@@ -3701,6 +3708,300 @@ class ProjectDB::Impl {
     if (sqlite3_step(s) != SQLITE_DONE)
       throw std::runtime_error("delete_plane_classes: " +
                                std::string(sqlite3_errmsg(db)));
+  }
+
+  void migrateToV33() {
+    reusex::info("Migrating database to schema version 33");
+    // Solid-model WP3 (reusex-z1v.5.5): walls with a measured thickness and
+    // the joins between them. Coordinates are in the level frame of the
+    // wall's storey. `storey` is the storey's idx, not a foreign key to
+    // storeys(id): a storeys re-run replaces those rows, which a foreign key
+    // would refuse (the plane_classes rule). wall_joins refer to walls by row
+    // id and go with them (ON DELETE CASCADE); the API speaks guids.
+    Savepoint sp(db, "migrate_v33");
+    execOrThrow(R"(
+      CREATE TABLE IF NOT EXISTS walls (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        guid            TEXT    NOT NULL UNIQUE,
+        storey          INTEGER NOT NULL,
+        x0              REAL    NOT NULL,
+        y0              REAL    NOT NULL,
+        x1              REAL    NOT NULL,
+        y1              REAL    NOT NULL,
+        z_base          REAL    NOT NULL DEFAULT 0,
+        height          REAL    NOT NULL DEFAULT 0,
+        thickness       REAL    NOT NULL DEFAULT -1,
+        thickness_ci_lo REAL    NOT NULL DEFAULT -1,
+        thickness_ci_hi REAL    NOT NULL DEFAULT -1,
+        lean_deg        REAL    NOT NULL DEFAULT 0,
+        is_external     INTEGER NOT NULL DEFAULT 0 CHECK (is_external IN (0, 1)),
+        assumed         INTEGER NOT NULL DEFAULT 0 CHECK (assumed IN (0, 1)),
+        seen_share      REAL    NOT NULL DEFAULT -1,
+        face_a_points   INTEGER NOT NULL DEFAULT 0,
+        face_b_points   INTEGER NOT NULL DEFAULT 0,
+        co_visibility   REAL    NOT NULL DEFAULT -1,
+        axis_family     INTEGER NOT NULL DEFAULT -1,
+        source          TEXT    NOT NULL DEFAULT 'detected'
+          CHECK (source IN ('detected', 'manual', 'imported')),
+        locked          INTEGER NOT NULL DEFAULT 0 CHECK (locked IN (0, 1)),
+        confidence      REAL    NOT NULL DEFAULT -1,
+        metadata        TEXT    NOT NULL DEFAULT '',
+        run_id          INTEGER,
+        created_at      TEXT    NOT NULL
+          DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_walls_storey ON walls(storey);
+      CREATE TABLE IF NOT EXISTS wall_joins (
+        wall_a INTEGER NOT NULL REFERENCES walls(id) ON DELETE CASCADE,
+        wall_b INTEGER NOT NULL REFERENCES walls(id) ON DELETE CASCADE,
+        kind   TEXT    NOT NULL CHECK (kind IN ('corner', 'tee', 'collinear')),
+        at_a   TEXT    NOT NULL CHECK (at_a IN ('start', 'end', 'path')),
+        at_b   TEXT    NOT NULL CHECK (at_b IN ('start', 'end', 'path')),
+        CHECK (wall_a <> wall_b),
+        PRIMARY KEY (wall_a, wall_b)
+      );
+      CREATE INDEX IF NOT EXISTS idx_wall_joins_b ON wall_joins(wall_b);
+    )");
+    insertSchemaVersion(33, "Solid model: walls and wall_joins tables");
+    sp.release();
+    reusex::info("Migration to schema version 33 complete");
+  }
+
+  // ── Walls (v33) ──────────────────────────────────────────────────────────
+
+  static constexpr const char *kWallColumns =
+      "id, guid, storey, x0, y0, x1, y1, z_base, height, thickness, "
+      "thickness_ci_lo, thickness_ci_hi, lean_deg, is_external, assumed, "
+      "seen_share, face_a_points, face_b_points, co_visibility, axis_family, "
+      "source, locked, confidence, metadata";
+
+  static core::WallRecord readWall(sqlite3_stmt *s) {
+    core::WallRecord r;
+    r.id = sqlite3_column_int64(s, 0);
+    r.guid = column_text(s, 1);
+    r.storey = sqlite3_column_int(s, 2);
+    r.x0 = sqlite3_column_double(s, 3);
+    r.y0 = sqlite3_column_double(s, 4);
+    r.x1 = sqlite3_column_double(s, 5);
+    r.y1 = sqlite3_column_double(s, 6);
+    r.z_base = sqlite3_column_double(s, 7);
+    r.height = sqlite3_column_double(s, 8);
+    r.thickness = sqlite3_column_double(s, 9);
+    r.thickness_ci_lo = sqlite3_column_double(s, 10);
+    r.thickness_ci_hi = sqlite3_column_double(s, 11);
+    r.lean_deg = sqlite3_column_double(s, 12);
+    r.is_external = sqlite3_column_int(s, 13) != 0;
+    r.assumed = sqlite3_column_int(s, 14) != 0;
+    r.seen_share = sqlite3_column_double(s, 15);
+    r.face_a_points = sqlite3_column_int(s, 16);
+    r.face_b_points = sqlite3_column_int(s, 17);
+    r.co_visibility = sqlite3_column_double(s, 18);
+    r.axis_family = sqlite3_column_int(s, 19);
+    r.source = column_text(s, 20);
+    r.locked = sqlite3_column_int(s, 21) != 0;
+    r.confidence = sqlite3_column_double(s, 22);
+    r.metadata = column_text(s, 23);
+    return r;
+  }
+
+  std::vector<core::WallRecord> listWalls() const {
+    std::vector<core::WallRecord> out;
+    if (!hasWallsTable)
+      return out;
+    const std::string sql = std::string("SELECT ") + kWallColumns +
+                            " FROM walls ORDER BY storey, id;";
+    sqlite3_stmt *s = prepare_or_throw(db, sql.c_str(), "walls");
+    StmtGuard guard(s);
+    int rc;
+    while ((rc = sqlite3_step(s)) == SQLITE_ROW)
+      out.push_back(readWall(s));
+    if (rc != SQLITE_DONE)
+      throw std::runtime_error("walls: " + std::string(sqlite3_errmsg(db)));
+    return out;
+  }
+
+  std::optional<core::WallRecord> wallByGuid(std::string_view guid) const {
+    if (!hasWallsTable)
+      return std::nullopt;
+    const std::string sql =
+        std::string("SELECT ") + kWallColumns + " FROM walls WHERE guid = ?;";
+    sqlite3_stmt *s = prepare_or_throw(db, sql.c_str(), "wall_by_guid");
+    StmtGuard guard(s);
+    bind_text(s, 1, guid);
+    if (sqlite3_step(s) != SQLITE_ROW)
+      return std::nullopt;
+    return readWall(s);
+  }
+
+  std::vector<core::WallJoinRecord> listWallJoins() const {
+    std::vector<core::WallJoinRecord> out;
+    if (!hasWallsTable)
+      return out;
+    sqlite3_stmt *s = prepare_or_throw(
+        db,
+        "SELECT a.guid, b.guid, j.kind, j.at_a, j.at_b FROM wall_joins j "
+        "JOIN walls a ON a.id = j.wall_a JOIN walls b ON b.id = j.wall_b "
+        "ORDER BY j.wall_a, j.wall_b;",
+        "wall_joins");
+    StmtGuard guard(s);
+    int rc;
+    while ((rc = sqlite3_step(s)) == SQLITE_ROW)
+      out.push_back({column_text(s, 0), column_text(s, 1), column_text(s, 2),
+                     column_text(s, 3), column_text(s, 4)});
+    if (rc != SQLITE_DONE)
+      throw std::runtime_error("wall_joins: " +
+                               std::string(sqlite3_errmsg(db)));
+    return out;
+  }
+
+  size_t saveWalls(const std::vector<core::WallRecord> &walls,
+                   const std::vector<core::WallJoinRecord> &joins, int runId) {
+    checkWritable();
+    if (!hasWallsTable)
+      throw std::runtime_error("save_walls: project schema predates v33");
+    std::set<std::string, std::less<>> guids;
+    for (const auto &r : walls) {
+      if (r.guid.empty())
+        throw std::invalid_argument("save_walls: a wall of storey " +
+                                    std::to_string(r.storey) + " has no guid");
+      if (r.source != "detected" && r.source != "manual" &&
+          r.source != "imported")
+        throw std::invalid_argument("save_walls: wall " + r.guid +
+                                    " has invalid source '" + r.source + "'");
+      if (!guids.insert(r.guid).second)
+        throw std::invalid_argument("save_walls: duplicate guid " + r.guid);
+    }
+
+    Savepoint sp(db, "save_walls");
+    std::set<std::string, std::less<>> lockedGuids;
+    {
+      sqlite3_stmt *s = prepare_or_throw(
+          db, "SELECT guid FROM walls WHERE locked = 1;", "save_walls");
+      StmtGuard guard(s);
+      int rc;
+      while ((rc = sqlite3_step(s)) == SQLITE_ROW)
+        lockedGuids.insert(column_text(s, 0));
+      if (rc != SQLITE_DONE)
+        throw std::runtime_error("save_walls: reading locked rows: " +
+                                 std::string(sqlite3_errmsg(db)));
+    }
+    static const std::set<std::string, std::less<>> kKinds = {"corner", "tee",
+                                                              "collinear"};
+    static const std::set<std::string, std::less<>> kEnds = {"start", "end",
+                                                             "path"};
+    for (const auto &j : joins) {
+      const auto where = "save_walls: join " + j.wall_a + " - " + j.wall_b;
+      if (!kKinds.count(j.kind))
+        throw std::invalid_argument(where + " has invalid kind '" + j.kind +
+                                    "'");
+      if (!kEnds.count(j.at_a) || !kEnds.count(j.at_b))
+        throw std::invalid_argument(where + " has an invalid end ('" + j.at_a +
+                                    "', '" + j.at_b + "')");
+      if (j.wall_a == j.wall_b)
+        throw std::invalid_argument(where + " joins a wall to itself");
+      for (const auto &g : {j.wall_a, j.wall_b})
+        if (!guids.count(g) && !lockedGuids.count(g))
+          throw std::invalid_argument(where + " names wall " + g +
+                                      ", which is neither saved nor locked");
+    }
+    // Joins of unlocked walls go with them (ON DELETE CASCADE).
+    execOrThrow("DELETE FROM walls WHERE locked = 0;");
+
+    sqlite3_stmt *ins = prepare_or_throw(
+        db,
+        "INSERT INTO walls (guid, storey, x0, y0, x1, y1, z_base, height, "
+        "thickness, thickness_ci_lo, thickness_ci_hi, lean_deg, is_external, "
+        "assumed, seen_share, face_a_points, face_b_points, co_visibility, "
+        "axis_family, source, locked, confidence, metadata, run_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+        "?, "
+        "?, ?, ?);",
+        "save_walls");
+    StmtGuard guard(ins);
+    size_t written = 0;
+    size_t skipped = 0;
+    for (const auto &r : walls) {
+      if (lockedGuids.count(r.guid)) {
+        ++skipped;
+        continue;
+      }
+      sqlite3_reset(ins);
+      sqlite3_clear_bindings(ins);
+      bind_text(ins, 1, r.guid);
+      sqlite3_bind_int(ins, 2, r.storey);
+      sqlite3_bind_double(ins, 3, r.x0);
+      sqlite3_bind_double(ins, 4, r.y0);
+      sqlite3_bind_double(ins, 5, r.x1);
+      sqlite3_bind_double(ins, 6, r.y1);
+      sqlite3_bind_double(ins, 7, r.z_base);
+      sqlite3_bind_double(ins, 8, r.height);
+      sqlite3_bind_double(ins, 9, r.thickness);
+      sqlite3_bind_double(ins, 10, r.thickness_ci_lo);
+      sqlite3_bind_double(ins, 11, r.thickness_ci_hi);
+      sqlite3_bind_double(ins, 12, r.lean_deg);
+      sqlite3_bind_int(ins, 13, r.is_external ? 1 : 0);
+      sqlite3_bind_int(ins, 14, r.assumed ? 1 : 0);
+      sqlite3_bind_double(ins, 15, r.seen_share);
+      sqlite3_bind_int(ins, 16, r.face_a_points);
+      sqlite3_bind_int(ins, 17, r.face_b_points);
+      sqlite3_bind_double(ins, 18, r.co_visibility);
+      sqlite3_bind_int(ins, 19, r.axis_family);
+      bind_text(ins, 20, r.source);
+      sqlite3_bind_int(ins, 21, r.locked ? 1 : 0);
+      sqlite3_bind_double(ins, 22, r.confidence);
+      bind_text(ins, 23, r.metadata);
+      if (runId >= 0)
+        sqlite3_bind_int(ins, 24, runId);
+      else
+        sqlite3_bind_null(ins, 24);
+      if (sqlite3_step(ins) != SQLITE_DONE)
+        throw std::runtime_error("save_walls: insert of wall " + r.guid +
+                                 " failed: " + sqlite3_errmsg(db));
+      ++written;
+    }
+
+    // A join already stored between the same two walls (two locked walls
+    // kept from an earlier run) stays as it is.
+    sqlite3_stmt *join = prepare_or_throw(
+        db,
+        "INSERT OR IGNORE INTO wall_joins (wall_a, wall_b, kind, at_a, at_b) "
+        "SELECT a.id, b.id, ?, ?, ? FROM walls a, walls b "
+        "WHERE a.guid = ? AND b.guid = ?;",
+        "save_walls");
+    StmtGuard joinGuard(join);
+    for (const auto &j : joins) {
+      sqlite3_reset(join);
+      sqlite3_clear_bindings(join);
+      bind_text(join, 1, j.kind);
+      bind_text(join, 2, j.at_a);
+      bind_text(join, 3, j.at_b);
+      bind_text(join, 4, j.wall_a);
+      bind_text(join, 5, j.wall_b);
+      if (sqlite3_step(join) != SQLITE_DONE)
+        throw std::runtime_error("save_walls: insert of join " + j.wall_a +
+                                 " - " + j.wall_b +
+                                 " failed: " + sqlite3_errmsg(db));
+    }
+    sp.release();
+    if (skipped > 0)
+      reusex::info("save_walls: {} wall(s) are locked; kept the stored rows",
+                   skipped);
+    return written;
+  }
+
+  bool hasWalls() const {
+    if (!hasWallsTable)
+      return false;
+    sqlite3_stmt *s = prepare_or_throw(
+        db, "SELECT EXISTS (SELECT 1 FROM walls);", "has_walls");
+    StmtGuard guard(s);
+    return sqlite3_step(s) == SQLITE_ROW && sqlite3_column_int(s, 0) != 0;
+  }
+
+  void deleteWalls() {
+    checkWritable();
+    if (hasWallsTable)
+      execOrThrow("DELETE FROM wall_joins; DELETE FROM walls;");
   }
 
   // ── Scan helpers (#129) ──────────────────────────────────────────────────
@@ -8332,6 +8633,29 @@ bool ProjectDB::has_plane_classes(std::string_view cloud) const {
 void ProjectDB::delete_plane_classes(std::string_view cloud) {
   impl_->deletePlaneClasses(cloud);
 }
+
+size_t ProjectDB::save_walls(const std::vector<core::WallRecord> &walls,
+                             const std::vector<core::WallJoinRecord> &joins,
+                             int run_id) {
+  return impl_->saveWalls(walls, joins, run_id);
+}
+
+std::vector<core::WallRecord> ProjectDB::walls() const {
+  return impl_->listWalls();
+}
+
+std::optional<core::WallRecord>
+ProjectDB::wall_by_guid(std::string_view guid) const {
+  return impl_->wallByGuid(guid);
+}
+
+bool ProjectDB::has_walls() const { return impl_->hasWalls(); }
+
+std::vector<core::WallJoinRecord> ProjectDB::wall_joins() const {
+  return impl_->listWallJoins();
+}
+
+void ProjectDB::delete_walls() { impl_->deleteWalls(); }
 
 core::SensorIntrinsics ProjectDB::sensor_frame_intrinsics(int nodeId) const {
   return impl_->getSensorFrameIntrinsics(nodeId);

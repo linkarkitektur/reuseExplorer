@@ -178,6 +178,10 @@ struct SceneOptions {
   std::array<std::uint8_t, 3> plan_door_rgb{0xd5, 0x5e, 0x00};
   std::array<std::uint8_t, 3> plan_window_rgb{0x56, 0xb4, 0xe9};
   std::array<std::uint8_t, 3> plan_opening_rgb{0xf0, 0xe4, 0x42};
+  /// Colour of the `walls` layer (`--label-4`, blue: apart from a reference
+  /// plan's green walls drawn over it). A wall that is assumed (seen from
+  /// one side) or seen over less than half its face is drawn dimmer.
+  std::array<std::uint8_t, 3> walls_rgb{0x00, 0x72, 0xb2};
 
   /// How a `mesh` layer is drawn. MeshStyle::automatic resolves to
   /// MeshStyle::overlay when a point layer is drawn too.
@@ -231,6 +235,11 @@ struct PlanOverlayInfo {
 /// vtkObject name of every plan-overlay actor.
 inline constexpr const char *kPlanOverlayActorName = "reusex.plan_overlay";
 
+/// vtkObject name of a `walls` layer actor in 3D (PlanPlacement::level). In
+/// plan (PlanPlacement::above_scene) the layer is a sheet over the section
+/// like the plan overlay, and its actors carry kPlanOverlayActorName.
+inline constexpr const char *kWallsActorName = "reusex.walls";
+
 /// vtkObject name of a mesh section line (add_mesh_section_line()); exempt
 /// from the cut and the section slab like the plan overlay.
 inline constexpr const char *kSectionLineActorName = "reusex.section_line";
@@ -245,7 +254,9 @@ struct SceneLayer {
   vtkActor *coarse = nullptr;
   std::size_t points = 0; ///< points drawn (per point layer)
   std::size_t faces = 0;  ///< mesh faces drawn
-  std::size_t items = 0;  ///< frustums / panoramas / components drawn
+  std::size_t items = 0;  ///< frustums / panoramas / components / walls drawn
+  /// Walls layer only: walls drawn dimmer (assumed, or seen_share < 0.5).
+  std::size_t dim = 0;
   /// Mesh layer only: the mesh's surface poly-data, the source of
   /// add_mesh_section_line(). Owned by a surface actor in the renderer (a
   /// hidden one, not in @ref actors, under MeshStyle::edges).
