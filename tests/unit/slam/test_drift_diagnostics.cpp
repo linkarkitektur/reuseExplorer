@@ -28,6 +28,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 
 using reusex::test_support::TempPath;
@@ -314,6 +315,66 @@ TEST_CASE("DriftDiagnostics_Deterministic_JsonHasAllFields", "[slam][drift]") {
         "\"suggestions\"", "\"cells\"", "\"crossings\"", "\"doubled_walls\"",
         "\"warnings\"", "\"delta\"", "\"frames_flagged\""})
     CHECK(a.find(key) != std::string::npos);
+}
+
+TEST_CASE("DriftDiagnostics_Cells_AreKeyedByStorey", "[slam][drift]") {
+  // reusex-98o: two storeys stacked in one plan footprint must not share a
+  // heat cell. The box room is split at z = 1.3 into two "storeys" whose
+  // level frame is world shifted by +10 m in x, so a cell's x tells which
+  // frame it was binned in.
+  const TempPath project("drift_storeys");
+  make_project(project.path.string(), kFramesPerPass + kFramesPerPass / 2);
+  {
+    reusex::ProjectDB db(project.path, /*readOnly=*/false);
+    std::vector<reusex::core::StoreyRecord> st(2);
+    for (int i = 0; i < 2; ++i) {
+      st[static_cast<std::size_t>(i)].guid = "storey-" + std::to_string(i);
+      st[static_cast<std::size_t>(i)].idx = i;
+      st[static_cast<std::size_t>(i)].z_floor = i == 0 ? 0.0 : 1.3;
+      st[static_cast<std::size_t>(i)].z_ceiling = i == 0 ? 1.3 : 2.6;
+      st[static_cast<std::size_t>(i)].level_transform[3] = 10.0;
+    }
+    db.save_storeys(st);
+  }
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  auto o = test_options(4);
+  const auto r = slam::diagnose_drift(db, o);
+  REQUIRE(r.storeys.size() == 2);
+  CHECK(r.storeys[1].idx == 1);
+  CHECK(r.storeys[1].z_floor == 1.3);
+  CHECK(r.storeys[1].level_transform[3] == 10.0);
+  REQUIRE(!r.cells.empty());
+  bool seen[2] = {false, false};
+  for (const auto &c : r.cells) {
+    REQUIRE((c.storey == 0 || c.storey == 1));
+    seen[c.storey] = true;
+    // Binned in the level frame: the room spans x in [7.5, 12.5] there.
+    CHECK(c.x > 7.0);
+    CHECK(c.x < 13.0);
+    // The low z of a storey-1 cell is above the split.
+    if (c.storey == 1)
+      CHECK(c.z_m > 1.2);
+  }
+  CHECK(seen[0]);
+  CHECK(seen[1]);
+  CHECK(std::is_sorted(
+      r.cells.begin(), r.cells.end(), [](const auto &a, const auto &b) {
+        return std::tie(a.storey, a.x, a.y) < std::tie(b.storey, b.x, b.y);
+      }));
+  const auto json = slam::drift_report_to_json(r);
+  CHECK(json.find("\"storeys\"") != std::string::npos);
+  CHECK(json.find("\"storey\"") != std::string::npos);
+  CHECK(json.find("\"z_m\"") != std::string::npos);
+
+  // Switched off (or no storeys): world cells over all heights.
+  o.cells_by_storey = false;
+  const auto w = slam::diagnose_drift(db, o);
+  CHECK(w.storeys.empty());
+  REQUIRE(!w.cells.empty());
+  for (const auto &c : w.cells) {
+    CHECK(c.storey == -1);
+    CHECK(c.x < 3.0);
+  }
 }
 
 TEST_CASE("DriftDiagnostics_WallCrossings_OpeningVsWall", "[slam][drift]") {

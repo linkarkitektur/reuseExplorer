@@ -31,6 +31,7 @@
 
 #include <Eigen/Core>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -94,8 +95,14 @@ struct DriftDiagnosticsOptions {
   int min_suggestion_points = 500; ///< overlap points needed to suggest
 
   // --- heatmap cells ------------------------------------------------------
-  double cell_m = 0.5;      ///< world x/y cell size
+  double cell_m = 0.5;      ///< x/y cell size (storey level frame, or world)
   int min_cell_points = 50; ///< a cell needs this many residuals
+  /// Key the cells by storey (reusex-98o): each residual point goes to the
+  /// storey whose [z_floor, z_ceiling] band (level frame) is nearest, and is
+  /// binned in that storey's level-frame x/y, so two storeys that overlap in
+  /// plan get separate heatmaps. Storeys come from the plan, else the
+  /// project; with none the cells are world x/y over all heights.
+  bool cells_by_storey = true;
 
   // --- through-wall crossings (needs a plan) ------------------------------
   double crossing_max_step_m = 1.5; ///< longer steps are jumps, not walks
@@ -166,11 +173,27 @@ struct SegmentSuggestion {
   double yaw_deg = 0.0;      ///< its rotation about world z
 };
 
-/// The pass-to-pass residual of one world x/y cell (the drift heatmap).
+/// The pass-to-pass residual of one x/y cell (the drift heatmap).
 struct DriftCell {
-  double x = 0.0, y = 0.0; ///< cell centre, world [m]
+  /// StoreyRecord::idx of the storey the cell belongs to (its level frame
+  /// holds x, y and z_m); -1 = world cell over all heights (no storeys).
+  int storey = -1;
+  double x = 0.0, y = 0.0; ///< cell centre [m], level frame or world
+  /// 10th percentile z of the cell's residual points, same frame: where a
+  /// world cell is drawn (a storey cell is drawn on its storey's floor).
+  double z_m = 0.0;
   double residual_m = 0.0; ///< median
   std::size_t points = 0;
+};
+
+/// A storey the cells are keyed by (DriftReport::storeys).
+struct DriftStorey {
+  int idx = 0;
+  std::string name;
+  double z_floor = 0.0, z_ceiling = 0.0; ///< level frame [m]
+  /// World -> level frame, row-major (StoreyRecord::level_transform).
+  std::array<double, 16> level_transform{1, 0, 0, 0, 0, 1, 0, 0,
+                                         0, 0, 1, 0, 0, 0, 0, 1};
 };
 
 /// One camera step that crosses a reference-plan wall axis.
@@ -228,7 +251,11 @@ struct DriftReport {
   std::vector<SegmentPair> pairs; ///< sorted by (a, b)
   HalvesSummary halves;
   std::vector<SegmentSuggestion> suggestions; ///< by segment
-  std::vector<DriftCell> cells;               ///< by (x, y)
+  /// By (storey, x, y). Keyed by storey when @ref storeys is non-empty.
+  std::vector<DriftCell> cells;
+  double cell_m = 0.5; ///< the cells' size (DriftDiagnosticsOptions::cell_m)
+  /// The storeys the cells are keyed by (by idx); empty = world cells.
+  std::vector<DriftStorey> storeys;
   /// Present when a plan was given.
   std::optional<CrossingSummary> crossings;
   std::vector<DoubledWallStats> doubled_walls; ///< by storey

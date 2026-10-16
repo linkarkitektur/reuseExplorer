@@ -696,6 +696,7 @@ DriftReport diagnose_drift(const ProjectDB &db,
         "normal_neighbours >= 3, cell and bin sizes > 0");
   const reusex::stopwatch clock;
   DriftReport r;
+  r.cell_m = o.cell_m;
   r.pose_source =
       o.pose_source == DriftPoseSource::initial ? "initial" : "current";
 
@@ -866,18 +867,66 @@ DriftReport diagnose_drift(const ProjectDB &db,
 
   core::debug("analyze drift: pooled residual done at {:.1f} s",
               clock.elapsed());
+  // ---- storeys (the cells' keys and the doubled-wall bands) ---------------
+  std::vector<core::StoreyRecord> storeys;
+  if (plan && !plan->storeys.empty())
+    storeys = plan->storeys;
+  else if (db.has_storeys())
+    storeys = db.storeys();
+  std::sort(storeys.begin(), storeys.end(),
+            [](const auto &a, const auto &b) { return a.idx < b.idx; });
+
   // ---- per frame and per cell ----------------------------------------------
   {
+    // reusex-98o: with storeys, a residual point is binned in the level
+    // frame of the storey whose [z_floor, z_ceiling] band is nearest (inside
+    // one = distance 0; ties to the lower storey), so storeys stacked in one
+    // footprint get separate cells.
+    const bool by_storey = o.cells_by_storey && !storeys.empty();
+    std::vector<Eigen::Matrix4d> to_level;
+    if (by_storey)
+      for (const auto &s : storeys) {
+        to_level.push_back(to_matrix(s.level_transform));
+        DriftStorey d;
+        d.idx = s.idx;
+        d.name = s.name;
+        d.z_floor = s.z_floor;
+        d.z_ceiling = s.z_ceiling;
+        d.level_transform = s.level_transform;
+        r.storeys.push_back(d);
+      }
+    struct CellAcc {
+      std::vector<double> res, z;
+    };
     std::vector<std::vector<double>> per_frame(nf);
-    std::map<std::pair<std::int64_t, std::int64_t>, std::vector<double>> cells;
+    std::map<std::tuple<int, std::int64_t, std::int64_t>, CellAcc> cells;
     for (std::size_t i = 0; i < cloud.size(); ++i) {
       if (!std::isfinite(far_res[i]))
         continue;
       per_frame[static_cast<std::size_t>(pooled.frame[i])].push_back(
           far_res[i]);
-      cells[{static_cast<std::int64_t>(std::floor(cloud[i].x / o.cell_m)),
-             static_cast<std::int64_t>(std::floor(cloud[i].y / o.cell_m))}]
-          .push_back(far_res[i]);
+      const Eigen::Vector3d w = cloud[i].getVector3fMap().cast<double>();
+      int key = -1;
+      Eigen::Vector3d p = w;
+      if (by_storey) {
+        double best = std::numeric_limits<double>::infinity();
+        for (std::size_t s = 0; s < storeys.size(); ++s) {
+          const Eigen::Vector3d l = to_level[s].topLeftCorner<3, 3>() * w +
+                                    to_level[s].topRightCorner<3, 1>();
+          const double d = std::max(
+              {storeys[s].z_floor - l.z(), l.z() - storeys[s].z_ceiling, 0.0});
+          if (d < best) {
+            best = d;
+            key = storeys[s].idx;
+            p = l;
+          }
+        }
+      }
+      auto &c =
+          cells[{key, static_cast<std::int64_t>(std::floor(p.x() / o.cell_m)),
+                 static_cast<std::int64_t>(std::floor(p.y() / o.cell_m))}];
+      c.res.push_back(far_res[i]);
+      c.z.push_back(p.z());
     }
     std::vector<double> frame_meds;
     for (std::size_t k = 0; k < nf; ++k) {
@@ -900,13 +949,15 @@ DriftReport diagnose_drift(const ProjectDB &db,
     r.frame_residual_median_m = median(frame_meds);
     r.frame_residual_p90_m = percentile(frame_meds, 90.0);
     for (auto &kv : cells) {
-      if (static_cast<int>(kv.second.size()) < o.min_cell_points)
+      if (static_cast<int>(kv.second.res.size()) < o.min_cell_points)
         continue;
       DriftCell c;
-      c.x = (static_cast<double>(kv.first.first) + 0.5) * o.cell_m;
-      c.y = (static_cast<double>(kv.first.second) + 0.5) * o.cell_m;
-      c.points = kv.second.size();
-      c.residual_m = *median(kv.second);
+      c.storey = std::get<0>(kv.first);
+      c.x = (static_cast<double>(std::get<1>(kv.first)) + 0.5) * o.cell_m;
+      c.y = (static_cast<double>(std::get<2>(kv.first)) + 0.5) * o.cell_m;
+      c.points = kv.second.res.size();
+      c.residual_m = *median(kv.second.res);
+      c.z_m = *percentile(kv.second.z, 10.0);
       r.cells.push_back(c);
     }
   }
@@ -1050,16 +1101,11 @@ DriftReport diagnose_drift(const ProjectDB &db,
   core::debug("analyze drift: crossings done at {:.1f} s", clock.elapsed());
   // ---- doubled walls -------------------------------------------------------
   if (o.doubled_walls) {
-    std::vector<core::StoreyRecord> st;
-    if (plan && !plan->storeys.empty())
-      st = plan->storeys;
-    else if (db.has_storeys())
-      st = db.storeys();
-    if (st.empty())
+    if (storeys.empty())
       core::info("analyze drift: no storeys (plan or project); the doubled-"
                  "wall patches are skipped");
     else
-      r.doubled_walls = doubled_walls(pooled, st, o);
+      r.doubled_walls = doubled_walls(pooled, storeys, o);
   }
 
   core::info("analyze drift: {} frames ({} points), pass-to-pass {} mm vs "
@@ -1138,10 +1184,20 @@ std::string drift_report_to_json(const DriftReport &r, int indent) {
   }
   j["cells"] = json::array();
   for (const auto &c : r.cells)
-    j["cells"].push_back({{"x", c.x},
+    j["cells"].push_back({{"storey", c.storey},
+                          {"x", c.x},
                           {"y", c.y},
+                          {"z_m", c.z_m},
                           {"residual_m", c.residual_m},
                           {"points", c.points}});
+  j["cell_m"] = r.cell_m;
+  j["storeys"] = json::array();
+  for (const auto &s : r.storeys)
+    j["storeys"].push_back({{"idx", s.idx},
+                            {"name", s.name},
+                            {"z_floor", s.z_floor},
+                            {"z_ceiling", s.z_ceiling},
+                            {"level_transform", s.level_transform}});
   if (r.crossings) {
     json c = {{"steps", r.crossings->steps},
               {"crossings", r.crossings->crossings.size()},
