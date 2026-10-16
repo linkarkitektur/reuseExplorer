@@ -85,5 +85,9 @@ odometry derived in memory), `--fast`, 12 segments, depth stride 8:
 Cycle 1's 13 mm gain was mostly shear; the honest gain at cycle 4 is about
 10 mm. The upper storey's doubled long wall is still visible in
 `s1.passes.png`: the move alone does not close it, which is the next thing
-to look at. Cycle times: `--fast` 13-16 s (the solve takes 0.1 s, the
-drift diagnostics 9-12 s); the full solve 3.6 s more.
+to look at. Cycle times (8 threads): `--fast` 4.9 s (the solve takes
+0.1 s, the drift diagnostics 3.5 s, the preview cloud and nine images
+1.3 s); the full solve 3.6 s more. The depth is read once, at load, into a
+frame cache (12 MB here, reported on the `frame cache` line); each cycle
+only re-transforms it (reusex-rcv.1.17). NewOffice (3876 frames) runs a
+`--fast` cycle in 12.4 s.

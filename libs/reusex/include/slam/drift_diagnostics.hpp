@@ -27,7 +27,10 @@
 //
 // Deterministic (STANDARDS §6): fixed segment boundaries, no sampling, no
 // randomness, parallel loops write per-index results that are reduced in
-// index order; every output vector is sorted.
+// index order; every output vector is sorted. The same report for any
+// thread count, and with or without a core::FrameDepthCache.
+
+#include "reusex/core/frame_depth_cache.hpp"
 
 #include <Eigen/Core>
 
@@ -44,7 +47,8 @@ class ProjectDB;
 }
 namespace reusex::core {
 struct SolidModel;
-}
+struct FrameDepthCache;
+} // namespace reusex::core
 
 namespace reusex::slam {
 
@@ -272,12 +276,25 @@ struct DriftReport {
 /// @param poses_override optional world poses replacing the stored ones,
 ///        index-aligned with db.sensor_frame_ids() (all frames, before
 ///        frame_step); e.g. a candidate solve that is not written yet.
+/// @param depth_cache optional sampled depth of @p db's frames
+///        (core::cache_frame_depth() with this frame_step, depth_stride and
+///        depth range): the frames are back-projected from it instead of
+///        read from @p db, with a bit-identical report (reusex-rcv.1.17,
+///        `rux optimize --watch` diagnoses every cycle's candidate poses).
 /// @throws std::invalid_argument for a non-empty @p poses_override of the
-///         wrong size, or options out of range (segments < 1, step < 1...).
-DriftReport
-diagnose_drift(const ProjectDB &db, const DriftDiagnosticsOptions &opts = {},
-               const core::SolidModel *plan = nullptr,
-               std::span<const Eigen::Matrix4d> poses_override = {});
+///         wrong size, a @p depth_cache made with other sampling or for
+///         another frame count, or options out of range (segments < 1,
+///         step < 1...).
+DriftReport diagnose_drift(const ProjectDB &db,
+                           const DriftDiagnosticsOptions &opts = {},
+                           const core::SolidModel *plan = nullptr,
+                           std::span<const Eigen::Matrix4d> poses_override = {},
+                           const core::FrameDepthCache *depth_cache = nullptr);
+
+/// The depth sampling diagnose_drift() reads with @p opts (frame_step,
+/// depth_stride, depth range): the core::cache_frame_depth() argument of a
+/// cache it accepts.
+core::DepthSampling drift_depth_sampling(const DriftDiagnosticsOptions &opts);
 
 /// Steps of a camera path (consecutive @p poses, world pose-frame origins)
 /// that cross a wall axis of @p plan, and whether each lies at one of the

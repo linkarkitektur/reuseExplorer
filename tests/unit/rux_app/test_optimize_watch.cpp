@@ -23,6 +23,7 @@
 #include <reusex/core/SensorIntrinsics.hpp>
 #include <reusex/core/pose_graph.hpp>
 #include <reusex/io/pose_edits.hpp>
+#include <reusex/slam/drift_diagnostics.hpp>
 #include <reusex/slam/pose_graph.hpp>
 
 #include "../../support/temp_path.hpp"
@@ -31,6 +32,7 @@
 #include <Eigen/Geometry>
 #include <opencv2/core.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -259,6 +261,8 @@ TEST_CASE("OptimizeWatchSession: suggestion pastes, re-solves, keeps the last "
   CHECK_THAT(p0.report, ContainsSubstring("frame step 1, depth stride 2"));
   CHECK_THAT(p0.report, ContainsSubstring("shear (untouched)"));
   CHECK_THAT(p0.report, ContainsSubstring("not written (preview only"));
+  // reusex-rcv.1.17: the depth is read once, into the frame cache.
+  CHECK_THAT(p0.report, ContainsSubstring("frame cache           48 frames"));
   REQUIRE(p0.cross_segment_median_m);
   CHECK(*p0.cross_segment_median_m > 0.03);
   CHECK(p0.shear.untouched == 2 * kPerPass);
@@ -292,6 +296,27 @@ TEST_CASE("OptimizeWatchSession: suggestion pastes, re-solves, keeps the last "
                              p0.poses[k].topRightCorner<3, 1>())
                                 .norm());
   CHECK(moved > 0.05);
+  // The cached cycle measures what an uncached diagnosis of the same
+  // candidate poses measures, bit for bit (reusex-rcv.1.17).
+  {
+    reusex::ProjectDB db(project, /*readOnly=*/true);
+    reusex::slam::DriftDiagnosticsOptions d;
+    d.depth_stride = 2;
+    d.segments = 2;
+    d.doubled_walls = false;
+    const auto u = reusex::slam::diagnose_drift(db, d, nullptr, p1.poses);
+    std::vector<double> cross;
+    for (const auto &p : u.pairs)
+      if (p.a != p.b)
+        cross.push_back(p.residual_m);
+    std::sort(cross.begin(), cross.end());
+    REQUIRE(!cross.empty());
+    const double pos = 0.5 * static_cast<double>(cross.size() - 1);
+    const auto lo = static_cast<std::size_t>(std::floor(pos));
+    const auto hi = std::min(lo + 1, cross.size() - 1);
+    const double med = cross[lo] + (cross[hi] - cross[lo]) * (pos - lo);
+    CHECK(*p1.cross_segment_median_m == med);
+  }
   // A move alone drags the pass no edit names along (reusex-sb2): the shear
   // indicator shows it and the suggestions offer a guard anchor.
   CHECK(p1.shear.untouched == static_cast<std::size_t>(kPerPass));

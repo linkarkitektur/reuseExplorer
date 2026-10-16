@@ -12,18 +12,22 @@
 
 #include <reusex/core/ProjectDB.hpp>
 #include <reusex/core/SensorIntrinsics.hpp>
+#include <reusex/core/frame_depth_cache.hpp>
 #include <reusex/core/solid_model.hpp>
 #include <reusex/slam/drift_diagnostics.hpp>
+#include <reusex/slam/frame_pair_icp.hpp>
 
 #include "../../support/temp_path.hpp"
 
 #include <Eigen/Geometry>
+#include <omp.h>
 #include <opencv2/core.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <random>
 #include <stdexcept>
@@ -430,5 +434,115 @@ TEST_CASE("DriftDiagnostics_WallCrossings_OpeningVsWall", "[slam][drift]") {
 
   CHECK_THROWS_AS(slam::trajectory_wall_crossings(
                       std::span<const std::int64_t>(ids).first(3), poses, plan),
+                  std::invalid_argument);
+}
+
+// ── reusex-rcv.1.17: the pose-independent depth cache ──────────────────────
+
+namespace {
+
+/// A tilted, offset local transform (camera -> pose frame), so the cached
+/// back-projection is checked against a non-trivial one.
+std::array<double, 16> tilted_local() {
+  Eigen::Matrix4d m = Eigen::Matrix4d::Identity();
+  m.topLeftCorner<3, 3>() =
+      Eigen::AngleAxisd(0.3, Eigen::Vector3d(1, 2, 3).normalized())
+          .toRotationMatrix();
+  m.topRightCorner<3, 1>() = Eigen::Vector3d(0.05, -0.02, 0.11);
+  return to_array(m);
+}
+
+} // namespace
+
+TEST_CASE("FrameDepthCache_PoseFramePoints_MatchSlamBitForBit",
+          "[slam][drift][cache]") {
+  const TempPath project("drift_cache_points");
+  {
+    reusex::ProjectDB db(project.path, /*readOnly=*/false);
+    std::mt19937 rng(11);
+    auto k = intrinsics();
+    k.local_transform = tilted_local();
+    const cv::Mat color(kH, kW, CV_8UC3, cv::Scalar(128, 128, 128));
+    const cv::Mat conf(kH, kW, CV_8UC1, cv::Scalar(255));
+    for (int f = 0; f < 4; ++f)
+      db.save_sensor_frame(f + 1, color, render_depth(true_pose(f * 5), rng),
+                           conf, to_array(true_pose(f * 5)), k, f);
+  }
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  for (int stride : {1, 3}) {
+    reusex::slam::FramePairIcpOptions bp;
+    bp.pixel_step = stride;
+    bp.min_depth_m = 0.5f;
+    bp.max_depth_m = 3.0f;
+    for (int id = 1; id <= 4; ++id) {
+      const auto want = slam::frame_pose_frame_points(db, id, bp);
+      const auto frame =
+          reusex::core::cache_depth_frame(db, id, stride, 0.5, 3.0);
+      const auto got = reusex::core::pose_frame_points(frame, 0.5f, 3.0f);
+      INFO("frame " << id << " stride " << stride);
+      REQUIRE(got.size() == want.size());
+      REQUIRE(!got.empty());
+      CHECK(std::memcmp(got.data(), want.data(), got.size() * sizeof(got[0])) ==
+            0);
+    }
+  }
+}
+
+TEST_CASE("DriftDiagnostics_DepthCache_IsBitIdenticalAcrossThreads",
+          "[slam][drift][cache]") {
+  const TempPath project("drift_cache_report");
+  make_project(project.path.string(), kFramesPerPass + kFramesPerPass / 2);
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  auto o = test_options(4);
+  o.frame_step = 2;
+  // Candidate poses (the watch loop's case): the truth, nudged.
+  std::vector<Eigen::Matrix4d> poses;
+  for (int k = 0; k < 2 * kFramesPerPass; ++k) {
+    Eigen::Matrix4d p = true_pose(k);
+    p(0, 3) += 0.001 * k;
+    poses.push_back(p);
+  }
+  const auto cache =
+      reusex::core::cache_frame_depth(db, slam::drift_depth_sampling(o));
+  CHECK(cache.frames.size() == static_cast<std::size_t>(kFramesPerPass));
+  CHECK(cache.samples() > 0);
+  CHECK(cache.bytes() >= cache.samples() * sizeof(reusex::core::DepthSample));
+
+  const auto uncached =
+      slam::drift_report_to_json(slam::diagnose_drift(db, o, nullptr, poses));
+  const int saved = omp_get_max_threads();
+  for (int threads : {1, 3, 8}) {
+    omp_set_num_threads(threads);
+    INFO(threads << " threads");
+    CHECK(slam::drift_report_to_json(
+              slam::diagnose_drift(db, o, nullptr, poses, &cache)) == uncached);
+    CHECK(slam::drift_report_to_json(
+              slam::diagnose_drift(db, o, nullptr, {}, &cache)) ==
+          slam::drift_report_to_json(slam::diagnose_drift(db, o)));
+  }
+  // More segments than the 64 the neighbourhood masks hold: the unmasked
+  // search path, same answers.
+  auto many = o;
+  many.segments = 70;
+  many.min_pair_points = 5;
+  many.min_suggestion_points = 5;
+  const auto many_cache =
+      reusex::core::cache_frame_depth(db, slam::drift_depth_sampling(many));
+  omp_set_num_threads(1);
+  const auto many_1 = slam::drift_report_to_json(
+      slam::diagnose_drift(db, many, nullptr, poses, &many_cache));
+  omp_set_num_threads(8);
+  CHECK(slam::drift_report_to_json(
+            slam::diagnose_drift(db, many, nullptr, poses)) == many_1);
+  omp_set_num_threads(saved);
+
+  // A cache made with other sampling is refused, not silently used.
+  auto other = o;
+  other.depth_stride = 3;
+  CHECK_THROWS_AS(slam::diagnose_drift(db, other, nullptr, poses, &cache),
+                  std::invalid_argument);
+  other = o;
+  other.max_depth_m = 3.5;
+  CHECK_THROWS_AS(slam::diagnose_drift(db, other, nullptr, poses, &cache),
                   std::invalid_argument);
 }

@@ -7,6 +7,7 @@
 #include "plan_watch.hpp"
 
 #include <reusex/core/ProjectDB.hpp>
+#include <reusex/core/frame_depth_cache.hpp>
 #include <reusex/core/pose_graph.hpp>
 #include <reusex/io/pose_edits.hpp>
 #include <reusex/io/solid_model_json.hpp>
@@ -372,6 +373,11 @@ struct OptimizeWatchSession::State {
   std::string plan_note;
   std::string project_guid;
 
+  /// reusex-rcv.1.17: the sampled depth of every frame the drift
+  /// diagnostics and the preview cloud back-project, read once at load (the
+  /// pixels do not depend on the poses; each cycle only re-transforms them).
+  std::optional<reusex::core::FrameDepthCache> depth_cache;
+
   std::optional<reusex::core::PoseEdits> edits; ///< last good
   std::vector<Eigen::Matrix4d> shown;           ///< last good solve's poses
   int shown_pass = -1;
@@ -379,6 +385,8 @@ struct OptimizeWatchSession::State {
   int passes = 0;
 
   bool load(std::string &out);
+  [[nodiscard]] reusex::slam::DriftDiagnosticsOptions drift_options() const;
+  [[nodiscard]] reusex::visualize::PreviewCloudOptions preview_options() const;
   std::vector<Eigen::Matrix4d>
   aligned(const reusex::geometry::StoredGraphSolve &s) const;
 };
@@ -408,6 +416,28 @@ std::vector<Eigen::Matrix4d> OptimizeWatchSession::State::aligned(
     if (graph_index[k] >= 0)
       out[k] = s.poses[static_cast<std::size_t>(graph_index[k])];
   return out;
+}
+
+reusex::slam::DriftDiagnosticsOptions
+OptimizeWatchSession::State::drift_options() const {
+  reusex::slam::DriftDiagnosticsOptions d;
+  d.frame_step = opt.drift_frame_step;
+  d.depth_stride = opt.drift_depth_stride;
+  d.segments = opt.drift_segments;
+  d.doubled_walls = false;
+  return d;
+}
+
+reusex::visualize::PreviewCloudOptions
+OptimizeWatchSession::State::preview_options() const {
+  const auto d = drift_options();
+  reusex::visualize::PreviewCloudOptions p;
+  p.segments = d.segments;
+  p.frame_step = d.frame_step;
+  p.depth_stride = d.depth_stride;
+  p.min_depth_m = d.min_depth_m;
+  p.max_depth_m = d.max_depth_m;
+  return p;
 }
 
 bool OptimizeWatchSession::State::load(std::string &out) {
@@ -457,6 +487,20 @@ bool OptimizeWatchSession::State::load(std::string &out) {
     }
     const auto base = geometry::solve_stored_pose_graph(*db, *graph, options);
     baseline = aligned(base);
+
+    // One cache serves both: the preview samples as the drift does.
+    const auto tc = Clock::now();
+    const auto sampling = slam::drift_depth_sampling(drift_options());
+    if (!(viz::preview_depth_sampling(preview_options()) == sampling))
+      throw std::logic_error("optimize --watch: the preview cloud and the "
+                             "drift diagnostics sample the depth apart");
+    depth_cache = core::cache_frame_depth(*db, sampling);
+    out += fmt::format(
+        "frame cache           {} frames, {} depth samples, {:.1f} MB; read "
+        "once in {:.1f} s (frame step {}, depth stride {})\n",
+        depth_cache->frames.size(), depth_cache->samples(),
+        static_cast<double>(depth_cache->bytes()) / (1024.0 * 1024.0),
+        seconds_since(tc), sampling.frame_step, sampling.depth_stride);
     load_seconds = seconds_since(t0);
     out += fmt::format(
         "graph                 {} of {} frames solved, {} "
@@ -644,18 +688,15 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
       ++r.shear.flagged;
 
   // --- drift diagnostics on the candidate poses -----------------------------
-  slam::DriftDiagnosticsOptions dopt;
-  dopt.frame_step = s.opt.drift_frame_step;
-  dopt.depth_stride = s.opt.drift_depth_stride;
-  dopt.segments = s.opt.drift_segments;
-  dopt.doubled_walls = false;
+  const slam::DriftDiagnosticsOptions dopt = s.drift_options();
   std::optional<slam::DriftReport> drift;
   double drift_seconds = 0.0;
   {
     const auto td = Clock::now();
     try {
       drift = slam::diagnose_drift(*s.db, dopt, s.plan ? &*s.plan : nullptr,
-                                   r.poses);
+                                   r.poses,
+                                   s.depth_cache ? &*s.depth_cache : nullptr);
     } catch (const std::exception &e) {
       out += fmt::format("drift                 FAILED: {}\n", e.what());
     }
@@ -970,21 +1011,19 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
     out += fmt::format("plan                  not read: {}\n", s.plan_note);
 
   // --- preview cloud, wall support, images ---------------------------------
-  double render_seconds = 0.0;
-  viz::PreviewCloudOptions popt;
-  popt.segments = dopt.segments;
-  popt.frame_step = dopt.frame_step;
-  popt.depth_stride = dopt.depth_stride;
+  double render_seconds = 0.0, preview_seconds = 0.0;
+  const viz::PreviewCloudOptions popt = s.preview_options();
   std::shared_ptr<const viz::PreviewCloud> preview;
   if (!s.opt.render.empty() || s.plan) {
     const auto tr = Clock::now();
     try {
-      preview = std::make_shared<const viz::PreviewCloud>(
-          viz::preview_cloud(*s.db, popt, r.poses));
+      preview = std::make_shared<const viz::PreviewCloud>(viz::preview_cloud(
+          *s.db, popt, r.poses, s.depth_cache ? &*s.depth_cache : nullptr));
     } catch (const std::exception &e) {
       out += fmt::format("preview cloud         FAILED: {}\n", e.what());
     }
-    render_seconds += seconds_since(tr);
+    preview_seconds = seconds_since(tr);
+    render_seconds += preview_seconds;
   }
   if (s.plan && preview) {
     Cloud cloud;
@@ -1099,12 +1138,15 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
 
   r.seconds = seconds_since(t0);
   out += fmt::format("timing                solve {:.1f} s, drift {:.1f} s, "
-                     "preview + images {:.1f} s, cycle {:.1f} s\n",
-                     solve_seconds, drift_seconds, render_seconds, r.seconds);
+                     "preview + images {:.1f} s (preview {:.1f} s), cycle "
+                     "{:.1f} s\n",
+                     solve_seconds, drift_seconds, render_seconds,
+                     preview_seconds, r.seconds);
   j["applied"] = r.applied;
   j["timing"] = {{"solve_s", solve_seconds},
                  {"drift_s", drift_seconds},
                  {"render_s", render_seconds},
+                 {"preview_s", preview_seconds},
                  {"cycle_s", r.seconds}};
   r.json = j.dump(2);
   r.report = std::move(out);

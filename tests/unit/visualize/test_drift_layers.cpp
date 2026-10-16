@@ -12,6 +12,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <reusex/core/ProjectDB.hpp>
+#include <reusex/core/frame_depth_cache.hpp>
 #include <reusex/core/pose_edits.hpp>
 #include <reusex/slam/drift_diagnostics.hpp>
 #include <reusex/visualize/drift_layers.hpp>
@@ -21,6 +22,7 @@
 #include "../../support/pose_fixture.hpp"
 #include "../../support/temp_path.hpp"
 
+#include <Eigen/Geometry>
 #include <opencv2/core.hpp>
 
 #include <vtkActor.h>
@@ -36,8 +38,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <map>
 #include <set>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -166,6 +170,72 @@ TEST_CASE("DriftLayers_PreviewCloud_KeepsEachPointsFrame",
   poses.pop_back();
   CHECK_THROWS_AS(viz::preview_cloud(db, two_segments(), poses),
                   std::invalid_argument);
+}
+
+TEST_CASE("DriftLayers_PreviewCloud_DepthCacheIsBitIdentical",
+          "[visualize][drift][cache]") {
+  // reusex-rcv.1.17: a ramp of depths, with holes and returns on and past
+  // both ends of the range, seen with a tilted local transform.
+  TempPath tmp("test_drift_preview_cache");
+  ProjectDB db(tmp.path);
+  auto k = make_intrinsics(30.0, 28.0, 16.5, 11.5, 32, 24);
+  k.local_transform = {0.0, 0.0,  1.0, 0.03, -1.0, 0.0, 0.0, -0.01,
+                       0.0, -1.0, 0.0, 0.12, 0.0,  0.0, 0.0, 1.0};
+  for (int id = 1; id <= 7; ++id) {
+    cv::Mat depth(24, 32, CV_16UC1);
+    for (int v = 0; v < depth.rows; ++v)
+      for (int u = 0; u < depth.cols; ++u)
+        depth.at<std::uint16_t>(v, u) = static_cast<std::uint16_t>(
+            (u + v + id) % 9 == 0 ? 0 : 150 + 37 * u + 101 * v + 13 * id);
+    depth.at<std::uint16_t>(0, 0) = 200;  // exactly min
+    depth.at<std::uint16_t>(2, 2) = 4000; // exactly max
+    db.save_sensor_frame(id, make_color(32, 24), depth, cv::Mat(),
+                         translation_pose(0.1 * id, 0.0, 0.0), k,
+                         static_cast<double>(id));
+  }
+  std::vector<Eigen::Matrix4d> poses;
+  for (int id = 1; id <= 7; ++id) {
+    Eigen::Matrix4d p = Eigen::Matrix4d::Identity();
+    p.topLeftCorner<3, 3>() =
+        Eigen::AngleAxisd(0.07 * id, Eigen::Vector3d::UnitZ())
+            .toRotationMatrix();
+    p.topRightCorner<3, 1>() = Eigen::Vector3d(12.3 + 0.2 * id, -4.1, 0.7);
+    poses.push_back(p);
+  }
+  for (double voxel : {0.0, 0.02}) {
+    for (int step : {1, 2}) {
+      viz::PreviewCloudOptions o;
+      o.segments = 3;
+      o.frame_step = step;
+      o.depth_stride = 3;
+      o.voxel_m = voxel;
+      const auto cache =
+          core::cache_frame_depth(db, viz::preview_depth_sampling(o));
+      INFO("voxel " << voxel << " frame step " << step);
+      for (const bool candidate : {false, true}) {
+        const std::span<const Eigen::Matrix4d> ps =
+            candidate ? std::span<const Eigen::Matrix4d>(poses)
+                      : std::span<const Eigen::Matrix4d>();
+        const auto a = viz::preview_cloud(db, o, ps);
+        const auto b = viz::preview_cloud(db, o, ps, &cache);
+        REQUIRE(!a.points.empty());
+        REQUIRE(a.points.size() == b.points.size());
+        CHECK(std::memcmp(a.points.data(), b.points.data(),
+                          a.points.size() * sizeof(a.points[0])) == 0);
+        CHECK(a.frame == b.frame);
+        CHECK(a.node_ids == b.node_ids);
+        CHECK(a.frame_segment == b.frame_segment);
+        REQUIRE(a.segments.size() == b.segments.size());
+        for (std::size_t i = 0; i < a.segments.size(); ++i)
+          CHECK(a.segments[i].points == b.segments[i].points);
+      }
+    }
+  }
+  viz::PreviewCloudOptions o;
+  const auto cache =
+      core::cache_frame_depth(db, viz::preview_depth_sampling(o));
+  o.depth_stride = 4;
+  CHECK_THROWS_AS(viz::preview_cloud(db, o, {}, &cache), std::invalid_argument);
 }
 
 TEST_CASE("DriftLayers_Passes_ColoursEachPassApart", "[visualize][drift]") {

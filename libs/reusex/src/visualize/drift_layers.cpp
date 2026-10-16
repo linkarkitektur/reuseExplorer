@@ -14,11 +14,11 @@
 #include "visualize/scene.hpp"
 
 #include <nlohmann/json.hpp>
-#include <opencv2/core.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -66,8 +66,18 @@ std::array<std::uint8_t, 3> pass_color(const LabelPalette &palette,
   return palette.colors[static_cast<std::size_t>(((segment % n) + n) % n)];
 }
 
+core::DepthSampling preview_depth_sampling(const PreviewCloudOptions &o) {
+  core::DepthSampling s;
+  s.frame_step = o.frame_step;
+  s.depth_stride = o.depth_stride;
+  s.min_depth_m = o.min_depth_m;
+  s.max_depth_m = o.max_depth_m;
+  return s;
+}
+
 PreviewCloud preview_cloud(const ProjectDB &db, const PreviewCloudOptions &o,
-                           std::span<const Eigen::Matrix4d> poses) {
+                           std::span<const Eigen::Matrix4d> poses,
+                           const core::FrameDepthCache *depth_cache) {
   if (o.segments < 1 || o.frame_step < 1 || o.depth_stride < 1 ||
       !(o.max_depth_m > o.min_depth_m) || o.voxel_m < 0.0)
     throw std::invalid_argument(
@@ -78,6 +88,13 @@ PreviewCloud preview_cloud(const ProjectDB &db, const PreviewCloudOptions &o,
     throw std::invalid_argument(
         "preview_cloud: " + std::to_string(poses.size()) + " poses for " +
         std::to_string(ids.size()) + " sensor frames");
+  if (depth_cache &&
+      !depth_cache->matches(preview_depth_sampling(o), ids.size()))
+    throw std::invalid_argument(
+        "preview_cloud: the depth cache was made with another frame step, "
+        "depth stride or depth range, or for another project (" +
+        std::to_string(depth_cache->frames_total) + " frames, this one has " +
+        std::to_string(ids.size()) + ")");
 
   PreviewCloud pc;
   std::vector<std::size_t> order; // index into ids of each sampled frame
@@ -91,51 +108,81 @@ PreviewCloud preview_cloud(const ProjectDB &db, const PreviewCloudOptions &o,
   for (std::size_t k = 0; k < nf; ++k)
     pc.frame_segment[k] = pass_segment(k, nf, o.segments);
 
-  std::unordered_set<VoxelKey, VoxelHash> kept;
+  // The poses first (the database is read on this thread only).
+  std::vector<std::optional<Eigen::Matrix4d>> pose_of(nf);
+  for (std::size_t k = 0; k < nf; ++k) {
+    const int id = static_cast<int>(pc.node_ids[k]);
+    if (!poses.empty())
+      pose_of[k] = poses[order[k]];
+    else if (db.has_sensor_frame_pose(id))
+      pose_of[k] = to_matrix(db.sensor_frame_pose(id));
+  }
+
+  // Segments are runs of consecutive frames and the voxel key holds the
+  // segment, so each segment thins on its own: with the cache, segments in
+  // parallel, then joined in segment (= frame) order -- the points and
+  // their order a single pass makes (reusex-rcv.1.17).
   std::vector<PassSegment> seg(static_cast<std::size_t>(o.segments));
   for (int s = 0; s < o.segments; ++s)
     seg[static_cast<std::size_t>(s)].index = s;
+  struct SegmentOut {
+    std::vector<Eigen::Vector3f> points;
+    std::vector<std::uint32_t> frame;
+    std::size_t without_pose = 0, without_depth = 0;
+  };
+  std::vector<SegmentOut> outs(static_cast<std::size_t>(o.segments));
+  std::vector<std::size_t> seg_begin(static_cast<std::size_t>(o.segments) + 1,
+                                     nf);
+  for (std::size_t k = nf; k-- > 0;)
+    seg_begin[static_cast<std::size_t>(pc.frame_segment[k])] = k;
+  for (int s = o.segments - 1; s >= 0; --s)
+    seg_begin[static_cast<std::size_t>(s)] =
+        std::min(seg_begin[static_cast<std::size_t>(s)],
+                 seg_begin[static_cast<std::size_t>(s) + 1]);
 
-  for (std::size_t k = 0; k < nf; ++k) {
-    const int id = static_cast<int>(pc.node_ids[k]);
-    auto &sg = seg[static_cast<std::size_t>(pc.frame_segment[k])];
-    if (sg.frames == 0)
-      sg.first_node = id;
-    sg.last_node = id;
-    ++sg.frames;
-
-    Eigen::Matrix4d pose;
-    if (!poses.empty()) {
-      pose = poses[order[k]];
-    } else if (db.has_sensor_frame_pose(id)) {
-      pose = to_matrix(db.sensor_frame_pose(id));
-    } else {
-      ++pc.frames_without_pose;
-      continue;
-    }
-    const cv::Mat depth16 = db.sensor_frame_depth(id);
-    const core::SensorIntrinsics intr = db.sensor_frame_intrinsics(id);
-    if (depth16.empty() || intr.fx <= 0.0 || intr.fy <= 0.0 ||
-        intr.width <= 0 || intr.height <= 0) {
-      ++pc.frames_without_depth;
-      continue;
-    }
-    cv::Mat depth;
-    depth16.convertTo(depth, CV_32FC1, 1.0 / 1000.0);
-    // The intrinsics describe the colour frame; scale them to the depth
-    // resolution (as segmentation/reconstruct.cpp and slam do).
-    const double sx = static_cast<double>(depth.cols) / intr.width;
-    const double sy = static_cast<double>(depth.rows) / intr.height;
-    const double fx = intr.fx * sx, fy = intr.fy * sy;
-    const double cx = intr.cx * sx, cy = intr.cy * sy;
-    const Eigen::Matrix4d c2w = pose * to_matrix(intr.local_transform);
-    const Eigen::Matrix3d r = c2w.topLeftCorner<3, 3>();
-    const Eigen::Vector3d t = c2w.topRightCorner<3, 1>();
-    std::size_t added = 0;
-    for (int v = 0; v < depth.rows; v += o.depth_stride) {
-      const float *row = depth.ptr<float>(v);
-      for (int u = 0; u < depth.cols; u += o.depth_stride) {
-        const double z = row[u];
+  auto run_segment = [&](int s) {
+    auto &sg = seg[static_cast<std::size_t>(s)];
+    auto &out = outs[static_cast<std::size_t>(s)];
+    std::unordered_set<VoxelKey, VoxelHash> kept;
+    for (std::size_t k = seg_begin[static_cast<std::size_t>(s)];
+         k < seg_begin[static_cast<std::size_t>(s) + 1]; ++k) {
+      const int id = static_cast<int>(pc.node_ids[k]);
+      if (sg.frames == 0)
+        sg.first_node = id;
+      sg.last_node = id;
+      ++sg.frames;
+      if (!pose_of[k]) {
+        ++out.without_pose;
+        continue;
+      }
+      const Eigen::Matrix4d &pose = *pose_of[k];
+      // From the cache, or this frame's depth read now: the same pixels
+      // (core::cache_depth_frame()) through the same formula below.
+      core::CachedDepthFrame read;
+      if (!depth_cache)
+        read = core::cache_depth_frame(db, id, o.depth_stride, o.min_depth_m,
+                                       o.max_depth_m);
+      const core::CachedDepthFrame &frame =
+          depth_cache ? depth_cache->frames[k] : read;
+      const core::SensorIntrinsics &intr = frame.intrinsics;
+      if (!frame.has_depth || intr.fx <= 0.0 || intr.fy <= 0.0 ||
+          intr.width <= 0 || intr.height <= 0) {
+        ++out.without_depth;
+        continue;
+      }
+      // The intrinsics describe the colour frame; scale them to the depth
+      // resolution (as segmentation/reconstruct.cpp and slam do).
+      const double sx = static_cast<double>(frame.depth_cols) / intr.width;
+      const double sy = static_cast<double>(frame.depth_rows) / intr.height;
+      const double fx = intr.fx * sx, fy = intr.fy * sy;
+      const double cx = intr.cx * sx, cy = intr.cy * sy;
+      const Eigen::Matrix4d c2w = pose * to_matrix(intr.local_transform);
+      const Eigen::Matrix3d r = c2w.topLeftCorner<3, 3>();
+      const Eigen::Vector3d t = c2w.topRightCorner<3, 1>();
+      std::size_t added = 0;
+      for (const auto &px : frame.samples) {
+        const int u = px.u, v = px.v;
+        const double z = px.z;
         if (!(z >= o.min_depth_m && z <= o.max_depth_m))
           continue;
         const Eigen::Vector3d w =
@@ -144,19 +191,35 @@ PreviewCloud preview_cloud(const ProjectDB &db, const PreviewCloudOptions &o,
           const VoxelKey key{
               static_cast<std::int64_t>(std::floor(w.x() / o.voxel_m)),
               static_cast<std::int64_t>(std::floor(w.y() / o.voxel_m)),
-              static_cast<std::int64_t>(std::floor(w.z() / o.voxel_m)),
-              pc.frame_segment[k]};
+              static_cast<std::int64_t>(std::floor(w.z() / o.voxel_m)), s};
           if (!kept.insert(key).second)
             continue;
         }
-        pc.points.push_back(w.cast<float>());
-        pc.frame.push_back(static_cast<std::uint32_t>(k));
+        out.points.push_back(w.cast<float>());
+        out.frame.push_back(static_cast<std::uint32_t>(k));
         ++added;
       }
+      sg.points += added;
     }
-    if (added == 0 && sg.points == 0)
-      core::debug("preview cloud: frame {} adds no point", id);
-    sg.points += added;
+  };
+  if (depth_cache) {
+#pragma omp parallel for schedule(dynamic, 1)
+    for (int s = 0; s < o.segments; ++s)
+      run_segment(s);
+  } else {
+    for (int s = 0; s < o.segments; ++s)
+      run_segment(s);
+  }
+  std::size_t total = 0;
+  for (const auto &out : outs)
+    total += out.points.size();
+  pc.points.reserve(total);
+  pc.frame.reserve(total);
+  for (auto &out : outs) {
+    pc.points.insert(pc.points.end(), out.points.begin(), out.points.end());
+    pc.frame.insert(pc.frame.end(), out.frame.begin(), out.frame.end());
+    pc.frames_without_pose += out.without_pose;
+    pc.frames_without_depth += out.without_depth;
   }
   for (const auto &s : seg)
     if (s.frames > 0)

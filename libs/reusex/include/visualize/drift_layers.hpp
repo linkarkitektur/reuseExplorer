@@ -26,6 +26,7 @@
 // Header hygiene (STANDARDS §2): Eigen + the core PODs only; no VTK, no
 // ProjectDB definition.
 
+#include "reusex/core/frame_depth_cache.hpp"
 #include "reusex/core/pose_edits.hpp"
 
 #include <Eigen/Core>
@@ -100,11 +101,22 @@ struct PreviewCloud {
 ///        before frame_step); the camera sits at pose * local_transform.
 /// Deterministic (STANDARDS §6): frames in node order, pixels in raster
 /// order, the first point of a (voxel, segment) kept.
-/// @throws std::invalid_argument for a @p poses of the wrong size or options
-///         out of range; std::runtime_error when no frame yields a point.
+/// @param depth_cache optional sampled depth of @p db's frames
+///        (core::cache_frame_depth() with preview_depth_sampling(opts)): the
+///        frames are back-projected from it instead of read from @p db, with
+///        a bit-identical result (reusex-rcv.1.17).
+/// @throws std::invalid_argument for a @p poses of the wrong size, a
+///         @p depth_cache made with other sampling or for another frame
+///         count, or options out of range; std::runtime_error when no frame
+///         yields a point.
 PreviewCloud preview_cloud(const ProjectDB &db,
                            const PreviewCloudOptions &opts = {},
-                           std::span<const Eigen::Matrix4d> poses = {});
+                           std::span<const Eigen::Matrix4d> poses = {},
+                           const core::FrameDepthCache *depth_cache = nullptr);
+
+/// The depth sampling preview_cloud() reads with @p opts: the
+/// core::cache_frame_depth() argument of a cache it accepts.
+core::DepthSampling preview_depth_sampling(const PreviewCloudOptions &opts);
 
 // ── Graph ───────────────────────────────────────────────────────────────────
 
