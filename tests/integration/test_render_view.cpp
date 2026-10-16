@@ -38,6 +38,7 @@
 // rejected before any GL work happens, so it keeps its value on a device-less
 // runner.
 
+#include "../support/source_dir.hpp"
 #include "../support/temp_path.hpp"
 
 #include <reusex/core/ProjectDB.hpp>
@@ -77,9 +78,9 @@ cv::Mat render_or_skip(const reusex::ProjectDB &db,
   return {}; // unreachable; SKIP throws
 }
 
-/// tests/integration/<this file> -> tests/fixtures/scans/office_corridor.rux
+/// tests/fixtures/scans/office_corridor.rux, located via the repo root.
 fs::path fixture_path() {
-  return fs::path(__FILE__).parent_path().parent_path() / "fixtures" / "scans" /
+  return reusex::test_support::source_dir() / "tests" / "fixtures" / "scans" /
          "office_corridor.rux";
 }
 
