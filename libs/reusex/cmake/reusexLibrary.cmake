@@ -427,6 +427,10 @@ target_link_libraries(reusex_slam PRIVATE opencv_features2d)
 # solvePnPRansac (panorama alignment resection) lives in opencv_calib3d;
 # opencv_imgcodecs backs the optional ORB-correspondence debug figure.
 target_link_libraries(reusex_slam PRIVATE opencv_calib3d opencv_imgcodecs)
+# nanoflann (header-only, already found for OpenMVS and find_dependency'd by
+# the package config): the drift diagnostics' k-d tree, which makes tens of
+# millions of bounded queries (drift_diagnostics.cpp).
+target_link_libraries(reusex_slam PRIVATE nanoflann::nanoflann)
 # NARROW EXCEPTION (#222): slam registration reuses segmentation's Surfel /
 # surfel_extraction (PlaneGraphOptimizer, JointPairwiseRegistration operate on
 # extracted surfels). Explicit peer edge slam -> segmentation, kept narrow.

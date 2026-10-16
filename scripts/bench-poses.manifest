@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 Povl Filip Sonne-Frederiksen
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Rows for scripts/bench-poses.sh. Whitespace-separated columns; '-' = none;
+# paths relative to the repo root and may use $VARIABLES (a row whose
+# variable is unset is skipped). `configs` is a comma-separated list from
+# {none, optimize, manhattan, register, opt-register, xfeat}; each produces
+# one report row named "<name>:<config>". `xfeat` is accepted but currently
+# always skipped -- no XFeat loop-closure front end is wired into `rux
+# graph discover` yet (docs/research/visual-drift-loop.md references the
+# matcher as research-branch only); remove it from a row once reusex-rcv.1.9
+# or a successor lands it.
+#
+# name              kind       project                                       reference  configs
+#
+# office_corridor (committed fixture, sensor frames only, no drift of its
+# own): the script perturbs a COPY with a fixed seed and scores every config
+# against the UNPERTURBED copy's own trajectory as a placeholder reference
+# (kind=synthetic), proving the mechanics (reference export, perturbation,
+# per-config run, report shape) end to end with no external data. It is only
+# 10 frames, too sparse for `rux optimize` to find landmarks after drift is
+# injected (it correctly warns and leaves poses unchanged, so 'none' and
+# 'optimize' score identically here) -- a real "worse vs better" demonstration
+# needs a scan with enough structure, e.g. an ARKitScenes copy perturbed the
+# same way (verified manually for reusex-rcv.1.6; not committed, see
+# scripts/bench-arkitscenes-drift.sh for that dataset's own harness).
+office_corridor    synthetic  tests/fixtures/scans/office_corridor.rux      -          none,optimize,manhattan
+# Local-only rows (never committed data), skipped unless the variable is set.
+# A pose reference is authored with the drift-correction loop (reusex-rcv.1.8)
+# and committed under tests/fixtures/pose_reference/<scan>.trajectory.tum.
+house1             local      $REUSEX_HOUSE1_RUX                            tests/fixtures/pose_reference/house1.trajectory.tum    none,optimize,manhattan,register,opt-register
+house2             local      $REUSEX_HOUSE2_RUX                            tests/fixtures/pose_reference/house2.trajectory.tum    none,optimize,manhattan,register,opt-register

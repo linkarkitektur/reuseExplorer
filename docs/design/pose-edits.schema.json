@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ReUse-X/ReUseX/docs/design/pose-edits.schema.json",
+  "title": "ReUseX pose-edits document",
+  "description": "Corrections to a scan's sensor poses (reusex.pose_edits.v1) that rux optimize --edits lowers into extra factors of the stored pose-graph solve. Prose, conventions and one example per kind: docs/design/pose-edits.md. Reader: io::pose_edits_from_json / pose_edits_from_yaml (libs/reusex/src/io/pose_edits.cpp), which also enforces what this schema cannot: unique ids, a rigid matrix, first <= last, x0 < x1 and y0 < y1, a != b, finite numbers.",
+  "type": "object",
+  "required": ["schema", "edits"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {"type": "string"},
+    "schema": {"const": "reusex.pose_edits.v1"},
+    "project_guid": {
+      "description": "ProjectDB::project_guid() of the project the edits were written for; a mismatch is refused.",
+      "type": "string"
+    },
+    "frame": {
+      "description": "Frame of every pose, delta, pivot and region: world, or storey:<guid> (that storey's level frame).",
+      "type": "string",
+      "pattern": "^(world|storey:.+)$"
+    },
+    "edits": {"type": "array", "items": {"$ref": "#/$defs/edit"}}
+  },
+  "$defs": {
+    "node": {"type": "integer"},
+    "nodes": {
+      "description": "[first, last] inclusive, or an explicit list.",
+      "oneOf": [
+        {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2},
+        {
+          "type": "object",
+          "required": ["list"],
+          "additionalProperties": false,
+          "properties": {
+            "list": {"type": "array", "items": {"type": "integer"}, "minItems": 1}
+          }
+        }
+      ]
+    },
+    "vec3": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
+    "region": {
+      "description": "[x0, y0, x1, y1], an axis-aligned box in the frame's xy plane.",
+      "type": "array",
+      "items": {"type": "number"},
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "matrix": {
+      "type": "object",
+      "required": ["matrix"],
+      "additionalProperties": false,
+      "properties": {
+        "matrix": {"type": "array", "items": {"type": "number"}, "minItems": 16, "maxItems": 16}
+      }
+    },
+    "euler": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "xyz": {"$ref": "#/$defs/vec3"},
+        "yaw_deg": {"type": "number"},
+        "pitch_deg": {"type": "number"},
+        "roll_deg": {"type": "number"}
+      }
+    },
+    "delta": {
+      "oneOf": [
+        {"$ref": "#/$defs/matrix"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "xyz": {"$ref": "#/$defs/vec3"},
+            "yaw_deg": {"type": "number"},
+            "pitch_deg": {"type": "number"},
+            "roll_deg": {"type": "number"},
+            "pivot": {"$ref": "#/$defs/vec3"}
+          }
+        }
+      ]
+    },
+    "pose": {
+      "oneOf": [
+        {"enum": ["current", "initial"]},
+        {"$ref": "#/$defs/matrix"},
+        {"$ref": "#/$defs/euler"}
+      ]
+    },
+    "dofs": {
+      "type": "array",
+      "items": {"enum": ["x", "y", "z", "roll", "pitch", "yaw"]},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "sigma": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trans_m": {"type": "number", "exclusiveMinimum": 0},
+        "rot_deg": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "sigma_m": {"type": "number", "exclusiveMinimum": 0},
+    "id": {"type": "string", "minLength": 1},
+    "note": {"type": "string"},
+    "surface_side": {
+      "type": "object",
+      "required": ["nodes", "region"],
+      "additionalProperties": false,
+      "properties": {
+        "nodes": {"$ref": "#/$defs/nodes"},
+        "region": {"$ref": "#/$defs/region"}
+      }
+    },
+    "edit": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["id", "kind", "node", "pose"],
+          "additionalProperties": false,
+          "properties": {
+            "id": {"$ref": "#/$defs/id"},
+            "kind": {"const": "anchor"},
+            "node": {"$ref": "#/$defs/node"},
+            "pose": {"$ref": "#/$defs/pose"},
+            "dofs": {"$ref": "#/$defs/dofs"},
+            "sigma": {"$ref": "#/$defs/sigma"},
+            "note": {"$ref": "#/$defs/note"}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["id", "kind", "nodes", "delta"],
+          "additionalProperties": false,
+          "properties": {
+            "id": {"$ref": "#/$defs/id"},
+            "kind": {"const": "move"},
+            "nodes": {"$ref": "#/$defs/nodes"},
+            "delta": {"$ref": "#/$defs/delta"},
+            "dofs": {"$ref": "#/$defs/dofs"},
+            "sigma": {"$ref": "#/$defs/sigma"},
+            "note": {"$ref": "#/$defs/note"}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["id", "kind", "a", "b", "pose"],
+          "additionalProperties": false,
+          "properties": {
+            "id": {"$ref": "#/$defs/id"},
+            "kind": {"const": "relative"},
+            "a": {"$ref": "#/$defs/node"},
+            "b": {"$ref": "#/$defs/node"},
+            "pose": {"$ref": "#/$defs/pose"},
+            "dofs": {"$ref": "#/$defs/dofs"},
+            "sigma": {"$ref": "#/$defs/sigma"},
+            "note": {"$ref": "#/$defs/note"}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["id", "kind", "a", "b"],
+          "additionalProperties": false,
+          "properties": {
+            "id": {"$ref": "#/$defs/id"},
+            "kind": {"const": "same_surface"},
+            "a": {"$ref": "#/$defs/surface_side"},
+            "b": {"$ref": "#/$defs/surface_side"},
+            "sigma_m": {"$ref": "#/$defs/sigma_m"},
+            "note": {"$ref": "#/$defs/note"}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["id", "kind", "plan", "wall", "nodes"],
+          "additionalProperties": false,
+          "properties": {
+            "id": {"$ref": "#/$defs/id"},
+            "kind": {"const": "on_plan_wall"},
+            "plan": {"type": "string", "minLength": 1},
+            "wall": {"type": "string", "minLength": 1},
+            "nodes": {"$ref": "#/$defs/nodes"},
+            "region": {"$ref": "#/$defs/region"},
+            "sigma_m": {"$ref": "#/$defs/sigma_m"},
+            "note": {"$ref": "#/$defs/note"}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["id", "kind", "a", "b", "edge_type"],
+          "additionalProperties": false,
+          "properties": {
+            "id": {"$ref": "#/$defs/id"},
+            "kind": {"const": "reject_edge"},
+            "a": {"$ref": "#/$defs/node"},
+            "b": {"$ref": "#/$defs/node"},
+            "edge_type": {"enum": ["odometry", "loop_closure", "panorama"]},
+            "note": {"$ref": "#/$defs/note"}
+          }
+        }
+      ]
+    }
+  }
+}
