@@ -12,6 +12,7 @@
 #include <Eigen/Eigenvalues>
 #include <Eigen/Geometry>
 
+#include <gtsam/base/numericalDerivative.h>
 #include <gtsam/geometry/OrientedPlane3.h>
 #include <gtsam/geometry/Pose3.h>
 #include <gtsam/geometry/Rot3.h>
@@ -28,6 +29,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <optional>
 #include <random>
 #include <utility>
@@ -52,6 +54,70 @@ information_noise(const Eigen::Matrix<double, 6, 6> &I) {
   if (I.isDiagonal(1e-12))
     return gtsam::noiseModel::Diagonal::Precisions(gtsam::Vector(I.diagonal()));
   return gtsam::noiseModel::Gaussian::Information(I);
+}
+
+/// A pose-edit factor's noise: its (possibly rank-deficient) information,
+/// regularised by 1e-9 on the diagonal so it stays a valid Gaussian.
+gtsam::SharedNoiseModel edit_noise(const Eigen::Matrix<double, 6, 6> &I) {
+  Eigen::Matrix<double, 6, 6> J = 0.5 * (I + I.transpose());
+  J.diagonal().array() += 1e-9;
+  return information_noise(J);
+}
+
+double wrap_pi(double a) { return std::remainder(a, 2.0 * M_PI); }
+
+/// Absolute pose prior of a pose edit (reusex-rcv.1.3): residual
+/// [roll, pitch, yaw, x, y, z] in the prior's axes (see PosePrior). gtsam's
+/// PriorFactor<Pose3> measures the error in the camera's own frame, where
+/// "x, y and yaw only" is not a mask at all; this one is exact.
+class EditPosePriorFactor : public gtsam::NoiseModelFactorN<gtsam::Pose3> {
+  using Base = gtsam::NoiseModelFactorN<gtsam::Pose3>;
+  Eigen::Matrix3d axes_, C_;
+  Eigen::Vector3d rpy_t_, t_t_;
+
+  gtsam::Vector6 residual(const gtsam::Pose3 &pose) const {
+    const Eigen::Vector3d rpy = prior_rpy(pose.rotation().matrix(), C_, axes_);
+    gtsam::Vector6 e;
+    e << wrap_pi(rpy[0] - rpy_t_[0]), wrap_pi(rpy[1] - rpy_t_[1]),
+        wrap_pi(rpy[2] - rpy_t_[2]), axes_ * (pose.translation() - t_t_);
+    return e;
+  }
+
+    public:
+  EditPosePriorFactor(gtsam::Key key, const Eigen::Matrix4d &target,
+                      const Eigen::Matrix3d &axes,
+                      const gtsam::SharedNoiseModel &noise)
+      : Base(noise, key), axes_(axes) {
+    const Eigen::Matrix3d Rt = target.topLeftCorner<3, 3>();
+    C_ = prior_levelling(Rt, axes_);
+    rpy_t_ = prior_rpy(Rt, C_, axes_);
+    t_t_ = target.topRightCorner<3, 1>();
+  }
+  gtsam::Vector evaluateError(
+      const gtsam::Pose3 &pose,
+      boost::optional<gtsam::Matrix &> H = boost::none) const override {
+    if (H)
+      *H = gtsam::numericalDerivative11<gtsam::Vector6, gtsam::Pose3>(
+          [this](const gtsam::Pose3 &x) { return residual(x); }, pose, 1e-7);
+    return residual(pose);
+  }
+  gtsam::NonlinearFactor::shared_ptr clone() const override {
+    return gtsam::NonlinearFactor::shared_ptr(new EditPosePriorFactor(*this));
+  }
+};
+
+/// Norm of @p e projected onto the range of the symmetric @p B (the
+/// directions an edit constrains).
+double constrained_norm(const Eigen::Vector3d &e, const Eigen::Matrix3d &B) {
+  Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es(0.5 * (B + B.transpose()));
+  const double top = es.eigenvalues().maxCoeff();
+  if (!(top > 0.0))
+    return 0.0;
+  double sq = 0.0;
+  for (int k = 0; k < 3; ++k)
+    if (es.eigenvalues()(k) > 1e-6 * top)
+      sq += std::pow(es.eigenvectors().col(k).dot(e), 2);
+  return std::sqrt(sq);
 }
 
 /// gtsam's OrientedPlane3Factor does not implement clone(), which
@@ -562,12 +628,49 @@ PlaneFitSigmas plane_fit_sigmas(const PlaneFitQuality &q) {
   return s;
 }
 
+Eigen::Matrix3d prior_levelling(const Eigen::Matrix3d &R_target,
+                                const Eigen::Matrix3d &axes) {
+  const Eigen::Matrix3d L = axes * R_target;
+  int k = 0;
+  for (int c = 1; c < 3; ++c)
+    if (std::abs(L(2, c)) > std::abs(L(2, k)))
+      k = c;
+  const double s = L(2, k) < 0.0 ? -1.0 : 1.0;
+  const Eigen::Vector3d z = s * Eigen::Vector3d::Unit(k);
+  const Eigen::Vector3d x = Eigen::Vector3d::Unit((k + 1) % 3);
+  Eigen::Matrix3d C;
+  C.col(0) = x;
+  C.col(1) = z.cross(x);
+  C.col(2) = z;
+  return C;
+}
+
+Eigen::Vector3d prior_rpy(const Eigen::Matrix3d &R, const Eigen::Matrix3d &C,
+                          const Eigen::Matrix3d &axes) {
+  const Eigen::Matrix3d L = axes * R * C;
+  return {std::atan2(L(2, 1), L(2, 2)),
+          std::asin(std::clamp(-L(2, 0), -1.0, 1.0)),
+          std::atan2(L(1, 0), L(0, 0))};
+}
+
+Eigen::Matrix3d prior_rotation(const Eigen::Vector3d &rpy,
+                               const Eigen::Matrix3d &C,
+                               const Eigen::Matrix3d &axes) {
+  const Eigen::Matrix3d L =
+      (Eigen::AngleAxisd(rpy[2], Eigen::Vector3d::UnitZ()) *
+       Eigen::AngleAxisd(rpy[1], Eigen::Vector3d::UnitY()) *
+       Eigen::AngleAxisd(rpy[0], Eigen::Vector3d::UnitX()))
+          .toRotationMatrix();
+  return axes.transpose() * L * C.transpose();
+}
+
 PlaneGraphOptimizer::PlaneGraphOptimizer(PlaneGraphOptions options)
     : options_(std::move(options)) {}
 
-PlaneGraphResult
-PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
-                                    const std::vector<GraphEdge> &edges) const {
+PlaneGraphResult PlaneGraphOptimizer::optimize_graph(
+    std::vector<FrameSurfels> &frames, const std::vector<GraphEdge> &edges,
+    std::span<const PosePrior> priors,
+    std::span<const SurfaceConstraint> surfaces) const {
   using gtsam::symbol_shorthand::P; // plane landmarks
   using gtsam::symbol_shorthand::X; // poses
 
@@ -585,6 +688,27 @@ PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
       std::any_of(edges.begin(), edges.end(), [](const GraphEdge &e) {
         return e.kind == GraphEdge::Kind::loop;
       });
+  // Pose edits (reusex-rcv.1.3). Out-of-range ones are skipped, with a warn.
+  std::vector<const PosePrior *> edit_priors;
+  std::vector<const SurfaceConstraint *> edit_surfaces;
+  {
+    int bad = 0;
+    for (const auto &p : priors)
+      if (p.i >= 0 && p.i < N)
+        edit_priors.push_back(&p);
+      else
+        ++bad;
+    for (const auto &c : surfaces)
+      if (c.i >= 0 && c.j >= 0 && c.i < N && c.j < N && c.i != c.j)
+        edit_surfaces.push_back(&c);
+      else
+        ++bad;
+    if (bad > 0)
+      core::warn("PlaneGraph: skipped {} pose-edit factors with an "
+                 "out-of-range frame index or a self-loop ({} frames)",
+                 bad, N);
+  }
+  const bool has_edits = !edit_priors.empty() || !edit_surfaces.empty();
   // Edges that cannot enter the graph (an endpoint outside frames[] or a
   // self-loop) are skipped. Odometry now comes from the edge list, so a
   // skipped odometry edge can disconnect the trajectory: say so (STANDARDS §5).
@@ -623,7 +747,7 @@ PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
   result.planes_detected = static_cast<int>(all_planes.size());
   core::info("PlaneGraph: {} frames, {} plane detections", N,
              all_planes.size());
-  if (all_planes.empty()) {
+  if (all_planes.empty() && !has_edits) {
     core::warn("PlaneGraph: no planes detected; poses unchanged");
     return result;
   }
@@ -875,7 +999,7 @@ PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
     // No plane landmarks: only bail out if there are ALSO no loop edges. When
     // loop edges are present the graph (gauge + odometry + loop factors) is
     // still well-posed and worth solving, so fall through to build it.
-    if (kept == 0 && !has_loop_edges) {
+    if (kept == 0 && !has_loop_edges && !has_edits) {
       if (round == 0) {
         core::warn("PlaneGraph: no landmark passed the hygiene checks; poses "
                    "unchanged. Lower --min-observations or relax association / "
@@ -1088,6 +1212,28 @@ PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
     }
     result.loop_edges = loop_edge_count;
 
+    // Pose-edit factors (reusex-rcv.1.3): absolute priors and rank-deficient
+    // relative constraints. Not known inliers: they get the generous but
+    // finite edit_inlier_cost GNC threshold, so a contradictory edit is
+    // down-weighted and reported rather than obeyed silently.
+    struct EditRec {
+      size_t factor_idx;
+      const std::string *tag;
+      Eigen::Matrix<double, 6, 6> information;
+    };
+    std::vector<EditRec> edit_recs;
+    for (const PosePrior *p : edit_priors) {
+      graph.emplace_shared<EditPosePriorFactor>(X(p->i), p->pose, p->axes,
+                                                edit_noise(p->information));
+      edit_recs.push_back({graph.size() - 1, &p->tag, p->information});
+    }
+    for (const SurfaceConstraint *c : edit_surfaces) {
+      graph.emplace_shared<gtsam::BetweenFactor<gtsam::Pose3>>(
+          X(c->i), X(c->j), to_pose3(c->T_ij), edit_noise(c->information));
+      edit_recs.push_back({graph.size() - 1, &c->tag, c->information});
+    }
+    result.edit_factors = static_cast<int>(edit_recs.size());
+
     // Plane landmark variables + one OrientedPlane3Factor per observation.
     // Each factor's noise is (optionally) scaled by the reliability of its
     // supporting fit: sigma *= clamp(sqrt(ref / inliers), min, max). A plane
@@ -1247,6 +1393,7 @@ PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
     lm_params.setMaxIterations(options_.max_iterations);
 
     gtsam::Values solution;
+    gtsam::Vector gnc_weights; // empty under --no-gnc
     try {
       if (options_.use_gnc) {
         using GncLM = gtsam::GncOptimizer<GncParamsLM>;
@@ -1255,10 +1402,12 @@ PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
         GncLM optimizer(graph, initial, gnc_params);
         const bool any_manhattan =
             !manhattan_factors.empty() || !manhattan_level_factors.empty();
-        if (loop_factors.empty() && odom_factors.empty() && !any_manhattan) {
+        if (loop_factors.empty() && odom_factors.empty() && !any_manhattan &&
+            edit_recs.empty()) {
           optimizer.setInlierCostThresholds(
               static_cast<double>(options_.gnc_inlier_cost));
-        } else if (loop_factors.empty() && !any_manhattan) {
+        } else if (loop_factors.empty() && !any_manhattan &&
+                   edit_recs.empty()) {
           // Robust odometry only: plane factors keep the 3-DoF chi-square
           // threshold, odometry gets the 6-DoF one.
           gtsam::Vector barc = gtsam::Vector::Constant(
@@ -1296,6 +1445,9 @@ PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
               0.5 * (man_level_gate / man_sigma) * (man_level_gate / man_sigma);
           for (size_t k : manhattan_level_factors)
             barc[static_cast<Eigen::Index>(k)] = level_barc;
+          for (const auto &rec : edit_recs)
+            barc[static_cast<Eigen::Index>(rec.factor_idx)] =
+                static_cast<double>(options_.edit_inlier_cost);
           optimizer.setInlierCostThresholds(barc);
           core::info("PlaneGraph: per-factor GNC thresholds: {} trusted loop "
                      "factors at {:.2f}, {} Manhattan wall / {} level "
@@ -1303,8 +1455,13 @@ PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
                      loop_factors.size(), options_.loop_trust_inlier_cost,
                      manhattan_factors.size(), manhattan_level_factors.size(),
                      man_barc, level_barc, options_.gnc_inlier_cost);
+          if (!edit_recs.empty())
+            core::info("PlaneGraph: {} pose-edit factors at a GNC threshold "
+                       "of {:.2f}",
+                       edit_recs.size(), options_.edit_inlier_cost);
         }
         solution = optimizer.optimize();
+        gnc_weights = optimizer.getWeights();
       } else {
         gtsam::LevenbergMarquardtOptimizer optimizer(graph, initial, lm_params);
         solution = optimizer.optimize();
@@ -1335,6 +1492,40 @@ PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
           {rec.i, rec.j, rec.type, res, rec.weight, rec.tag});
     }
 
+    // Per-edit residuals, aggregated by tag in the order of first factor.
+    result.edit_residuals.clear();
+    {
+      std::map<std::string, size_t> slot;
+      for (const auto &rec : edit_recs) {
+        const auto &f = graph.at(rec.factor_idx);
+        const auto *nf = dynamic_cast<const gtsam::NoiseModelFactor *>(f.get());
+        const gtsam::Vector e = nf->unwhitenedError(solution);
+        const double err = f->error(solution);
+        const bool inlier =
+            gnc_weights.size() > 0
+                ? gnc_weights[static_cast<Eigen::Index>(rec.factor_idx)] >= 0.5
+                : err <= static_cast<double>(options_.edit_inlier_cost);
+        auto [it, fresh] = slot.emplace(*rec.tag, result.edit_residuals.size());
+        if (fresh) {
+          EditResidual r;
+          r.tag = *rec.tag;
+          result.edit_residuals.push_back(r);
+        }
+        auto &r = result.edit_residuals[it->second];
+        r.trans_m = std::max(
+            r.trans_m,
+            constrained_norm(e.tail<3>(),
+                             rec.information.bottomRightCorner<3, 3>()));
+        r.rot_deg = std::max(
+            r.rot_deg, constrained_norm(e.head<3>(),
+                                        rec.information.topLeftCorner<3, 3>()) *
+                           180.0 / M_PI);
+        r.chi2 += 2.0 * err;
+        r.gnc_inlier = r.gnc_inlier && inlier;
+        ++r.factors;
+      }
+    }
+
     // Adopt the round's poses into cur[] and measure this round's motion.
     round_max_shift = 0.0;
     for (int i = 0; i < N; ++i) {
@@ -1361,6 +1552,15 @@ PlaneGraphOptimizer::optimize_graph(std::vector<FrameSurfels> &frames,
 
   if (!result.converged)
     return result;
+
+  for (const auto &r : result.edit_residuals)
+    if (!r.gnc_inlier)
+      core::warn("PlaneGraph: pose edit '{}' is NOT honoured: it contradicts "
+                 "the graph or another edit (residual {:.3f} m / {:.2f} deg, "
+                 "chi2 {:.1f} over {} factors, GNC threshold {:.1f}). Check "
+                 "the edit against the renders, loosen its sigma, or drop it",
+                 r.tag, r.trans_m, r.rot_deg, r.chi2, r.factors,
+                 options_.edit_inlier_cost);
 
   // --- Write final poses back into the frames; report shift vs seed --------
   double max_shift = 0.0;

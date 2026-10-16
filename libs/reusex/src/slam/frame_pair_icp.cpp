@@ -266,16 +266,20 @@ cv::Mat color_bgr(const ProjectDB &db, int node_id, std::string &why) {
 std::vector<std::array<float, 3>>
 back_project(const ProjectDB &db, int node_id, const FramePairIcpOptions &o,
              const cv::Mat *color,
-             std::vector<std::array<std::uint8_t, 3>> *colors) {
+             std::vector<std::array<std::uint8_t, 3>> *colors,
+             bool in_world = true) {
   const cv::Mat depth16 = db.sensor_frame_depth(node_id);
   if (depth16.empty())
     throw std::runtime_error("frame " + std::to_string(node_id) +
                              " has no stored depth image");
-  if (!db.has_sensor_frame_pose(node_id))
+  if (in_world && !db.has_sensor_frame_pose(node_id))
     throw std::runtime_error("frame " + std::to_string(node_id) +
                              " has no stored pose");
 
-  const auto pose_arr = db.sensor_frame_pose(node_id);
+  const auto pose_arr = in_world
+                            ? db.sensor_frame_pose(node_id)
+                            : std::array<double, 16>{1, 0, 0, 0, 0, 1, 0, 0,
+                                                     0, 0, 1, 0, 0, 0, 0, 1};
   const auto intr = db.sensor_frame_intrinsics(node_id);
 
   cv::Mat depth_f;
@@ -339,6 +343,12 @@ std::vector<std::array<float, 3>>
 frame_world_points(const ProjectDB &db, int node_id,
                    const FramePairIcpOptions &o) {
   return back_project(db, node_id, o, nullptr, nullptr);
+}
+
+std::vector<std::array<float, 3>>
+frame_pose_frame_points(const ProjectDB &db, int node_id,
+                        const FramePairIcpOptions &o) {
+  return back_project(db, node_id, o, nullptr, nullptr, /*in_world=*/false);
 }
 
 FrameWorldCloud frame_world_colored_points(const ProjectDB &db, int node_id,

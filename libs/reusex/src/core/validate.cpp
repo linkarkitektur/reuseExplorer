@@ -4,6 +4,7 @@
 #include "core/validate.hpp"
 #include "core/ProjectDB.hpp"
 #include "core/label_encoding.hpp"
+#include "core/pose_fingerprint.hpp"
 
 #include <fmt/format.h>
 #include <fmt/ranges.h>
@@ -205,6 +206,24 @@ void check_unstamped_semantic_clouds(const ProjectDB &db,
   }
 }
 
+void check_stale_cloud_poses(const ProjectDB &db,
+                             std::vector<ValidationIssue> &out) {
+  static constexpr std::string_view kCloud = "cloud";
+  if (cloud_pose_freshness(db, kCloud) != PoseFreshness::stale)
+    return;
+  out.push_back(
+      {"stale_cloud_poses",
+       fmt::format("cloud '{}' was reconstructed from poses this project no "
+                   "longer has — a pose refinement (`rux optimize` or `rux "
+                   "register`) likely ran since `rux create clouds`",
+                   kCloud),
+       ValidationSeverity::warning,
+       /*hint=*/
+       "re-run `rux create clouds` to rebuild it from the current poses",
+       /*artifact=*/std::string(kCloud),
+       /*commands=*/{"rux create clouds"}});
+}
+
 ValidationReport validate_project(const ProjectDB &db) {
   ValidationReport report;
   check_orphaned_passports(db, report.issues);
@@ -212,6 +231,7 @@ ValidationReport validate_project(const ProjectDB &db) {
   check_instances_without_label_defs(db, report.issues);
   check_sibling_cloud_sizes(db, report.issues);
   check_unstamped_semantic_clouds(db, report.issues);
+  check_stale_cloud_poses(db, report.issues);
   return report;
 }
 
@@ -518,6 +538,12 @@ void check_stage_inputs(const ProjectDB &db, PipelineStage stage,
           group_for(artifact->alignment)
               .push_back({candidate.effective, it->second});
       }
+      // Any stage that consumes `cloud` inherits whatever pose set it was
+      // built from; warn here once rather than at every one of its callers
+      // (`rux create planes/rooms/storeys/mesh/...`, the GUI pipeline, and
+      // `rux validate --stage ...` all reach this same check, reusex-rcv.1.15).
+      if (candidate.effective == "cloud")
+        check_stale_cloud_poses(db, out);
       break;
     }
 

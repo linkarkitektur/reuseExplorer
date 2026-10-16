@@ -9,6 +9,7 @@
 #include <reusex/pipeline/mesh_parameters.hpp>
 #include <reusex/pipeline/wall_parameters.hpp>
 #include <reusex/reconstruction/mesh.hpp>
+#include <reusex/segmentation/band_rooms.hpp>
 #include <reusex/segmentation/classify_planes.hpp>
 #include <reusex/segmentation/level.hpp>
 #include <reusex/segmentation/reconstruct.hpp>
@@ -184,6 +185,7 @@ const std::vector<ParameterDescriptor> &planes_parameters() {
 const std::vector<ParameterDescriptor> &rooms_parameters() {
   static const std::vector<ParameterDescriptor> table = [] {
     const geometry::SegmentRoomsOptions d{};
+    const geometry::BandRoomsOptions b{};
     return std::vector<ParameterDescriptor>{
         num("grid_size", "Grid size [m]",
             "Spatial discretisation used to build the plane graph.",
@@ -215,7 +217,37 @@ const std::vector<ParameterDescriptor> &rooms_parameters() {
             d.merge_affinity, 0.0, 10.0),
         optional_of(ParameterType::string, "filter", "Point filter",
                     "Filter expression restricting which points are "
-                    "partitioned. Empty means the whole cloud."),
+                    "partitioned (band: which points give evidence). Empty "
+                    "means the whole cloud."),
+        text("method", "Method",
+             "'leiden' clusters the plane visibility graph; 'band' finds "
+             "rooms in 2D free space from walls in a clutter-free height "
+             "band and cuts them at doors (needs `rux create storeys`).",
+             std::string(geometry::kDefaultRoomsMethod)),
+        dnum("band_bottom", "Wall band bottom [m]",
+             "band: wall evidence starts this far above the storey floor "
+             "(above desks and screens).",
+             b.band_bottom, 0.0, 10.0),
+        dnum("band_top", "Wall band top [m]",
+             "band: wall evidence ends this far above the storey floor "
+             "(clamped below the ceiling).",
+             b.band_top, 0.0, 10.0),
+        dnum("band_cell_size", "Band grid cell [m]",
+             "band: edge of one occupancy grid cell.", b.cell_size, 0.01, 1.0),
+        dnum("band_core_radius", "Door half-width [m]",
+             "band: rooms are cut where the free space is narrower than "
+             "twice this; rooms narrower than that join a neighbour.",
+             b.core_radius, 0.05, 5.0),
+        dnum("band_min_room_area", "Band minimum room [m^2]",
+             "band: smaller regions are dropped.", b.min_room_area, 0.0,
+             1000.0),
+        integer("band_wall_min_points", "Band wall points per cell",
+                "band: points a cell needs in the band to count as wall.",
+                b.wall_min_points, 1.0, 1000.0),
+        dnum("band_footprint_close", "Footprint closing [m]",
+             "band: gaps in the floor/ceiling footprint up to about twice "
+             "this are closed.",
+             b.footprint_close, 0.0, 5.0),
     };
   }();
   return table;

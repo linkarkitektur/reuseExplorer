@@ -123,6 +123,16 @@ std::vector<std::array<float, 3>>
 frame_world_points(const ProjectDB &db, int node_id,
                    const FramePairIcpOptions &opts = {});
 
+/// The same pixels as frame_world_points(), in the frame's POSE frame
+/// (local_transform applied, the stored world pose not): world = pose * p for
+/// any candidate pose, e.g. the drift diagnostics' initial or overridden
+/// poses. Needs no stored pose.
+/// @throws std::runtime_error when the frame has no depth, or its depth has
+///         no return inside the range.
+std::vector<std::array<float, 3>>
+frame_pose_frame_points(const ProjectDB &db, int node_id,
+                        const FramePairIcpOptions &opts = {});
+
 /// frame_world_points() with each point's colour (reusex-xlg.10, the Qt
 /// overlay's RGB mode).
 struct FrameWorldCloud {

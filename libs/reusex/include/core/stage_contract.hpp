@@ -43,9 +43,10 @@ enum class PipelineStage {
   annotate,       ///< ML semantic labelling of the stored frames
   project,        ///< project 2D semantic labels onto the 3D cloud
   planes,         ///< detect planar surfaces
+  storeys,        ///< storeys and the measured vertical (level frame);
+                  ///< before rooms: `rooms --method band` reads them
   rooms,          ///< partition into rooms
   instances,      ///< separate semantic labels into spatial instances
-  storeys,        ///< storeys and the measured vertical (level frame)
   classify,       ///< the role of each plane (wall, floor, ceiling, ...)
   walls,          ///< walls with a measured thickness and their joins
   mesh,           ///< generate the reconstructed mesh

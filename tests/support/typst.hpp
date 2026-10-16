@@ -5,13 +5,14 @@
 #pragma once
 
 // Compile the repo's report template against a report data directory the
-// way `report-build` (nix develop .#report) does. Needs REUSEX_SOURCE_DIR,
-// which both unit test binaries define.
+// way `report-build` (nix develop .#report) does.
 // Include as "../../support/typst.hpp" from tests/unit/<module>/.
 
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+
+#include "source_dir.hpp"
 
 namespace reusex::test_support {
 
@@ -23,7 +24,7 @@ inline int typst_compile_report(const std::filesystem::path &data_dir,
                                 const std::filesystem::path &out_pdf,
                                 const std::filesystem::path &log) {
   const std::string tmpl =
-      std::string(REUSEX_SOURCE_DIR) + "/apps/rux/resources/report.typ";
+      (source_dir() / "apps/rux/resources/report.typ").string();
   const std::string cmd =
       "typst compile --ignore-system-fonts --root / --input 'data-dir=" +
       std::filesystem::absolute(data_dir).string() + "' '" + tmpl + "' '" +

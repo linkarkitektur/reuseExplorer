@@ -71,9 +71,12 @@ target_include_directories(rux_qt_lib PUBLIC include)
 # binaries embed a snapshot of both through rux_qt.qrc instead. tokens.css is
 # vendored here (scripts/sync-tokens.sh) rather than read from
 # apps/rux/frontend, which moved to the standalone rux-frontend repo.
-target_compile_definitions(rux_qt_lib PRIVATE
-    RUX_QT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
-    RUX_QT_TOKENS_CSS="${CMAKE_CURRENT_SOURCE_DIR}/theme/tokens.css")
+# Set on Theme.cpp (their only reader) rather than on the target: an absolute
+# path in a target-wide definition is in every rux_qt_lib TU's command line,
+# including the AUTOMOC ones, and ccache hashes it verbatim, so no object
+# could be shared between two worktrees (reusex-37v).
+set_source_files_properties(src/Theme.cpp PROPERTIES COMPILE_DEFINITIONS
+    "RUX_QT_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\";RUX_QT_TOKENS_CSS=\"${CMAKE_CURRENT_SOURCE_DIR}/theme/tokens.css\"")
 target_link_libraries(rux_qt_lib
     PUBLIC
         rux_qt_core

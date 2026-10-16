@@ -6,6 +6,7 @@
 #include "exit_status.hpp"
 
 #include <reusex/core/ProjectDB.hpp>
+#include <reusex/core/pose_fingerprint.hpp>
 #include <reusex/io/solid_model_json.hpp>
 
 #include <pcl/PolygonMesh.h>
@@ -212,6 +213,11 @@ int run_subcommand_analyze_solid(SubcommandAnalyzeSolidOptions const &opt,
       }
       db = std::make_unique<ProjectDB>(global_opt.project_db,
                                        /*readOnly=*/true);
+      // A model/fit built from a stale cloud (poses `rux optimize`/`rux
+      // register` has since superseded) will not visibly disagree with
+      // itself — warn so a bad score is not mistaken for a bad detector
+      // (reusex-rcv.1.15).
+      core::warn_if_cloud_poses_stale(*db, opt.cloud_name);
       if (!from_file)
         detected = io::load_solid_model(*db);
     }

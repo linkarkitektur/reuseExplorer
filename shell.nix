@@ -40,6 +40,39 @@
     CUDA_PATH = "${cudaDevToolkit}";
   };
 
+  # ccache for the CMake builds in this shell (CMakeLists.txt sets ccache as
+  # the compiler launcher). The point is that every checkout of this repo —
+  # the main one and each of .worktrees/* — shares one cache, so a fresh
+  # build dir in a new worktree compiles from hits, not from scratch
+  # (reusex-37v). CCACHE_BASEDIR, the other half of that, depends on where the
+  # shell was entered and is therefore set in shellHook below.
+  #
+  # Measured before this (2026-10-16): 9 % hit rate over 81k compiles, the
+  # 5 GiB default cache full with 1640 cleanups — every worktree's absolute
+  # paths hashed differently, so they evicted each other instead of sharing.
+  # docs/guides/ci-cache.md "Local ccache" has the numbers after.
+  ccacheEnv = {
+    # Do not hash the build's working directory. Release builds carry no -g,
+    # so it would not be hashed anyway; for Debug/RelWithDebInfo it would
+    # make every worktree miss. Cost: DW_AT_comp_dir in a shared object
+    # names whichever worktree compiled it first.
+    CCACHE_NOHASHDIR = "1";
+    # Nix store files all have mtime 1, and two gcc-wrapper scripts whose
+    # store paths have the same length also have the same size — so the
+    # default `mtime` check could hand a stale object to a different compiler
+    # after a nixpkgs bump. Hash the compiler (wrapper) contents instead; the
+    # wrapper names its store paths, so a new compiler is a new hash.
+    CCACHE_COMPILERCHECK = "content";
+    # One full build of this tree (CUDA variant, tests, Qt client) is a few
+    # GiB of compressed objects; with several worktrees on different commits
+    # plus the CPU-variant dir, 5 GiB thrashed (1640 cleanups). 50 GiB keeps
+    # roughly ten build generations around and is ~14 % of the free space on
+    # the dev machine at the time (355 GiB). Only applies to compiles run from
+    # this shell; the nix-sandbox cache (/var/cache/ccache,
+    # overlays/ccache.nix) is separate and has its own 60G.
+    CCACHE_MAXSIZE = "50G";
+  };
+
   motd = ''
     echo ""
     echo "  ┌─────────────────────────────────────────────┐"
@@ -97,7 +130,7 @@
 in
   pkgs.mkShell {
     inputsFrom = [reusex];
-    env = cudaEnv;
+    env = cudaEnv // ccacheEnv;
     buildInputs = self.checks.${system}.pre-commit-check.enabledPackages;
 
     packages =
@@ -197,6 +230,27 @@ in
         if [ -d /run/opengl-driver/lib ]; then
           export LD_LIBRARY_PATH="/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
         fi
+
+        # ccache base_dir (reusex-37v; the static ccache settings are in
+        # ccacheEnv above). ccache rewrites absolute paths under base_dir to
+        # paths relative to the compiler's working directory before hashing,
+        # so .worktrees/a/build and .worktrees/b/build hash the same
+        # `../libs/...` and hit each other's objects. The default is the
+        # directory that holds the shared .git (the main checkout), which
+        # covers the main checkout and every .worktrees/* at once, even when
+        # the shell is entered in one and you cd into another. A worktree
+        # living outside it gets its own toplevel instead (still shares, as
+        # long as its shell was entered inside it). An explicit
+        # CCACHE_BASEDIR in the environment wins.
+        if [ -z "''${CCACHE_BASEDIR:-}" ] \
+          && _cc_top=$(git rev-parse --show-toplevel 2>/dev/null); then
+          _cc_root=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
+          case "$_cc_top/" in
+            "$_cc_root"/*) export CCACHE_BASEDIR="$_cc_root" ;;
+            *) export CCACHE_BASEDIR="$_cc_top" ;;
+          esac
+        fi
+        unset _cc_top _cc_root
 
         ${motd}
       ''
