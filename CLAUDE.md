@@ -510,6 +510,11 @@ and deleted the shims. `include/geometry/` now holds only the real
   (`stage_executor_with_optimize()`), compiled into `rux` and, in its own
   repo, `ruxd`, because `reusex_pipeline` must not link GTSAM (#464)
 - `PanoramaAlignment.hpp`: content-based 360 pose refinement, `rux align 360`
+- `drift_diagnostics.hpp`: `rux analyze drift` (reusex-rcv.1.1): GT-free
+  drift measures over the back-projected depth (pass-to-pass residual vs the
+  noise floor, segment x segment matrix, per-segment rigid ICP suggestions,
+  drift cells, through-wall crossings against a plan, doubled-wall patches);
+  numbers depend on --frame-step / --depth-stride, compare like with like.
 - `PanoramaLoopEdges.hpp`: wide-baseline `LoopEdge`s derived from 360
   panoramas (`rux graph discover --use-panoramas`, #236). Each panorama is
   resected INDEPENDENTLY against every frame it matches, in that frame's own
@@ -682,7 +687,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | `export` | `ply`, `e57`, `materialepas`, `csv`, `rhino`, `semantic-images`, `speckle`, `colmap`, `pdf` | `src/export/` |
 | `align` | `360` (content-based panorama pose refinement) | `src/align/` |
 | `edit` | `downsample`, `perturb-poses` (drift synthesis, #338) | `src/edit/` |
-| `analyze` | `quality`, `accuracy`, `solid` (typed model vs a reference plan) | `src/analyze/` |
+| `analyze` | `quality`, `accuracy`, `solid` (typed model vs a reference plan), `drift` (where the stored poses disagree: pass-to-pass residual vs noise floor, segment pairs + ICP suggestions, through-wall crossings) | `src/analyze/` |
 | `optimize` | — (solves the stored pose graph) | `src/optimize.cpp` |
 | `graph` | `init`, `discover`, `prune` (stored pose graph) | `src/graph/` |
 | `register` | — (joint pairwise registration) | `src/register.cpp` |
