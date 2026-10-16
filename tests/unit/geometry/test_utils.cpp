@@ -337,3 +337,86 @@ TEST_CASE("DistPlanePoint_NormalizedNormalVectors_ReturnsSignedDistance",
     REQUIRE(distance == Approx(std::sqrt(2.0)));
   }
 }
+
+// ── force_orthogonal_planes (reusex-8vj) ───────────────────────────────────
+//
+// Snapping a tilted normal to vertical/horizontal rotates the plane. Keeping
+// the old `d` pivots it about whichever point is closest to the origin
+// instead of its own inliers, moving the plane metres away from the points
+// it was fit to (NewOffice horizontals landed at -2.55, 6.42, 10.02 m against
+// 0.5-1.5 m inliers). The fix recomputes `d` through the supplied centroid.
+
+TEST_CASE("ForceOrthogonalPlanes_TiltedHorizontalAtHeight_StaysThroughCentroid",
+          "[geometry][force_orthogonal_planes]") {
+  // A near-horizontal plane (within the default 0.1 threshold of n_z = 1),
+  // but tilted, with a centroid 10 m from the origin in x and 1 m up in z.
+  // Fit so the plane actually passes through the centroid: n . c + d = 0.
+  Eigen::Vector3d centroid(10.0, 0.0, 1.0);
+  Eigen::Vector3d n(0.05, 0.0, std::sqrt(1.0 - 0.05 * 0.05));
+  n.normalize();
+  Eigen::Vector4d plane;
+  plane.head<3>() = n;
+  plane[3] = -n.dot(centroid);
+
+  EigenVectorContainer<double, 4> planes{plane};
+  EigenVectorContainer<double, 3> centroids{centroid};
+
+  const auto result = force_orthogonal_planes(planes, centroids);
+
+  REQUIRE(result.size() == 1);
+  // Normal snapped to the up vector.
+  CHECK(result[0].head<3>().isApprox(Eigen::Vector3d(0, 0, 1), 1e-9));
+  // The snapped plane must still pass through its own centroid, not land at
+  // whatever height the un-rotated offset implies (-10 m here, since the
+  // original plane was closest to the origin at x=10, z≈-10*0.05=-0.5 plus
+  // the tilt contribution — the regression this test guards against).
+  CHECK(dist_plane_point(result[0], centroid) == Approx(0.0).margin(1e-9));
+  CHECK(result[0][3] == Approx(-centroid.z()).margin(1e-9));
+}
+
+TEST_CASE("ForceOrthogonalPlanes_TiltedWallAwayFromOrigin_StaysThroughCentroid",
+          "[geometry][force_orthogonal_planes]") {
+  // A near-vertical plane tilted slightly from the Z axis, far from the
+  // origin, must still pass through its own centroid after being squared to
+  // a wall (orthogonal to 'up').
+  Eigen::Vector3d centroid(5.0, 20.0, 1.5);
+  Eigen::Vector3d n(1.0, 0.0, 0.05);
+  n.normalize();
+  Eigen::Vector4d plane;
+  plane.head<3>() = n;
+  plane[3] = -n.dot(centroid);
+
+  EigenVectorContainer<double, 4> planes{plane};
+  EigenVectorContainer<double, 3> centroids{centroid};
+
+  const auto result = force_orthogonal_planes(planes, centroids);
+
+  REQUIRE(result.size() == 1);
+  CHECK(std::abs(result[0][2]) < 1e-9); // orthogonal to 'up'
+  CHECK(dist_plane_point(result[0], centroid) == Approx(0.0).margin(1e-9));
+}
+
+TEST_CASE("ForceOrthogonalPlanes_AlreadyAxisAligned_OffsetUnchanged",
+          "[geometry][force_orthogonal_planes]") {
+  // A plane that is already exactly horizontal should pass through unchanged
+  // (same normal, same offset, derived from the same centroid either way).
+  Eigen::Vector3d centroid(3.0, -4.0, 2.0);
+  Eigen::Vector4d plane(0.0, 0.0, 1.0, -2.0);
+
+  EigenVectorContainer<double, 4> planes{plane};
+  EigenVectorContainer<double, 3> centroids{centroid};
+
+  const auto result = force_orthogonal_planes(planes, centroids);
+
+  CHECK(result[0].head<3>().isApprox(Eigen::Vector3d(0, 0, 1), 1e-12));
+  CHECK(result[0][3] == Approx(-2.0).margin(1e-12));
+}
+
+TEST_CASE("ForceOrthogonalPlanes_SizeMismatch_Throws",
+          "[geometry][force_orthogonal_planes]") {
+  EigenVectorContainer<double, 4> planes{Eigen::Vector4d(0, 0, 1, 0)};
+  EigenVectorContainer<double, 3> centroids; // empty: mismatched size
+
+  CHECK_THROWS_AS(force_orthogonal_planes(planes, centroids),
+                  std::invalid_argument);
+}

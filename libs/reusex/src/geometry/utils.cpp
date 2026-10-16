@@ -143,17 +143,25 @@ auto make_pairs(EigenVectorContainer<double, 4> &planes,
 }
 
 auto force_orthogonal_planes(EigenVectorContainer<double, 4> &planes,
+                             const EigenVectorContainer<double, 3> &centroids,
                              const double threshold, const Eigen::Vector3d &up)
     -> EigenVectorContainer<double, 4> {
   reusex::trace("Force planes to be orthogonal");
+
+  if (planes.size() != centroids.size())
+    throw std::invalid_argument(
+        fmt::format("force_orthogonal_planes: {} planes but {} centroids",
+                    planes.size(), centroids.size()));
 
   // Validate normals are unit length at this module boundary (STANDARDS §4).
   for (size_t i = 0; i < planes.size(); ++i)
     validate_normalized(planes[i], "force_orthogonal_planes", i);
 
-  for (auto &plane : planes) {
+  for (size_t i = 0; i < planes.size(); ++i) {
+    auto &plane = planes[i];
     auto normal = plane.head<3>(); // This is a block, no copy
     const double scalar = normal.dot(up);
+    bool snapped = true;
 
     if (std::abs(scalar) < threshold) {
       // Wall: make normal orthogonal to 'up' in-place
@@ -166,10 +174,19 @@ auto force_orthogonal_planes(EigenVectorContainer<double, 4> &planes,
       // Ceiling
       normal = -up;
     } else {
+      snapped = false;
       reusex::warn("Plane with normal ({:3f}, {:3f}, {:3f}) is not vertical or "
                    "horizontal",
                    normal.x(), normal.y(), normal.z());
     }
+
+    // Snapping the normal rotates the plane; keeping the old `d` would pivot
+    // it about the point nearest the origin instead of its own inliers,
+    // moving it metres off the points it was fit to (reusex-8vj). Re-offset
+    // through the inlier centroid so the snapped plane still passes through
+    // it.
+    if (snapped)
+      plane[3] = -normal.dot(centroids[i]);
   }
 
   return planes;

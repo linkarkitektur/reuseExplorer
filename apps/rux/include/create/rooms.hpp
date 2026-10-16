@@ -60,6 +60,11 @@ struct SubcommandSegRoomsOptions {
       reusex::geometry::BandRoomsOptions{}.wall_min_points;
   double band_footprint_close =
       reusex::geometry::BandRoomsOptions{}.footprint_close;
+  /// Use the walls / openings tables when present (W4.1, W5.4).
+  bool band_use_walls = reusex::geometry::BandRoomsOptions{}.use_wall_graph;
+  bool band_cut_at_doors = reusex::geometry::BandRoomsOptions{}.cut_at_doors;
+  double band_wall_min_seen_share =
+      reusex::geometry::BandRoomsOptions{}.wall_graph_min_seen_share;
 };
 
 /**

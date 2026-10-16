@@ -159,17 +159,6 @@ const std::vector<StageContract> &contracts() {
        {{{"cloud"}}, {{"planes"}}, {{"plane_centroids"}}, {{"plane_normals"}}},
        {"storeys"}},
 
-      {PipelineStage::rooms,
-       "rooms",
-       {},
-       "rux create rooms",
-       "partition the plane graph into rooms",
-       // `normals` and `storeys` are inputs of `method = band` only (checked
-       // by the stage, which says to run `rux create storeys`), so they are
-       // not declared; `storeys` sits earlier in this table all the same.
-       {{{"cloud"}}, {{"planes"}}, {{"plane_centroids"}}, {{"plane_normals"}}},
-       {"rooms"}},
-
       {PipelineStage::instances,
        "instances",
        {},
@@ -218,6 +207,27 @@ const std::vector<StageContract> &contracts() {
        // declared, as for `classify`.
        {{{"cloud"}}, {{"walls"}}, {{"storeys"}}},
        {"openings"}},
+
+      {PipelineStage::rooms,
+       "rooms",
+       {},
+       "rux create rooms",
+       "partition the scan into rooms (band: cut at walls and doors)",
+       // `method = band` (the default) also reads the per-point `normals`
+       // and the `storeys` table (checked by the stage, which falls back to
+       // leiden without storeys), and, when the walls / openings stages
+       // have run, the wall graph and the doors (W4.1, W5.4): optional, so
+       // a missing one is no issue, but they sit earlier in this table, so
+       // the recommended order is walls -> openings -> rooms.
+       {{{"cloud"}},
+        {{"planes"}},
+        {{"plane_centroids"}},
+        {{"plane_normals"}},
+        {{"normals"}, 1, 0, /*optional=*/true},
+        {{"storeys"}, 1, 0, /*optional=*/true},
+        {{"walls"}, 1, 0, /*optional=*/true},
+        {{"openings"}, 1, 0, /*optional=*/true}},
+       {"rooms"}},
 
       {PipelineStage::mesh,
        "mesh",

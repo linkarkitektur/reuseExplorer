@@ -281,12 +281,18 @@ TEST_CASE("WallsStage_Parameters_ReachDetectWalls",
   TempPath project("test_walls_stage_params");
   ProjectDB db(project.path);
   seed_rooms(db);
-  REQUIRE(run(db, project, R"({"default_thickness_m": 0.33})").ok);
+  REQUIRE(run(db, project, R"({"min_seen_share": 1.0})").ok);
   const auto walls = db.walls();
+  REQUIRE_FALSE(walls.empty());
+  // Every wall is seen less than all over: each one is flagged.
+  for (const auto &w : walls)
+    CHECK(w.metadata == R"({"low_seen_share":true})");
+  // A one-sided wall's stored thickness is unknown (reusex-v8p), whatever
+  // body default_thickness_m assumes behind its face.
   const auto assumed = std::find_if(walls.begin(), walls.end(),
                                     [](const auto &w) { return w.assumed; });
   REQUIRE(assumed != walls.end());
-  CHECK_THAT(assumed->thickness, WithinAbs(0.33, 1e-9));
+  CHECK(assumed->thickness == -1.0);
 
   const auto bad = run(db, project, R"({"max_gap_m": "wide"})");
   CHECK_FALSE(bad.ok);

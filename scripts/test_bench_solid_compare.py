@@ -49,7 +49,8 @@ def metrics(**over):
         "wall_position_rms_m": 0.03, "wall_thickness_err_mean_m": 0.01,
         "wall_thickness_err_p95_m": 0.03, "wall_recall": 0.8,
         "wall_precision": 0.8, "opening_recall": 0.5,
-        "opening_precision": 0.5, "fit_mean_m": None,
+        "opening_precision": 0.5, "opening_iou_mean": 0.5,
+        "fit_mean_m": None,
         "fit_within_share": None, "seen_share_mean": 0.6,
         "assumed_share": 0.2, "counts": {"reference_walls": 7},
     }
@@ -98,6 +99,14 @@ def main() -> int:
     v = verdicts(report(row("a")), report(row("a", wall_recall=0.7)), 20.0)
     check("recall drop of 12.5% passes at 20%",
           not v[("a", "wall_recall")].regression)
+
+    # The opening bench line (reusex-z1v.7.5): recall, precision and the
+    # mean face IoU all gate, higher is better.
+    for key in ("opening_recall", "opening_precision", "opening_iou_mean"):
+        v = verdicts(report(row("a")), report(row("a", **{key: 0.4})))
+        check(f"{key} drop of 20% regresses", v[("a", key)].regression)
+        v = verdicts(report(row("a")), report(row("a", **{key: 0.6})))
+        check(f"{key} rise improves", v[("a", key)].verdict == "improved")
 
     v = verdicts(report(row("a")),
                  report(row("a", wall_position_rms_m=0.02)))

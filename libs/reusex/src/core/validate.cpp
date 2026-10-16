@@ -391,6 +391,8 @@ void collect_producers(const ProjectDB &db, const ProjectState &state,
     if (!stages.insert(i).second)
       return; // already collected, and so are its prerequisites
     for (const auto &input : contracts[i].inputs) {
+      if (input.optional)
+        continue; // never a prerequisite, so never in the hint
       const auto names = resolve(input, {});
       const bool satisfied =
           std::any_of(names.begin(), names.end(), [&](const ResolvedName &n) {
@@ -551,7 +553,8 @@ void check_stage_inputs(const ProjectDB &db, PipelineStage stage,
       break;
     }
 
-    if (!satisfied)
+    // A missing optional input is no issue: the stage runs without it.
+    if (!satisfied && !input.optional)
       out.push_back(artifact_issue(
           db, state, "missing_stage_input",
           missing_message(name, *artifact, names, input, state, db),

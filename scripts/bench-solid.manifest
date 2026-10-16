@@ -18,7 +18,7 @@ office_corridor    fixture    tests/fixtures/solid_model/two_rooms.plan.json -  
 # Local-only rows (never committed data), skipped unless the variable is set:
 # NewOffice: the authored reference is committed (DRAFT, reusex-z1v.2.6); the
 # scan is not. Point $REUSEX_NEWOFFICE_RUX at a NewOffice project.rux.
-newoffice         local      tests/fixtures/solid_model/newoffice.plan.yaml -                                               $REUSEX_NEWOFFICE_RUX storeys,classify,walls
+newoffice         local      tests/fixtures/solid_model/newoffice.plan.yaml -                                               $REUSEX_NEWOFFICE_RUX storeys,classify,walls,openings
 # s3dis_area1      local      $REUSEX_S3DIS_DIR/area1.plan.json             -                                               $REUSEX_S3DIS_DIR/area1.rux storeys,walls,spaces,openings
 # house1 / house2 (scan archive, see reusex-yf4.3): authored references
 # committed (DRAFT, maintainer review pending), scans not. Point the variables
@@ -26,8 +26,12 @@ newoffice         local      tests/fixtures/solid_model/newoffice.plan.yaml -   
 # oriented normals): the references use the detected level frames, which the
 # row's storeys stage re-detects (deterministic). house1 = one storey with a
 # split level; house2 = two storeys in their own frames, heavily drifted.
-# The local rows run storeys -> classify -> walls (WP3, reusex-z1v.5.7), so
-# they score the wall metrics: wall_recall / wall_precision /
-# wall_position_rms_m / wall_thickness_err_mean_m / _p95_m.
-house1            local      tests/fixtures/solid_model/house1.plan.yaml    -                                               $REUSEX_HOUSE1_RUX storeys,classify,walls
-house2            local      tests/fixtures/solid_model/house2.plan.yaml    -                                               $REUSEX_HOUSE2_RUX storeys,classify,walls
+# The local rows run storeys -> classify -> walls (WP3, reusex-z1v.5.7) ->
+# openings (WP5, reusex-z1v.7.5), so they score the wall metrics
+# (wall_recall / wall_precision / wall_position_rms_m /
+# wall_thickness_err_mean_m / _p95_m) and the opening line: opening_recall /
+# opening_precision / opening_iou_mean (a match: rectangle IoU >= 0.5 in the
+# reference wall's face, `rux analyze solid --opening-iou`), gated by
+# bench-solid-compare.py.
+house1            local      tests/fixtures/solid_model/house1.plan.yaml    -                                               $REUSEX_HOUSE1_RUX storeys,classify,walls,openings
+house2            local      tests/fixtures/solid_model/house2.plan.yaml    -                                               $REUSEX_HOUSE2_RUX storeys,classify,walls,openings

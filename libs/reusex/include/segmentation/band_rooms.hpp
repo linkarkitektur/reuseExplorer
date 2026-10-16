@@ -25,8 +25,28 @@
 /// reference plans: room IoU NewOffice 0.579 (Leiden) -> 0.663, house1
 /// 0.602 -> 0.632, house2 0.469 -> 0.523. Known limits: a room narrower than
 /// 2 x core_radius (a < 1 m WC stall) has no core and is flooded by its
-/// neighbour; the footprint leaks through windows the sensor looked through;
-/// sparse band walls (drift) merge rooms.
+/// neighbour unless walls and door cuts close it off (below); the footprint
+/// leaks through windows the sensor looked through; sparse band walls
+/// (drift) merge rooms where the walls table has no wall either.
+///
+/// The walls and openings tables, when the project has them, tighten the
+/// partition (W4.1 + W5.4, reusex-z1v.6.1 / reusex-z1v.7.4; recommended
+/// order walls -> openings -> rooms):
+///  - wall graph: every wall of the storey is rasterised into the blocked
+///    cells (BandRoomsOptions::use_wall_graph), so a wall the band saw too
+///    sparsely (glass, drift) still separates rooms;
+///  - doorway cuts: every door and floor-reaching opening of the openings
+///    table closes its doorway (BandRoomsOptions::cut_at_doors), so rooms
+///    are cut at doors however wide; a free-space component that no core
+///    reaches but that is closed off this way (a WC stall) is a room of its
+///    own.
+/// Without them the constriction watershed alone cuts the rooms, as before.
+/// Measured with them (reusex-z1v.7.4, room IoU / count error against the
+/// reference plans, walls -> openings -> rooms): NewOffice 0.544 / 0 ->
+/// 0.694 / +7 (the glass-walled meeting room and the printer room are rooms
+/// of their own; the WC stalls are too, which the reference draws as one
+/// bathroom), house1 0.695 / -2 -> 0.771 / 0 (entrance hall and WC no longer
+/// merge), house2 0.503 / -3 -> 0.507 / -1.
 ///
 /// Determinism (STANDARDS §6): the grid is anchored to the level frame
 /// origin (cell (c, r) covers x in [c, c+1) * cell_size), never to a
@@ -95,6 +115,39 @@ struct BandRoomsOptions {
   /// Empty cells around the storey's points on every side [m].
   double grid_padding = 1.0;
 
+  // --- walls / openings tables (W4.1, W5.4) --------------------------------
+  /// Rasterise the walls of the walls table (BandRoomsPlan::walls) into the
+  /// blocked cells, each over its axis, half its measured thickness wide
+  /// (at least wall_graph_half_width), except across its doorways unless
+  /// cut_at_doors closes them.
+  bool use_wall_graph = true;
+  /// Close every door and floor-reaching opening of the openings table
+  /// (kind door or opening) with a cut along its host wall's axis, running
+  /// door_cut_overlap into the jambs: the rooms either side are separated
+  /// at the door, however wide it is.
+  bool cut_at_doors = true;
+  /// Least half-width of a rasterised wall or door cut [m] (an unknown or
+  /// one-sided wall's thickness; also at least 0.75 cells so the line is
+  /// closed).
+  double wall_graph_half_width = 0.05;
+  /// A door cut runs this far past the door's ends along the wall [m].
+  double door_cut_overlap = 0.15;
+  /// Walls with evidence on less than this share of their face
+  /// (WallRecord::seen_share; -1 = not measured, kept) are left out, with
+  /// their doorways: a wall the scan barely shows is as likely a cabinet
+  /// front or a drift artefact as a partition.
+  double wall_graph_min_seen_share = 0.3;
+  /// A free-space component no core reaches (narrower than 2 x
+  /// core_radius, closed off by walls and door cuts: a WC stall) is a room
+  /// of its own when it is at least 2 x this wide somewhere and holds
+  /// min_room_area [m]; 0 disables (it stays unlabeled, as before)...
+  double coreless_min_clearance = 0.3;
+  /// ...and when at most this share of its boundary opens onto the
+  /// exterior (not the interior): a stall is closed by walls and its door
+  /// cut, a footprint leak beyond a window that the wall graph cut off
+  /// from its room is mostly open.
+  double coreless_max_open_share = 0.25;
+
   /// Optional cancellation flag, checked between storeys. Caller keeps it
   /// alive for the call.
   const std::atomic_bool *cancel_token = nullptr;
@@ -115,6 +168,10 @@ struct RoomGrid {
   /// Input evidence (1 = set): band wall cells and raw footprint cells.
   std::vector<uint8_t> wall;
   std::vector<uint8_t> footprint;
+  /// Cells of the rasterised wall graph and door cuts
+  /// (rasterise_wall_graph()); blocked like `wall` but not dilated. Empty or
+  /// all 0 without walls / openings tables.
+  std::vector<uint8_t> graph;
 
   /// Outputs of partition_room_grid():
   /// footprint closed and with every hole the exterior flood cannot reach
@@ -126,6 +183,9 @@ struct RoomGrid {
   std::vector<int32_t> labels;
 
   int cores = 0;              ///< cores seeded (after the min_core_area filter)
+  int coreless = 0;           ///< rooms from components no core reached
+  int graph_walls = 0;        ///< walls rasterised (rasterise_wall_graph())
+  int door_cuts = 0;          ///< doorways closed (rasterise_wall_graph())
   int rooms = 0;              ///< rooms kept
   int dropped_regions = 0;    ///< regions below min_room_area
   double interior_area = 0.0; ///< [m^2]
@@ -138,11 +198,29 @@ struct RoomGrid {
   void resize(int w, int h);
 };
 
-/// The 2D part: from `wall` and `footprint`, fill `interior`, `clearance`
-/// and `labels`. Room ids are first_label, first_label + 1, ... in the
-/// raster order of their cores. Returns the number of rooms.
+/// The 2D part: from `wall`, `graph` and `footprint`, fill `interior`,
+/// `clearance` and `labels`. Room ids are first_label, first_label + 1, ...
+/// in the raster order of their cores, then of the coreless rooms
+/// (BandRoomsOptions::coreless_min_clearance). Returns the number of rooms.
 int partition_room_grid(RoomGrid &grid, const BandRoomsOptions &options,
                         int first_label = 1);
+
+/// The walls and openings tables of a project, in their storeys' level
+/// frames (rows of the walls and openings stages).
+struct BandRoomsPlan {
+  std::vector<core::WallRecord> walls;
+  std::vector<core::OpeningRecord> openings;
+};
+
+/// Rasterise the walls of @p plan standing on the grid's storey
+/// (WallRecord::storey == RoomGrid::storey_idx) into `grid.graph` (resized
+/// to the grid, OR-ed): with use_wall_graph every wall over its axis
+/// except its doorways, with cut_at_doors every doorway (door or opening,
+/// by OpeningRecord::wall = WallRecord::guid) over its span plus
+/// door_cut_overlap. Sets `graph_walls` and `door_cuts`; returns the number
+/// of cells set. Deterministic: depends on the records, not their order.
+size_t rasterise_wall_graph(RoomGrid &grid, const BandRoomsPlan &plan,
+                            const BandRoomsOptions &options);
 
 struct BandRoomsResult {
   /// Per point room label (0 = unlabeled), index-aligned with the cloud.
@@ -159,11 +237,12 @@ struct BandRoomsResult {
 /// stage). @p evidence, when set, limits the points that rasterise
 /// evidence; every point is still labelled. A point in the height range of
 /// several storeys takes the lowest one's room. Room ids run on across
-/// storeys.
+/// storeys. @p plan, when set, is rasterised into each storey's grid
+/// (rasterise_wall_graph()) before the partition.
 auto segment_band_rooms(const Cloud &cloud, const CloudN &normals,
                         const std::vector<core::StoreyRecord> &storeys,
                         const BandRoomsOptions &options = {},
-                        const pcl::Indices *evidence = nullptr)
-    -> BandRoomsResult;
+                        const pcl::Indices *evidence = nullptr,
+                        const BandRoomsPlan *plan = nullptr) -> BandRoomsResult;
 
 } // namespace reusex::geometry

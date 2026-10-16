@@ -29,9 +29,10 @@ DESCRIPTION:
   which two faces are the sides of one wall (gap, empty valley between,
   co-visibility), its thickness at mid-height with a bootstrap CI and its
   lean, whether it is external, and the wall graph (snapping, bridging over
-  doorways, corners and tees). A wall seen from one side only gets an
-  assumed thickness (--default-thickness). Writes the 'walls' and
-  'wall_joins' tables.
+  doorways, corners and tees). A wall seen from one side only has its
+  axis on the seen face and thickness -1 (unknown); --default-thickness is
+  the body assumed behind that face. Writes the 'walls' and 'wall_joins'
+  tables.
 
 EXAMPLES:
   rux create walls                          # Default settings

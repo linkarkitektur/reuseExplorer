@@ -7,6 +7,7 @@
 
 #include "wall_synth.hpp"
 
+#include <reusex/reconstruction/openings.hpp>
 #include <reusex/reconstruction/walls.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -87,9 +88,9 @@ TEST_CASE("JoinWalls_RectangularRoom_FourCorners", "[walls][join_walls]") {
   REQUIRE(g.walls.size() == 4);
   CHECK(count(g, WallJoinKind::corner) == 4);
   CHECK(count(g, WallJoinKind::tee) == 0);
-  // One-sided walls: their axes sit half a default thickness outside the
-  // room, and the corners meet on those axes.
-  const double h = 0.5 * WallOptions{}.default_thickness_m;
+  // One-sided walls: their axes are the seen (inner) faces, and the
+  // corners meet on those (reusex-v8p).
+  const double h = 0.0;
   for (const auto &j : g.joins) {
     const auto pa = end_point(g.walls[static_cast<size_t>(j.a)], j.at_a);
     const auto pb = end_point(g.walls[static_cast<size_t>(j.b)], j.at_b);
@@ -102,7 +103,7 @@ TEST_CASE("JoinWalls_RectangularRoom_FourCorners", "[walls][join_walls]") {
   for (const auto &w : g.walls) {
     CHECK(w.assumed);
     CHECK(w.is_external);
-    CHECK(w.seen_share > 0.8); // the corner overhang is not seen
+    CHECK(w.seen_share > 0.9); // the faces meet: nothing overhangs
     CHECK_FALSE(w.low_seen);
   }
 }
@@ -223,6 +224,16 @@ TEST_CASE("WallRecords_Graph_StableKeysAndJoinGuids", "[walls][join_walls]") {
     CHECK_THAT(w.height, WithinAbs(2.5, 1e-12));
     CHECK(w.assumed);
     CHECK(w.thickness_ci_lo == -1.0);
+    // One-sided: the axis is the inner face, the thickness unknown
+    // (reusex-v8p), as the reference plans draw external walls.
+    CHECK(w.thickness == -1.0);
+    const bool on_x = std::abs(w.x0 - w.x1) < 1e-9;
+    if (on_x)
+      CHECK_THAT(std::min(std::abs(w.x0), std::abs(w.x0 - 4.0)),
+                 WithinAbs(0.0, 0.01));
+    else
+      CHECK_THAT(std::min(std::abs(w.y0), std::abs(w.y0 - 3.0)),
+                 WithinAbs(0.0, 0.01));
   }
   CHECK(walls[0].guid != walls[1].guid);
   REQUIRE(joins.size() == 4);
@@ -263,4 +274,169 @@ TEST_CASE("JoinWalls_FacadeWithWindowNiches_IsOneWallOnThePierFace",
   CHECK_THAT(g.walls[0].face_hi, WithinAbs(1.0, 0.005));
   CHECK_THAT(g.walls[0].s0, WithinAbs(0.0, 0.05));
   CHECK_THAT(g.walls[0].s1, WithinAbs(y, 0.05));
+}
+
+TEST_CASE("JoinWalls_OneSidedWallSeenFromBothRooms_StaysOneWall",
+          "[walls][join_walls]") {
+  // A 0.2 m wall at x = 1.0 .. 1.2 whose west face is seen over y 0..2 and
+  // whose east face over y 2.6..4.6 (two rooms, the doorway between them
+  // hidden): two one-sided stretches whose seen faces differ by the
+  // thickness. With axes on the faces they are still collinear (their bodies
+  // coincide) and bridge into one wall.
+  auto wp = storey_points();
+  add_face(wp, {1.0, 0}, {1.0, 2}, {-1, 0}, 0.0, 2.5, 0.003, 120);
+  add_face(wp, {1.2, 2.6}, {1.2, 4.6}, {1, 0}, 0.0, 2.5, 0.003, 121);
+  const auto g = graph_of(wp);
+  REQUIRE(g.walls.size() == 1);
+  CHECK_THAT(g.walls[0].s0, WithinAbs(0.0, 0.05));
+  CHECK_THAT(g.walls[0].s1, WithinAbs(4.6, 0.05));
+}
+
+TEST_CASE("JoinWalls_OneSidedWall_SnapsToItsFaceNotIntoTheRoom",
+          "[walls][join_walls]") {
+  // Furniture faces 6 cm in front of a one-sided wall must not pull the
+  // snapped face (and with it the axis) into the room.
+  auto wp = storey_points();
+  add_face(wp, {1.0, 0}, {1.0, 4}, {1, 0}, 0.0, 2.5, 0.003, 130);
+  add_face(wp, {1.06, 1}, {1.06, 3}, {1, 0}, 0.0, 0.9, 0.003, 131);
+  const auto g = graph_of(wp);
+  REQUIRE_FALSE(g.walls.empty());
+  const auto w = std::max_element(
+      g.walls.begin(), g.walls.end(),
+      [](const auto &a, const auto &b) { return a.s1 - a.s0 < b.s1 - b.s0; });
+  CHECK_THAT(w->axis_offset, WithinAbs(1.0, 0.01));
+  CHECK_THAT(w->face_hi, WithinAbs(1.0, 0.01));
+}
+
+TEST_CASE("JoinWalls_DriftDoubledFacade_MergesIntoTheDominantFace",
+          "[walls][join_walls]") {
+  // reusex-1wp: a 10 m facade seen from inside (+x) at x = 1.0, and the same
+  // facade scanned again 28 cm further in (drift) over y 3..7. A sensor
+  // cannot see a face through another one standing in front of it over the
+  // same stretch, so both are one wall: the face with more points wins.
+  auto wp = storey_points();
+  add_face(wp, {1.0, 0}, {1.0, 10}, {1, 0}, 0.0, 2.5, 0.003, 140);
+  add_face(wp, {1.28, 3}, {1.28, 7}, {1, 0}, 0.0, 2.5, 0.003, 141);
+  add_floor(wp, 1.3, 0.0, 5.0, 10.0);
+  const auto g = graph_of(wp);
+  REQUIRE(g.walls.size() == 1);
+  CHECK_THAT(g.walls[0].face_hi, WithinAbs(1.0, 0.01));
+  CHECK_THAT(g.walls[0].s0, WithinAbs(0.0, 0.05));
+  CHECK_THAT(g.walls[0].s1, WithinAbs(10.0, 0.05));
+}
+
+TEST_CASE("JoinWalls_DriftDoubledPartition_MergesIntoOneWall",
+          "[walls][join_walls]") {
+  // A 0.12 m partition at x = 3 (two faces) and its drift copy 8 cm off
+  // over half its length: their bodies overlap -- one wall.
+  auto wp = storey_points();
+  add_face(wp, {2.94, 0}, {2.94, 6}, {-1, 0}, 0.0, 2.5, 0.003, 150);
+  add_face(wp, {3.06, 0}, {3.06, 6}, {1, 0}, 0.0, 2.5, 0.003, 151);
+  add_face(wp, {3.02, 1}, {3.02, 4}, {-1, 0}, 0.0, 2.5, 0.003, 152);
+  add_face(wp, {3.14, 1}, {3.14, 4}, {1, 0}, 0.0, 2.5, 0.003, 153);
+  add_floor(wp, 0.0, 0.0, 2.9, 6.0);
+  add_floor(wp, 3.2, 0.0, 6.0, 6.0);
+  const auto g = graph_of(wp);
+  REQUIRE(g.walls.size() == 1);
+  CHECK_FALSE(g.walls[0].assumed);
+  CHECK_THAT(g.walls[0].axis_offset,
+             WithinAbs(3.0, 0.03)); // snapped over both copies
+}
+
+TEST_CASE("JoinWalls_DistinctParallelWalls_AreNotMerged",
+          "[walls][join_walls]") {
+  // Two partitions 0.5 m apart (a duct between them, both seen inside it)
+  // and a corridor: faces looking at each other bound a space, not a wall.
+  auto wp = storey_points();
+  add_face(wp, {2.95, 0}, {2.95, 4}, {-1, 0}, 0.0, 2.5, 0.003, 160);
+  add_face(wp, {3.05, 0}, {3.05, 4}, {1, 0}, 0.0, 2.5, 0.003, 161);
+  add_face(wp, {3.55, 0}, {3.55, 4}, {-1, 0}, 0.0, 2.5, 0.003, 162);
+  add_face(wp, {3.65, 0}, {3.65, 4}, {1, 0}, 0.0, 2.5, 0.003, 163);
+  // A corridor 1.2 m wide: two one-sided walls facing each other.
+  add_face(wp, {6.0, 0}, {6.0, 4}, {1, 0}, 0.0, 2.5, 0.003, 164);
+  add_face(wp, {7.2, 0}, {7.2, 4}, {-1, 0}, 0.0, 2.5, 0.003, 165);
+  add_floor(wp, 0.0, 0.0, 2.9, 4.0);
+  add_floor(wp, 3.1, 0.0, 3.5, 4.0);
+  add_floor(wp, 3.7, 0.0, 5.9, 4.0);
+  add_floor(wp, 6.05, 0.0, 7.15, 4.0);
+  const auto g = graph_of(wp);
+  CHECK(g.walls.size() == 4);
+}
+
+namespace {
+
+/// A facade seen from inside (+y) at y = 0 over x 0..8 with a 2.1 m patio
+/// door gap at x 3..5.1 (head 2.1 m); with @p lintel, the face above the
+/// door (2.15..2.5 m) is seen too.
+WallPoints patio_facade(bool lintel) {
+  auto wp = storey_points();
+  add_face(wp, {0, 0}, {3, 0}, {0, 1}, 0.0, 2.5, 0.003, 170);
+  add_face(wp, {5.1, 0}, {8, 0}, {0, 1}, 0.0, 2.5, 0.003, 171);
+  if (lintel)
+    add_face(wp, {3, 0}, {5.1, 0}, {0, 1}, 2.15, 2.5, 0.003, 172);
+  add_floor(wp, 0.0, 0.05, 8.0, 4.0);
+  return wp;
+}
+
+} // namespace
+
+TEST_CASE("JoinWalls_WideDoorwayUnderALintel_IsBridged",
+          "[walls][join_walls]") {
+  // reusex-3e9: house1's patio door leaves a 2.1 m gap, wider than
+  // bridge_gap_m. The face seen over the gap above door height (a lintel)
+  // says the wall runs on over an opening.
+  const auto g = graph_of(patio_facade(true));
+  REQUIRE(g.walls.size() == 1);
+  CHECK_THAT(g.walls[0].s0, WithinAbs(-8.0, 0.05)); // t = -x for d = +y
+  CHECK_THAT(g.walls[0].s1, WithinAbs(0.0, 0.05));
+}
+
+TEST_CASE("JoinWalls_WideGapWithoutEvidence_StaysTwoWalls",
+          "[walls][join_walls]") {
+  const auto g = graph_of(patio_facade(false));
+  CHECK(g.walls.size() == 2);
+}
+
+TEST_CASE("JoinWalls_WideGapTheCameraWalkedThrough_IsBridged",
+          "[walls][join_walls]") {
+  // No lintel seen, but the capture path crosses the face line in the gap:
+  // the operator walked out through a door.
+  auto wp = patio_facade(false);
+  wp.trajectory = {
+      {4.0, 1.5, 1.4}, {4.05, 0.6, 1.4}, {4.1, -0.3, 1.4}, {4.1, -1.2, 1.4}};
+  const auto g = graph_of(wp);
+  CHECK(g.walls.size() == 1);
+  // A path crossing outside the gap is no evidence.
+  wp.trajectory = {{9.0, 1.5, 1.4}, {9.05, 0.6, 1.4}, {9.1, -0.3, 1.4}};
+  CHECK(graph_of(wp).walls.size() == 2);
+}
+
+TEST_CASE("JoinWalls_GapWiderThanADoor_StaysTwoWalls", "[walls][join_walls]") {
+  auto wp = storey_points();
+  add_face(wp, {0, 0}, {3, 0}, {0, 1}, 0.0, 2.5, 0.003, 180);
+  add_face(wp, {6.5, 0}, {9, 0}, {0, 1}, 0.0, 2.5, 0.003, 181);
+  add_face(wp, {3, 0}, {6.5, 0}, {0, 1}, 2.15, 2.5, 0.003, 182);
+  CHECK(graph_of(wp).walls.size() == 2);
+}
+
+TEST_CASE("Openings_PatioDoorInABridgedGap_LandsOnTheWall",
+          "[walls][join_walls]") {
+  // The bridged wall's record hosts the door the openings stage finds in
+  // the gap.
+  const auto wp = patio_facade(true);
+  const auto g = graph_of(wp);
+  REQUIRE(g.walls.size() == 1);
+  reusex::core::StoreyRecord st;
+  st.z_floor = 0.0;
+  st.z_ceiling = 2.5;
+  const auto [walls, joins] = wall_records(g, st);
+  reusex::geometry::OpeningEvidence ev;
+  ev.points = wp.points;
+  ev.points.insert(ev.points.end(), wp.others.begin(), wp.others.end());
+  const auto found = reusex::geometry::detect_openings(ev, walls, st);
+  REQUIRE(found.size() == 1);
+  const auto &o = found[0].record;
+  CHECK(o.kind == "door");
+  const double width = o.s_end - o.s_start;
+  CHECK_THAT(width, WithinAbs(2.1, 0.15));
 }

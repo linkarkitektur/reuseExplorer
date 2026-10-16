@@ -39,7 +39,12 @@ DESCRIPTION:
   above the storey floor), footprint from floor and ceiling points, exterior
   flooded from outside, rooms = watershed of the free-space distance
   transform, cut where the free space is narrower than 2 x --core-radius
-  (doors, gaps between glass-partition mullions). Rooms narrower than about
+  (doors, gaps between glass-partition mullions). When `rux create walls`
+  and `rux create openings` have run (recommended order: walls -> openings
+  -> rooms), the walls block the grid too and every door and floor-reaching
+  opening is closed, so rooms are cut at doors however wide and a WC stall
+  closed off by its door is a room of its own (--no-wall-graph,
+  --no-door-cuts turn this off). Without them, rooms narrower than about
   1-1.5 m (WC stalls) join their neighbour. Needs `rux create storeys`; if
   the project has none, the stage logs a warning and falls back to
   --method leiden for that run (an explicit --method band without storeys
@@ -170,6 +175,21 @@ NOTES:
       ->default_val(opt->band_footprint_close)
       ->check(CLI::Range(0.0, 5.0));
 
+  sub->add_flag("!--no-wall-graph", opt->band_use_walls,
+                "band: ignore the walls table (`rux create walls`); by "
+                "default its walls block the grid like band walls.");
+
+  sub->add_flag("!--no-door-cuts", opt->band_cut_at_doors,
+                "band: do not close the doors and floor-reaching openings of "
+                "the openings table (`rux create openings`); rooms are then "
+                "cut at doors only where the free space narrows.");
+
+  sub->add_option("--wall-min-seen", opt->band_wall_min_seen_share,
+                  "band: walls of the walls table seen on less of their face "
+                  "than this share are left out, with their doors.")
+      ->default_val(opt->band_wall_min_seen_share)
+      ->check(CLI::Range(0.0, 1.0));
+
   sub->add_option(
          "-f, --filter", opt->filter_expr,
          "Filter expression to limit processing to specific labeled points.\n"
@@ -222,6 +242,9 @@ std::string rooms_stage_parameters(SubcommandSegRoomsOptions const &opt) {
       .set("band_min_room_area", opt.band_min_room_area)
       .set("band_wall_min_points", opt.band_wall_min_points)
       .set("band_footprint_close", opt.band_footprint_close)
+      .set("band_use_walls", opt.band_use_walls)
+      .set("band_cut_at_doors", opt.band_cut_at_doors)
+      .set("band_wall_min_seen_share", opt.band_wall_min_seen_share)
       .dump();
 }
 

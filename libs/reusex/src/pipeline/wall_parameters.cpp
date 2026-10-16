@@ -137,7 +137,8 @@ const std::vector<WallParameter> &wall_parameter_table() {
        "Confidence level of the thickness interval.", WALL(ci_level), 0.5,
        0.999},
       {"default_thickness_m", "--default-thickness", "Assumed thickness [m]",
-       "Thickness given to a wall seen from one side only.",
+       "Body assumed behind a wall seen from one side only (its axis is the "
+       "seen face, its stored thickness -1).",
        WALL(default_thickness_m), 0.0, 2.0},
       {"external_strip_near_m", "--external-strip-near",
        "External strip from [m]",
@@ -167,6 +168,21 @@ const std::vector<WallParameter> &wall_parameter_table() {
       {"bridge_offset_m", "--bridge-offset", "Bridge offset [m]",
        "Collinear = faces or axes within this of each other.",
        WALL(bridge_offset_m), 0.0, 1.0},
+      {"door_bridge_gap_m", "--door-bridge-gap", "Door bridge gap [m]",
+       "A wider gap, up to this, is bridged when it is an opening (a lintel "
+       "seen over it, or the camera path through it).",
+       WALL(door_bridge_gap_m), 0.0, 20.0},
+      {"lintel_min_z_m", "--lintel-min-z", "Lintel above [m]",
+       "Face seen over the gap above this height over the floor is a "
+       "lintel ...",
+       WALL(lintel_min_z_m), 0.0, 10.0},
+      {"lintel_min_share", "--lintel-min-share", "Lintel share",
+       "... when it covers this share of the gap's columns.",
+       WALL(lintel_min_share), 0.0, 1.0},
+      {"crossing_max_step_m", "--crossing-max-step", "Camera path step [m]",
+       "Camera path steps longer than this are jumps, not walks through a "
+       "gap.",
+       WALL(crossing_max_step_m), 0.0, 20.0},
       {"bridge_thickness_m", "--bridge-thickness", "Bridge thickness [m]",
        "Two measured walls whose thickness differs by more meet end to end "
        "instead of merging.",
@@ -175,6 +191,17 @@ const std::vector<WallParameter> &wall_parameter_table() {
        "A short one-sided wall up to this long behind or before a neighbour "
        "is a recess of it.",
        WALL(recess_max_length_m), 0.0, 20.0},
+      {"duplicate_min_overlap", "--duplicate-min-overlap", "Duplicate overlap",
+       "Two parallel walls overlapping by this share of the shorter one ...",
+       WALL(duplicate_min_overlap), 0.0, 1.0},
+      {"duplicate_min_overlap_m", "--duplicate-min-overlap-length",
+       "Duplicate overlap length [m]", "... or by this length ...",
+       WALL(duplicate_min_overlap_m), 0.0, 100.0},
+      {"duplicate_max_offset_m", "--duplicate-max-offset",
+       "Duplicate offset [m]",
+       "... whose faces seen from one side lie within this are one wall seen "
+       "twice (drift).",
+       WALL(duplicate_max_offset_m), 0.0, 2.0},
       {"corner_m", "--corner", "Corner reach [m]",
        "Two walls whose nearer ends lie within this of their crossing meet "
        "there.",
