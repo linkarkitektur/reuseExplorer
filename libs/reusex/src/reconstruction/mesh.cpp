@@ -113,17 +113,21 @@ wall_z_ranges(const EigenVectorContainer<double, 4> &planes,
               const std::vector<IndicesPtr> &inliers, CloudConstPtr cloud,
               const std::vector<std::pair<size_t, size_t>> &pairs) {
   constexpr double nan = std::numeric_limits<double>::quiet_NaN();
-  constexpr double kVerticalEps = 0.1; // |n_z| below this: a wall
-  constexpr double kTrim = 0.02;       // percentile cut at each end
+  constexpr double kVerticalEps = 0.1;  // |n_z| below this: a wall
+  constexpr double kTrim = 0.02;        // percentile cut at each end
+  constexpr double kHorizontalNz = 0.9; // |n_z| above this: a floor/ceiling
   std::vector<std::array<double, 2>> out(planes.size(), {nan, nan});
   if (planes.size() != inliers.size())
     throw std::invalid_argument(
         fmt::format("wall_z_ranges: {} planes but {} inlier lists",
                     planes.size(), inliers.size()));
-  std::vector<bool> wall(planes.size(), false);
+  // 1: a wall, 2: an oblique plane (a roof slope, which gets its measured
+  // range too, reusex-e6z), 0: a floor or ceiling (no range).
+  std::vector<int> kind(planes.size(), 0);
   for (size_t i = 0; i < planes.size(); ++i) {
-    wall[i] = std::abs(planes[i][2]) < kVerticalEps;
-    if (!wall[i] || !inliers[i] || inliers[i]->empty() || !cloud)
+    const double nz = std::abs(planes[i][2]);
+    kind[i] = nz < kVerticalEps ? 1 : nz < kHorizontalNz ? 2 : 0;
+    if (kind[i] == 0 || !inliers[i] || inliers[i]->empty() || !cloud)
       continue;
     std::vector<float> z;
     z.reserve(inliers[i]->size());
@@ -135,9 +139,10 @@ wall_z_ranges(const EigenVectorContainer<double, 4> &planes,
     const auto hi = static_cast<size_t>(std::ceil((1.0 - kTrim) * last));
     out[i] = {z[lo], z[hi]};
   }
-  // The two faces of a wall share one range.
+  // The two faces of a wall (or of a roof) share one range.
   for (const auto &[a, b] : pairs) {
-    if (a >= out.size() || b >= out.size() || !wall[a] || !wall[b])
+    if (a >= out.size() || b >= out.size() || kind[a] == 0 ||
+        kind[a] != kind[b])
       continue;
     const auto ra = out[a], rb = out[b];
     if (std::isnan(ra[0]) && std::isnan(rb[0]))
@@ -216,6 +221,31 @@ pcl::PolygonMeshPtr mesh(CloudConstPtr cloud, CloudNConstPtr normals,
 
   auto [vertical, horizontal] = separate_planes(planes);
 
+  if (reusex::core::should_log(reusex::core::LogLevel::debug))
+    for (size_t i = 0; i < planes.size(); ++i) {
+      const auto &p = planes[i];
+      float zlo = 0, zhi = 0, xlo = 0, xhi = 0, ylo = 0, yhi = 0;
+      std::vector<float> zs;
+      if (inliers[i] && !inliers[i]->empty()) {
+        xlo = ylo = std::numeric_limits<float>::max();
+        xhi = yhi = std::numeric_limits<float>::lowest();
+        for (int idx : *inliers[i]) {
+          const auto &q = cloud->points[static_cast<size_t>(idx)];
+          zs.push_back(q.z);
+          xlo = std::min(xlo, q.x), xhi = std::max(xhi, q.x);
+          ylo = std::min(ylo, q.y), yhi = std::max(yhi, q.y);
+        }
+        std::sort(zs.begin(), zs.end());
+        zlo = zs[zs.size() / 50];
+        zhi = zs[zs.size() - 1 - zs.size() / 50];
+      }
+      reusex::debug("mesh plane {}: n=({:.3f},{:.3f},{:.3f}) d={:.3f} "
+                    "inliers={} z=[{:.2f},{:.2f}] x=[{:.2f},{:.2f}] "
+                    "y=[{:.2f},{:.2f}]",
+                    i, p[0], p[1], p[2], p[3], zs.size(), zlo, zhi, xlo, xhi,
+                    ylo, yhi);
+    }
+
   // Storey floors and ceilings only as section planes, when the storeys
   // table gave their heights (reusex-z1v.3.4).
   if (!opt.section_heights.empty())
@@ -226,6 +256,19 @@ pcl::PolygonMeshPtr mesh(CloudConstPtr cloud, CloudNConstPtr normals,
   std::vector<std::array<double, 2>> z_ranges;
   if (opt.storey_local)
     z_ranges = wall_z_ranges(planes, inliers, cloud, pairs);
+  // The oblique planes (roof slopes): an attic under a pitched roof ends
+  // where they cross it (reusex-e6z).
+  std::vector<size_t> oblique;
+  {
+    std::vector<bool> taken(planes.size(), false);
+    for (size_t i : vertical)
+      taken[i] = true;
+    for (size_t i : horizontal)
+      taken[i] = true;
+    for (size_t i = 0; i < planes.size(); ++i)
+      if (!taken[i] && std::abs(planes[i][2]) < 0.9)
+        oblique.push_back(i);
+  }
   reusex::debug("Number indices in inliers [{}]",
                 fmt::join(inliers | ranges::views::transform([](auto const &i) {
                             return i->size();
@@ -269,7 +312,7 @@ pcl::PolygonMeshPtr mesh(CloudConstPtr cloud, CloudNConstPtr normals,
       planes, vertical, horizontal, pairs,
       std::array<double, 2>{min.x - 1, min.y - 1},
       std::array<double, 2>{max.x + 1, max.y + 1}, std::nullopt, opt.max_cells,
-      z_ranges, opt.section_overlap_m);
+      z_ranges, opt.section_overlap_m, oblique);
 
   reusex::debug("Cell complex: {}", *cc);
 

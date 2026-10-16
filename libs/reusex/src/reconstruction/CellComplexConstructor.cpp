@@ -19,6 +19,7 @@
 #include <range/v3/view/zip.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <memory>
 #include <optional>
@@ -41,7 +42,7 @@ CellComplex::CellComplex(
                            std::vector<int> const &)>>
         viz_func,
     size_t max_cells, const std::vector<std::array<double, 2>> &plane_z_ranges,
-    double min_section_overlap_m)
+    double min_section_overlap_m, const std::vector<size_t> &obliques)
     : n_rooms(0), n_walls(pairs.size()) {
 
   if (!plane_z_ranges.empty() && plane_z_ranges.size() != planes_vec.size())
@@ -163,7 +164,11 @@ CellComplex::CellComplex(
   // ── Wall segments ───────────────────────────────────────────────────────
   // One clipped ground-plane segment per vertical plane that behaves as a
   // wall; `kept` lists the positions (into `verticals`) of those that do.
+  // Positions 0 .. verticals.size()-1 are the wall lines; the roof lines of
+  // oblique planes (reusex-e6z) are appended per section further down.
+  // seg_plane[i] is the plane a line comes from.
   std::vector<std::optional<Segment>> segments(verticals.size());
+  std::vector<size_t> seg_plane(verticals.begin(), verticals.end());
   std::vector<size_t> kept;
   size_t dropped_non_vertical = 0;
   int example_dropped_plane = -1;
@@ -210,7 +215,7 @@ CellComplex::CellComplex(
       slot = std::make_unique<ArrInfo>();
       for (size_t i : set)
         slot->ch_map[insert(slot->arr, *segments[i])] =
-            static_cast<int>(verticals[i]);
+            static_cast<int>(seg_plane[i]);
       for (auto fit = slot->arr.faces_begin(); fit != slot->arr.faces_end();
            ++fit)
         slot->bounded += fit->is_unbounded() ? 0 : 1;
@@ -286,7 +291,43 @@ CellComplex::CellComplex(
         raw_sets[s].push_back(i);
     }
   }
+  // Roof lines (reusex-e6z): where each oblique plane reaching section s
+  // crosses the section's mid-height, as a line in its arrangement. Appended to
+  // `segments`, so the ids grow and each returned set is sorted.
+  auto roof_lines = [&](size_t s) {
+    WallSet out;
+    if (plane_z_ranges.empty())
+      return out;
+    const double h0 = level_z[s], h1 = level_z[s + 1];
+    const double need = std::min(min_section_overlap_m, 0.5 * (h1 - h0));
+    for (size_t id : obliques) {
+      const auto &p = planes_vec[id];
+      const auto &r = plane_z_ranges[id];
+      if (!(r[0] <= r[1]) || std::abs(p[2]) > 0.95 ||
+          std::hypot(p[0], p[1]) < 1e-6)
+        continue;
+      const double lo = std::max(r[0] - recenter.z(), h0);
+      const double hi = std::min(r[1] - recenter.z(), h1);
+      if (hi - lo < need)
+        continue;
+      // The line at the section's mid-height, where its cell centres lie:
+      // the face's two cells then lie on either side of the oblique plane
+      // too, which is what Face::is_main (get_a / get_b) is decided by.
+      const double z = 0.5 * (h0 + h1);
+      // n . (x, y, z) + d = 0 at this height: a line in the plan.
+      const Line_2 line(NT(p[0]), NT(p[1]), NT(p[2] * z + p[3]));
+      auto clipped = CGAL::intersection(rect, line);
+      if (!clipped || !std::holds_alternative<Segment>(clipped.value()))
+        continue;
+      segments.emplace_back(std::get<Segment>(clipped.value()));
+      seg_plane.push_back(id);
+      out.push_back(segments.size() - 1);
+    }
+    return out;
+  };
+
   std::vector<WallSet> sets(n_sections);
+  std::vector<WallSet> roofs(n_sections);
   std::vector<ArrInfo *> section_arr(n_sections, nullptr);
   for (size_t s = 0; s < n_sections; ++s) {
     sets[s] = raw_sets[s];
@@ -308,13 +349,55 @@ CellComplex::CellComplex(
         if (s + r < n_sections)
           sets[s] = set_union(sets[s], raw_sets[s + r]);
       }
+      // Under a pitched roof the neighbours' walls run out under the eaves;
+      // the roof planes reaching into the section say where it ends.
+      const auto roof = roof_lines(s);
+      roofs[s] = roof;
+      sets[s] = set_union(sets[s], roof);
       reusex::debug("CellComplex: section {} ({:.2f}-{:.2f} m) encloses no "
                     "face with its own {} wall line(s); using {} from the "
-                    "neighbouring sections",
+                    "neighbouring sections and {} roof line(s)",
                     s, level_z[s] + recenter.z(), level_z[s + 1] + recenter.z(),
-                    raw_sets[s].size(), sets[s].size());
+                    raw_sets[s].size(), sets[s].size() - roof.size(),
+                    roof.size());
     }
     section_arr[s] = arrangement_of(sets[s]);
+  }
+  // A thick section without faces of its own (an attic under a pitched
+  // roof, not a slab) is not bounded by the nearest storey's walls: where
+  // the roof space is open to a side no scanned wall closes, the cell
+  // complex needs the lines of other storeys' walls there too, or the MIP
+  // finds no wall to end the room at and drops it (house2, reusex-e6z). Such
+  // a section takes every wall, as before reusex-sba, while the projected
+  // cell count stays within max_cells; lowest section first.
+  {
+    size_t total = 0;
+    for (auto *a : section_arr)
+      total += a->bounded;
+    for (size_t s = 0; s < n_sections; ++s) {
+      const double thickness = level_z[s + 1] - level_z[s];
+      if (sets[s] == raw_sets[s] || thickness < 2.0 * min_section_overlap_m)
+        continue;
+      auto all = set_union(kept, roofs[s]);
+      if (all == sets[s])
+        continue;
+      auto *a = arrangement_of(all);
+      const size_t grown = total - section_arr[s]->bounded + a->bounded;
+      if (grown > max_cells) {
+        reusex::debug("CellComplex: section {} ({:.2f}-{:.2f} m) keeps the "
+                      "nearest walls: every wall would make {} cells > {}",
+                      s, level_z[s] + recenter.z(),
+                      level_z[s + 1] + recenter.z(), grown, max_cells);
+        continue;
+      }
+      reusex::debug("CellComplex: section {} ({:.2f}-{:.2f} m) has no walls "
+                    "of its own: using every wall ({} -> {} faces)",
+                    s, level_z[s] + recenter.z(), level_z[s + 1] + recenter.z(),
+                    section_arr[s]->bounded, a->bounded);
+      total = grown;
+      sets[s] = std::move(all);
+      section_arr[s] = a;
+    }
   }
   // Levels: the arrangement of a level is the overlay of the sections below
   // and above it (the arrangement of the union of their walls).

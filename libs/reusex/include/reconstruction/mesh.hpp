@@ -113,9 +113,10 @@ select_section_planes(const EigenVectorContainer<double, 4> &planes,
  * the 2nd to 98th percentile of its inliers' z, so a few stray points do not
  * stretch a wall into the next storey. The two faces of a wall pair (@p
  * pairs, from make_pairs) share the union of their ranges, so a face
- * make_pairs invented (no inliers) takes its partner's. Planes that are not
- * vertical, and walls with no inliers on either face, get {NaN, NaN}: they
- * reach every section.
+ * make_pairs invented (no inliers) takes its partner's. Oblique planes (roof
+ * slopes, reusex-e6z) get their range the same way, shared with their
+ * invented back face. Floors and ceilings, and planes with no inliers on
+ * either face, get {NaN, NaN}: a wall without one reaches every section.
  *
  * @return One range per plane, index-aligned with @p planes.
  */
