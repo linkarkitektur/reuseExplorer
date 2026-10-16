@@ -1336,6 +1336,59 @@ void merge_duplicate(WallSegment &dom, const WallSegment &minor) {
   }
 }
 
+/// Is the gap between collinear walls @p a and @p b an opening (reusex-3e9)?
+/// The face line they share (the face both saw, else the middle of their
+/// bodies) is seen over the gap above lintel_min_z_m in lintel_min_share
+/// of its columns -- a lintel over a door -- or the capture path crosses
+/// that line in the gap.
+bool gap_is_opening(const WallSegment &a, const WallSegment &b,
+                    const EvidenceIndex &ev, size_t fam, const WallPoints &wp,
+                    const WallOptions &opt) {
+  const double g0 = std::min(a.s1, b.s1), g1 = std::max(a.s0, b.s0);
+  if (!(g1 > g0))
+    return false;
+  double f = 0.5 * (body_centre(a) + body_centre(b));
+  int side = 0;
+  if (std::isfinite(a.face_hi) && std::isfinite(b.face_hi)) {
+    f = 0.5 * (a.face_hi + b.face_hi);
+    side = 1;
+  } else if (std::isfinite(a.face_lo) && std::isfinite(b.face_lo)) {
+    f = 0.5 * (a.face_lo + b.face_lo);
+    side = -1;
+  }
+  // Lintel: wall evidence on the face line over the gap, above the door.
+  const int c0 = cell_index(g0, opt.cell_m), c1 = cell_index(g1, opt.cell_m);
+  std::set<int> cols;
+  const double band = opt.snap_wide_m;
+  const auto [lo, hi] = offset_range(ev.wall[fam], f - band, f + band);
+  for (auto q = lo; q != hi; ++q)
+    if ((side == 0 || q->side == 0 || q->side == side) && q->s > g0 &&
+        q->s < g1 && q->z >= wp.z_floor + opt.lintel_min_z_m &&
+        q->z <= wp.z_ceiling)
+      cols.insert(cell_index(q->s, opt.cell_m));
+  const double ncols = std::max(1, c1 - c0 + 1);
+  if (static_cast<double>(cols.size()) >= opt.lintel_min_share * ncols)
+    return true;
+  // The capture path walking through the gap.
+  const Eigen::Vector2d t = tangent(a.d);
+  for (size_t k = 0; k + 1 < wp.trajectory.size(); ++k) {
+    const Eigen::Vector3d &p = wp.trajectory[k], &q = wp.trajectory[k + 1];
+    if (!p.allFinite() || !q.allFinite())
+      continue;
+    if ((q.head<2>() - p.head<2>()).norm() > opt.crossing_max_step_m)
+      continue;
+    const double op = p.head<2>().dot(a.d) - f, oq = q.head<2>().dot(a.d) - f;
+    if (op * oq > 0.0 || op == oq)
+      continue;
+    const double u = op / (op - oq);
+    const double sc = (1.0 - u) * p.head<2>().dot(t) + u * q.head<2>().dot(t);
+    const double zc = (1.0 - u) * p.z() + u * q.z();
+    if (sc >= g0 && sc <= g1 && zc >= wp.z_floor && zc <= wp.z_ceiling + 0.5)
+      return true;
+  }
+  return false;
+}
+
 /// Merge @p b into @p a (collinear, close along the axis).
 void merge_into(WallSegment &a, const WallSegment &b) {
   const double la = a.s1 - a.s0, lb = b.s1 - b.s0;
@@ -1435,8 +1488,21 @@ WallGraph join_walls(std::vector<WallSegment> walls,
         if (a.family != b.family)
           continue;
         const double gap = std::max(a.s0, b.s0) - std::min(a.s1, b.s1);
-        if (gap > opt.bridge_gap_m)
+        if (gap > opt.bridge_gap_m) {
+          // A wider gap only over an opening, between collinear walls whose
+          // thicknesses agree (reusex-3e9).
+          if (gap > opt.door_bridge_gap_m ||
+              !collinear(a, b, opt.bridge_offset_m) ||
+              (!a.assumed && !b.assumed &&
+               std::abs(a.thickness - b.thickness) > opt.bridge_thickness_m) ||
+              !gap_is_opening(a, b, ev, family_pos(a.family), wp, opt))
+            continue;
+          merge_into(a, b);
+          walls.erase(walls.begin() + static_cast<std::ptrdiff_t>(j));
+          merged = true;
+          ++g.door_bridges;
           continue;
+        }
         if (is_recess(a, b, opt)) {
           merge_recess(a, b);
           walls.erase(walls.begin() + static_cast<std::ptrdiff_t>(j));
@@ -1625,7 +1691,8 @@ WallsResult
 detect_walls(const Cloud &cloud, const CloudL &planes,
              const CloudN &plane_normals,
              const std::vector<core::PlaneClassRecord> &plane_classes,
-             const core::StoreyRecord &storey, const WallOptions &opt) {
+             const core::StoreyRecord &storey, const WallOptions &opt,
+             const std::vector<Eigen::Vector3d> &camera_path) {
   WallsResult r;
   r.families = axis_families(plane_classes, plane_normals, storey, opt);
   if (r.families.empty()) {
@@ -1634,8 +1701,12 @@ detect_walls(const Cloud &cloud, const CloudL &planes,
          storey.idx, plane_classes.size());
     return r;
   }
-  const WallPoints wp =
+  WallPoints wp =
       wall_points(cloud, planes, plane_normals, plane_classes, storey, opt);
+  const Eigen::Affine3d T = to_affine(storey.level_transform);
+  wp.trajectory.reserve(camera_path.size());
+  for (const auto &c : camera_path)
+    wp.trajectory.push_back(T * c);
   r.faces = wall_faces(wp, r.families, opt);
   r.pairing = pair_faces(r.faces, wp, r.families, opt);
   r.graph = join_walls(measure_walls(r.faces, r.pairing, wp, r.families, opt),

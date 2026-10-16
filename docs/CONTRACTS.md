@@ -382,7 +382,10 @@ profile, which two faces are the two sides of one wall (gap, an empty valley
 between them, co-visibility), its thickness at mid-height with a bootstrap
 CI and its lean, whether it is external (no room evidence beyond one face),
 and the bounded wall graph: faces snapped to their points, collinear walls
-bridged over doorways, corner and tee joins, and the share of each wall's
+bridged over doorways (gaps up to `bridge_gap_m`, or up to
+`door_bridge_gap_m` when a lintel is seen over the gap or the capture path
+crosses it), parallel duplicates of one wall (drift) merged, corner and tee
+joins, and the share of each wall's
 face area that has evidence (`seen_share`). A wall seen from one side only is
 `assumed`: its axis is the seen face and its `thickness` is −1 (unknown), as
 reference plans draw external walls (reusex-v8p); `default_thickness_m` is
@@ -391,7 +394,7 @@ external test.
 
 | | |
 |---|---|
-| Consumes | `cloud`, `planes`, `plane_normals`, `plane_classes`, `storeys` |
+| Consumes | `cloud`, `planes`, `plane_normals`, `plane_classes`, `storeys` (+ sensor poses as optional evidence: the capture path through a wide doorway) |
 | Produces | `walls` (table, schema v33: one row per wall, a stable GUID — see below), `wall_joins` (table, schema v33: corner / tee / collinear joins) |
 | Options  | `WallOptions` (`libs/reusex/include/reconstruction/walls.hpp`), parameter keys are its field names; plus `guid_match_m`, `guid_match_angle_deg`, `guid_min_overlap` (`core::WallIdentityOptions`, `core/wall_identity.hpp`). One table, `pipeline::wall_parameter_table()`, defines the keys, the CLI flags and their bounds |
 | Checks   | `cloud`/`planes` present + aligned; `plane_normals` present; ≥1 plane class; ≥1 storey |

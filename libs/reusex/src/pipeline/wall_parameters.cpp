@@ -168,6 +168,21 @@ const std::vector<WallParameter> &wall_parameter_table() {
       {"bridge_offset_m", "--bridge-offset", "Bridge offset [m]",
        "Collinear = faces or axes within this of each other.",
        WALL(bridge_offset_m), 0.0, 1.0},
+      {"door_bridge_gap_m", "--door-bridge-gap", "Door bridge gap [m]",
+       "A wider gap, up to this, is bridged when it is an opening (a lintel "
+       "seen over it, or the camera path through it).",
+       WALL(door_bridge_gap_m), 0.0, 20.0},
+      {"lintel_min_z_m", "--lintel-min-z", "Lintel above [m]",
+       "Face seen over the gap above this height over the floor is a "
+       "lintel ...",
+       WALL(lintel_min_z_m), 0.0, 10.0},
+      {"lintel_min_share", "--lintel-min-share", "Lintel share",
+       "... when it covers this share of the gap's columns.",
+       WALL(lintel_min_share), 0.0, 1.0},
+      {"crossing_max_step_m", "--crossing-max-step", "Camera path step [m]",
+       "Camera path steps longer than this are jumps, not walks through a "
+       "gap.",
+       WALL(crossing_max_step_m), 0.0, 20.0},
       {"bridge_thickness_m", "--bridge-thickness", "Bridge thickness [m]",
        "Two measured walls whose thickness differs by more meet end to end "
        "instead of merging.",

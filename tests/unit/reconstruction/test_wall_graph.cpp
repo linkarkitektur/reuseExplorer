@@ -7,6 +7,7 @@
 
 #include "wall_synth.hpp"
 
+#include <reusex/reconstruction/openings.hpp>
 #include <reusex/reconstruction/walls.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -360,4 +361,82 @@ TEST_CASE("JoinWalls_DistinctParallelWalls_AreNotMerged",
   add_floor(wp, 6.05, 0.0, 7.15, 4.0);
   const auto g = graph_of(wp);
   CHECK(g.walls.size() == 4);
+}
+
+namespace {
+
+/// A facade seen from inside (+y) at y = 0 over x 0..8 with a 2.1 m patio
+/// door gap at x 3..5.1 (head 2.1 m); with @p lintel, the face above the
+/// door (2.15..2.5 m) is seen too.
+WallPoints patio_facade(bool lintel) {
+  auto wp = storey_points();
+  add_face(wp, {0, 0}, {3, 0}, {0, 1}, 0.0, 2.5, 0.003, 170);
+  add_face(wp, {5.1, 0}, {8, 0}, {0, 1}, 0.0, 2.5, 0.003, 171);
+  if (lintel)
+    add_face(wp, {3, 0}, {5.1, 0}, {0, 1}, 2.15, 2.5, 0.003, 172);
+  add_floor(wp, 0.0, 0.05, 8.0, 4.0);
+  return wp;
+}
+
+} // namespace
+
+TEST_CASE("JoinWalls_WideDoorwayUnderALintel_IsBridged",
+          "[walls][join_walls]") {
+  // reusex-3e9: house1's patio door leaves a 2.1 m gap, wider than
+  // bridge_gap_m. The face seen over the gap above door height (a lintel)
+  // says the wall runs on over an opening.
+  const auto g = graph_of(patio_facade(true));
+  REQUIRE(g.walls.size() == 1);
+  CHECK_THAT(g.walls[0].s0, WithinAbs(-8.0, 0.05)); // t = -x for d = +y
+  CHECK_THAT(g.walls[0].s1, WithinAbs(0.0, 0.05));
+}
+
+TEST_CASE("JoinWalls_WideGapWithoutEvidence_StaysTwoWalls",
+          "[walls][join_walls]") {
+  const auto g = graph_of(patio_facade(false));
+  CHECK(g.walls.size() == 2);
+}
+
+TEST_CASE("JoinWalls_WideGapTheCameraWalkedThrough_IsBridged",
+          "[walls][join_walls]") {
+  // No lintel seen, but the capture path crosses the face line in the gap:
+  // the operator walked out through a door.
+  auto wp = patio_facade(false);
+  wp.trajectory = {
+      {4.0, 1.5, 1.4}, {4.05, 0.6, 1.4}, {4.1, -0.3, 1.4}, {4.1, -1.2, 1.4}};
+  const auto g = graph_of(wp);
+  CHECK(g.walls.size() == 1);
+  // A path crossing outside the gap is no evidence.
+  wp.trajectory = {{9.0, 1.5, 1.4}, {9.05, 0.6, 1.4}, {9.1, -0.3, 1.4}};
+  CHECK(graph_of(wp).walls.size() == 2);
+}
+
+TEST_CASE("JoinWalls_GapWiderThanADoor_StaysTwoWalls", "[walls][join_walls]") {
+  auto wp = storey_points();
+  add_face(wp, {0, 0}, {3, 0}, {0, 1}, 0.0, 2.5, 0.003, 180);
+  add_face(wp, {6.5, 0}, {9, 0}, {0, 1}, 0.0, 2.5, 0.003, 181);
+  add_face(wp, {3, 0}, {6.5, 0}, {0, 1}, 2.15, 2.5, 0.003, 182);
+  CHECK(graph_of(wp).walls.size() == 2);
+}
+
+TEST_CASE("Openings_PatioDoorInABridgedGap_LandsOnTheWall",
+          "[walls][join_walls]") {
+  // The bridged wall's record hosts the door the openings stage finds in
+  // the gap.
+  const auto wp = patio_facade(true);
+  const auto g = graph_of(wp);
+  REQUIRE(g.walls.size() == 1);
+  reusex::core::StoreyRecord st;
+  st.z_floor = 0.0;
+  st.z_ceiling = 2.5;
+  const auto [walls, joins] = wall_records(g, st);
+  reusex::geometry::OpeningEvidence ev;
+  ev.points = wp.points;
+  ev.points.insert(ev.points.end(), wp.others.begin(), wp.others.end());
+  const auto found = reusex::geometry::detect_openings(ev, walls, st);
+  REQUIRE(found.size() == 1);
+  const auto &o = found[0].record;
+  CHECK(o.kind == "door");
+  const double width = o.s_end - o.s_start;
+  CHECK_THAT(width, WithinAbs(2.1, 0.15));
 }

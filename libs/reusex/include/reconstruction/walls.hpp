@@ -153,6 +153,17 @@ struct WallOptions {
   /// wall (a doorway, a window, an occluded stretch) [m]...
   double bridge_gap_m = 1.5;
   double bridge_offset_m = 0.05;
+  /// A wider gap, up to door_bridge_gap_m, is bridged too when it is an
+  /// opening (reusex-3e9: house1's 2.1 m patio door): the face is seen over
+  /// the gap above lintel_min_z_m over the floor in at least
+  /// lintel_min_share of its cell_m columns (a lintel, a header), or the
+  /// capture path (WallPoints::trajectory) crosses the face line in the gap
+  /// with steps no longer than crossing_max_step_m (someone walked
+  /// through) [m].
+  double door_bridge_gap_m = 3.0;
+  double lintel_min_z_m = 1.8;
+  double lintel_min_share = 0.5;
+  double crossing_max_step_m = 1.5;
   /// ...unless both thicknesses are measured and differ by more than this;
   /// then they meet end to end (a collinear join) [m].
   double bridge_thickness_m = 0.05;
@@ -251,6 +262,9 @@ struct WallPoints {
   /// the valley and external tests (W3.3) look at.
   std::vector<Eigen::Vector3d> others;
   double z_floor = 0.0, z_ceiling = 0.0; ///< the storey's height range
+  /// Camera centres in capture order, level frame (empty: none): evidence
+  /// that a gap between collinear walls is a door (join_walls).
+  std::vector<Eigen::Vector3d> trajectory;
 };
 
 /// One point of a face in its family's coordinates: s = p . t along the axis
@@ -425,6 +439,8 @@ struct WallGraph {
   std::vector<WallSegment> walls;
   std::vector<WallJoin> joins;
   int low_seen = 0; ///< walls flagged WallSegment::low_seen
+  /// Gaps wider than bridge_gap_m bridged as openings (reusex-3e9).
+  int door_bridges = 0;
 };
 
 /// The bounded wall graph of a storey (W3.4):
@@ -437,13 +453,14 @@ struct WallGraph {
 ///     shorter one (duplicate_min_overlap, duplicate_max_offset_m) merge
 ///     into the dominant one (reusex-1wp), checked whenever nothing is left
 ///     to bridge;
-///     bridging: collinear walls with a gap up to bridge_gap_m merge
-///     (a measured thickness wins over an assumed one); when both are
-///     measured and differ by more than bridge_thickness_m they meet in the
-///     middle of the gap instead (a collinear join); a short one-sided wall
-///     seen from the same side as a neighbour and standing within max_gap_m
-///     behind or before it is a recess of that wall and merges into it
-///     (recess_max_length_m);
+///     bridging: collinear walls with a gap up to bridge_gap_m merge (up
+///     to door_bridge_gap_m when a lintel or a camera path crossing says
+///     the gap is an opening, reusex-3e9) (a measured thickness wins over an
+///     assumed one); when both are measured and differ by more than
+///     bridge_thickness_m they meet in the middle of the gap instead (a
+///     collinear join); a short one-sided wall seen from the same side as a
+///     neighbour and standing within max_gap_m behind or before it is a recess
+///     of that wall and merges into it (recess_max_length_m);
 ///  4. corners and tees: non-parallel pairs, nearest crossing first; a
 ///     corner moves both ends to the crossing of the axes, a tee moves one
 ///     end onto the other wall's axis; each end joins at most once and a
@@ -467,13 +484,16 @@ struct WallsResult {
 
 /// Steps 1-4 on one storey: axis_families() from the plane classes,
 /// wall_points() from the clouds, then wall_faces(), pair_faces(),
-/// measure_walls() and join_walls(). Logs (reusex::warn) when a storey
-/// yields no family or no wall, with the numbers.
+/// measure_walls() and join_walls(). @p camera_path (world frame, capture
+/// order; may be empty) is taken into the level frame as
+/// WallPoints::trajectory. Logs (reusex::warn) when a storey yields no
+/// family or no wall, with the numbers.
 WallsResult
 detect_walls(const Cloud &cloud, const CloudL &planes,
              const CloudN &plane_normals,
              const std::vector<core::PlaneClassRecord> &plane_classes,
-             const core::StoreyRecord &storey, const WallOptions &opt = {});
+             const core::StoreyRecord &storey, const WallOptions &opt = {},
+             const std::vector<Eigen::Vector3d> &camera_path = {});
 
 /// The walls and joins of @p graph as core records in @p storey's level
 /// frame. The guid is the stable key W3.5 hashes into a deterministic GUID:
