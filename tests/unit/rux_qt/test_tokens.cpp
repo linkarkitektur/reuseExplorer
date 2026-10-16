@@ -25,6 +25,8 @@
 #include <sstream>
 #include <string>
 
+#include "../../support/source_dir.hpp"
+
 using namespace rux::qt;
 using Catch::Matchers::WithinAbs;
 
@@ -175,8 +177,8 @@ TEST_CASE("ParseTokensCss_RealTokensFile_HasEveryRoleTheQtClientUses",
           "[rux_qt][tokens]") {
   // The real file, so a rename on the design side shows up here rather than
   // as a magenta widget in a screenshot nobody looked at.
-  std::ifstream in(std::string(REUSEX_SOURCE_DIR) +
-                   "/apps/rux/qt/theme/tokens.css");
+  std::ifstream in(reusex::test_support::source_dir() /
+                   "apps/rux/qt/theme/tokens.css");
   REQUIRE(in);
   std::stringstream ss;
   ss << in.rdbuf();
@@ -274,7 +276,7 @@ std::string slurp(const std::filesystem::path &p) {
   return ss.str();
 }
 
-const std::filesystem::path kSource = REUSEX_SOURCE_DIR;
+const std::filesystem::path kSource = reusex::test_support::source_dir();
 
 } // namespace
 

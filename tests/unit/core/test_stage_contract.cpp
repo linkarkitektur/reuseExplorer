@@ -23,6 +23,8 @@
 #include <string>
 #include <vector>
 
+#include "../../support/source_dir.hpp"
+
 using reusex::core::Alignment;
 using reusex::core::ArtifactKind;
 using reusex::core::find_artifact;
@@ -331,7 +333,7 @@ std::map<std::string, DocStage> parse_contracts_doc(const std::string &text) {
 TEST_CASE("ContractsDoc_StageSections_MatchContractTable",
           "[core][contract][docs]") {
   const std::filesystem::path doc =
-      std::filesystem::path(REUSEX_SOURCE_DIR) / "docs" / "CONTRACTS.md";
+      reusex::test_support::source_dir() / "docs" / "CONTRACTS.md";
   REQUIRE(std::filesystem::exists(doc));
 
   std::ifstream in(doc);
