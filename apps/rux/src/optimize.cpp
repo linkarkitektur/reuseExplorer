@@ -5,6 +5,7 @@
 #include "optimize.hpp"
 #include "create/stage_bridge.hpp"
 #include "exit_status.hpp"
+#include "optimize_watch.hpp"
 #include "stage_prerequisites.hpp"
 
 #include <reusex/core/ProjectDB.hpp>
@@ -107,6 +108,8 @@ EXAMPLES:
   rux optimize --min-observations 3 --assoc-distance 0.15
   rux optimize --no-gnc               # Plain Levenberg-Marquardt (no robustness)
   rux optimize --edits edits.yaml --dry-run  # Steer the solve with pose edits
+  rux optimize --edits e.yaml --watch --fast --render qa/h2.png
+                                      # The pose loop: re-solve on every save
 
 WORKFLOW:
   1. rux import rtabmap scan.db       # Import sensor frames
@@ -344,6 +347,91 @@ NOTES:
       ->default_val(opt->edit_inlier_cost)
       ->check(CLI::PositiveNumber);
 
+  // --- The pose loop (reusex-rcv.1.5, optimize_watch.hpp) ---
+  auto *watch = sub->add_flag(
+      "--watch", opt->watch,
+      "Hot-reload loop: solve once, then re-solve from the initial poses on "
+      "every save of --edits, back-project a preview cloud with the "
+      "candidate poses, re-render the drift panels (--render) and print a "
+      "metrics block (pass-to-pass residual, cross-segment residual next to "
+      "a shear indicator, worst segment pairs, segment-ICP suggestions as "
+      "ready-to-paste YAML). Never writes the project unless --apply. "
+      "Ctrl-C stops it");
+  watch->needs("--edits");
+  sub->add_option("--watch-interval", opt->watch_interval_ms,
+                  "--watch: polling interval (ms)")
+      ->default_val(opt->watch_interval_ms)
+      ->check(CLI::Range(50, 60000))
+      ->needs(watch);
+  sub->add_option("--watch-cycles", opt->watch_cycles,
+                  "--watch: stop after this many re-solves (-1 = never)")
+      ->default_val(opt->watch_cycles)
+      ->group("") // hidden: tests and scripted runs
+      ->needs(watch);
+  auto *apply =
+      sub->add_flag("--apply,--write", opt->apply,
+                    "--watch: write every good solve's poses to `transform` "
+                    "(never initial_transform). Default: in memory only")
+          ->needs(watch);
+  sub->add_flag("--fast", opt->fast,
+                "--watch: no plane factors (odometry + loop edges + edits "
+                "only) and no surfels, for second-scale cycles; solve the "
+                "final reference without it")
+      ->needs(watch);
+  sub->add_option("--render", opt->render,
+                  "--watch: image path stem; writes <stem>.[s<storey>.]"
+                  "passes|graph|drift|plan.png (plan cut per storey) and "
+                  "<stem>.front.png on every good solve")
+      ->needs(watch);
+  sub->add_option("--render-width", opt->render_width,
+                  "--watch: image width (px)")
+      ->default_val(opt->render_width)
+      ->check(CLI::Range(64, 8192))
+      ->needs(watch);
+  sub->add_option("--render-height", opt->render_height,
+                  "--watch: image height (px)")
+      ->default_val(opt->render_height)
+      ->check(CLI::Range(64, 8192))
+      ->needs(watch);
+  sub->add_option("--plan", opt->plan,
+                  "--watch: reference plan (solid-model JSON or YAML): "
+                  "through-wall crossings, wall support on the preview "
+                  "cloud, overlay in the images")
+      ->check(CLI::ExistingFile)
+      ->needs(watch);
+  sub->add_option("--json", opt->json,
+                  "--watch: write the metrics block as JSON here, every "
+                  "cycle")
+      ->needs(watch);
+  sub->add_option("--drift-frame-step", opt->drift_frame_step,
+                  "--watch: drift diagnostics and preview use every Nth "
+                  "frame (pinned: the residuals depend on it)")
+      ->default_val(opt->drift_frame_step)
+      ->check(CLI::PositiveNumber)
+      ->needs(watch);
+  sub->add_option("--drift-depth-stride", opt->drift_depth_stride,
+                  "--watch: every Nth depth pixel (pinned, see above)")
+      ->default_val(opt->drift_depth_stride)
+      ->check(CLI::PositiveNumber)
+      ->needs(watch);
+  sub->add_option("--segments", opt->drift_segments,
+                  "--watch: time segments of the drift diagnostics (also "
+                  "the pass colours)")
+      ->default_val(opt->drift_segments)
+      ->check(CLI::PositiveNumber)
+      ->needs(watch);
+  sub->add_option("--suggestions", opt->suggestions,
+                  "--watch: segment-ICP suggestions printed as YAML")
+      ->default_val(opt->suggestions)
+      ->check(CLI::NonNegativeNumber)
+      ->needs(watch);
+  sub->add_option("--shear-flag", opt->shear_flag_m,
+                  "--watch: an untouched node moving more than this (m) vs "
+                  "the no-edit solve counts as shear")
+      ->default_val(opt->shear_flag_m)
+      ->check(CLI::PositiveNumber)
+      ->needs(watch);
+
   // --- Flags that moved to `rux graph discover` (2026-10-13) ---
   // Registered hidden so a stale script gets a pointer instead of
   // "unknown option" (spec D5).
@@ -372,8 +460,10 @@ NOTES:
                   "Minimum confidence threshold")
       ->default_val(opt->confidence_threshold);
 
-  sub->add_flag("--dry-run", opt->dry_run,
-                "Compute and report statistics without writing poses back");
+  auto *dry =
+      sub->add_flag("--dry-run", opt->dry_run,
+                    "Compute and report statistics without writing poses back");
+  apply->excludes(dry);
 
   sub->callback([opt, global_opt, moved, moved_sink]() {
     for (const auto &[flag, o] : *moved)
@@ -381,6 +471,10 @@ NOTES:
         spdlog::error("{}", optimize_moved_flag_message(flag));
         rux::finish(RuxError::INVALID_ARGUMENT);
       }
+    if (opt->watch) {
+      rux::finish(rux::run_optimize_watch(*opt, *global_opt));
+      return;
+    }
     spdlog::trace("calling run_subcommand_optimize");
     if (rux::capture_stage_params("optimize", optimize_stage_parameters(*opt)))
       return;

@@ -27,10 +27,14 @@
 //
 // Deterministic (STANDARDS §6): fixed segment boundaries, no sampling, no
 // randomness, parallel loops write per-index results that are reduced in
-// index order; every output vector is sorted.
+// index order; every output vector is sorted. The same report for any
+// thread count, and with or without a core::FrameDepthCache.
+
+#include "reusex/core/frame_depth_cache.hpp"
 
 #include <Eigen/Core>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -43,7 +47,8 @@ class ProjectDB;
 }
 namespace reusex::core {
 struct SolidModel;
-}
+struct FrameDepthCache;
+} // namespace reusex::core
 
 namespace reusex::slam {
 
@@ -94,8 +99,14 @@ struct DriftDiagnosticsOptions {
   int min_suggestion_points = 500; ///< overlap points needed to suggest
 
   // --- heatmap cells ------------------------------------------------------
-  double cell_m = 0.5;      ///< world x/y cell size
+  double cell_m = 0.5;      ///< x/y cell size (storey level frame, or world)
   int min_cell_points = 50; ///< a cell needs this many residuals
+  /// Key the cells by storey (reusex-98o): each residual point goes to the
+  /// storey whose [z_floor, z_ceiling] band (level frame) is nearest, and is
+  /// binned in that storey's level-frame x/y, so two storeys that overlap in
+  /// plan get separate heatmaps. Storeys come from the plan, else the
+  /// project; with none the cells are world x/y over all heights.
+  bool cells_by_storey = true;
 
   // --- through-wall crossings (needs a plan) ------------------------------
   double crossing_max_step_m = 1.5; ///< longer steps are jumps, not walks
@@ -166,11 +177,27 @@ struct SegmentSuggestion {
   double yaw_deg = 0.0;      ///< its rotation about world z
 };
 
-/// The pass-to-pass residual of one world x/y cell (the drift heatmap).
+/// The pass-to-pass residual of one x/y cell (the drift heatmap).
 struct DriftCell {
-  double x = 0.0, y = 0.0; ///< cell centre, world [m]
+  /// StoreyRecord::idx of the storey the cell belongs to (its level frame
+  /// holds x, y and z_m); -1 = world cell over all heights (no storeys).
+  int storey = -1;
+  double x = 0.0, y = 0.0; ///< cell centre [m], level frame or world
+  /// 10th percentile z of the cell's residual points, same frame: where a
+  /// world cell is drawn (a storey cell is drawn on its storey's floor).
+  double z_m = 0.0;
   double residual_m = 0.0; ///< median
   std::size_t points = 0;
+};
+
+/// A storey the cells are keyed by (DriftReport::storeys).
+struct DriftStorey {
+  int idx = 0;
+  std::string name;
+  double z_floor = 0.0, z_ceiling = 0.0; ///< level frame [m]
+  /// World -> level frame, row-major (StoreyRecord::level_transform).
+  std::array<double, 16> level_transform{1, 0, 0, 0, 0, 1, 0, 0,
+                                         0, 0, 1, 0, 0, 0, 0, 1};
 };
 
 /// One camera step that crosses a reference-plan wall axis.
@@ -228,7 +255,11 @@ struct DriftReport {
   std::vector<SegmentPair> pairs; ///< sorted by (a, b)
   HalvesSummary halves;
   std::vector<SegmentSuggestion> suggestions; ///< by segment
-  std::vector<DriftCell> cells;               ///< by (x, y)
+  /// By (storey, x, y). Keyed by storey when @ref storeys is non-empty.
+  std::vector<DriftCell> cells;
+  double cell_m = 0.5; ///< the cells' size (DriftDiagnosticsOptions::cell_m)
+  /// The storeys the cells are keyed by (by idx); empty = world cells.
+  std::vector<DriftStorey> storeys;
   /// Present when a plan was given.
   std::optional<CrossingSummary> crossings;
   std::vector<DoubledWallStats> doubled_walls; ///< by storey
@@ -245,12 +276,25 @@ struct DriftReport {
 /// @param poses_override optional world poses replacing the stored ones,
 ///        index-aligned with db.sensor_frame_ids() (all frames, before
 ///        frame_step); e.g. a candidate solve that is not written yet.
+/// @param depth_cache optional sampled depth of @p db's frames
+///        (core::cache_frame_depth() with this frame_step, depth_stride and
+///        depth range): the frames are back-projected from it instead of
+///        read from @p db, with a bit-identical report (reusex-rcv.1.17,
+///        `rux optimize --watch` diagnoses every cycle's candidate poses).
 /// @throws std::invalid_argument for a non-empty @p poses_override of the
-///         wrong size, or options out of range (segments < 1, step < 1...).
-DriftReport
-diagnose_drift(const ProjectDB &db, const DriftDiagnosticsOptions &opts = {},
-               const core::SolidModel *plan = nullptr,
-               std::span<const Eigen::Matrix4d> poses_override = {});
+///         wrong size, a @p depth_cache made with other sampling or for
+///         another frame count, or options out of range (segments < 1,
+///         step < 1...).
+DriftReport diagnose_drift(const ProjectDB &db,
+                           const DriftDiagnosticsOptions &opts = {},
+                           const core::SolidModel *plan = nullptr,
+                           std::span<const Eigen::Matrix4d> poses_override = {},
+                           const core::FrameDepthCache *depth_cache = nullptr);
+
+/// The depth sampling diagnose_drift() reads with @p opts (frame_step,
+/// depth_stride, depth range): the core::cache_frame_depth() argument of a
+/// cache it accepts.
+core::DepthSampling drift_depth_sampling(const DriftDiagnosticsOptions &opts);
 
 /// Steps of a camera path (consecutive @p poses, world pose-frame origins)
 /// that cross a wall axis of @p plan, and whether each lies at one of the

@@ -723,7 +723,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | `align` | `360` (content-based panorama pose refinement) | `src/align/` |
 | `edit` | `downsample`, `perturb-poses` (drift synthesis, #338) | `src/edit/` |
 | `analyze` | `quality`, `accuracy`, `solid` (typed model vs a reference plan), `drift` (where the stored poses disagree: pass-to-pass residual vs noise floor, segment pairs + ICP suggestions, through-wall crossings) | `src/analyze/` |
-| `optimize` | — (solves the stored pose graph) | `src/optimize.cpp` |
+| `optimize` | — (solves the stored pose graph; `--edits e.yaml` steers it with pose edits, `--edits e.yaml --watch` is the hot-reload pose loop: in-memory re-solve on every save, preview cloud, drift renders, metrics block with a shear indicator and paste-ready YAML suggestions, `optimize_watch.hpp`, [`docs/guides/pose-reference-authoring.md`](docs/guides/pose-reference-authoring.md)) | `src/optimize.cpp` |
 | `graph` | `init`, `discover`, `prune` (stored pose graph) | `src/graph/` |
 | `register` | — (joint pairwise registration) | `src/register.cpp` |
 | `validate` | — (`--stage`, `--json`) | `src/validate.cpp` |

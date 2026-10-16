@@ -9,6 +9,7 @@
 // (docs/STANDARDS.md §4): a CLI default that references the library's own
 // value cannot silently drift away from it.
 #include <reusex/slam/PlaneGraphOptimizer.hpp>
+#include <reusex/slam/drift_diagnostics.hpp>
 
 #include <CLI/CLI.hpp>
 #include <filesystem>
@@ -109,6 +110,31 @@ struct SubcommandOptimizeOptions {
   int confidence_threshold = 2;
 
   bool dry_run = false;
+
+  // The pose loop (reusex-rcv.1.5, optimize_watch.hpp): `--edits e.yaml
+  // --watch` re-solves on every save of the edits file. In memory unless
+  // --apply; defaults mirror slam::DriftDiagnosticsOptions and
+  // visualize::PreviewCloudOptions.
+  bool watch = false;
+  int watch_interval_ms = 500;
+  int watch_cycles = -1; ///< hidden: stop after N re-solves (-1 = never)
+  bool apply = false;    ///< write `transform` on every good solve
+  bool fast = false;     ///< no plane factors: odometry + loops + edits
+  /// Image path stem: `<stem>.<panel>.png` per panel; empty = no images.
+  fs::path render;
+  int render_width = 1280;
+  int render_height = 960;
+  fs::path plan; ///< reference plan: crossings, wall support, overlay
+  fs::path json; ///< the metrics block as JSON, rewritten every cycle
+  /// The drift numbers depend on the sampling (reusex-74q), so the loop pins
+  /// them and prints them with every block.
+  int drift_frame_step = reusex::slam::DriftDiagnosticsOptions{}.frame_step;
+  int drift_depth_stride = reusex::slam::DriftDiagnosticsOptions{}.depth_stride;
+  int drift_segments = reusex::slam::DriftDiagnosticsOptions{}.segments;
+  int suggestions = 3; ///< ICP suggestions printed as YAML
+  /// Untouched nodes moving more than this vs the no-edit solve count as
+  /// shear (reusex-sb2).
+  double shear_flag_m = 0.05;
 };
 
 /// Every flag -> the optimizer's options (what `rux optimize` runs with).

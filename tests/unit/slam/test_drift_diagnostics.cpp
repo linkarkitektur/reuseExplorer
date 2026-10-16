@@ -12,22 +12,27 @@
 
 #include <reusex/core/ProjectDB.hpp>
 #include <reusex/core/SensorIntrinsics.hpp>
+#include <reusex/core/frame_depth_cache.hpp>
 #include <reusex/core/solid_model.hpp>
 #include <reusex/slam/drift_diagnostics.hpp>
+#include <reusex/slam/frame_pair_icp.hpp>
 
 #include "../../support/temp_path.hpp"
 
 #include <Eigen/Geometry>
+#include <omp.h>
 #include <opencv2/core.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 
 using reusex::test_support::TempPath;
@@ -316,6 +321,66 @@ TEST_CASE("DriftDiagnostics_Deterministic_JsonHasAllFields", "[slam][drift]") {
     CHECK(a.find(key) != std::string::npos);
 }
 
+TEST_CASE("DriftDiagnostics_Cells_AreKeyedByStorey", "[slam][drift]") {
+  // reusex-98o: two storeys stacked in one plan footprint must not share a
+  // heat cell. The box room is split at z = 1.3 into two "storeys" whose
+  // level frame is world shifted by +10 m in x, so a cell's x tells which
+  // frame it was binned in.
+  const TempPath project("drift_storeys");
+  make_project(project.path.string(), kFramesPerPass + kFramesPerPass / 2);
+  {
+    reusex::ProjectDB db(project.path, /*readOnly=*/false);
+    std::vector<reusex::core::StoreyRecord> st(2);
+    for (int i = 0; i < 2; ++i) {
+      st[static_cast<std::size_t>(i)].guid = "storey-" + std::to_string(i);
+      st[static_cast<std::size_t>(i)].idx = i;
+      st[static_cast<std::size_t>(i)].z_floor = i == 0 ? 0.0 : 1.3;
+      st[static_cast<std::size_t>(i)].z_ceiling = i == 0 ? 1.3 : 2.6;
+      st[static_cast<std::size_t>(i)].level_transform[3] = 10.0;
+    }
+    db.save_storeys(st);
+  }
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  auto o = test_options(4);
+  const auto r = slam::diagnose_drift(db, o);
+  REQUIRE(r.storeys.size() == 2);
+  CHECK(r.storeys[1].idx == 1);
+  CHECK(r.storeys[1].z_floor == 1.3);
+  CHECK(r.storeys[1].level_transform[3] == 10.0);
+  REQUIRE(!r.cells.empty());
+  bool seen[2] = {false, false};
+  for (const auto &c : r.cells) {
+    REQUIRE((c.storey == 0 || c.storey == 1));
+    seen[c.storey] = true;
+    // Binned in the level frame: the room spans x in [7.5, 12.5] there.
+    CHECK(c.x > 7.0);
+    CHECK(c.x < 13.0);
+    // The low z of a storey-1 cell is above the split.
+    if (c.storey == 1)
+      CHECK(c.z_m > 1.2);
+  }
+  CHECK(seen[0]);
+  CHECK(seen[1]);
+  CHECK(std::is_sorted(
+      r.cells.begin(), r.cells.end(), [](const auto &a, const auto &b) {
+        return std::tie(a.storey, a.x, a.y) < std::tie(b.storey, b.x, b.y);
+      }));
+  const auto json = slam::drift_report_to_json(r);
+  CHECK(json.find("\"storeys\"") != std::string::npos);
+  CHECK(json.find("\"storey\"") != std::string::npos);
+  CHECK(json.find("\"z_m\"") != std::string::npos);
+
+  // Switched off (or no storeys): world cells over all heights.
+  o.cells_by_storey = false;
+  const auto w = slam::diagnose_drift(db, o);
+  CHECK(w.storeys.empty());
+  REQUIRE(!w.cells.empty());
+  for (const auto &c : w.cells) {
+    CHECK(c.storey == -1);
+    CHECK(c.x < 3.0);
+  }
+}
+
 TEST_CASE("DriftDiagnostics_WallCrossings_OpeningVsWall", "[slam][drift]") {
   reusex::core::SolidModel plan;
   reusex::core::StoreyRecord st;
@@ -369,5 +434,115 @@ TEST_CASE("DriftDiagnostics_WallCrossings_OpeningVsWall", "[slam][drift]") {
 
   CHECK_THROWS_AS(slam::trajectory_wall_crossings(
                       std::span<const std::int64_t>(ids).first(3), poses, plan),
+                  std::invalid_argument);
+}
+
+// ── reusex-rcv.1.17: the pose-independent depth cache ──────────────────────
+
+namespace {
+
+/// A tilted, offset local transform (camera -> pose frame), so the cached
+/// back-projection is checked against a non-trivial one.
+std::array<double, 16> tilted_local() {
+  Eigen::Matrix4d m = Eigen::Matrix4d::Identity();
+  m.topLeftCorner<3, 3>() =
+      Eigen::AngleAxisd(0.3, Eigen::Vector3d(1, 2, 3).normalized())
+          .toRotationMatrix();
+  m.topRightCorner<3, 1>() = Eigen::Vector3d(0.05, -0.02, 0.11);
+  return to_array(m);
+}
+
+} // namespace
+
+TEST_CASE("FrameDepthCache_PoseFramePoints_MatchSlamBitForBit",
+          "[slam][drift][cache]") {
+  const TempPath project("drift_cache_points");
+  {
+    reusex::ProjectDB db(project.path, /*readOnly=*/false);
+    std::mt19937 rng(11);
+    auto k = intrinsics();
+    k.local_transform = tilted_local();
+    const cv::Mat color(kH, kW, CV_8UC3, cv::Scalar(128, 128, 128));
+    const cv::Mat conf(kH, kW, CV_8UC1, cv::Scalar(255));
+    for (int f = 0; f < 4; ++f)
+      db.save_sensor_frame(f + 1, color, render_depth(true_pose(f * 5), rng),
+                           conf, to_array(true_pose(f * 5)), k, f);
+  }
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  for (int stride : {1, 3}) {
+    reusex::slam::FramePairIcpOptions bp;
+    bp.pixel_step = stride;
+    bp.min_depth_m = 0.5f;
+    bp.max_depth_m = 3.0f;
+    for (int id = 1; id <= 4; ++id) {
+      const auto want = slam::frame_pose_frame_points(db, id, bp);
+      const auto frame =
+          reusex::core::cache_depth_frame(db, id, stride, 0.5, 3.0);
+      const auto got = reusex::core::pose_frame_points(frame, 0.5f, 3.0f);
+      INFO("frame " << id << " stride " << stride);
+      REQUIRE(got.size() == want.size());
+      REQUIRE(!got.empty());
+      CHECK(std::memcmp(got.data(), want.data(), got.size() * sizeof(got[0])) ==
+            0);
+    }
+  }
+}
+
+TEST_CASE("DriftDiagnostics_DepthCache_IsBitIdenticalAcrossThreads",
+          "[slam][drift][cache]") {
+  const TempPath project("drift_cache_report");
+  make_project(project.path.string(), kFramesPerPass + kFramesPerPass / 2);
+  reusex::ProjectDB db(project.path, /*readOnly=*/true);
+  auto o = test_options(4);
+  o.frame_step = 2;
+  // Candidate poses (the watch loop's case): the truth, nudged.
+  std::vector<Eigen::Matrix4d> poses;
+  for (int k = 0; k < 2 * kFramesPerPass; ++k) {
+    Eigen::Matrix4d p = true_pose(k);
+    p(0, 3) += 0.001 * k;
+    poses.push_back(p);
+  }
+  const auto cache =
+      reusex::core::cache_frame_depth(db, slam::drift_depth_sampling(o));
+  CHECK(cache.frames.size() == static_cast<std::size_t>(kFramesPerPass));
+  CHECK(cache.samples() > 0);
+  CHECK(cache.bytes() >= cache.samples() * sizeof(reusex::core::DepthSample));
+
+  const auto uncached =
+      slam::drift_report_to_json(slam::diagnose_drift(db, o, nullptr, poses));
+  const int saved = omp_get_max_threads();
+  for (int threads : {1, 3, 8}) {
+    omp_set_num_threads(threads);
+    INFO(threads << " threads");
+    CHECK(slam::drift_report_to_json(
+              slam::diagnose_drift(db, o, nullptr, poses, &cache)) == uncached);
+    CHECK(slam::drift_report_to_json(
+              slam::diagnose_drift(db, o, nullptr, {}, &cache)) ==
+          slam::drift_report_to_json(slam::diagnose_drift(db, o)));
+  }
+  // More segments than the 64 the neighbourhood masks hold: the unmasked
+  // search path, same answers.
+  auto many = o;
+  many.segments = 70;
+  many.min_pair_points = 5;
+  many.min_suggestion_points = 5;
+  const auto many_cache =
+      reusex::core::cache_frame_depth(db, slam::drift_depth_sampling(many));
+  omp_set_num_threads(1);
+  const auto many_1 = slam::drift_report_to_json(
+      slam::diagnose_drift(db, many, nullptr, poses, &many_cache));
+  omp_set_num_threads(8);
+  CHECK(slam::drift_report_to_json(
+            slam::diagnose_drift(db, many, nullptr, poses)) == many_1);
+  omp_set_num_threads(saved);
+
+  // A cache made with other sampling is refused, not silently used.
+  auto other = o;
+  other.depth_stride = 3;
+  CHECK_THROWS_AS(slam::diagnose_drift(db, other, nullptr, poses, &cache),
+                  std::invalid_argument);
+  other = o;
+  other.max_depth_m = 3.5;
+  CHECK_THROWS_AS(slam::diagnose_drift(db, other, nullptr, poses, &cache),
                   std::invalid_argument);
 }

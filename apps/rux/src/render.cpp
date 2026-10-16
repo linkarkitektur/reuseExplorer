@@ -8,7 +8,9 @@
 
 #include <reusex/core/ProjectDB.hpp>
 #include <reusex/core/pose_fingerprint.hpp>
+#include <reusex/io/pose_edits.hpp>
 #include <reusex/io/solid_model_json.hpp>
+#include <reusex/slam/drift_diagnostics.hpp>
 #include <reusex/visualize/qa_sheet.hpp>
 #include <reusex/visualize/render_view.hpp>
 
@@ -17,8 +19,11 @@
 #include <opencv2/imgcodecs.hpp>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <charconv>
+#include <fstream>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -181,6 +186,13 @@ void setup_subcommand_render(CLI::App &app,
   opt->mesh_style = std::string(viz::to_string(defaults.mesh_style));
   opt->deviation_within_m = defaults.deviation.within_m;
   opt->deviation_uncovered_m = defaults.deviation.uncovered_m;
+  opt->drift_good_m = defaults.drift.good_m;
+  opt->drift_bad_m = defaults.drift.bad_m;
+  opt->pass_segments = defaults.passes.segments;
+  opt->pass_depth_stride = defaults.passes.depth_stride;
+  opt->pass_frame_step = defaults.passes.frame_step;
+  opt->pass_voxel_m = defaults.passes.voxel_m;
+  opt->graph_label_every = defaults.graph.label_every;
 
   auto *sub = app.add_subcommand(
       "render", "Render the project to an image file without a display");
@@ -226,6 +238,13 @@ EXAMPLES:
 
   # The whole mesh-QA contact sheet (plus one PNG per panel next to it)
   rux -p scan.rux render --qa -o qa.png
+
+  # Drift loop: passes in colour, the pose graph, the drift heatmap
+  rux -p scan.rux render -o passes.png --view plan --layers passes
+  rux -p scan.rux render -o graph.png --view plan --layers cloud,graph
+  rux -p scan.rux analyze drift -o drift.json
+  rux -p scan.rux render -o heat.png --view plan --layers cloud,drift \
+      --drift-report drift.json
 
 VIEWS:
   top          orthographic view looking down -Z (default). In a closed
@@ -280,6 +299,23 @@ NOTES:
     layers: walls as footprints with their axis, spaces as outlines,
     openings as bars with end ticks; labelled by space name and wall guid.
     In top/plan views it lies on top of everything and is not cut.
+
+DRIFT LOOP (reusex-rcv.1.4):
+  - `passes` back-projects the depth frames (every --pass-depth-stride-th
+    pixel of every --pass-frame-step-th frame) and colours each point by the
+    capture segment of its frame (--pass-segments equal frame counts, the
+    segments `rux analyze drift --segments` uses): a wall the poses doubled
+    shows in two colours. The legend lists each segment's node range.
+  - `graph` draws the camera path (coloured by the same segments), the
+    stored pose-graph edges coloured by their solve residual on the fixed
+    0.5 chi2 scale of the Rediger graph panel (green -> yellow -> vermillion,
+    purple beyond, grey never solved), node ids every --graph-label-every
+    nodes, and the pose edits of --edits as pins. A plan cut keeps the path
+    within a slab around the cut, so a storey's plan shows its own cameras.
+  - `drift` draws the pass-to-pass residual cells of a drift report
+    (--drift-report, else computed here with the defaults -- slow on a big
+    capture) as a heatmap, one per storey; a plan cut shows the storey it
+    cuts, --drift-storey picks one.
 
 WATCH (ground-truth authoring loop, reusex-yf4.2):
   rux -p scan.rux render --plan gt.yaml --watch --qa -o /tmp/gt/qa.png
@@ -354,6 +390,46 @@ WATCH (ground-truth authoring loop, reusex-yf4.2):
                               "(default {:g}; with --qa {:g})",
                               defaults.frame_quantile,
                               viz::QaSheetOptions{}.frame_quantile));
+  sub->add_option("--drift-report", opt->drift_report,
+                  "Drift layer: the JSON of `rux analyze drift -o` (default: "
+                  "run the diagnostics here)")
+      ->check(CLI::ExistingFile);
+  sub->add_option("--drift-storey", opt->drift_storey,
+                  "Drift layer: draw only this storey's cells (default: the "
+                  "storey of the plan cut, else all)");
+  sub->add_option("--drift-good", opt->drift_good_m,
+                  "Drift layer: a cell this good is green [m]")
+      ->default_val(opt->drift_good_m);
+  sub->add_option("--drift-bad", opt->drift_bad_m,
+                  "Drift layer: a cell this bad is vermillion [m]")
+      ->default_val(opt->drift_bad_m);
+  sub->add_option("--pass-segments", opt->pass_segments,
+                  "Passes/graph layers: capture segments (one colour each)")
+      ->default_val(opt->pass_segments)
+      ->check(CLI::PositiveNumber);
+  sub->add_option("--pass-depth-stride", opt->pass_depth_stride,
+                  "Passes layer: sample every Nth depth pixel")
+      ->default_val(opt->pass_depth_stride)
+      ->check(CLI::PositiveNumber);
+  sub->add_option("--pass-frame-step", opt->pass_frame_step,
+                  "Passes layer: use every Nth frame")
+      ->default_val(opt->pass_frame_step)
+      ->check(CLI::PositiveNumber);
+  sub->add_option("--pass-voxel", opt->pass_voxel_m,
+                  "Passes layer: one point per voxel and segment [m] (0 = all)")
+      ->default_val(opt->pass_voxel_m)
+      ->check(CLI::NonNegativeNumber);
+  sub->add_option("--graph-label-every", opt->graph_label_every,
+                  "Graph layer: label every Nth node with its id (0 = none)")
+      ->default_val(opt->graph_label_every)
+      ->check(CLI::NonNegativeNumber);
+  sub->add_flag("--graph-odometry", opt->graph_odometry,
+                "Graph layer: draw odometry edges too");
+  sub->add_flag("--graph-rejected", opt->graph_rejected,
+                "Graph layer: draw rejected edges too");
+  sub->add_option("--edits", opt->edits,
+                  "Graph layer: pose-edits file (YAML/JSON) drawn as pins")
+      ->check(CLI::ExistingFile);
   sub->add_flag("--qa", opt->qa,
                 "Write the mesh-QA contact sheet to --output (and each panel "
                 "next to it)");
@@ -424,6 +500,18 @@ render_to_files(SubcommandRenderOptions const &opt,
     if (!(opt.section_thickness > 0.0))
       throw std::runtime_error("--section-thickness must be positive");
     render_opts.plan = plan;
+    render_opts.drift.good_m = opt.drift_good_m;
+    render_opts.drift.bad_m = opt.drift_bad_m;
+    render_opts.drift.storey = opt.drift_storey;
+    render_opts.passes.segments = opt.pass_segments;
+    render_opts.passes.depth_stride = opt.pass_depth_stride;
+    render_opts.passes.frame_step = opt.pass_frame_step;
+    render_opts.passes.voxel_m = opt.pass_voxel_m;
+    render_opts.graph.label_every = opt.graph_label_every;
+    render_opts.graph.odometry_edges = opt.graph_odometry;
+    render_opts.graph.rejected_edges = opt.graph_rejected;
+    if (!opt.edits.empty())
+      render_opts.edits = reusex::io::read_pose_edits(opt.edits);
 
     reusex::ProjectDB db(global_opt.project_db, /* readOnly */ true);
 
@@ -432,6 +520,32 @@ render_to_files(SubcommandRenderOptions const &opt,
     // built from; warn once up front rather than silently showing stale
     // geometry (reusex-rcv.1.15).
     reusex::core::warn_if_cloud_poses_stale(db, "cloud");
+
+    // ── Drift heatmap: a report file, or the diagnostics run here ─────────
+    const bool wants_drift =
+        std::find(render_opts.layers.begin(), render_opts.layers.end(),
+                  viz::Layer::drift) != render_opts.layers.end();
+    if (wants_drift) {
+      std::string json;
+      if (!opt.drift_report.empty()) {
+        std::ifstream in(opt.drift_report);
+        std::stringstream ss;
+        ss << in.rdbuf();
+        json = ss.str();
+      } else {
+        spdlog::info("No --drift-report: running the drift diagnostics with "
+                     "their defaults (save them with `rux analyze drift -o` "
+                     "to render again quickly)");
+        json = reusex::slam::drift_report_to_json(
+            reusex::slam::diagnose_drift(db, {}, plan ? &*plan : nullptr));
+      }
+      try {
+        render_opts.drift_heatmap = viz::drift_heatmap_from_json(json);
+      } catch (const std::invalid_argument &e) {
+        throw std::runtime_error("--drift-report '" +
+                                 opt.drift_report.string() + "': " + e.what());
+      }
+    }
 
     // ── Camera selection ────────────────────────────────────────────────
     // An explicit --cut-height cuts whatever view was asked for; `--view

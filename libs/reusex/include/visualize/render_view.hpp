@@ -16,11 +16,14 @@
 // Keep this header light (STANDARDS §2): cv::Mat and ProjectDB are
 // forward-declared, and no VTK header is exposed to consumers.
 
+#include "reusex/core/pose_edits.hpp"
 #include "reusex/core/solid_model.hpp"
+#include "reusex/visualize/drift_layers.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -49,7 +52,13 @@ namespace visualize {
 /// point's distance to the stored mesh (RenderOptions::mesh_name), the mesh-QA
 /// view of reusex-8vx: green on the mesh, yellow to vermillion as the distance
 /// grows to DeviationOptions::uncovered_m, reddish purple beyond it (a point
-/// the mesh does not cover).
+/// the mesh does not cover). The drift-loop layers (reusex-rcv.1.4,
+/// visualize/drift_layers.hpp): `passes` draws the depth frames
+/// back-projected on the fly, each point coloured by the time segment of its
+/// frame (a doubled wall shows in two colours); `graph` the camera
+/// trajectory, the stored pose-graph edges coloured by solve residual,
+/// node-id labels and pose-edit pins; `drift` the pass-to-pass residual cells
+/// of a drift report as a heatmap per storey.
 enum class Layer {
   cloud,      ///< `cloud` (PointXYZRGB), stored per-point colour
   labels,     ///< `labels` (Label) — semantic classes
@@ -61,6 +70,9 @@ enum class Layer {
   frustums,   ///< camera frustums of the posed sensor frames (subsampled)
   panoramas,  ///< a marker at each placed 360 panorama
   deviation,  ///< `cloud` coloured by distance to the mesh (mesh QA)
+  passes,     ///< back-projected depth coloured by capture segment
+  graph,      ///< trajectory + pose-graph edges by residual + edit pins
+  drift,      ///< drift-report residual cells as a heatmap (per storey)
   walls,      ///< `walls` table: footprints in plan, boxes in 3D (WP3)
 };
 
@@ -305,8 +317,35 @@ struct RenderOptions {
   DeviationOptions deviation;
 
   /// Draw a colour-ramp legend and the summary numbers into the image when
-  /// the `deviation` layer is drawn.
+  /// the `deviation` layer is drawn, and a legend per drift-loop layer
+  /// (`passes`, `graph`, `drift`).
   bool legend = true;
+
+  /// The `passes` layer's back-projection and segments (also the
+  /// trajectory's colours in the `graph` layer).
+  PreviewCloudOptions passes;
+  /// The `graph` layer.
+  GraphLayerOptions graph;
+  /// The `drift` layer's colour scale and storey filter. With a plan cut and
+  /// no explicit storey, only the storey the cut lies in is drawn.
+  DriftLayerOptions drift;
+  /// The `drift` layer's cells. Required by that layer.
+  std::optional<DriftHeatmap> drift_heatmap;
+  /// Pose edits drawn as pins by the `graph` layer.
+  std::optional<core::PoseEdits> edits;
+  /// World poses replacing the stored ones for `passes` and `graph` (a
+  /// candidate solve), index-aligned with ProjectDB::sensor_frame_ids();
+  /// empty = the stored poses.
+  std::vector<Eigen::Matrix4d> poses;
+  /// The edges the `graph` layer draws, replacing the stored rows (with
+  /// their stored residuals): a candidate solve's residuals
+  /// (reusex-rcv.1.18). nullopt = ProjectDB::list_pose_graph_edges().
+  std::optional<std::vector<GraphLayerEdge>> graph_edges;
+  /// The `passes` layer's points, already back-projected with @ref passes
+  /// and @ref poses (preview_cloud()): a caller that renders several views
+  /// of one candidate solve (`rux optimize --watch`) makes it once. null =
+  /// render_view() back-projects the frames itself.
+  std::shared_ptr<const PreviewCloud> preview;
 
   /// Frame the camera on the [q, 1 - q] quantiles of the cloud (plus the
   /// mesh) rather than on everything drawn; 0 = everything
@@ -339,6 +378,8 @@ struct RenderInfo {
   /// of the second.
   std::optional<DeviationStats> deviation;
   std::optional<DeviationStats> deviation_planar;
+  /// What the drift-loop layers drew (passes, graph, drift).
+  DriftLegendInfo drift_legend;
 };
 
 /// This machine cannot create an offscreen OpenGL context (#313).
