@@ -41,6 +41,14 @@ struct SubcommandSegRoomsOptions {
 
   /// "leiden" (plane visibility graph) or "band" (2D free-space watershed).
   std::string method = reusex::geometry::kDefaultRoomsMethod;
+  /// User passed --method (reusex-icg): only then is "method" sent to the
+  /// stage, so an untouched CLI run and an explicit `--method band` differ
+  /// when the project has no storeys — the stage falls back to Leiden for
+  /// the former but refuses the latter. The Qt dropdown stays freely
+  /// selectable (unlike the #214 pinned fields): it sends "method" whenever
+  /// the selected value differs from the descriptor default, which already
+  /// gives the same "default degrades gracefully" behaviour.
+  bool method_explicit = false;
   /// Band method (reusex::geometry::BandRoomsOptions).
   double band_bottom = reusex::geometry::BandRoomsOptions{}.band_bottom;
   double band_top = reusex::geometry::BandRoomsOptions{}.band_top;

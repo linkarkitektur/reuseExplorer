@@ -134,3 +134,46 @@ TEST_CASE("BandRoomsStage_UnknownMethod_IsRefusedAsInvalidInput",
   CHECK(r.invalid_input);
   CHECK(r.message.find("voronoi") != std::string::npos);
 }
+
+TEST_CASE("RoomsStage_DefaultMethodWithStoreys_UsesBand",
+          "[pipeline][stages][band_rooms][rooms]") {
+  // method defaults to band (reusex-icg); with storeys present it must
+  // behave exactly like an explicit `--method band`.
+  TempPath project("test_rooms_stage_default_with_storeys");
+  ProjectDB db(project.path);
+  seed_two_rooms(db);
+  const auto r = run(db, project, "{}");
+  INFO(r.message);
+  REQUIRE(r.ok);
+  auto rooms = db.point_cloud_label("rooms");
+  REQUIRE(rooms->size() == db.point_cloud_xyzrgb("cloud")->size());
+  std::set<uint32_t> ids;
+  for (const auto &l : rooms->points)
+    if (l.label > 0)
+      ids.insert(l.label);
+  CHECK(ids == std::set<uint32_t>{1, 2});
+}
+
+TEST_CASE("RoomsStage_DefaultMethodNoStoreys_FallsBackToLeidenWithWarning",
+          "[pipeline][stages][band_rooms][rooms]") {
+  // The default resolves to band, but the project has no storeys: this is
+  // the default degrading, not a user asking for band by name, so it must
+  // fall back to Leiden instead of refusing (reusex-icg).
+  TempPath project("test_rooms_stage_default_no_storeys");
+  ProjectDB db(project.path);
+  seed_two_rooms(db, /*with_storeys=*/false);
+  const auto r = run(db, project, "{}");
+  INFO(r.message);
+  REQUIRE(r.ok);
+  CHECK_FALSE(r.invalid_input);
+  CHECK(r.message.find("leiden") != std::string::npos);
+  CHECK(r.message.find("storeys") != std::string::npos);
+  REQUIRE(db.has_point_cloud("rooms"));
+  auto rooms = db.point_cloud_label("rooms");
+  CHECK(rooms->size() == db.point_cloud_xyzrgb("cloud")->size());
+}
+
+// Explicit `--method band` without storeys stays a refusal: see
+// BandRoomsStage_NoStoreys_IsRefusedAsInvalidInput above, unchanged by the
+// default switching to band — an explicit method is an instruction, not a
+// preference, so it never degrades to the fallback below.

@@ -50,6 +50,18 @@ namespace {
 /// the Qt client says so next to the command.
 const std::set<std::string> kNoFlag = {"rooms.propagate_k"};
 
+/// Keys with a CLI flag that the CLI only sends when the user actually
+/// passed it (like the #214 pinned fields), but that are NOT marked
+/// `presence_sensitive` in the shared descriptor table: unlike a pinned
+/// field, the Qt dropdown stays freely selectable (no pin checkbox) and
+/// sends the key whenever its value differs from the default, which already
+/// gives the GUI the same "default degrades gracefully" behaviour. Only the
+/// CLI needs the finer "asked for band by name" vs. "defaulted to band"
+/// distinction (reusex-icg), via a CLI11 `->count()` flag mirroring
+/// `dist_explicit`/`min_explicit` without going through
+/// `ParameterDescriptor::presence_sensitive`.
+const std::set<std::string> kSentOnlyWhenExplicit = {"rooms.method"};
+
 /// Stages known to have no `rux create`/`rux <stage>` CLI mapping at all —
 /// a job-only stage the Qt client cannot offer as "Kopiér som rux-kommando".
 /// Explicit by name (final-review.md finding 4) rather than "whatever
@@ -138,7 +150,7 @@ std::string changed_value(const pl::ParameterDescriptor &d) {
     if (d.key == "solver")
       return "highs";
     if (d.key == "method")
-      return "band";
+      return "leiden"; // differs from the "band" default (reusex-icg)
     if (d.key == "loop_proposal")
       return "spatial";
     return "x_" + d.key;
@@ -275,7 +287,8 @@ TEST_CASE("CliCommandRoundTrip_NoParameters_MeansTheStageDefaults",
       const std::string id = stage + "." + d.key;
       INFO(id);
       if (d.presence_sensitive ||
-          std::holds_alternative<std::monostate>(d.default_value)) {
+          std::holds_alternative<std::monostate>(d.default_value) ||
+          kSentOnlyWhenExplicit.count(id)) {
         CHECK_FALSE(got.params.contains(d.key));
         continue;
       }

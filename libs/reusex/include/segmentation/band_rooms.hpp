@@ -46,9 +46,13 @@ namespace reusex::geometry {
 /// visibility graph (segment_rooms.hpp) or this file's band watershed.
 inline constexpr const char *kRoomsMethodLeiden = "leiden";
 inline constexpr const char *kRoomsMethodBand = "band";
-/// Leiden stays the default until the band method has been benched on more
-/// scans than the three references (reusex-rqn.2).
-inline constexpr const char *kDefaultRoomsMethod = kRoomsMethodLeiden;
+/// Default since the maintainer decision of 2026-10-16 (reusex-icg): band
+/// beats Leiden on room IoU on all three measured references. Band needs the
+/// storeys table; when the default resolves to band and the project has no
+/// storeys rows, the `rooms` stage falls back to Leiden with a warning
+/// instead of refusing (see `run_rooms` in `pipeline/stages.cpp`) — an
+/// *explicit* `--method band` without storeys still refuses, as before.
+inline constexpr const char *kDefaultRoomsMethod = kRoomsMethodBand;
 
 struct BandRoomsOptions {
   /// Grid cell edge [m].

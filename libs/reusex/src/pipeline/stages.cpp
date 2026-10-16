@@ -384,14 +384,37 @@ StageResult run_band_rooms(ProjectDB &db, const StageContext &ctx,
 
 StageResult run_rooms(ProjectDB &db, const StageContext &ctx,
                       const json &params) {
-  const auto method = param_or<std::string>(
+  const bool method_specified =
+      params.contains("method") && !params.at("method").is_null();
+  auto method = param_or<std::string>(
       params, "method", std::string(geometry::kDefaultRoomsMethod));
-  if (method == geometry::kRoomsMethodBand)
-    return run_band_rooms(db, ctx, params);
-  if (method != geometry::kRoomsMethodLeiden)
+  if (method != geometry::kRoomsMethodBand &&
+      method != geometry::kRoomsMethodLeiden)
     return StageResult::invalid(
         fmt::format("unknown rooms method '{}' (expected '{}' or '{}')", method,
                     geometry::kRoomsMethodLeiden, geometry::kRoomsMethodBand));
+
+  // Band is the default (reusex-icg), but it needs the storeys table. An
+  // explicit `--method band` without storeys still refuses below
+  // (run_band_rooms) — that is a user asking for something the project
+  // cannot do yet. The *default* degrades instead of breaking every
+  // `clouds -> planes -> rooms` pipeline that has not run `create storeys`:
+  // fall back to Leiden, with a warning naming the reason and both fixes.
+  std::string fallback_note;
+  if (method == geometry::kRoomsMethodBand && !method_specified &&
+      db.storeys().empty()) {
+    warn("rooms: default method 'band' needs the storeys table, but the "
+         "project has none; falling back to 'leiden' for this run. Run `rux "
+         "create storeys` first to use band, or pass --method leiden to "
+         "silence this warning.");
+    method = geometry::kRoomsMethodLeiden;
+    fallback_note =
+        " (method defaulted to band, but the project has no storeys; fell "
+        "back to leiden - run `rux create storeys` or pass --method leiden)";
+  }
+
+  if (method == geometry::kRoomsMethodBand)
+    return run_band_rooms(db, ctx, params);
 
   geometry::SegmentRoomsOptions options;
   options.grid_size = param_or(params, "grid_size", options.grid_size);
@@ -450,7 +473,7 @@ StageResult run_rooms(ProjectDB &db, const StageContext &ctx,
   // `count` is points written, not rooms found — the room count is in the
   // summary. One cloud was written, so one artifact is reported.
   return StageResult::success(
-      fmt::format("segmented {} room(s)", unique.size()),
+      fmt::format("segmented {} room(s){}", unique.size(), fallback_note),
       {{"cloud", "rooms", static_cast<int64_t>(labels->size())}});
 }
 

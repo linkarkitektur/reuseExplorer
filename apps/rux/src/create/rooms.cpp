@@ -28,36 +28,41 @@ void setup_subcommand_create_rooms(CLI::App &app,
 
   auto opt = std::make_shared<SubcommandSegRoomsOptions>();
   auto *sub =
-      app.add_subcommand("rooms", "Segment rooms (Leiden clustering of the "
-                                  "plane graph, or the 2D band watershed)");
+      app.add_subcommand("rooms", "Segment rooms (2D band watershed by "
+                                  "default, or Leiden clustering of the "
+                                  "plane graph)");
 
   sub->footer(R"(
 DESCRIPTION:
-  Performs room segmentation using the Leiden community detection algorithm
-  based on spatial relationships and visual connections between planar surfaces.
-  Groups planes into distinct room volumes using graph-based clustering.
+  By default (--method band) finds rooms per storey in 2D: wall evidence
+  from vertical points in a clutter-free height band (default 1.2-2.3 m
+  above the storey floor), footprint from floor and ceiling points, exterior
+  flooded from outside, rooms = watershed of the free-space distance
+  transform, cut where the free space is narrower than 2 x --core-radius
+  (doors, gaps between glass-partition mullions). Rooms narrower than about
+  1-1.5 m (WC stalls) join their neighbour. Needs `rux create storeys`; if
+  the project has none, the stage logs a warning and falls back to
+  --method leiden for that run (an explicit --method band without storeys
+  is refused instead).
 
-  --method band instead finds rooms per storey in 2D: wall evidence from
-  vertical points in a clutter-free height band (default 1.2-2.3 m above the
-  storey floor), footprint from floor and ceiling points, exterior flooded
-  from outside, rooms = watershed of the free-space distance transform, cut
-  where the free space is narrower than 2 x --core-radius (doors, gaps
-  between glass-partition mullions). Needs `rux create storeys`. Rooms
-  narrower than about 1-1.5 m (WC stalls) join their neighbour.
+  --method leiden instead performs room segmentation using the Leiden
+  community detection algorithm based on spatial relationships and visual
+  connections between planar surfaces: groups planes into distinct room
+  volumes using graph-based clustering. Does not need storeys.
 
 EXAMPLES:
-  rux create rooms                     # Default settings (resolution=1.0)
-  rux create storeys && rux create rooms --method band
-  rux create rooms -r 1.5              # More clusters (higher resolution)
-  rux create rooms -r 0.5 -g 0.1       # Fewer clusters, finer grid
-  rux create rooms -f 'planes >= 5'    # Filter to specific planes
+  rux create storeys && rux create rooms       # Default settings (band)
+  rux create rooms --method leiden -r 1.5      # More clusters (higher resolution)
+  rux create rooms --method leiden -r 0.5 -g 0.1  # Fewer clusters, finer grid
+  rux create rooms -f 'planes >= 5'            # Filter to specific planes
 
 WORKFLOW:
   1. rux import rtabmap scan.db        # Import sensor data
   2. rux create clouds                 # Reconstruct point clouds
   3. rux create planes                 # Segment planar surfaces
-  4. rux create rooms                  # Segment rooms from planes
-  5. rux create mesh                   # Generate 3D mesh
+  4. rux create storeys                # Detect storeys (band needs this)
+  5. rux create rooms                  # Segment rooms from planes
+  6. rux create mesh                   # Generate 3D mesh
 
 NOTES:
   - Requires 'cloud', 'planes', 'plane_centroids', 'plane_normals' in project
@@ -116,12 +121,15 @@ NOTES:
       ->default_val(opt->merge_affinity)
       ->check(CLI::Range(0.0, 10.0));
 
-  sub->add_option("--method", opt->method,
-                  "Room method: 'leiden' (plane visibility graph) or 'band' "
-                  "(2D free-space watershed from a clutter-free wall band; "
-                  "needs `rux create storeys`).")
-      ->default_val(opt->method)
-      ->check(CLI::IsMember({std::string(reusex::geometry::kRoomsMethodLeiden),
+  auto *method_opt =
+      sub->add_option("--method", opt->method,
+                      "Room method: 'band' (default; 2D free-space watershed "
+                      "from a clutter-free wall band, needs `rux create "
+                      "storeys` or the stage falls back to 'leiden' with a "
+                      "warning) or 'leiden' (plane visibility graph).")
+          ->default_val(opt->method)
+          ->check(
+              CLI::IsMember({std::string(reusex::geometry::kRoomsMethodLeiden),
                              std::string(reusex::geometry::kRoomsMethodBand)}));
 
   sub->add_option("--band-bottom", opt->band_bottom,
@@ -174,8 +182,12 @@ NOTES:
          "  -f 'planes >= 10 && planes <= 20'   # Range filter")
       ->default_val("");
 
-  sub->callback([opt, global_opt]() {
+  sub->callback([opt, global_opt, method_opt]() {
     spdlog::trace("calling seg-rooms subcommand");
+    // Only an explicit --method distinguishes "asked for band" (refused
+    // without storeys) from "defaulted to band" (falls back to leiden,
+    // reusex-icg).
+    opt->method_explicit = method_opt->count() > 0;
     if (rux::capture_stage_params("rooms", rooms_stage_parameters(*opt)))
       return;
     rux::finish(run_subcommand_segment_rooms(*opt, *global_opt));
@@ -202,7 +214,7 @@ std::string rooms_stage_parameters(SubcommandSegRoomsOptions const &opt) {
       .set("min_room_area", opt.min_room_area)
       .set("merge_affinity", opt.merge_affinity)
       .set_if(!opt.filter_expr.empty(), "filter", opt.filter_expr)
-      .set("method", opt.method)
+      .set_if(opt.method_explicit, "method", opt.method)
       .set("band_bottom", opt.band_bottom)
       .set("band_top", opt.band_top)
       .set("band_cell_size", opt.band_cell_size)
