@@ -1268,6 +1268,74 @@ void merge_recess(WallSegment &a, const WallSegment &b) {
   a = out;
 }
 
+/// Are @p a and @p b one wall seen twice (reusex-1wp)? Parallel and
+/// overlapping along the axis by duplicate_min_overlap of the shorter (or
+/// by duplicate_min_overlap_m), and
+///  - both one-sided, seen from the same side, faces within
+///    duplicate_max_offset_m: the nearer face would hide the farther one
+///    over the shared stretch, so drift put one face in two places;
+///  - both measured with overlapping bodies (a crossed pair's body is a
+///    guess, so it never decides);
+///  - one of each, the one-sided face within bridge_offset_m of the
+///    two-sided wall's face on its side (the same face, seen twice).
+/// A one-sided face near but not on a two-sided wall stays apart: the
+/// two-sided wall's pairing may be wrong, and merging would move a
+/// well-placed face onto it. So do two two-sided walls with a gap between
+/// their bodies (a duct) and faces looking at each other (a corridor).
+bool is_duplicate(const WallSegment &a, const WallSegment &b,
+                  const WallOptions &opt) {
+  if (a.family != b.family)
+    return false;
+  const double shorter = std::min(a.s1 - a.s0, b.s1 - b.s0);
+  const double overlap = std::min(a.s1, b.s1) - std::max(a.s0, b.s0);
+  if (!(shorter > 0.0) || !(overlap > 0.0) ||
+      (overlap < opt.duplicate_min_overlap * shorter &&
+       overlap < opt.duplicate_min_overlap_m))
+    return false;
+  const int sa = seen_side(a), sb = seen_side(b);
+  auto face = [](const WallSegment &w, int side) {
+    return side > 0 ? w.face_hi : w.face_lo;
+  };
+  if (sa != 0 && sb != 0)
+    return sa == sb &&
+           std::abs(face(a, sa) - face(b, sb)) <= opt.duplicate_max_offset_m;
+  if (sa == 0 && sb == 0) {
+    if (a.assumed || b.assumed)
+      return false;
+    const auto [alo, ahi] = body(a);
+    const auto [blo, bhi] = body(b);
+    return std::min(ahi, bhi) > std::max(alo, blo);
+  }
+  const WallSegment &one = sa != 0 ? a : b, &two = sa != 0 ? b : a;
+  const int side = sa != 0 ? sa : sb;
+  const double f = face(one, side);
+  const auto [lo, hi] = body(two);
+  return std::abs(f - (side > 0 ? hi : lo)) <= opt.bridge_offset_m;
+}
+
+/// Does @p a dominate its duplicate @p b: measured over assumed, then more
+/// points, then longer?
+bool dominates(const WallSegment &a, const WallSegment &b) {
+  auto rank = [](const WallSegment &w) {
+    return std::make_tuple(!w.assumed, w.points_lo + w.points_hi, w.s1 - w.s0);
+  };
+  return rank(a) >= rank(b);
+}
+
+/// Merge duplicate @p minor into @p dom (reusex-1wp): the dominant wall
+/// keeps its faces over the union of the two extents -- a straight wall
+/// scanned twice with drift, not two walls -- and takes the minor's points
+/// when both were seen from the same side(s).
+void merge_duplicate(WallSegment &dom, const WallSegment &minor) {
+  dom.s0 = std::min(dom.s0, minor.s0);
+  dom.s1 = std::max(dom.s1, minor.s1);
+  if (std::isfinite(dom.face_lo) == std::isfinite(minor.face_lo) &&
+      std::isfinite(dom.face_hi) == std::isfinite(minor.face_hi)) {
+    dom.points_lo += minor.points_lo;
+    dom.points_hi += minor.points_hi;
+  }
+}
+
 /// Merge @p b into @p a (collinear, close along the axis).
 void merge_into(WallSegment &a, const WallSegment &b) {
   const double la = a.s1 - a.s0, lb = b.s1 - b.s0;
@@ -1335,7 +1403,24 @@ WallGraph join_walls(std::vector<WallSegment> walls,
     snap(w, ev, family_pos(w.family), opt);
 
   // 3. Bridge collinear gaps: merge, or join end to end when the measured
-  //    thicknesses disagree. Bounded: every merge removes a wall.
+  //    thicknesses disagree; and merge duplicates -- one wall seen twice
+  //    (drift, a split face) -- into their dominant copy (reusex-1wp). Both
+  //    in one loop: a facade broken by windows only overlaps its drifted
+  //    copy once its pieces are bridged, so duplicates are merged only when
+  //    nothing is left to bridge (and bridging resumes after). Bounded: every
+  //    merge removes a wall.
+  auto merge_duplicates = [&] {
+    for (size_t i = 0; i < walls.size(); ++i)
+      for (size_t j = i + 1; j < walls.size(); ++j)
+        if (is_duplicate(walls[i], walls[j], opt)) {
+          const bool keep_i = dominates(walls[i], walls[j]);
+          const size_t d = keep_i ? i : j, m = keep_i ? j : i;
+          merge_duplicate(walls[d], walls[m]);
+          walls.erase(walls.begin() + static_cast<std::ptrdiff_t>(m));
+          return true;
+        }
+    return false;
+  };
   for (bool merged = true; merged;) {
     merged = false;
     std::stable_sort(walls.begin(), walls.end(),
@@ -1367,6 +1452,8 @@ WallGraph join_walls(std::vector<WallSegment> walls,
         walls.erase(walls.begin() + static_cast<std::ptrdiff_t>(j));
         merged = true;
       }
+    if (!merged)
+      merged = merge_duplicates();
   }
   // Collinear walls of different measured thickness meet in the gap middle.
   std::vector<std::array<bool, 2>> end_used(walls.size(), {false, false});

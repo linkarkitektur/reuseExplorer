@@ -161,6 +161,20 @@ struct WallOptions {
   /// shorter at most this long, are one wall with a recess (window niches
   /// between piers): they merge onto the face with more points [m].
   double recess_max_length_m = 1.0;
+  /// Two parallel walls overlapping along the axis by at least
+  /// duplicate_min_overlap of the shorter one, or by duplicate_min_overlap_m
+  /// (a long facade and its drifted copy that run on past each other), are
+  /// one wall seen twice (pose
+  /// drift, a face split in two, reusex-1wp) when both are one-sided, seen
+  /// from the same side, with faces within duplicate_max_offset_m (a sensor
+  /// cannot see a face through another standing in front of it over the
+  /// same stretch); when both are measured and their bodies overlap; or
+  /// when a one-sided face lies within bridge_offset_m of a two-sided
+  /// wall's face on its side. The dominant one (measured, else more points,
+  /// else longer) is kept over the union of the extents.
+  double duplicate_min_overlap = 0.8;
+  double duplicate_min_overlap_m = 3.0;
+  double duplicate_max_offset_m = 0.45;
   /// Two non-parallel walls whose nearer ends both lie within corner_m of
   /// the crossing of their axes meet there (a corner) [m]...
   double corner_m = 0.9;
@@ -419,7 +433,11 @@ struct WallGraph {
 ///     parallel to its family;
 ///  2. snapping: each seen face moves to the median offset of the raw wall
 ///     points seen from its side within snap_wide_m, then snap_narrow_m;
-///  3. bridging: collinear walls with a gap up to bridge_gap_m merge
+///  3. duplicates: parallel walls standing in one another over most of the
+///     shorter one (duplicate_min_overlap, duplicate_max_offset_m) merge
+///     into the dominant one (reusex-1wp), checked whenever nothing is left
+///     to bridge;
+///     bridging: collinear walls with a gap up to bridge_gap_m merge
 ///     (a measured thickness wins over an assumed one); when both are
 ///     measured and differ by more than bridge_thickness_m they meet in the
 ///     middle of the gap instead (a collinear join); a short one-sided wall

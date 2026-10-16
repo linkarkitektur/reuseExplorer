@@ -176,6 +176,17 @@ const std::vector<WallParameter> &wall_parameter_table() {
        "A short one-sided wall up to this long behind or before a neighbour "
        "is a recess of it.",
        WALL(recess_max_length_m), 0.0, 20.0},
+      {"duplicate_min_overlap", "--duplicate-min-overlap", "Duplicate overlap",
+       "Two parallel walls overlapping by this share of the shorter one ...",
+       WALL(duplicate_min_overlap), 0.0, 1.0},
+      {"duplicate_min_overlap_m", "--duplicate-min-overlap-length",
+       "Duplicate overlap length [m]", "... or by this length ...",
+       WALL(duplicate_min_overlap_m), 0.0, 100.0},
+      {"duplicate_max_offset_m", "--duplicate-max-offset",
+       "Duplicate offset [m]",
+       "... whose faces seen from one side lie within this are one wall seen "
+       "twice (drift).",
+       WALL(duplicate_max_offset_m), 0.0, 2.0},
       {"corner_m", "--corner", "Corner reach [m]",
        "Two walls whose nearer ends lie within this of their crossing meet "
        "there.",

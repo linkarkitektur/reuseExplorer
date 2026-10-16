@@ -306,3 +306,58 @@ TEST_CASE("JoinWalls_OneSidedWall_SnapsToItsFaceNotIntoTheRoom",
   CHECK_THAT(w->axis_offset, WithinAbs(1.0, 0.01));
   CHECK_THAT(w->face_hi, WithinAbs(1.0, 0.01));
 }
+
+TEST_CASE("JoinWalls_DriftDoubledFacade_MergesIntoTheDominantFace",
+          "[walls][join_walls]") {
+  // reusex-1wp: a 10 m facade seen from inside (+x) at x = 1.0, and the same
+  // facade scanned again 28 cm further in (drift) over y 3..7. A sensor
+  // cannot see a face through another one standing in front of it over the
+  // same stretch, so both are one wall: the face with more points wins.
+  auto wp = storey_points();
+  add_face(wp, {1.0, 0}, {1.0, 10}, {1, 0}, 0.0, 2.5, 0.003, 140);
+  add_face(wp, {1.28, 3}, {1.28, 7}, {1, 0}, 0.0, 2.5, 0.003, 141);
+  add_floor(wp, 1.3, 0.0, 5.0, 10.0);
+  const auto g = graph_of(wp);
+  REQUIRE(g.walls.size() == 1);
+  CHECK_THAT(g.walls[0].face_hi, WithinAbs(1.0, 0.01));
+  CHECK_THAT(g.walls[0].s0, WithinAbs(0.0, 0.05));
+  CHECK_THAT(g.walls[0].s1, WithinAbs(10.0, 0.05));
+}
+
+TEST_CASE("JoinWalls_DriftDoubledPartition_MergesIntoOneWall",
+          "[walls][join_walls]") {
+  // A 0.12 m partition at x = 3 (two faces) and its drift copy 8 cm off
+  // over half its length: their bodies overlap -- one wall.
+  auto wp = storey_points();
+  add_face(wp, {2.94, 0}, {2.94, 6}, {-1, 0}, 0.0, 2.5, 0.003, 150);
+  add_face(wp, {3.06, 0}, {3.06, 6}, {1, 0}, 0.0, 2.5, 0.003, 151);
+  add_face(wp, {3.02, 1}, {3.02, 4}, {-1, 0}, 0.0, 2.5, 0.003, 152);
+  add_face(wp, {3.14, 1}, {3.14, 4}, {1, 0}, 0.0, 2.5, 0.003, 153);
+  add_floor(wp, 0.0, 0.0, 2.9, 6.0);
+  add_floor(wp, 3.2, 0.0, 6.0, 6.0);
+  const auto g = graph_of(wp);
+  REQUIRE(g.walls.size() == 1);
+  CHECK_FALSE(g.walls[0].assumed);
+  CHECK_THAT(g.walls[0].axis_offset,
+             WithinAbs(3.0, 0.03)); // snapped over both copies
+}
+
+TEST_CASE("JoinWalls_DistinctParallelWalls_AreNotMerged",
+          "[walls][join_walls]") {
+  // Two partitions 0.5 m apart (a duct between them, both seen inside it)
+  // and a corridor: faces looking at each other bound a space, not a wall.
+  auto wp = storey_points();
+  add_face(wp, {2.95, 0}, {2.95, 4}, {-1, 0}, 0.0, 2.5, 0.003, 160);
+  add_face(wp, {3.05, 0}, {3.05, 4}, {1, 0}, 0.0, 2.5, 0.003, 161);
+  add_face(wp, {3.55, 0}, {3.55, 4}, {-1, 0}, 0.0, 2.5, 0.003, 162);
+  add_face(wp, {3.65, 0}, {3.65, 4}, {1, 0}, 0.0, 2.5, 0.003, 163);
+  // A corridor 1.2 m wide: two one-sided walls facing each other.
+  add_face(wp, {6.0, 0}, {6.0, 4}, {1, 0}, 0.0, 2.5, 0.003, 164);
+  add_face(wp, {7.2, 0}, {7.2, 4}, {-1, 0}, 0.0, 2.5, 0.003, 165);
+  add_floor(wp, 0.0, 0.0, 2.9, 4.0);
+  add_floor(wp, 3.1, 0.0, 3.5, 4.0);
+  add_floor(wp, 3.7, 0.0, 5.9, 4.0);
+  add_floor(wp, 6.05, 0.0, 7.15, 4.0);
+  const auto g = graph_of(wp);
+  CHECK(g.walls.size() == 4);
+}
