@@ -382,6 +382,20 @@ const std::vector<ParameterDescriptor> &optimize_parameters() {
               "GNC down-weights outlier plane associations; disabling it is "
               "faster but less robust.",
               false),
+      boolean("manhattan", "Manhattan prior",
+              "Tie wall planes to two dominant horizontal axes and floors / "
+              "ceilings to vertical, so rotational drift between rooms is "
+              "corrected without loop closure (reusex-rqn.1).",
+              false),
+      num("manhattan_sigma_deg", "Manhattan sigma [deg]",
+          "Std of a Manhattan factor's normal residual.", 1.0f, 0.01, 10.0),
+      num("manhattan_max_angle_deg", "Manhattan gate [deg]",
+          "Walls further than this from the grid are left alone.", 15.0f, 0.5,
+          45.0),
+      num("manhattan_level_max_angle_deg", "Manhattan level gate [deg]",
+          "Floors/ceilings within this of horizontal are levelled; keep it "
+          "below real ceiling slopes.",
+          4.0f, 0.1, 45.0),
       boolean("dry_run", "Dry run",
               "Compute and report statistics without writing optimised poses "
               "back to the project.",

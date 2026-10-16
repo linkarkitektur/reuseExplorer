@@ -67,6 +67,9 @@ video_ids="41069048 41069050 41069051"
 #               evidence on its own; this row is what tests it against
 #               absolute GT.
 #   opt-register  the plane graph first, then the local polish.
+#   manhattan   the shipped default plus the Manhattan-world prior
+#               (--manhattan, reusex-rqn.1): wall landmarks tied to a jointly
+#               estimated horizontal grid, floors/ceilings to up.
 configs="none optimize noplane xfeat"
 
 while getopts "d:o:s:S:e:v:c:" o; do
@@ -174,6 +177,7 @@ for vid in $video_ids; do
           "$rux" -v -p "$work" graph discover --no-loop-closure --loop-edges "$edges"
           "$rux" -v -p "$work" optimize
           ;;
+        manhattan)    "$rux" -v -p "$work" optimize --manhattan ;;
         register)     "$rux" -v -p "$work" register ;;
         opt-register) "$rux" -v -p "$work" optimize
                       "$rux" -v -p "$work" register ;;

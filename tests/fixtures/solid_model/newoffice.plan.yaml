@@ -721,8 +721,30 @@ openings:
   - {guid: "o-ew-win-03", wall: "x-ewing-west", kind: window, s_start: 4.706, s_end: 5.806, z_sill: 0.15, z_head: 2.15, is_external: true, source: manual, locked: true, metadata: {note: "rectangular, low sill (z 0.15-2.15 from the elevation)"}}
   - {guid: "o-ew-win-04", wall: "x-ewing-west", kind: window, s_start: 2.806, s_end: 3.906, z_sill: 0.15, z_head: 2.15, is_external: true, source: manual, locked: true, metadata: {note: "rectangular, low sill (z 0.15-2.15 from the elevation)"}}
   - {guid: "o-ew-win-05", wall: "x-ewing-west", kind: window, s_start: 1.006, s_end: 2.056, z_sill: 0.15, z_head: 2.15, is_external: true, source: manual, locked: true, metadata: {note: "rectangular, low sill (z 0.15-2.15 from the elevation)"}}
-  - {guid: "o-mr2-door", wall: "p-mr2-lobby", kind: door, s_start: 0.33, s_end: 1.23, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "Meeting room 2 door: gap in the wall points below 1.9 m; head height assumed"}}
-  - {guid: "o-mr1-door", wall: "p-mr1-glass", kind: door, s_start: 0.81, s_end: 1.71, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "Meeting room 1 glass door: between the mullion posts at a=-1.5 and -0.6; approximate, head height assumed"}}
+  # DECISION (reusex-a51): moved +0.40 m along the wall (the "edge, maybe
+  # 0.3-0.4 m off" flagged in docs/research/solid-model-ideas-lab.md
+  # Sec4.4, whose reported crossing cluster is s = 1.56-1.67). The camera
+  # trajectory crosses p-mr2-lobby 6 times, independently re-derived here
+  # from sensor_frames.transform: s = 1.108/1.181 (frames 3335-3336,
+  # 3380-3381), 1.378 (3831-3832) and 1.563/1.612/1.671 (frames 11-12,
+  # 116-117, 3818-3819) -- not at the old s = 0.33-1.23 (only the
+  # 0.73-1.0 sliver of which overlaps any crossing). New range brackets
+  # all six crossings with ~0.03-0.1 m margin. Old: s_start 0.33, s_end 1.23.
+  - {guid: "o-mr2-door", wall: "p-mr2-lobby", kind: door, s_start: 0.73, s_end: 1.7, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "Meeting room 2 door: gap in the wall points below 1.9 m; head height assumed; position re-measured against the capture trajectory (reusex-a51), moved +0.40 m"}}
+  # DECISION (reusex-a51): moved to the NORTH end of the wall (near its
+  # corner with p-mr1-office), not the south end. The camera trajectory
+  # crosses p-mr1-glass 6 times at s = 3.29-4.11 (frames 173-174, 293-294,
+  # 3269-3270, 3313-3314, 3805-3806, 3812-3813; independently re-derived
+  # from sensor_frames.transform, matching the s = 3.25-4.11 reported in
+  # docs/research/solid-model-ideas-lab.md Sec4.4), not at the old s =
+  # 0.81-1.71 near the SOUTH end (no overlap with the crossings at all).
+  # Frames 170/290/3266 show the operator passing the open glass leaf;
+  # frame 3805 looks straight through the opening into the open office
+  # (someone seated at a desk beyond it) -- consistent with a door at the
+  # p-mr1-office corner, not at the lobby corner. The span narrows
+  # slightly to 0.86 m (was 0.90 m) to stay inside the wall, which ends
+  # at s = 4.39. Old: s_start 0.81, s_end 1.71.
+  - {guid: "o-mr1-door", wall: "p-mr1-glass", kind: door, s_start: 3.25, s_end: 4.11, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "Meeting room 1 glass door: between the mullion posts; approximate, head height assumed; position re-measured against the capture trajectory (reusex-a51), moved to the north end near p-mr1-office"}}
   - {guid: "o-office-opening", wall: "p-corridor-east", kind: opening, s_start: 7.3, s_end: 9.05, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "Closed office: no wall points between b=2.65 and 4.4 below 1.9 m; a glazed front with a door (frame 792); head height assumed"}}
   - {guid: "o-bath-door", wall: "p-corridor-east", kind: door, s_start: 2.4, s_end: 3.2, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "Bathroom door: gaps on the wall axis at b=-2.2..-1.5, the open leaf lies against the room face (frames 870, 3178); approximate, head height assumed"}}
   - {guid: "o-printer-door", wall: "p-corridor-east", kind: door, s_start: 1.2, s_end: 1.75, z_sill: 0.0, z_head: 2.05, is_external: false, source: manual, locked: true, metadata: {note: "Printer-server room door (frames 873, 1615); head height assumed"}}
