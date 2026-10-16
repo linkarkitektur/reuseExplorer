@@ -18,6 +18,7 @@ struct SubcommandCreateWallsDevOptions {
   reusex::geometry::WallOptions walls{};
   std::filesystem::path output;    ///< solid-model JSON; empty = none
   std::filesystem::path reference; ///< reference plan to compare families to
+  bool faces_only = false;         ///< write the W3.2 faces, not walls
 };
 
 void setup_subcommand_create_walls_dev(CLI::App &app,

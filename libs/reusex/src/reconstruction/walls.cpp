@@ -17,6 +17,8 @@
 #include <limits>
 #include <map>
 #include <numbers>
+#include <optional>
+#include <random>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -635,6 +637,508 @@ std::vector<WallFace> wall_faces(const WallPoints &wp,
            std::tie(b.family, b.offset, b.s0, b.side);
   });
   return faces;
+}
+
+namespace {
+
+/// Cell medians of a face's samples with s in [s0, s1]: (z, o) per cell
+/// with at least WallOptions::min_cell_points samples, in cell order.
+std::vector<Eigen::Vector2d> cell_medians(const WallFace &f, double s0,
+                                          double s1, const WallOptions &opt) {
+  std::map<FaceCell, std::pair<std::vector<double>, std::vector<double>>> by;
+  for (const auto &q : f.samples) {
+    if (q.s < s0 || q.s > s1)
+      continue;
+    auto &c = by[{cell_index(q.s, opt.cell_m), cell_index(q.z, opt.cell_m)}];
+    c.first.push_back(q.z);
+    c.second.push_back(q.o);
+  }
+  std::vector<Eigen::Vector2d> out;
+  for (auto &[key, zo] : by)
+    if (static_cast<int>(zo.first.size()) >= opt.min_cell_points)
+      out.emplace_back(median_of(std::move(zo.first)),
+                       median_of(std::move(zo.second)));
+  return out;
+}
+
+struct LineFit {
+  double a = 0.0, b = 0.0; ///< o = a + b z
+  bool ok = false;
+  [[nodiscard]] double at(double z) const { return a + b * z; }
+};
+
+/// Ordinary least squares o = a + b z over @p pts (z, o); slope 0 when the
+/// heights do not spread.
+LineFit ols(const std::vector<Eigen::Vector2d> &pts) {
+  LineFit f;
+  if (pts.empty())
+    return f;
+  double mz = 0.0, mo = 0.0;
+  for (const auto &p : pts) {
+    mz += p.x();
+    mo += p.y();
+  }
+  mz /= static_cast<double>(pts.size());
+  mo /= static_cast<double>(pts.size());
+  double szz = 0.0, szo = 0.0;
+  for (const auto &p : pts) {
+    szz += (p.x() - mz) * (p.x() - mz);
+    szo += (p.x() - mz) * (p.y() - mo);
+  }
+  f.b = szz > kEpsilonLengthM ? szo / szz : 0.0;
+  f.a = mo - f.b * mz;
+  f.ok = true;
+  return f;
+}
+
+/// Theil-Sen fit of o(z), then the cells within outlier_mad_k robust
+/// sigmas of it (the furniture or lining cells a face also caught).
+std::vector<Eigen::Vector2d> robust_inliers(std::vector<Eigen::Vector2d> pts,
+                                            const WallOptions &opt) {
+  if (pts.size() < 3)
+    return pts;
+  std::vector<double> slopes;
+  for (size_t i = 0; i < pts.size(); ++i)
+    for (size_t j = i + 1; j < pts.size(); ++j) {
+      const double dz = pts[j].x() - pts[i].x();
+      if (std::abs(dz) > kEpsilonLengthM)
+        slopes.push_back((pts[j].y() - pts[i].y()) / dz);
+    }
+  const double b = slopes.empty() ? 0.0 : median_of(std::move(slopes));
+  std::vector<double> icpt;
+  icpt.reserve(pts.size());
+  for (const auto &p : pts)
+    icpt.push_back(p.y() - b * p.x());
+  const double a = median_of(icpt);
+  std::vector<double> absres;
+  absres.reserve(pts.size());
+  for (const auto &p : pts)
+    absres.push_back(std::abs(p.y() - a - b * p.x()));
+  constexpr double kMadToSigma = 1.4826;
+  const double sigma =
+      std::max(kMadToSigma * median_of(absres), opt.min_robust_sigma_m);
+  std::vector<Eigen::Vector2d> kept;
+  for (const auto &p : pts)
+    if (std::abs(p.y() - a - b * p.x()) <= opt.outlier_sigma_k * sigma)
+      kept.push_back(p);
+  return kept;
+}
+
+/// Nearest-rank quantile of a sorted vector.
+double quantile_sorted(const std::vector<double> &v, double q) {
+  if (v.empty())
+    return std::numeric_limits<double>::quiet_NaN();
+  const auto rank = static_cast<size_t>(
+      std::clamp(std::ceil(q * static_cast<double>(v.size())), 1.0,
+                 static_cast<double>(v.size())));
+  return v[rank - 1];
+}
+
+} // namespace
+
+ThicknessFit measure_thickness(const WallFace &lo, const WallFace &hi,
+                               double s0, double s1, const WallOptions &opt) {
+  ThicknessFit r;
+  const auto a = robust_inliers(cell_medians(lo, s0, s1, opt), opt);
+  const auto b = robust_inliers(cell_medians(hi, s0, s1, opt), opt);
+  r.cells_lo = static_cast<int>(a.size());
+  r.cells_hi = static_cast<int>(b.size());
+  if (a.size() < 2 || b.size() < 2)
+    return r;
+
+  // Mid-height of the heights both faces were seen at (of either, when
+  // they do not overlap).
+  auto zrange = [](const std::vector<Eigen::Vector2d> &v) {
+    double lo_z = std::numeric_limits<double>::infinity(), hi_z = -lo_z;
+    for (const auto &p : v) {
+      lo_z = std::min(lo_z, p.x());
+      hi_z = std::max(hi_z, p.x());
+    }
+    return std::pair{lo_z, hi_z};
+  };
+  const auto [alo, ahi] = zrange(a);
+  const auto [blo, bhi] = zrange(b);
+  const double zlo = std::max(alo, blo), zhi = std::min(ahi, bhi);
+  r.z_mid = zlo <= zhi ? 0.5 * (zlo + zhi)
+                       : 0.5 * (std::min(alo, blo) + std::max(ahi, bhi));
+
+  const LineFit fa = ols(a), fb = ols(b);
+  r.offset_lo = fa.at(r.z_mid);
+  r.offset_hi = fb.at(r.z_mid);
+  r.thickness = r.offset_hi - r.offset_lo;
+  r.lean_deg = std::atan(0.5 * (fa.b + fb.b)) * kRadToDeg;
+
+  // Bootstrap over cells, seeded (STANDARDS §6). Draws use the raw engine
+  // output so the sequence is the same on every standard library.
+  std::mt19937_64 rng(opt.seed);
+  std::vector<double> boot;
+  boot.reserve(static_cast<size_t>(std::max(opt.bootstrap_samples, 0)));
+  std::vector<Eigen::Vector2d> ra(a.size()), rb(b.size());
+  for (int k = 0; k < opt.bootstrap_samples; ++k) {
+    for (auto &p : ra)
+      p = a[static_cast<size_t>(rng() % a.size())];
+    for (auto &p : rb)
+      p = b[static_cast<size_t>(rng() % b.size())];
+    boot.push_back(ols(rb).at(r.z_mid) - ols(ra).at(r.z_mid));
+  }
+  std::sort(boot.begin(), boot.end());
+  const double tail = 0.5 * (1.0 - opt.ci_level);
+  r.ci_lo = boot.empty() ? r.thickness : quantile_sorted(boot, tail);
+  r.ci_hi = boot.empty() ? r.thickness : quantile_sorted(boot, 1.0 - tail);
+  r.ok = true;
+  return r;
+}
+
+namespace {
+
+using Interval = std::pair<double, double>;
+
+/// @p free minus [s0, s1].
+std::vector<Interval> subtract(const std::vector<Interval> &free, double s0,
+                               double s1) {
+  std::vector<Interval> out;
+  for (const auto &[a, b] : free) {
+    if (b <= s0 || a >= s1) {
+      out.emplace_back(a, b);
+      continue;
+    }
+    if (a < s0)
+      out.emplace_back(a, s0);
+    if (b > s1)
+      out.emplace_back(s1, b);
+  }
+  return out;
+}
+
+/// The longest piece of the intersection of two interval lists.
+std::optional<Interval> longest_common(const std::vector<Interval> &x,
+                                       const std::vector<Interval> &y) {
+  std::optional<Interval> best;
+  for (const auto &[a0, a1] : x)
+    for (const auto &[b0, b1] : y) {
+      const double lo = std::max(a0, b0), hi = std::min(a1, b1);
+      if (hi > lo && (!best || hi - lo > best->second - best->first))
+        best = Interval{lo, hi};
+    }
+  return best;
+}
+
+/// Raw point counts per offset bin of every point (wall or not) of family
+/// position @p fam within s in [s0, s1] and offsets in [o0, o1].
+std::map<long, int> raw_counts(const EvidenceIndex &ev, size_t fam, double s0,
+                               double s1, double o0, double o1,
+                               const WallOptions &opt) {
+  std::map<long, int> c;
+  for (const auto *v : {&ev.wall[fam], &ev.others[fam]}) {
+    const auto [lo, hi] = offset_range(*v, o0, o1);
+    for (auto it = lo; it != hi; ++it)
+      if (it->s >= s0 && it->s <= s1)
+        ++c[static_cast<long>(std::floor(it->o / opt.bin_m))];
+  }
+  return c;
+}
+
+/// Valley share between two faces: the emptiest bin between them over the
+/// weaker face's peak bin, on raw counts of all the storey's points.
+double valley_share(const EvidenceIndex &ev, size_t fam, double olo, double ohi,
+                    double s0, double s1, const WallOptions &opt) {
+  const double bin = opt.bin_m;
+  const auto c = raw_counts(ev, fam, s0, s1, olo - 2 * bin, ohi + 2 * bin, opt);
+  auto count = [&](long k) {
+    const auto it = c.find(k);
+    return it == c.end() ? 0 : it->second;
+  };
+  auto peak = [&](double o) {
+    const long k = static_cast<long>(std::floor(o / bin));
+    return std::max({count(k - 1), count(k), count(k + 1)});
+  };
+  const double weaker = std::min(peak(olo), peak(ohi));
+  if (weaker <= 0)
+    return 1.0;
+  const double margin = std::min(opt.face_window_m, 0.25 * (ohi - olo));
+  int valley = std::numeric_limits<int>::max();
+  for (long k = static_cast<long>(std::floor((olo + margin) / bin));
+       k <= static_cast<long>(std::floor((ohi - margin) / bin)); ++k) {
+    const double centre = (static_cast<double>(k) + 0.5) * bin;
+    if (centre <= olo + margin || centre >= ohi - margin)
+      continue;
+    valley = std::min(valley, count(k));
+  }
+  if (valley == std::numeric_limits<int>::max())
+    return 0.0; // no bin between: nothing contradicts a void
+  return static_cast<double>(valley) / weaker;
+}
+
+/// Cells (s, z) seen on both faces over those seen on either, over [s0, s1].
+double co_visibility(const WallFace &lo, const WallFace &hi, double s0,
+                     double s1, const WallOptions &opt) {
+  auto in_range = [&](const FaceCell &c) {
+    const double centre = (static_cast<double>(c.first) + 0.5) * opt.cell_m;
+    return centre >= s0 && centre <= s1;
+  };
+  int both = 0, either = 0;
+  for (const auto &[c, n] : lo.cells) {
+    if (!in_range(c))
+      continue;
+    ++either;
+    if (hi.cells.count(c))
+      ++both;
+  }
+  for (const auto &[c, n] : hi.cells)
+    if (in_range(c) && !lo.cells.count(c))
+      ++either;
+  return either > 0 ? static_cast<double>(both) / either : 0.0;
+}
+
+} // namespace
+
+FacePairing pair_faces(const std::vector<WallFace> &faces, const WallPoints &wp,
+                       const std::vector<AxisFamily> &families,
+                       const WallOptions &opt) {
+  FacePairing out;
+  if (faces.empty())
+    return out;
+  const EvidenceIndex ev = index_evidence(wp, families, opt, true);
+  std::map<int, size_t> pos; // AxisFamily::index -> position
+  for (size_t f = 0; f < families.size(); ++f)
+    pos[families[f].index] = f;
+
+  struct Candidate {
+    size_t lo, hi;
+    double overlap, gap;
+  };
+  std::vector<Candidate> cand;
+  for (size_t i = 0; i < faces.size(); ++i)
+    for (size_t j = 0; j < faces.size(); ++j) {
+      const auto &a = faces[i], &b = faces[j];
+      if (i == j || a.family != b.family || !(a.offset < b.offset) ||
+          !pos.count(a.family))
+        continue;
+      // Both faces' outward normals point away from the wall: the lower
+      // face is seen from -d, the upper from +d. Faces the other way round
+      // look at each other: a room -- unless they are too close for a
+      // sensor to have seen into the gap between them, which only drift
+      // between the two rooms' scans explains ("crossed").
+      const double gap = b.offset - a.offset;
+      const bool crossed = a.side == 1 && b.side == -1;
+      if (crossed) {
+        if (gap > opt.max_crossed_gap_m)
+          continue;
+      } else {
+        if ((a.side != 0 && a.side != -1) || (b.side != 0 && b.side != 1))
+          continue;
+        if (gap < opt.min_gap_m || gap > opt.max_gap_m)
+          continue;
+      }
+      const double overlap = std::min(a.s1, b.s1) - std::max(a.s0, b.s0);
+      if (overlap < opt.min_shared_m)
+        continue;
+      cand.push_back({i, j, overlap, gap});
+    }
+  std::stable_sort(cand.begin(), cand.end(),
+                   [](const Candidate &x, const Candidate &y) {
+                     if (x.overlap != y.overlap)
+                       return x.overlap > y.overlap;
+                     if (x.gap != y.gap)
+                       return x.gap < y.gap;
+                     return std::tie(x.lo, x.hi) < std::tie(y.lo, y.hi);
+                   });
+
+  std::vector<std::vector<Interval>> free(faces.size());
+  for (size_t i = 0; i < faces.size(); ++i)
+    free[i] = {{faces[i].s0, faces[i].s1}};
+  for (const auto &c : cand) {
+    const auto piece = longest_common(free[c.lo], free[c.hi]);
+    if (!piece || piece->second - piece->first < opt.min_shared_m)
+      continue;
+    const auto &a = faces[c.lo], &b = faces[c.hi];
+    FacePair p;
+    p.face_lo = static_cast<int>(c.lo);
+    p.face_hi = static_cast<int>(c.hi);
+    p.s0 = piece->first;
+    p.s1 = piece->second;
+    p.gap = c.gap;
+    p.crossed = a.side == 1 && b.side == -1;
+    p.valley_share = p.crossed ? 0.0
+                               : valley_share(ev, pos.at(a.family), a.offset,
+                                              b.offset, p.s0, p.s1, opt);
+    p.co_visibility = co_visibility(a, b, p.s0, p.s1, opt);
+    if (p.valley_share > opt.max_valley_share ||
+        p.co_visibility < opt.min_co_visibility) {
+      ++out.rejected;
+      continue;
+    }
+    free[c.lo] = subtract(free[c.lo], p.s0, p.s1);
+    free[c.hi] = subtract(free[c.hi], p.s0, p.s1);
+    out.pairs.push_back(p);
+  }
+
+  // What no pair took: one-sided stretches, trimmed to their points.
+  for (size_t i = 0; i < faces.size(); ++i)
+    for (const auto &[s0, s1] : free[i]) {
+      double lo = std::numeric_limits<double>::infinity(), hi = -lo;
+      int n = 0;
+      for (const auto &q : faces[i].samples)
+        if (q.s >= s0 && q.s <= s1) {
+          lo = std::min(lo, q.s);
+          hi = std::max(hi, q.s);
+          ++n;
+        }
+      if (n >= opt.min_run_points && hi - lo >= opt.min_run_m)
+        out.singles.push_back({static_cast<int>(i), lo, hi});
+    }
+  return out;
+}
+
+namespace {
+
+/// Non-wall points per m^2 of the strip [o0, o1] x [s0, s1], below
+/// WallOptions::external_max_z_m above the floor.
+double strip_density(const EvidenceIndex &ev, size_t fam, double o0, double o1,
+                     double s0, double s1, const WallPoints &wp,
+                     const WallOptions &opt) {
+  const double area = (o1 - o0) * (s1 - s0);
+  if (!(area > 0.0))
+    return 0.0;
+  const double zlo = wp.z_floor - opt.external_strip_near_m;
+  const double zhi = wp.z_floor + opt.external_max_z_m;
+  int n = 0;
+  const auto [lo, hi] = offset_range(ev.others[fam], o0, o1);
+  for (auto it = lo; it != hi; ++it)
+    if (it->s >= s0 && it->s <= s1 && it->z >= zlo && it->z <= zhi)
+      ++n;
+  return n / area;
+}
+
+int samples_in(const WallFace &f, double s0, double s1) {
+  return static_cast<int>(std::count_if(
+      f.samples.begin(), f.samples.end(),
+      [&](const FaceSample &q) { return q.s >= s0 && q.s <= s1; }));
+}
+
+} // namespace
+
+std::vector<WallSegment> measure_walls(const std::vector<WallFace> &faces,
+                                       const FacePairing &pairing,
+                                       const WallPoints &wp,
+                                       const std::vector<AxisFamily> &families,
+                                       const WallOptions &opt) {
+  std::vector<WallSegment> out;
+  if (faces.empty())
+    return out;
+  const EvidenceIndex ev = index_evidence(wp, families, opt, true);
+  const double near = opt.external_strip_near_m, far = opt.external_strip_far_m;
+  auto external = [&](size_t fam, double olo, double ohi, double s0,
+                      double s1) {
+    const double below =
+        strip_density(ev, fam, olo - far, olo - near, s0, s1, wp, opt);
+    const double above =
+        strip_density(ev, fam, ohi + near, ohi + far, s0, s1, wp, opt);
+    return std::min(below, above) < opt.min_room_density;
+  };
+  auto family_pos = [&](int index) -> size_t {
+    for (size_t f = 0; f < families.size(); ++f)
+      if (families[f].index == index)
+        return f;
+    throw std::invalid_argument(
+        fmt::format("measure_walls: a face names family {}, which is not "
+                    "among the {} families given",
+                    index, families.size()));
+  };
+
+  for (const auto &p : pairing.pairs) {
+    const auto &lo = faces[static_cast<size_t>(p.face_lo)];
+    const auto &hi = faces[static_cast<size_t>(p.face_hi)];
+    const size_t fam = family_pos(lo.family);
+    WallSegment w;
+    w.family = lo.family;
+    w.d = families[fam].d;
+    w.s0 = p.s0;
+    w.s1 = p.s1;
+    w.face_lo_index = p.face_lo;
+    w.face_hi_index = p.face_hi;
+    w.points_lo = samples_in(lo, p.s0, p.s1);
+    w.points_hi = samples_in(hi, p.s0, p.s1);
+    w.co_visibility = p.co_visibility;
+    if (p.crossed) {
+      // The two rooms' scans disagree about where the wall is: its centre
+      // is between them, its thickness unknown.
+      const auto fit = measure_thickness(lo, hi, p.s0, p.s1, opt);
+      w.axis_offset = fit.ok ? 0.5 * (fit.offset_lo + fit.offset_hi)
+                             : 0.5 * (lo.offset + hi.offset);
+      w.assumed = true;
+      w.thickness = opt.default_thickness_m;
+      w.is_external = external(fam, w.axis_offset - 0.5 * w.thickness,
+                               w.axis_offset + 0.5 * w.thickness, w.s0, w.s1);
+      out.push_back(w);
+      continue;
+    }
+    const auto fit = measure_thickness(lo, hi, p.s0, p.s1, opt);
+    if (fit.ok && fit.thickness > 0.0) {
+      w.face_lo = fit.offset_lo;
+      w.face_hi = fit.offset_hi;
+      w.thickness = fit.thickness;
+      w.thickness_ci_lo = fit.ci_lo;
+      w.thickness_ci_hi = fit.ci_hi;
+      w.lean_deg = fit.lean_deg;
+    } else { // too few cells for a fit: the profile peaks, no CI
+      w.face_lo = lo.offset;
+      w.face_hi = hi.offset;
+      w.thickness = hi.offset - lo.offset;
+    }
+    w.axis_offset = 0.5 * (w.face_lo + w.face_hi);
+    w.is_external = external(fam, w.face_lo, w.face_hi, w.s0, w.s1);
+    out.push_back(w);
+  }
+
+  const double t = opt.default_thickness_m;
+  for (const auto &sp : pairing.singles) {
+    const auto &f = faces[static_cast<size_t>(sp.face)];
+    const size_t fam = family_pos(f.family);
+    WallSegment w;
+    w.family = f.family;
+    w.d = families[fam].d;
+    w.s0 = sp.s0;
+    w.s1 = sp.s1;
+    w.assumed = true;
+    w.thickness = t;
+
+    const auto cells = robust_inliers(cell_medians(f, sp.s0, sp.s1, opt), opt);
+    const LineFit fit = ols(cells);
+    const double zm = 0.5 * (f.z0 + f.z1);
+    const double o = fit.ok ? fit.at(zm) : f.offset;
+    if (fit.ok)
+      w.lean_deg = std::atan(fit.b) * kRadToDeg;
+
+    // Which side the room is on: the face's normal, else the side with
+    // more floor-level evidence in front of it.
+    int side = f.side;
+    if (side == 0)
+      side = strip_density(ev, fam, o + near, o + far, sp.s0, sp.s1, wp, opt) >=
+                     strip_density(ev, fam, o - far, o - near, sp.s0, sp.s1, wp,
+                                   opt)
+                 ? 1
+                 : -1;
+    if (side > 0) { // seen from +d: the wall's body lies below the face
+      w.face_hi = o;
+      w.axis_offset = o - 0.5 * t;
+      w.points_hi = samples_in(f, sp.s0, sp.s1);
+      w.face_hi_index = sp.face;
+      w.is_external = external(fam, o - t, o, w.s0, w.s1);
+    } else {
+      w.face_lo = o;
+      w.axis_offset = o + 0.5 * t;
+      w.points_lo = samples_in(f, sp.s0, sp.s1);
+      w.face_lo_index = sp.face;
+      w.is_external = external(fam, o, o + t, w.s0, w.s1);
+    }
+    out.push_back(w);
+  }
+  std::stable_sort(out.begin(), out.end(), [](const auto &a, const auto &b) {
+    return std::tie(a.family, a.axis_offset, a.s0) <
+           std::tie(b.family, b.axis_offset, b.s0);
+  });
+  return out;
 }
 
 WallPoints wall_points(const Cloud &cloud, const CloudL &planes,

@@ -98,6 +98,36 @@ reusex::core::WallRecord face_record(const reusex::geometry::WallFace &f,
   return w;
 }
 
+/// A measured wall as a record (W3.3, before the wall graph).
+reusex::core::WallRecord segment_record(const reusex::geometry::WallSegment &g,
+                                        const reusex::core::StoreyRecord &st,
+                                        int n) {
+  const Eigen::Vector2d t(-g.d.y(), g.d.x());
+  const Eigen::Vector2d a = g.axis_offset * g.d + g.s0 * t;
+  const Eigen::Vector2d b = g.axis_offset * g.d + g.s1 * t;
+  reusex::core::WallRecord w;
+  w.guid = fmt::format("wall-{}-{}", st.idx, n);
+  w.storey = st.idx;
+  w.x0 = a.x();
+  w.y0 = a.y();
+  w.x1 = b.x();
+  w.y1 = b.y();
+  w.z_base = st.z_floor;
+  w.height = st.z_ceiling - st.z_floor;
+  w.thickness = g.thickness;
+  w.thickness_ci_lo = g.thickness_ci_lo;
+  w.thickness_ci_hi = g.thickness_ci_hi;
+  w.lean_deg = g.lean_deg;
+  w.is_external = g.is_external;
+  w.assumed = g.assumed;
+  w.seen_share = g.seen_share;
+  w.face_a_points = g.points_lo;
+  w.face_b_points = g.points_hi;
+  w.co_visibility = g.co_visibility;
+  w.axis_family = g.family;
+  return w;
+}
+
 } // namespace
 
 void setup_subcommand_create_walls_dev(CLI::App &app,
@@ -111,6 +141,8 @@ void setup_subcommand_create_walls_dev(CLI::App &app,
 
   sub->add_option("-o,--output", opt->output,
                   "Solid-model JSON with the storeys and detected walls");
+  sub->add_flag("--faces-only", opt->faces_only,
+                "Write each face as a wall (W3.2 output)");
   sub->add_option("--reference", opt->reference,
                   "Reference plan: report how its walls sit on the families");
   sub->add_option("--max-families", w.max_families)
@@ -128,6 +160,12 @@ void setup_subcommand_create_walls_dev(CLI::App &app,
       ->default_val(w.min_peak_points);
   sub->add_option("--min-column-share", w.min_column_share)
       ->default_val(w.min_column_share);
+  sub->add_option("--default-thickness", w.default_thickness_m)
+      ->default_val(w.default_thickness_m);
+  sub->add_option("--min-co-visibility", w.min_co_visibility)
+      ->default_val(w.min_co_visibility);
+  sub->add_option("--max-valley-share", w.max_valley_share)
+      ->default_val(w.max_valley_share);
 
   sub->callback([opt, global_opt]() {
     rux::finish(run_subcommand_create_walls_dev(*opt, *global_opt));
@@ -185,14 +223,27 @@ int run_subcommand_create_walls_dev(SubcommandCreateWallsDevOptions const &opt,
       const auto faces = reusex::geometry::wall_faces(wp, families, wopt);
       spdlog::info("  {} wall points, {} other points, {} faces",
                    wp.points.size(), wp.others.size(), faces.size());
-      for (size_t k = 0; k < faces.size(); ++k) {
-        const auto &f = faces[k];
-        const auto fam =
-            std::find_if(families.begin(), families.end(),
-                         [&](const auto &x) { return x.index == f.family; });
-        model.walls.push_back(
-            face_record(f, *fam, st, static_cast<int>(model.walls.size())));
+      if (opt.faces_only) {
+        for (const auto &f : faces) {
+          const auto fam =
+              std::find_if(families.begin(), families.end(),
+                           [&](const auto &x) { return x.index == f.family; });
+          model.walls.push_back(
+              face_record(f, *fam, st, static_cast<int>(model.walls.size())));
+        }
+        continue;
       }
+      const auto pairing =
+          reusex::geometry::pair_faces(faces, wp, families, wopt);
+      const auto segments =
+          reusex::geometry::measure_walls(faces, pairing, wp, families, wopt);
+      spdlog::info("  {} pairs ({} rejected), {} one-sided stretches -> {} "
+                   "walls",
+                   pairing.pairs.size(), pairing.rejected,
+                   pairing.singles.size(), segments.size());
+      for (const auto &g : segments)
+        model.walls.push_back(
+            segment_record(g, st, static_cast<int>(model.walls.size())));
     }
 
     if (!opt.output.empty()) {

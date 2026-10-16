@@ -11,6 +11,9 @@
 ///  1. axis_families(): the directions walls run in, per storey (W3.1).
 ///  2. wall_faces(): faces (one-sided sheets of wall points) and their runs
 ///     along the axis, from the offset profile of each family (W3.2).
+///  3. pair_faces(), measure_thickness(), measure_walls(): which faces are
+///     the two sides of one wall, its thickness with a bootstrap CI, its
+///     lean, and whether it is external (W3.3).
 ///
 /// Everything is in the level frame of one storey (core::StoreyRecord::
 /// level_transform): z up, the storey's floor at its z_floor. Inputs are
@@ -26,6 +29,7 @@
 
 #include <Eigen/Core>
 
+#include <limits>
 #include <map>
 #include <utility>
 #include <vector>
@@ -97,6 +101,43 @@ struct WallOptions {
   /// wall_points(): points this far below the storey's floor / above its
   /// ceiling still belong to it [m].
   double storey_margin_m = 0.1;
+
+  // --- W3.3 pairing, thickness, external test -----------------------------
+  /// Two faces are the sides of one wall when they are this far apart [m]...
+  double min_gap_m = 0.04, max_gap_m = 0.45;
+  /// ...share at least this length along the axis [m]...
+  double min_shared_m = 0.5;
+  /// ...the emptiest 1 cm bin between them holds at most this share of the
+  /// weaker face's peak bin (all the storey's points counted)...
+  double max_valley_share = 0.15;
+  /// ...and at least this share of the (s, z) cells seen on either face over
+  /// the shared stretch are seen on both.
+  double min_co_visibility = 0.3;
+  /// Two faces closer than this whose normals point at each other cannot
+  /// bound a room a sensor looked into: they are one wall seen from both
+  /// sides by scans that drifted apart. Paired as a wall at their middle,
+  /// thickness assumed [m].
+  double max_crossed_gap_m = 0.15;
+  /// A cell enters the thickness fit with at least this many points.
+  int min_cell_points = 3;
+  /// Theil-Sen residuals beyond this many robust sigmas drop a cell...
+  double outlier_sigma_k = 3.0;
+  /// ...with the robust sigma (1.4826 x MAD) at least this [m].
+  double min_robust_sigma_m = 0.005;
+  /// Bootstrap resamples (over cells) for the thickness CI; seeded
+  /// (STANDARDS §6).
+  int bootstrap_samples = 200;
+  unsigned seed = 0;
+  double ci_level = 0.95;
+  /// Thickness given to a wall seen from one side only (assumed) [m].
+  double default_thickness_m = 0.2;
+  /// External test: a strip from near to far beyond each face [m]...
+  double external_strip_near_m = 0.1, external_strip_far_m = 0.6;
+  /// ...below this height above the floor [m]...
+  double external_max_z_m = 1.2;
+  /// ...holds fewer non-wall points per m^2 than this on one side: no room
+  /// there, the wall is external.
+  double min_room_density = 20.0;
 };
 
 /// One direction family: walls whose normal is (anti)parallel to @ref d.
@@ -211,6 +252,110 @@ struct WallFace {
 std::vector<WallFace> wall_faces(const WallPoints &wp,
                                  const std::vector<AxisFamily> &families,
                                  const WallOptions &opt = {});
+
+/// Two faces paired as the sides of one wall over [s0, s1].
+struct FacePair {
+  int face_lo = -1, face_hi = -1; ///< indices into the faces; lo offset < hi
+  double s0 = 0.0, s1 = 0.0;      ///< the shared stretch [m]
+  double gap = 0.0;               ///< hi.offset - lo.offset [m]
+  double valley_share = 0.0;      ///< emptiest bin between / weaker peak
+  double co_visibility = 0.0;     ///< cells seen on both / on either
+  /// The faces look at each other (lo seen from +d, hi from -d): drift.
+  bool crossed = false;
+};
+
+/// A stretch of a face no pair took: a wall seen from one side.
+struct FaceSpan {
+  int face = -1;
+  double s0 = 0.0, s1 = 0.0;
+};
+
+struct FacePairing {
+  std::vector<FacePair> pairs;   ///< in the order they were taken
+  std::vector<FaceSpan> singles; ///< by face index, then s
+  int rejected = 0; ///< candidates that failed the valley / co-visibility test
+};
+
+/// Pair the faces of one storey (W3.3). Candidates are faces of one family
+/// whose gap is within [min_gap_m, max_gap_m] and that share at least
+/// min_shared_m along the axis; with known sides, the lower face must be
+/// seen from -d and the upper from +d (faces looking at each other bound a
+/// room, not a wall -- unless they are within max_crossed_gap_m: a sensor
+/// cannot see into so narrow a gap, so it is one wall whose two sides were
+/// scanned with drift between them, a "crossed" pair). Greedy, longest shared
+/// stretch first (ties: smaller gap, then index): a candidate takes the longest
+/// stretch both faces still have free if it passes the empty-valley test (raw
+/// counts of every point of the storey, @p wp's wall and other points) and the
+/// co-visibility test; what is left of each face (at least min_run_m,
+/// min_run_points) becomes a FaceSpan.
+FacePairing pair_faces(const std::vector<WallFace> &faces, const WallPoints &wp,
+                       const std::vector<AxisFamily> &families,
+                       const WallOptions &opt = {});
+
+/// The thickness of a wall from its two faces over [s0, s1].
+struct ThicknessFit {
+  bool ok = false;        ///< false: a face has fewer than 2 usable cells
+  double thickness = 0.0; ///< at mid-height [m]
+  double ci_lo = 0.0, ci_hi = 0.0; ///< bootstrap CI (WallOptions::ci_level)
+  double lean_deg = 0.0; ///< mean slope of the faces; + leans toward +d
+  double offset_lo = 0.0, offset_hi = 0.0; ///< the faces at mid-height [m]
+  double z_mid = 0.0;                      ///< the mid-height used [m]
+  int cells_lo = 0, cells_hi = 0; ///< cells kept per face after Theil-Sen
+};
+
+/// Thickness of the wall between faces @p lo and @p hi over [s0, s1]: per
+/// face, the median offset and height of each (s, z) cell with
+/// min_cell_points; a Theil-Sen fit offset(z) drops cells beyond
+/// outlier_sigma_k robust sigmas (furniture, linings); an OLS fit over the
+/// rest gives the face at mid-height (of the heights both faces were seen
+/// at) and its slope. Thickness = hi - lo at mid-height, lean = the mean
+/// slope, CI = percentiles of the thickness over bootstrap resamples of the
+/// cells (seeded: the same inputs give the same CI).
+ThicknessFit measure_thickness(const WallFace &lo, const WallFace &hi,
+                               double s0, double s1,
+                               const WallOptions &opt = {});
+
+/// One wall in its family's coordinates, before the wall graph (W3.4).
+struct WallSegment {
+  int family = 0;                               ///< AxisFamily::index
+  Eigen::Vector2d d = Eigen::Vector2d::UnitX(); ///< the family's normal
+  double axis_offset = 0.0;                     ///< centre line: p . d [m]
+  double s0 = 0.0, s1 = 0.0; ///< extent along t = d rotated +90 deg [m]
+  /// The faces at mid-height [m]; NaN for a side that was not seen.
+  double face_lo = std::numeric_limits<double>::quiet_NaN();
+  double face_hi = std::numeric_limits<double>::quiet_NaN();
+  int face_lo_index = -1, face_hi_index = -1; ///< into the faces, -1 none
+  double thickness = 0.0; ///< measured, or default_thickness_m if assumed
+  double thickness_ci_lo = -1.0, thickness_ci_hi = -1.0; ///< -1: none
+  double lean_deg = 0.0;
+  bool assumed = false;             ///< one side seen: thickness defaulted
+  bool is_external = false;         ///< no room evidence beyond one face
+  double co_visibility = -1.0;      ///< -1 for a one-sided wall
+  int points_lo = 0, points_hi = 0; ///< face points over [s0, s1]
+  double seen_share = -1.0;         ///< set by join_walls (W3.4)
+  bool low_seen = false;            ///< seen_share below min_seen_share (W3.4)
+};
+
+/// The walls of a storey from its faces and their pairing (W3.3): a pair is
+/// a wall with a measured thickness (measure_thickness; when it cannot fit,
+/// the profile peaks and no CI); a crossed pair a wall halfway between its
+/// faces with an assumed thickness; a one-sided stretch is an assumed wall of
+/// default_thickness_m whose body lies behind the seen face (away from the
+/// side it was seen from; with no normal sign, away from the side with
+/// more floor-level evidence). External test: a strip from
+/// external_strip_near_m to external_strip_far_m beyond each face, below
+/// external_max_z_m above the floor, holding fewer than min_room_density
+/// non-wall points per m^2 on either side.
+///
+/// Sorted by (family, axis_offset, s0).
+///
+/// @throws std::invalid_argument when a face names a family that is not in
+///         @p families.
+std::vector<WallSegment> measure_walls(const std::vector<WallFace> &faces,
+                                       const FacePairing &pairing,
+                                       const WallPoints &wp,
+                                       const std::vector<AxisFamily> &families,
+                                       const WallOptions &opt = {});
 
 /// The evidence of one storey from the clouds: every finite point of
 /// @p cloud whose level-frame height lies within the storey (with
