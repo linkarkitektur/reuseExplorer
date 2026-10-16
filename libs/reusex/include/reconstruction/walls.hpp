@@ -14,6 +14,9 @@
 ///  3. pair_faces(), measure_thickness(), measure_walls(): which faces are
 ///     the two sides of one wall, its thickness with a bootstrap CI, its
 ///     lean, and whether it is external (W3.3).
+///  4. join_walls(): the bounded wall graph -- snapping, collinear bridging,
+///     corner and tee joins, seen share (W3.4); detect_walls() runs 1-4 on
+///     one storey and wall_records() turns the result into core records.
 ///
 /// Everything is in the level frame of one storey (core::StoreyRecord::
 /// level_transform): z up, the storey's floor at its z_floor. Inputs are
@@ -138,6 +141,34 @@ struct WallOptions {
   /// ...holds fewer non-wall points per m^2 than this on one side: no room
   /// there, the wall is external.
   double min_room_density = 20.0;
+
+  // --- W3.4 wall graph ------------------------------------------------------
+  /// Snap the seen faces to the median of the raw wall points within this
+  /// of them: a wide pass, then a narrow one [m].
+  double snap_wide_m = 0.10, snap_narrow_m = 0.04;
+  /// Collinear walls of one family (a face both saw, else the axes, within
+  /// bridge_offset_m) with at most bridge_gap_m between them merge into one
+  /// wall (a doorway, a window, an occluded stretch) [m]...
+  double bridge_gap_m = 1.5;
+  double bridge_offset_m = 0.05;
+  /// ...unless both thicknesses are measured and differ by more than this;
+  /// then they meet end to end (a collinear join) [m].
+  double bridge_thickness_m = 0.05;
+  /// Two one-sided walls seen from the same side whose faces lie within
+  /// max_gap_m of each other, within bridge_gap_m along the axis, the
+  /// shorter at most this long, are one wall with a recess (window niches
+  /// between piers): they merge onto the face with more points [m].
+  double recess_max_length_m = 1.0;
+  /// Two non-parallel walls whose nearer ends both lie within corner_m of
+  /// the crossing of their axes meet there (a corner) [m]...
+  double corner_m = 0.9;
+  /// ...one whose end lies within tee_m of a crossing that lies on the other
+  /// wall (within tee_on_wall_m of its extent) ends there (a tee) [m].
+  double tee_m = 2.2;
+  double tee_on_wall_m = 0.1;
+  /// A wall whose face area (25 cm cells over its length and the storey
+  /// height) is seen less than this is flagged (WallSegment::low_seen).
+  double min_seen_share = 0.5;
 };
 
 /// One direction family: walls whose normal is (anti)parallel to @ref d.
@@ -356,6 +387,78 @@ std::vector<WallSegment> measure_walls(const std::vector<WallFace> &faces,
                                        const WallPoints &wp,
                                        const std::vector<AxisFamily> &families,
                                        const WallOptions &opt = {});
+
+/// How two walls meet (core::WallJoinRecord::kind).
+enum class WallJoinKind { corner, tee, collinear };
+/// Where on a wall a join is (core::WallJoinRecord::at_a / at_b).
+enum class WallEnd { start, end, path };
+
+/// A join between walls @ref a and @ref b (indices into WallGraph::walls).
+struct WallJoin {
+  int a = -1, b = -1;
+  WallJoinKind kind = WallJoinKind::corner;
+  WallEnd at_a = WallEnd::start, at_b = WallEnd::start;
+};
+
+struct WallGraph {
+  std::vector<WallSegment> walls;
+  std::vector<WallJoin> joins;
+  int low_seen = 0; ///< walls flagged WallSegment::low_seen
+};
+
+/// The bounded wall graph of a storey (W3.4):
+///  1. squaring: already done on the evidence (wall_faces squares every
+///     wall plane within square_deg onto its family axis), so every wall is
+///     parallel to its family;
+///  2. snapping: each seen face moves to the median offset of the raw wall
+///     points seen from its side within snap_wide_m, then snap_narrow_m;
+///  3. bridging: collinear walls with a gap up to bridge_gap_m merge
+///     (a measured thickness wins over an assumed one); when both are
+///     measured and differ by more than bridge_thickness_m they meet in the
+///     middle of the gap instead (a collinear join); a short one-sided wall
+///     seen from the same side as a neighbour and standing within max_gap_m
+///     behind or before it is a recess of that wall and merges into it
+///     (recess_max_length_m);
+///  4. corners and tees: non-parallel pairs, nearest crossing first; a
+///     corner moves both ends to the crossing of the axes, a tee moves one
+///     end onto the other wall's axis; each end joins at most once and a
+///     move never leaves a wall shorter than min_run_m;
+///  5. seen share: the share of the wall's 25 cm (s, z) cells over its
+///     length and the storey height with wall evidence within its body;
+///     below min_seen_share it is flagged.
+/// Deterministic: walls are visited in a fixed order (sorted by family,
+/// s0, axis offset), crossings by distance then index.
+WallGraph join_walls(std::vector<WallSegment> walls,
+                     const std::vector<AxisFamily> &families,
+                     const WallPoints &wp, const WallOptions &opt = {});
+
+/// Everything the wall sub-steps found on one storey.
+struct WallsResult {
+  std::vector<AxisFamily> families;
+  std::vector<WallFace> faces;
+  FacePairing pairing;
+  WallGraph graph;
+};
+
+/// Steps 1-4 on one storey: axis_families() from the plane classes,
+/// wall_points() from the clouds, then wall_faces(), pair_faces(),
+/// measure_walls() and join_walls(). Logs (reusex::warn) when a storey
+/// yields no family or no wall, with the numbers.
+WallsResult
+detect_walls(const Cloud &cloud, const CloudL &planes,
+             const CloudN &plane_normals,
+             const std::vector<core::PlaneClassRecord> &plane_classes,
+             const core::StoreyRecord &storey, const WallOptions &opt = {});
+
+/// The walls and joins of @p graph as core records in @p storey's level
+/// frame. The guid is the stable key W3.5 hashes into a deterministic GUID:
+/// "walls/<storey idx>/<x0>,<y0>,<x1>,<y1>" with the axis endpoints rounded
+/// to 5 cm (a "#n" suffix keeps two walls that round alike apart). z_base /
+/// height are the storey's floor and height; an assumed wall carries
+/// default thickness and no CI; a flagged wall carries
+/// {"low_seen_share": true} as metadata.
+std::pair<std::vector<core::WallRecord>, std::vector<core::WallJoinRecord>>
+wall_records(const WallGraph &graph, const core::StoreyRecord &storey);
 
 /// The evidence of one storey from the clouds: every finite point of
 /// @p cloud whose level-frame height lies within the storey (with

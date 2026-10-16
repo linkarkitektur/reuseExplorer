@@ -143,6 +143,8 @@ void setup_subcommand_create_walls_dev(CLI::App &app,
                   "Solid-model JSON with the storeys and detected walls");
   sub->add_flag("--faces-only", opt->faces_only,
                 "Write each face as a wall (W3.2 output)");
+  sub->add_flag("--no-graph", opt->no_graph,
+                "Write the measured walls before the wall graph (W3.3)");
   sub->add_option("--reference", opt->reference,
                   "Reference plan: report how its walls sit on the families");
   sub->add_option("--max-families", w.max_families)
@@ -166,6 +168,13 @@ void setup_subcommand_create_walls_dev(CLI::App &app,
       ->default_val(w.min_co_visibility);
   sub->add_option("--max-valley-share", w.max_valley_share)
       ->default_val(w.max_valley_share);
+  sub->add_option("--bridge-gap", w.bridge_gap_m)->default_val(w.bridge_gap_m);
+  sub->add_option("--bridge-offset", w.bridge_offset_m)
+      ->default_val(w.bridge_offset_m);
+  sub->add_option("--corner", w.corner_m)->default_val(w.corner_m);
+  sub->add_option("--recess-max-length", w.recess_max_length_m)
+      ->default_val(w.recess_max_length_m);
+  sub->add_option("--tee", w.tee_m)->default_val(w.tee_m);
 
   sub->callback([opt, global_opt]() {
     rux::finish(run_subcommand_create_walls_dev(*opt, *global_opt));
@@ -241,9 +250,30 @@ int run_subcommand_create_walls_dev(SubcommandCreateWallsDevOptions const &opt,
                    "walls",
                    pairing.pairs.size(), pairing.rejected,
                    pairing.singles.size(), segments.size());
-      for (const auto &g : segments)
-        model.walls.push_back(
-            segment_record(g, st, static_cast<int>(model.walls.size())));
+      if (opt.no_graph) {
+        for (const auto &g : segments)
+          model.walls.push_back(
+              segment_record(g, st, static_cast<int>(model.walls.size())));
+        continue;
+      }
+      const auto graph =
+          reusex::geometry::join_walls(segments, families, wp, wopt);
+      auto [walls, joins] = reusex::geometry::wall_records(graph, st);
+      int corners = 0, tees = 0, collinear = 0;
+      for (const auto &j : joins)
+        (j.kind == "corner" ? corners : j.kind == "tee" ? tees : collinear)++;
+      spdlog::info("  graph: {} walls ({} assumed, {} external, {} seen < "
+                   "{:.0f} %), {} corners, {} tees, {} collinear joins",
+                   walls.size(),
+                   std::count_if(walls.begin(), walls.end(),
+                                 [](const auto &w) { return w.assumed; }),
+                   std::count_if(walls.begin(), walls.end(),
+                                 [](const auto &w) { return w.is_external; }),
+                   graph.low_seen, 100.0 * wopt.min_seen_share, corners, tees,
+                   collinear);
+      model.walls.insert(model.walls.end(), walls.begin(), walls.end());
+      model.wall_joins.insert(model.wall_joins.end(), joins.begin(),
+                              joins.end());
     }
 
     if (!opt.output.empty()) {

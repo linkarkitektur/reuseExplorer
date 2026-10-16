@@ -4,6 +4,7 @@
 
 #include "reusex/reconstruction/walls.hpp"
 
+#include "reusex/core/logging.hpp"
 #include "reusex/geometry/transform_utils.hpp"
 #include "reusex/utils/tolerances.hpp"
 
@@ -21,6 +22,7 @@
 #include <random>
 #include <set>
 #include <stdexcept>
+#include <string>
 #include <tuple>
 
 namespace reusex::geometry {
@@ -1139,6 +1141,451 @@ std::vector<WallSegment> measure_walls(const std::vector<WallFace> &faces,
            std::tie(b.family, b.axis_offset, b.s0);
   });
   return out;
+}
+
+namespace {
+
+/// The face offsets a wall occupies: [lo, hi] (a one-sided wall's unseen
+/// face sits a default thickness behind the seen one).
+std::pair<double, double> body(const WallSegment &w) {
+  const double lo =
+      std::isfinite(w.face_lo) ? w.face_lo : w.axis_offset - 0.5 * w.thickness;
+  const double hi =
+      std::isfinite(w.face_hi) ? w.face_hi : w.axis_offset + 0.5 * w.thickness;
+  return {lo, hi};
+}
+
+void set_axis_from_faces(WallSegment &w) {
+  if (std::isfinite(w.face_lo) && std::isfinite(w.face_hi))
+    w.axis_offset = 0.5 * (w.face_lo + w.face_hi);
+  else if (std::isfinite(w.face_hi))
+    w.axis_offset = w.face_hi - 0.5 * w.thickness;
+  else if (std::isfinite(w.face_lo))
+    w.axis_offset = w.face_lo + 0.5 * w.thickness;
+}
+
+/// Median offset of the family's wall evidence seen from @p side within
+/// [o0, o1] and s in [s0, s1]; NaN when there is none.
+double median_offset(const EvidenceIndex &ev, size_t fam, int side, double o0,
+                     double o1, double s0, double s1) {
+  std::vector<double> o;
+  const auto [lo, hi] = offset_range(ev.wall[fam], o0, o1);
+  for (auto it = lo; it != hi; ++it)
+    if ((it->side == side || it->side == 0) && it->s >= s0 && it->s <= s1)
+      o.push_back(it->o);
+  return median_of(std::move(o));
+}
+
+/// Snap a wall's seen faces to the median of the raw wall points near them:
+/// a wide pass, then a narrow one around the result.
+void snap(WallSegment &w, const EvidenceIndex &ev, size_t fam,
+          const WallOptions &opt) {
+  const double axis = w.axis_offset;
+  for (const double r : {opt.snap_wide_m, opt.snap_narrow_m}) {
+    if (std::isfinite(w.face_lo)) {
+      const double m = median_offset(ev, fam, -1, w.face_lo - r,
+                                     std::min(w.face_lo + r, axis), w.s0, w.s1);
+      if (std::isfinite(m))
+        w.face_lo = m;
+    }
+    if (std::isfinite(w.face_hi)) {
+      const double m = median_offset(ev, fam, 1, std::max(w.face_hi - r, axis),
+                                     w.face_hi + r, w.s0, w.s1);
+      if (std::isfinite(m))
+        w.face_hi = m;
+    }
+  }
+  if (std::isfinite(w.face_lo) && std::isfinite(w.face_hi) && !w.assumed) {
+    // Keep the measured thickness; move the axis with the faces.
+    w.axis_offset = 0.5 * (w.face_lo + w.face_hi);
+  } else {
+    set_axis_from_faces(w);
+  }
+}
+
+/// Are two walls of one family on the same line? Compare a face both saw,
+/// else the axes.
+bool collinear(const WallSegment &a, const WallSegment &b, double tol) {
+  if (std::isfinite(a.face_lo) && std::isfinite(b.face_lo))
+    return std::abs(a.face_lo - b.face_lo) <= tol;
+  if (std::isfinite(a.face_hi) && std::isfinite(b.face_hi))
+    return std::abs(a.face_hi - b.face_hi) <= tol;
+  return std::abs(a.axis_offset - b.axis_offset) <= tol;
+}
+
+/// The one face a one-sided wall was seen on: +1 its face_hi, -1 its
+/// face_lo, 0 none or both.
+int seen_side(const WallSegment &w) {
+  const bool lo = std::isfinite(w.face_lo), hi = std::isfinite(w.face_hi);
+  return lo == hi ? 0 : (hi ? 1 : -1);
+}
+
+/// Two one-sided walls seen from the same side, one behind the other within
+/// a wall's thickness: the farther face is a recess (a window niche, a
+/// reveal) of the nearer wall -- the room cannot see a separate wall
+/// standing in another wall's body. Only short pieces: a long step in a
+/// facade stays two walls.
+bool is_recess(const WallSegment &a, const WallSegment &b,
+               const WallOptions &opt) {
+  const int side = seen_side(a);
+  if (!a.assumed || !b.assumed || side == 0 || side != seen_side(b))
+    return false;
+  const double fa = side > 0 ? a.face_hi : a.face_lo;
+  const double fb = side > 0 ? b.face_hi : b.face_lo;
+  if (std::abs(fa - fb) > opt.max_gap_m)
+    return false;
+  return std::min(a.s1 - a.s0, b.s1 - b.s0) <= opt.recess_max_length_m;
+}
+
+/// Merge the recess pair @p b into @p a: the face with more points is the
+/// wall's face, the extent is the union.
+void merge_recess(WallSegment &a, const WallSegment &b) {
+  const int pa = a.points_lo + a.points_hi, pb = b.points_lo + b.points_hi;
+  WallSegment out = pa >= pb ? a : b;
+  out.s0 = std::min(a.s0, b.s0);
+  out.s1 = std::max(a.s1, b.s1);
+  out.points_lo = a.points_lo + b.points_lo;
+  out.points_hi = a.points_hi + b.points_hi;
+  a = out;
+}
+
+/// Merge @p b into @p a (collinear, close along the axis).
+void merge_into(WallSegment &a, const WallSegment &b) {
+  const double la = a.s1 - a.s0, lb = b.s1 - b.s0;
+  const double wa = la / std::max(la + lb, kEpsilonLengthM), wb = 1.0 - wa;
+  auto blend = [&](double x, double y) {
+    if (std::isfinite(x) && std::isfinite(y))
+      return wa * x + wb * y;
+    return std::isfinite(x) ? x : y;
+  };
+  if (a.assumed != b.assumed) {
+    // A measured wall decides the thickness of the whole.
+    const WallSegment &m = a.assumed ? b : a;
+    WallSegment out = m;
+    out.s0 = std::min(a.s0, b.s0);
+    out.s1 = std::max(a.s1, b.s1);
+    out.points_lo = a.points_lo + b.points_lo;
+    out.points_hi = a.points_hi + b.points_hi;
+    out.is_external = (la >= lb ? a : b).is_external;
+    a = out;
+    return;
+  }
+  a.face_lo = blend(a.face_lo, b.face_lo);
+  a.face_hi = blend(a.face_hi, b.face_hi);
+  if (!a.assumed) {
+    a.thickness = wa * a.thickness + wb * b.thickness;
+    a.thickness_ci_lo = wa * a.thickness_ci_lo + wb * b.thickness_ci_lo;
+    a.thickness_ci_hi = wa * a.thickness_ci_hi + wb * b.thickness_ci_hi;
+    a.co_visibility = wa * a.co_visibility + wb * b.co_visibility;
+  }
+  a.lean_deg = wa * a.lean_deg + wb * b.lean_deg;
+  a.is_external = (la >= lb ? a : b).is_external;
+  a.s0 = std::min(a.s0, b.s0);
+  a.s1 = std::max(a.s1, b.s1);
+  a.points_lo += b.points_lo;
+  a.points_hi += b.points_hi;
+  if (a.assumed) {
+    a.axis_offset = wa * a.axis_offset + wb * b.axis_offset;
+  } else {
+    set_axis_from_faces(a);
+  }
+}
+
+} // namespace
+
+WallGraph join_walls(std::vector<WallSegment> walls,
+                     const std::vector<AxisFamily> &families,
+                     const WallPoints &wp, const WallOptions &opt) {
+  WallGraph g;
+  if (walls.empty())
+    return g;
+  const EvidenceIndex ev = index_evidence(wp, families, opt, false);
+  auto family_pos = [&](int index) -> size_t {
+    for (size_t f = 0; f < families.size(); ++f)
+      if (families[f].index == index)
+        return f;
+    throw std::invalid_argument(fmt::format(
+        "join_walls: a wall names family {}, which is not among the {} "
+        "families given",
+        index, families.size()));
+  };
+
+  // 1. Squaring happened on the evidence (wall_faces turns every wall plane
+  //    within square_deg onto its family axis), so each wall is already
+  //    parallel to its family. 2. Snap the seen faces to the raw points.
+  for (auto &w : walls)
+    snap(w, ev, family_pos(w.family), opt);
+
+  // 3. Bridge collinear gaps: merge, or join end to end when the measured
+  //    thicknesses disagree. Bounded: every merge removes a wall.
+  for (bool merged = true; merged;) {
+    merged = false;
+    std::stable_sort(walls.begin(), walls.end(),
+                     [](const auto &x, const auto &y) {
+                       return std::tie(x.family, x.s0, x.axis_offset) <
+                              std::tie(y.family, y.s0, y.axis_offset);
+                     });
+    for (size_t i = 0; i < walls.size() && !merged; ++i)
+      for (size_t j = i + 1; j < walls.size() && !merged; ++j) {
+        auto &a = walls[i];
+        const auto &b = walls[j];
+        if (a.family != b.family)
+          continue;
+        const double gap = std::max(a.s0, b.s0) - std::min(a.s1, b.s1);
+        if (gap > opt.bridge_gap_m)
+          continue;
+        if (is_recess(a, b, opt)) {
+          merge_recess(a, b);
+          walls.erase(walls.begin() + static_cast<std::ptrdiff_t>(j));
+          merged = true;
+          continue;
+        }
+        if (!collinear(a, b, opt.bridge_offset_m))
+          continue;
+        if (!a.assumed && !b.assumed &&
+            std::abs(a.thickness - b.thickness) > opt.bridge_thickness_m)
+          continue; // joined end to end below
+        merge_into(a, b);
+        walls.erase(walls.begin() + static_cast<std::ptrdiff_t>(j));
+        merged = true;
+      }
+  }
+  // Collinear walls of different measured thickness meet in the gap middle.
+  std::vector<std::array<bool, 2>> end_used(walls.size(), {false, false});
+  for (size_t i = 0; i < walls.size(); ++i)
+    for (size_t j = 0; j < walls.size(); ++j) {
+      auto &a = walls[i];
+      auto &b = walls[j];
+      if (i == j || a.family != b.family || end_used[i][1] || end_used[j][0] ||
+          !collinear(a, b, opt.bridge_offset_m))
+        continue;
+      const double gap = b.s0 - a.s1;
+      if (gap < -kToleranceCoplanarM || gap > opt.bridge_gap_m)
+        continue;
+      const double mid = 0.5 * (a.s1 + b.s0);
+      a.s1 = mid;
+      b.s0 = mid;
+      end_used[i][1] = end_used[j][0] = true;
+      g.joins.push_back({static_cast<int>(i), static_cast<int>(j),
+                         WallJoinKind::collinear, WallEnd::end,
+                         WallEnd::start});
+    }
+
+  // 4. Corners and tees between non-parallel walls, nearest first.
+  struct Meet {
+    size_t a, b;
+    double sa, sb;    ///< the crossing, along each wall
+    int end_a, end_b; ///< nearer end of each (0 start, 1 end)
+    double da, db;    ///< distances of those ends to the crossing
+  };
+  std::vector<Meet> meets;
+  for (size_t i = 0; i < walls.size(); ++i)
+    for (size_t j = i + 1; j < walls.size(); ++j) {
+      const auto &a = walls[i], &b = walls[j];
+      if (a.family == b.family)
+        continue;
+      Eigen::Matrix2d m;
+      m.row(0) = a.d.transpose();
+      m.row(1) = b.d.transpose();
+      if (std::abs(m.determinant()) <= kEpsilonRelative)
+        continue;
+      const Eigen::Vector2d x =
+          m.inverse() * Eigen::Vector2d(a.axis_offset, b.axis_offset);
+      Meet mt{i, j, x.dot(tangent(a.d)), x.dot(tangent(b.d)), 0, 0, 0, 0};
+      mt.end_a = std::abs(mt.sa - a.s0) <= std::abs(mt.sa - a.s1) ? 0 : 1;
+      mt.end_b = std::abs(mt.sb - b.s0) <= std::abs(mt.sb - b.s1) ? 0 : 1;
+      mt.da = std::abs(mt.sa - (mt.end_a == 0 ? a.s0 : a.s1));
+      mt.db = std::abs(mt.sb - (mt.end_b == 0 ? b.s0 : b.s1));
+      if (std::min(mt.da, mt.db) <= opt.tee_m)
+        meets.push_back(mt);
+    }
+  std::stable_sort(
+      meets.begin(), meets.end(), [](const Meet &x, const Meet &y) {
+        const double kx = std::min(x.da, x.db) + std::max(x.da, x.db);
+        const double ky = std::min(y.da, y.db) + std::max(y.da, y.db);
+        if (kx != ky)
+          return kx < ky;
+        return std::tie(x.a, x.b) < std::tie(y.a, y.b);
+      });
+  auto move_end = [&](size_t w, int end, double s) {
+    auto &x = walls[w];
+    const double s0 = end == 0 ? s : x.s0, s1 = end == 1 ? s : x.s1;
+    if (s1 - s0 < opt.min_run_m)
+      return false;
+    x.s0 = s0;
+    x.s1 = s1;
+    end_used[w][static_cast<size_t>(end)] = true;
+    return true;
+  };
+  auto on_wall = [&](size_t w, double s) {
+    return s >= walls[w].s0 - opt.tee_on_wall_m &&
+           s <= walls[w].s1 + opt.tee_on_wall_m;
+  };
+  for (const auto &mt : meets) {
+    const bool free_a = !end_used[mt.a][static_cast<size_t>(mt.end_a)];
+    const bool free_b = !end_used[mt.b][static_cast<size_t>(mt.end_b)];
+    const auto end_name = [](int e) {
+      return e == 0 ? WallEnd::start : WallEnd::end;
+    };
+    if (free_a && free_b && mt.da <= opt.corner_m && mt.db <= opt.corner_m) {
+      const WallSegment keep_a = walls[mt.a];
+      if (move_end(mt.a, mt.end_a, mt.sa)) {
+        if (move_end(mt.b, mt.end_b, mt.sb))
+          g.joins.push_back({static_cast<int>(mt.a), static_cast<int>(mt.b),
+                             WallJoinKind::corner, end_name(mt.end_a),
+                             end_name(mt.end_b)});
+        else { // undo: a corner moves both ends or none
+          walls[mt.a] = keep_a;
+          end_used[mt.a][static_cast<size_t>(mt.end_a)] = false;
+        }
+      }
+      continue;
+    }
+    // Tee: one wall ends near the crossing, which lies on the other one
+    // away from its ends.
+    if (free_a && mt.da <= opt.tee_m && mt.db > opt.corner_m &&
+        on_wall(mt.b, mt.sb) && move_end(mt.a, mt.end_a, mt.sa)) {
+      g.joins.push_back({static_cast<int>(mt.a), static_cast<int>(mt.b),
+                         WallJoinKind::tee, end_name(mt.end_a), WallEnd::path});
+      continue;
+    }
+    if (free_b && mt.db <= opt.tee_m && mt.da > opt.corner_m &&
+        on_wall(mt.a, mt.sa) && move_end(mt.b, mt.end_b, mt.sb))
+      g.joins.push_back({static_cast<int>(mt.b), static_cast<int>(mt.a),
+                         WallJoinKind::tee, end_name(mt.end_b), WallEnd::path});
+  }
+
+  // 5. Seen share: (s, z) cells of the wall's face area with evidence.
+  for (auto &w : walls) {
+    const size_t fam = family_pos(w.family);
+    const auto [lo, hi] = body(w);
+    const double pad = opt.face_window_m;
+    const int is0 = cell_index(w.s0, opt.cell_m),
+              is1 = cell_index(w.s1, opt.cell_m);
+    const int iz0 = cell_index(wp.z_floor, opt.cell_m);
+    const int iz1 = cell_index(wp.z_ceiling - kEpsilonLengthM, opt.cell_m);
+    std::set<FaceCell> seen;
+    const auto [qlo, qhi] = offset_range(ev.wall[fam], lo - pad, hi + pad);
+    for (auto q = qlo; q != qhi; ++q)
+      if (q->s >= w.s0 && q->s <= w.s1 && q->z >= wp.z_floor &&
+          q->z <= wp.z_ceiling)
+        seen.insert(
+            {cell_index(q->s, opt.cell_m), cell_index(q->z, opt.cell_m)});
+    const double total = static_cast<double>(is1 - is0 + 1) * (iz1 - iz0 + 1);
+    w.seen_share = total > 0.0 ? static_cast<double>(seen.size()) / total : 0.0;
+    w.low_seen = w.seen_share < opt.min_seen_share;
+    if (w.low_seen)
+      ++g.low_seen;
+  }
+  g.walls = std::move(walls);
+  return g;
+}
+
+namespace {
+
+const char *to_text(WallJoinKind k) {
+  switch (k) {
+  case WallJoinKind::corner:
+    return "corner";
+  case WallJoinKind::tee:
+    return "tee";
+  case WallJoinKind::collinear:
+    return "collinear";
+  }
+  return "corner";
+}
+
+const char *to_text(WallEnd e) {
+  switch (e) {
+  case WallEnd::start:
+    return "start";
+  case WallEnd::end:
+    return "end";
+  case WallEnd::path:
+    return "path";
+  }
+  return "path";
+}
+
+/// @p v rounded to 5 cm, printed without a negative zero.
+std::string key_coord(double v) {
+  constexpr double kKeyGridM = 0.05;
+  const double r = std::round(v / kKeyGridM) * kKeyGridM + 0.0;
+  return fmt::format("{:.2f}", r == 0.0 ? 0.0 : r);
+}
+
+} // namespace
+
+WallsResult
+detect_walls(const Cloud &cloud, const CloudL &planes,
+             const CloudN &plane_normals,
+             const std::vector<core::PlaneClassRecord> &plane_classes,
+             const core::StoreyRecord &storey, const WallOptions &opt) {
+  WallsResult r;
+  r.families = axis_families(plane_classes, plane_normals, storey, opt);
+  if (r.families.empty()) {
+    warn("walls: storey {} has no vertical plane to take wall directions "
+         "from ({} plane classes); no walls",
+         storey.idx, plane_classes.size());
+    return r;
+  }
+  const WallPoints wp =
+      wall_points(cloud, planes, plane_normals, plane_classes, storey, opt);
+  r.faces = wall_faces(wp, r.families, opt);
+  r.pairing = pair_faces(r.faces, wp, r.families, opt);
+  r.graph = join_walls(measure_walls(r.faces, r.pairing, wp, r.families, opt),
+                       r.families, wp, opt);
+  if (r.graph.walls.empty())
+    warn("walls: storey {} has no wall: {} wall points, {} faces in {} "
+         "families",
+         storey.idx, wp.points.size(), r.faces.size(), r.families.size());
+  return r;
+}
+
+std::pair<std::vector<core::WallRecord>, std::vector<core::WallJoinRecord>>
+wall_records(const WallGraph &graph, const core::StoreyRecord &storey) {
+  std::vector<core::WallRecord> walls;
+  std::map<std::string, int> used;
+  for (const auto &g : graph.walls) {
+    const Eigen::Vector2d t = tangent(g.d);
+    const Eigen::Vector2d a = g.axis_offset * g.d + g.s0 * t;
+    const Eigen::Vector2d b = g.axis_offset * g.d + g.s1 * t;
+    core::WallRecord w;
+    std::string key =
+        fmt::format("walls/{}/{},{},{},{}", storey.idx, key_coord(a.x()),
+                    key_coord(a.y()), key_coord(b.x()), key_coord(b.y()));
+    if (const int n = used[key]++; n > 0)
+      key += fmt::format("#{}", n);
+    w.guid = key;
+    w.storey = storey.idx;
+    w.x0 = a.x();
+    w.y0 = a.y();
+    w.x1 = b.x();
+    w.y1 = b.y();
+    w.z_base = storey.z_floor;
+    w.height = storey.z_ceiling - storey.z_floor;
+    w.thickness = g.thickness;
+    w.thickness_ci_lo = g.assumed ? -1.0 : g.thickness_ci_lo;
+    w.thickness_ci_hi = g.assumed ? -1.0 : g.thickness_ci_hi;
+    w.lean_deg = g.lean_deg;
+    w.is_external = g.is_external;
+    w.assumed = g.assumed;
+    w.seen_share = g.seen_share;
+    w.face_a_points = g.points_lo;
+    w.face_b_points = g.points_hi;
+    w.co_visibility = g.co_visibility;
+    w.axis_family = g.family;
+    w.source = "detected";
+    if (g.low_seen)
+      w.metadata = R"({"low_seen_share":true})";
+    walls.push_back(std::move(w));
+  }
+  std::vector<core::WallJoinRecord> joins;
+  for (const auto &j : graph.joins)
+    joins.push_back({walls[static_cast<size_t>(j.a)].guid,
+                     walls[static_cast<size_t>(j.b)].guid, to_text(j.kind),
+                     to_text(j.at_a), to_text(j.at_b)});
+  return {std::move(walls), std::move(joins)};
 }
 
 WallPoints wall_points(const Cloud &cloud, const CloudL &planes,

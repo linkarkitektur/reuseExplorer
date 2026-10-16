@@ -19,6 +19,7 @@ struct SubcommandCreateWallsDevOptions {
   std::filesystem::path output;    ///< solid-model JSON; empty = none
   std::filesystem::path reference; ///< reference plan to compare families to
   bool faces_only = false;         ///< write the W3.2 faces, not walls
+  bool no_graph = false;           ///< write the W3.3 walls, no joins
 };
 
 void setup_subcommand_create_walls_dev(CLI::App &app,
