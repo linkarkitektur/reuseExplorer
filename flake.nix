@@ -69,93 +69,106 @@
     in {
       formatter = pkgs.alejandra;
 
-      checks.pre-commit-check = pre-commit-hooks.lib.${system}.run {
-        src = ./.;
-        default_stages = ["pre-commit"];
-        hooks = {
-          check-added-large-files.enable = true;
-          check-case-conflicts.enable = true;
-          check-executables-have-shebangs.enable = true;
-          check-shebang-scripts-are-executable.enable = true;
-          check-merge-conflicts.enable = true;
-          alejandra.enable = true;
-          # Nix static analysis (anti-patterns + dead code). statix runs
-          # repo-wide, so skip .direnv (cached flake-input sources).
-          statix = {
-            enable = true;
-            settings.ignore = [".direnv"];
-          };
-          deadnix.enable = true;
-          # C++/CUDA formatting per .clang-format (docs/STANDARDS.md §9).
-          clang-format = {
-            enable = true;
-            types_or = ["c++" "c" "cuda"];
-          };
-          reuse = {
-            enable = true;
-          };
-          git-lfs-pre-push = {
-            enable = true;
-            name = "git-lfs pre-push";
-            entry = "${pkgs.writeShellScript "git-lfs-pre-push" ''
-              exec ${pkgs.git-lfs}/bin/git-lfs pre-push "$PRE_COMMIT_REMOTE_NAME" "$PRE_COMMIT_REMOTE_URL"
-            ''}";
-            stages = ["pre-push"];
-            pass_filenames = false;
-            always_run = true;
-          };
+      checks = {
+        pre-commit-check = pre-commit-hooks.lib.${system}.run {
+          src = ./.;
+          default_stages = ["pre-commit"];
+          hooks = {
+            check-added-large-files.enable = true;
+            check-case-conflicts.enable = true;
+            check-executables-have-shebangs.enable = true;
+            check-shebang-scripts-are-executable.enable = true;
+            check-merge-conflicts.enable = true;
+            alejandra.enable = true;
+            # Nix static analysis (anti-patterns + dead code). statix runs
+            # repo-wide, so skip .direnv (cached flake-input sources).
+            statix = {
+              enable = true;
+              settings.ignore = [".direnv"];
+            };
+            deadnix.enable = true;
+            # C++/CUDA formatting per .clang-format (docs/STANDARDS.md §9).
+            clang-format = {
+              enable = true;
+              types_or = ["c++" "c" "cuda"];
+            };
+            reuse = {
+              enable = true;
+            };
+            git-lfs-pre-push = {
+              enable = true;
+              name = "git-lfs pre-push";
+              entry = "${pkgs.writeShellScript "git-lfs-pre-push" ''
+                exec ${pkgs.git-lfs}/bin/git-lfs pre-push "$PRE_COMMIT_REMOTE_NAME" "$PRE_COMMIT_REMOTE_URL"
+              ''}";
+              stages = ["pre-push"];
+              pass_filenames = false;
+              always_run = true;
+            };
 
-          git-lfs-post-checkout = {
-            enable = true;
-            name = "git-lfs post-checkout";
-            entry = "${pkgs.writeShellScript "git-lfs-post-checkout" ''
-              exec ${pkgs.git-lfs}/bin/git-lfs post-checkout "$PRE_COMMIT_FROM_REF" "$PRE_COMMIT_TO_REF" "$PRE_COMMIT_CHECKOUT_TYPE"
-            ''}";
-            stages = ["post-checkout"];
-            pass_filenames = false;
-            always_run = true;
-          };
+            git-lfs-post-checkout = {
+              enable = true;
+              name = "git-lfs post-checkout";
+              entry = "${pkgs.writeShellScript "git-lfs-post-checkout" ''
+                exec ${pkgs.git-lfs}/bin/git-lfs post-checkout "$PRE_COMMIT_FROM_REF" "$PRE_COMMIT_TO_REF" "$PRE_COMMIT_CHECKOUT_TYPE"
+              ''}";
+              stages = ["post-checkout"];
+              pass_filenames = false;
+              always_run = true;
+            };
 
-          git-lfs-post-merge = {
-            enable = true;
-            name = "git-lfs post-merge";
-            entry = "${pkgs.writeShellScript "git-lfs-post-merge" ''
-              exec ${pkgs.git-lfs}/bin/git-lfs post-merge "$PRE_COMMIT_IS_SQUASH_MERGE"
-            ''}";
-            stages = ["post-merge"];
-            pass_filenames = false;
-            always_run = true;
-          };
+            git-lfs-post-merge = {
+              enable = true;
+              name = "git-lfs post-merge";
+              entry = "${pkgs.writeShellScript "git-lfs-post-merge" ''
+                exec ${pkgs.git-lfs}/bin/git-lfs post-merge "$PRE_COMMIT_IS_SQUASH_MERGE"
+              ''}";
+              stages = ["post-merge"];
+              pass_filenames = false;
+              always_run = true;
+            };
 
-          git-lfs-post-commit = {
-            enable = true;
-            name = "git-lfs post-commit";
-            entry = "${pkgs.git-lfs}/bin/git-lfs post-commit";
-            stages = ["post-commit"];
-            pass_filenames = false;
-            always_run = true;
+            git-lfs-post-commit = {
+              enable = true;
+              name = "git-lfs post-commit";
+              entry = "${pkgs.git-lfs}/bin/git-lfs post-commit";
+              stages = ["post-commit"];
+              pass_filenames = false;
+              always_run = true;
+            };
           };
         };
-      };
 
-      # Hermetic test gate for the CPU variant (no GPU needed: works in CI
-      # and on any machine). Run with: nix build .#checks.x86_64-linux.tests
-      # (or nix flake check). For the fast incremental dev loop use
-      # scripts/check.sh instead.
-      #
-      # Build and test are two derivations (reusex-uk8):
-      #   packages.cpu   compiles once, with BUILD_TESTS=ON. `out` is the
-      #                  installed package (bin/rux, the ReUseX CMake package
-      #                  ruxd builds against); `testsuite` holds the test
-      #                  binaries and ctest files.
-      #   checks.tests   (= cpu.check, default.nix) runs ctest over
-      #                  `testsuite` and the package-consumer install check
-      #                  against `out`. It compiles nothing of ReUseX, and its
-      #                  output is a pass stamp with no references.
-      # scripts/ci-local.sh builds both locally and pushes `out`, `testsuite`
-      # and the stamp to reusex.cachix.org; CI on the same commit then
-      # substitutes the stamp (and, on main, `.#cpu`) and compiles nothing.
-      checks.tests = self.packages.${system}.cpu.check;
+        # Hermetic test gate for the CPU variant (no GPU needed: works in CI
+        # and on any machine). Run with: nix build .#checks.x86_64-linux.tests
+        # (or nix flake check). For the fast incremental dev loop use
+        # scripts/check.sh instead.
+        #
+        # Build and test are two derivations (reusex-uk8):
+        #   packages.cpu   compiles once, with BUILD_TESTS=ON. `out` is the
+        #                  installed package (bin/rux, the ReUseX CMake package
+        #                  ruxd builds against); `testsuite` holds the test
+        #                  binaries and ctest files.
+        #   checks.tests   (= cpu.check, default.nix) runs ctest over
+        #                  `testsuite` and the package-consumer install check
+        #                  against `out`. It compiles nothing of ReUseX, and its
+        #                  output is a pass stamp with no references.
+        #
+        # What CI realises is the flake output `packages.ci` (below), and the
+        # developer builds the very same thing before pushing (no script):
+        #
+        #   nix build .#ci --print-out-paths | cachix push reusex
+        #
+        # CI then evaluates the same derivations, substitutes them and
+        # compiles nothing (docs/guides/ci-cache.md).
+        tests = self.packages.${system}.cpu.check;
+        # The package itself is a check as well (as NixCI requires of every
+        # package): `nix flake check` then builds everything CI realises,
+        # including the `github:…#cpu` path downstream repos fetch.
+        cpu = self.packages.${system}.cpu;
+        # The pre-commit hooks above stay out of `ci`: .github/workflows/
+        # lint.yml runs the same clang-format / REUSE checks without nix.
+      };
 
       packages = let
         # Get all custom packages
@@ -214,6 +227,27 @@
         # The variant CI tests: carries the `testsuite` output and
         # passthru.check (checks.tests above).
         reusexCpu = mkReusex {withTestsOutput = true;};
+
+        # Everything CI realises, as one flake output, so the developer and
+        # CI run the same plain command (reusex-uk8):
+        #
+        #   nix build .#ci --print-out-paths | cachix push reusex   # local
+        #   nix build .#ci                                          # CI
+        #
+        # It links the pass stamp (checks.tests) and both outputs of the
+        # CPU package (checks.cpu: `out` for downstream repos, `testsuite`
+        # so a missed stamp reruns the tests without a compile). Its closure
+        # is therefore everything CI needs; pushing it uploads only what
+        # reusex.cachix.org and cache.nixos.org do not already hold, i.e.
+        # our own outputs. A plain runCommand, not linkFarm: linkFarm sets
+        # allowSubstitutes = false, and CI's first attempt is
+        # substitute-only (--max-jobs 0).
+        ci = pkgs.runCommand "reusex-ci" {} ''
+          mkdir -p $out
+          ln -s ${reusexCpu.check} $out/tests
+          ln -s ${reusexCpu.out} $out/cpu
+          ln -s ${reusexCpu.testsuite} $out/cpu-testsuite
+        '';
         reusexRocm = mkReusex {rocmSupport = true;};
         reusexCpuNoTorch = mkReusex {withLibtorch = false;};
       in
@@ -223,6 +257,7 @@
           default = reusex; # CUDA / NVIDIA GPU
           cuda = reusex;
           cpu = reusexCpu;
+          inherit ci;
           rocm = reusexRocm;
           # Opt-in variants without libtorch: no LibTorch ML backend (YOLO
           # .pt) and no `rux create gsplat`. TensorRT/ONNX (CUDA) or ONNX
