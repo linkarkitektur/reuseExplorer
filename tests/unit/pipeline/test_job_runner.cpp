@@ -64,6 +64,31 @@ template <typename Predicate> bool wait_for(Predicate predicate) {
   return predicate();
 }
 
+/// Assert @p events are exactly one job's submitted -> started -> finished
+/// (succeeded), ordered by JobEvent::sequence — the documented ordering key.
+/// Arrival order is NOT asserted: `submitted` is published on the submitting
+/// thread and `started`/`finished` on the worker, so arrival may interleave
+/// (JobEvent::sequence, reusex-dkt).
+void check_lifecycle_in_sequence_order(std::vector<JobEvent> events,
+                                       const std::string &id) {
+  std::sort(events.begin(), events.end(),
+            [](const JobEvent &a, const JobEvent &b) {
+              return a.sequence < b.sequence;
+            });
+  REQUIRE(events.size() == 3);
+  CHECK(events[0].type == JobEvent::Type::submitted);
+  CHECK(events[0].job.status == JobStatus::queued);
+  CHECK(events[1].type == JobEvent::Type::started);
+  CHECK(events[1].job.status == JobStatus::running);
+  CHECK(events[2].type == JobEvent::Type::finished);
+  CHECK(events[2].job.status == JobStatus::succeeded);
+  for (size_t i = 0; i < events.size(); ++i) {
+    CHECK(events[i].sequence == events[0].sequence + i); // Gapless.
+    CHECK(events[i].job.id == id);
+    CHECK_FALSE(events[i].timestamp.empty());
+  }
+}
+
 StageExecutor always_succeeds(std::string message = "ok") {
   return
       [message](const StageContext &) { return StageResult::success(message); };
@@ -341,27 +366,57 @@ TEST_CASE("JobRunner_Listener_ObservesFullLifecycle", "[pipeline][jobs]") {
   });
 
   const auto id = runner.submit(JobStage::rooms);
+  // wait_idle() returns only once every event made so far has been delivered
+  // to every listener (JobQueue::State::emitting), so all three are here.
   runner.wait_idle();
 
-  REQUIRE(wait_for([&] {
-    std::lock_guard<std::mutex> lock(mutex);
-    return events.size() >= 3;
-  }));
-
-  std::lock_guard<std::mutex> lock(mutex);
-  CHECK(events.front().type == JobEvent::Type::submitted);
-  CHECK(events.back().type == JobEvent::Type::finished);
-  CHECK(events.back().job.status == JobStatus::succeeded);
-  for (const auto &event : events) {
-    CHECK(event.job.id == id);
-    CHECK_FALSE(event.timestamp.empty());
-  }
+  std::unique_lock<std::mutex> lock(mutex);
+  check_lifecycle_in_sequence_order(events, id);
+  lock.unlock();
 
   runner.remove_listener(token);
   const auto count_before = events.size();
   runner.submit(JobStage::clouds);
   runner.wait_idle();
+  lock.lock();
   CHECK(events.size() == count_before); // Removed listener stays silent.
+}
+
+TEST_CASE("JobRunner_Listener_SubmittedArrivesLast_SequenceRecoversLifecycle",
+          "[pipeline][jobs]") {
+  // reusex-dkt: `job.submitted` is delivered on the submitting thread after
+  // the queue lock is released, while the worker delivers `job.started` and
+  // `job.finished` on its own thread — so a listener can legitimately see
+  // `submitted` LAST (JobEvent::sequence documents this). This forces that
+  // interleaving on every run instead of leaving it to the scheduler: the
+  // listener holds the `submitted` delivery until `finished` has arrived.
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::vector<JobEvent> events;
+  bool finished_seen = false;
+
+  JobRunner runner("/nonexistent/project.rux", always_succeeds());
+  runner.add_listener([&](const JobEvent &event) {
+    std::unique_lock<std::mutex> lock(mutex);
+    if (event.type == JobEvent::Type::submitted)
+      cv.wait_for(lock, std::chrono::seconds(5), [&] { return finished_seen; });
+    if (event.type == JobEvent::Type::finished) {
+      finished_seen = true;
+      cv.notify_all();
+    }
+    events.push_back(event);
+  });
+
+  const auto id = runner.submit(JobStage::rooms);
+  runner.wait_idle();
+
+  std::lock_guard<std::mutex> lock(mutex);
+  REQUIRE(finished_seen);
+  REQUIRE(events.size() == 3);
+  // Arrival order really was inverted...
+  CHECK(events.back().type == JobEvent::Type::submitted);
+  // ...and ordering by sequence still recovers the true lifecycle.
+  check_lifecycle_in_sequence_order(events, id);
 }
 
 TEST_CASE("JobRunner_ListenerThrows_DoesNotCrashRunner", "[pipeline][jobs]") {

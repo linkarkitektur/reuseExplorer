@@ -16,6 +16,11 @@
   #     `rux create gsplat` reports that the build lacks support.
   # The default `true` keeps the derivation byte-identical to before.
   withLibtorch ? true,
+  # Also install what ctest needs to run the suite later, in another
+  # derivation, into a second output `testsuite`, and expose that run as
+  # passthru.check (reusex-uk8). flake.nix turns it on for `.#cpu` only:
+  # `checks.tests` is `cpu.check`. Off, the derivation has the single `out`.
+  withTestsOutput ? false,
   cudaPackages,
   qt6,
   pkg-config,
@@ -93,50 +98,72 @@
     if cudaSupport
     then cudaPackages.backendStdenv
     else stdenv;
+  # What the compile reads. Run-time-only test inputs are deliberately left
+  # out (testFileset below), for two reasons (reusex-uk8):
+  #   - an edit to one of them reruns the tests but does not recompile, and
+  #   - tests/fixtures holds the one LFS file in this set. A `github:` flake
+  #     ref (how ruxd and the main-branch CI step fetch `.#cpu`) is a GitHub
+  #     tarball with LFS *pointers*, a local checkout has the content, so with
+  #     fixtures in the build source the two never hashed alike and CI rebuilt
+  #     the package nobody had pushed.
+  buildFileset = lib.fileset.unions [
+    # Build system
+    ./CMakeLists.txt
+    ./cmake
+    # Embedded into the generated version header by reusexLibrary.cmake
+    # (file(READ ...LICENSE.md)); the build fails to configure without it.
+    ./LICENSE.md
+    # C++ library source, headers, and CMake config
+    ./libs
+    # Applications: the rux CLI (incl. the native Qt client, apps/rux/qt).
+    # apps/blender has no CMakeLists.txt and is not part of the C++ build.
+    # ruxd (the HTTP service worker) moved to its own repo (repo split, P4).
+    ./apps/rux
+    # Python bindings (pybind11, BUILD_PYTHON_BINDINGS)
+    ./bindings
+    # Tests: unit, integration, benchmarks, support (sources only; the
+    # fixtures are run-time data, see testFileset)
+    (lib.fileset.difference ./tests ./tests/fixtures)
+    # Embedded into a generated header by reusexLibrary.cmake (the native
+    # TensorRT EngineBuilder's default SAM 3.1 recipe)
+    ./python/reusex_sam3/engine-build.json
+  ];
+
+  # Everything the test binaries and ctest read at run time, on top of the
+  # build source: reusex::test_support::source_dir() points here when
+  # passthru.check runs the suite.
+  testFileset = lib.fileset.unions [
+    buildFileset
+    # Binary fixtures (office_corridor.rux is LFS: CI checks out with
+    # `lfs: true`, and a local git+file flake reads the smudged work tree)
+    ./tests/fixtures
+    # Accessed at test runtime via source_dir() (test_stage_contract.cpp)
+    ./docs/CONTRACTS.md
+    # Read by test_pose_edits.cpp (every doc example must parse + match the schema)
+    ./docs/design/pose-edits.md
+    ./docs/design/pose-edits.schema.json
+    # Run by the bench_solid_compare_selftest ctest (tests/CMakeLists.txt).
+    # Missing from this set it failed every nix check with "can't open
+    # file" — unnoticed, because ci.yml piped `nix build` into `tee`
+    # without pipefail (reusex-37v).
+    ./scripts/bench-solid-compare.py
+    ./scripts/test_bench_solid_compare.py
+    # Run by the bench_poses_compare_selftest ctest (reusex-rcv.1.6),
+    # same reason as the bench-solid pair above.
+    ./scripts/bench-poses-compare.py
+    ./scripts/test_bench_poses_compare.py
+  ];
 in
-  effectiveStdenv.mkDerivation rec {
+  effectiveStdenv.mkDerivation (finalAttrs: {
     pname = "ReUseX";
     version = "0.0.5";
 
     src = lib.fileset.toSource {
       root = ./.;
-      fileset = lib.fileset.unions [
-        # Build system
-        ./CMakeLists.txt
-        ./cmake
-        # Embedded into the generated version header by reusexLibrary.cmake
-        # (file(READ ...LICENSE.md)); the build fails to configure without it.
-        ./LICENSE.md
-        # C++ library source, headers, and CMake config
-        ./libs
-        # Applications: the rux CLI (incl. the native Qt client, apps/rux/qt).
-        # apps/blender has no CMakeLists.txt and is not part of the C++ build.
-        # ruxd (the HTTP service worker) moved to its own repo (repo split, P4).
-        ./apps/rux
-        # Python bindings (pybind11, BUILD_PYTHON_BINDINGS)
-        ./bindings
-        # Tests: unit, integration, benchmarks, support, and binary fixtures
-        ./tests
-        # Accessed at test runtime via REUSEX_SOURCE_DIR (test_stage_contract.cpp)
-        ./docs/CONTRACTS.md
-        # Read by test_pose_edits.cpp (every doc example must parse + match the schema)
-        ./docs/design/pose-edits.md
-        ./docs/design/pose-edits.schema.json
-        # Run by the bench_solid_compare_selftest ctest (tests/CMakeLists.txt).
-        # Missing from this set it failed every nix check with "can't open
-        # file" — unnoticed, because ci.yml piped `nix build` into `tee`
-        # without pipefail (reusex-37v).
-        ./scripts/bench-solid-compare.py
-        ./scripts/test_bench_solid_compare.py
-        # Run by the bench_poses_compare_selftest ctest (reusex-rcv.1.6),
-        # same reason as the bench-solid pair above.
-        ./scripts/bench-poses-compare.py
-        ./scripts/test_bench_poses_compare.py
-        # Embedded into a generated header by reusexLibrary.cmake (the native
-        # TensorRT EngineBuilder's default SAM 3.1 recipe)
-        ./python/reusex_sam3/engine-build.json
-      ];
+      fileset = buildFileset;
     };
+
+    outputs = ["out"] ++ lib.optionals withTestsOutput ["testsuite"];
 
     # Native dependencies
     # programs and libraries used at build-time
@@ -288,8 +315,82 @@ in
     # LibTorch's bundled FindCUDAToolkit. A dev shell never runs that hook, so
     # it needs a single directory instead. passthru is not part of the
     # derivation, so this does not touch the package or its closure.
-    passthru.cudaToolkitPackages =
-      lib.optionals cudaSupport ([cudaPackages.cuda_nvcc] ++ cudaLibraries);
+    passthru =
+      {
+        cudaToolkitPackages =
+          lib.optionals cudaSupport ([cudaPackages.cuda_nvcc] ++ cudaLibraries);
+      }
+      // lib.optionalAttrs withTestsOutput {
+        # Runs the compiled suite of this derivation: ctest over the
+        # `testsuite` output, then the installed-package consumer against
+        # `out` (find_package(ReUseX CONFIG REQUIRED); the CMake package is
+        # only proven by consuming it). Compiles nothing of ReUseX — only the
+        # few-line consumer. Its output is a pass stamp with no references
+        # (allowedReferences), so substituting it fetches a few KiB. This is
+        # `checks.tests` in flake.nix (reusex-uk8).
+        check = effectiveStdenv.mkDerivation {
+          pname = "ReUseX-tests";
+          inherit (finalAttrs) version;
+          src = lib.fileset.toSource {
+            root = ./.;
+            fileset = testFileset;
+          };
+          # The consumer re-runs every find_dependency of ReUseXConfig.cmake,
+          # so it needs the same dependency closure on CMAKE_PREFIX_PATH.
+          inherit (finalAttrs) nativeBuildInputs buildInputs;
+          dontConfigure = true;
+          dontBuild = true;
+          dontFixup = true;
+          dontWrapQtApps = true;
+          doCheck = true;
+          checkPhase = ''
+            runHook preCheck
+            # The test binaries were compiled in another sandbox. These two
+            # replace the paths baked into them (tests/support/source_dir.cpp,
+            # tests/support/rux_executable.hpp).
+            export REUSEX_TEST_SOURCE_DIR="$PWD"
+            export REUSEX_TEST_RUX_EXECUTABLE="${finalAttrs.finalPackage.out}/bin/rux"
+            # A writable copy: ctest writes Testing/ next to the build tree
+            # and the tests run in build/tests. The ctest files carry the
+            # placeholders postInstall put in place of the build's paths.
+            build="$TMPDIR/build"
+            cp -r "${finalAttrs.finalPackage.testsuite}/build" "$build"
+            chmod -R u+w "$build"
+            find "$build" -name '*.cmake' -exec sed -i \
+              -e "s|@REUSEX_TEST_BUILD_DIR@|$build|g" \
+              -e "s|@REUSEX_TEST_SOURCE_DIR@|$REUSEX_TEST_SOURCE_DIR|g" {} +
+            # --parallel: the suite is dominated by per-process loader
+            # overhead, so this is a near-linear speedup (#268). Safe since
+            # #262 gave temp files pid-unique names.
+            ctest --test-dir "$build" --output-on-failure \
+              --parallel "''${NIX_BUILD_CORES:-1}" \
+              --output-log "$TMPDIR/ctest.log"
+            ctest_count=$(ctest --test-dir "$build" -N | sed -n 's/^Total Tests: //p')
+            echo "ctest: $ctest_count tests registered"
+            test "''${ctest_count:-0}" -gt 0 \
+              || { echo "ctest found no tests in the testsuite output" >&2; exit 1; }
+            cmake -DINSTALLED_PREFIX=${finalAttrs.finalPackage.out} \
+              -DCONSUMER_SOURCE_DIR="$PWD/tests/package/consumer" \
+              -DWORK_DIR="$TMPDIR/reusex-package-test" \
+              "-DGENERATOR=Unix Makefiles" \
+              -DBUILD_CONFIG=Release \
+              -P "$PWD/tests/package/run_package_test.cmake"
+            runHook postCheck
+          '';
+          # Store paths are blanked so the stamp references nothing: CI
+          # substitutes just this, never the package's closure.
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out"
+            sed -E 's|/nix/store/[0-9a-z]{32}-|/nix/store/<hash>-|g' \
+              "$TMPDIR/ctest.log" > "$out/ctest.log"
+            echo "ReUseX-${finalAttrs.version}: ctest ($ctest_count tests) and install check passed" \
+              > "$out/passed"
+            runHook postInstall
+          '';
+          allowedReferences = [];
+        };
+      };
 
     # The library installs as a CMake package (cmake/Installation.cmake):
     # headers under include/reusex/, the per-module static libraries in lib/,
@@ -297,27 +398,36 @@ in
     # after the repo split) can `find_package(ReUseX CONFIG REQUIRED)` against
     # this one. Fail here, not in a downstream build, if that ever stops being
     # installed.
-    postInstall = ''
-      test -f $out/lib/cmake/ReUseX/ReUseXConfig.cmake \
-        || { echo "ReUseX CMake package config was not installed" >&2; exit 1; }
-    '';
-
-    # Build and run tests/package/consumer against the installed $out with
-    # find_package(ReUseX CONFIG REQUIRED): the installed CMake package is only
-    # proven by consuming it. Off by default (it re-runs the whole dependency
-    # lookup, minutes on the CUDA variant); `checks.tests` in flake.nix turns
-    # it on for the CPU variant CI builds.
-    doInstallCheck = false;
-    installCheckPhase = ''
-      runHook preInstallCheck
-      cmake -DINSTALLED_PREFIX=$out \
-        -DCONSUMER_SOURCE_DIR=$NIX_BUILD_TOP/$sourceRoot/tests/package/consumer \
-        -DWORK_DIR=$TMPDIR/reusex-package-test \
-        "-DGENERATOR=Unix Makefiles" \
-        -DBUILD_CONFIG=Release \
-        -P $NIX_BUILD_TOP/$sourceRoot/tests/package/run_package_test.cmake
-      runHook postInstallCheck
-    '';
+    postInstall =
+      ''
+        test -f $out/lib/cmake/ReUseX/ReUseXConfig.cmake \
+          || { echo "ReUseX CMake package config was not installed" >&2; exit 1; }
+      ''
+      # The `testsuite` output: what ctest needs to run the suite without
+      # this build tree: every CTestTestfile.cmake, the catch_discover_tests
+      # *_include/*_tests.cmake lists, and the test executables (static
+      # ReUseX, so no build-tree libraries). The ctest files hold absolute
+      # paths into this sandbox; they become placeholders here and
+      # passthru.check substitutes its own. A leftover path would make
+      # ctest look for files that do not exist, so that fails here.
+      + lib.optionalString withTestsOutput ''
+        build_dir=$(pwd -P)
+        source_dir=$(cd "$NIX_BUILD_TOP/$sourceRoot" && pwd -P)
+        find . -name CMakeFiles -prune -o -type f \( -name CTestTestfile.cmake \
+            -o -name '*_include.cmake' -o -name '*_tests.cmake' \) -print \
+          | while read -r f; do install -Dm644 "$f" "$testsuite/build/$f"; done
+        for exe in tests/reusex_unit_tests tests/reusex_unit_tests_vision \
+                   tests/reusex_integration_tests; do
+          if [ -e "$exe" ]; then install -Dm755 "$exe" "$testsuite/build/$exe"; fi
+        done
+        find "$testsuite/build" -name '*.cmake' -exec sed -i \
+          -e "s|$build_dir|@REUSEX_TEST_BUILD_DIR@|g" \
+          -e "s|$source_dir|@REUSEX_TEST_SOURCE_DIR@|g" {} +
+        if grep -rlE "(^|[\"' ;=(])$NIX_BUILD_TOP/" "$testsuite/build" --include='*.cmake'; then
+          echo "testsuite: build paths left in the ctest files above" >&2
+          exit 1
+        fi
+      '';
 
     # Patch the installed binaries and shared libraries so the dynamic loader
     # finds the host NVIDIA driver (libcuda.so) at /run/opengl-driver/lib.
@@ -347,4 +457,4 @@ in
       mainProgram = "rux";
       maintainers = with maintainers; [];
     };
-  }
+  })

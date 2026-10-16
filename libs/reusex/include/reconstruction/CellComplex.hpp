@@ -151,6 +151,15 @@ class CellComplex
    *   or around storeys) takes the walls of the sections next to it. Empty:
    *   every vertical plane spans every section (the behaviour before sba).
    * @param min_section_overlap_m See default_min_section_overlap_m.
+   * @param obliques Indices into @p planes of oblique planes (roof slopes;
+   *   reusex-e6z), used only with @p plane_z_ranges. A section whose own
+   *   walls enclose no face (an attic under a pitched roof, whose only walls
+   *   are its gables) takes, besides the walls of the nearest sections, the
+   *   line where each oblique plane reaching into it by min_section_overlap_m
+   *   crosses the section's mid-height: the attic's cells then stop under
+   *   the roof instead of running out under the eaves. Such wall faces carry
+   *   the oblique plane's id. An oblique plane with no z-range (NaN) or
+   *   nearly horizontal (|n_z| > 0.95) is ignored.
    * @throws std::invalid_argument if @p plane_z_ranges is neither empty nor
    *   as long as @p planes.
    */
@@ -166,7 +175,8 @@ class CellComplex
           viz_func = std::nullopt,
       size_t max_cells = default_max_cells,
       const std::vector<std::array<double, 2>> &plane_z_ranges = {},
-      double min_section_overlap_m = default_min_section_overlap_m);
+      double min_section_overlap_m = default_min_section_overlap_m,
+      const std::vector<size_t> &obliques = {});
 
   // Per-face coverage values are written to the "f:support_probability"
   // vertex property map and queried from there by downstream code.

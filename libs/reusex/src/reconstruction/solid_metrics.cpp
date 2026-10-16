@@ -345,10 +345,12 @@ void compare_openings(const core::SolidModel &det, const core::SolidModel &ref,
   const auto dop = place_openings(det, "detected");
   r.reference_openings = ro.size();
   r.detected_openings = dop.size();
-  std::vector<Candidate> cands;
+  std::vector<Candidate> cands, any;
   for (std::size_t i = 0; i < ro.size(); ++i)
     for (std::size_t j = 0; j < dop.size(); ++j) {
       const double iou = opening_iou(ro[i], dop[j], opt);
+      if (iou > 0.0)
+        any.push_back({iou, i, j});
       if (iou >= opt.opening_match_iou && iou > 0.0)
         cands.push_back({iou, i, j});
     }
@@ -357,6 +359,13 @@ void compare_openings(const core::SolidModel &det, const core::SolidModel &ref,
   r.matched_openings = matches.size();
   r.opening_recall = ratio(matches.size(), ro.size());
   r.opening_precision = ratio(matches.size(), dop.size());
+  if (!ro.empty()) {
+    double sum = 0.0;
+    for (const auto &m : greedy_match(std::move(any), ro.size(), dop.size(),
+                                      /*higher_is_better=*/true))
+      sum += m.score;
+    r.opening_iou_mean = sum / static_cast<double>(ro.size());
+  }
 }
 
 void evidence_shares(const core::SolidModel &det, SolidModelReport &r) {
@@ -632,6 +641,7 @@ std::string SolidModelReport::to_json(int indent) const {
   j["wall_precision"] = opt_json(wall_precision);
   j["opening_recall"] = opt_json(opening_recall);
   j["opening_precision"] = opt_json(opening_precision);
+  j["opening_iou_mean"] = opt_json(opening_iou_mean);
   j["fit_mean_m"] = opt_json(fit_mean_m);
   j["fit_within_share"] = opt_json(fit_within_share);
   j["mesh_area_m2"] = opt_json(mesh_area_m2);

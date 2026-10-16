@@ -83,6 +83,11 @@ struct SolidModelReport {
   std::optional<double> wall_precision; ///< matched / detected walls
   std::optional<double> opening_recall;
   std::optional<double> opening_precision;
+  /// Mean over reference openings of the IoU with the detected opening it is
+  /// paired with one-to-one (greedy by IoU, any overlap, no
+  /// opening_match_iou threshold); an unpaired reference opening counts 0.
+  /// Shows how close the misses of opening_recall came.
+  std::optional<double> opening_iou_mean;
   /// Point-to-solid fit (fit_report): mean distance [m], and the share of
   /// points within SolidMetricsOptions::fit_within_m.
   std::optional<double> fit_mean_m;

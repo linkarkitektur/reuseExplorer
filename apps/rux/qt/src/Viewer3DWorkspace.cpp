@@ -316,6 +316,8 @@ bool Viewer3DWorkspace::has_data(Layer l) const {
     return s.sensor_frames.total_count > 0;
   case Layer::walls:
     return db->has_walls();
+  case Layer::openings:
+    return db->has_openings();
   case Layer::deviation:
   case Layer::drift:
     // TODO: Let the 3D workspace draw the drift heatmap
@@ -339,7 +341,8 @@ void Viewer3DWorkspace::reset() {
   visible_.clear();
   visible_[static_cast<int>(Layer::cloud)] = true;
   visible_[static_cast<int>(Layer::panoramas)] = true;
-  visible_[static_cast<int>(Layer::walls)] = true; // the WP3 product
+  visible_[static_cast<int>(Layer::walls)] = true;    // the WP3 product
+  visible_[static_cast<int>(Layer::openings)] = true; // ...and WP5's
   rebuild_panel();
   if (!session_.is_open()) {
     view_->set_message(session_.state() == ProjectSession::State::loading
@@ -367,8 +370,9 @@ void Viewer3DWorkspace::activate() {
                            : Layer::cloud;
   if (visible_.value(static_cast<int>(Layer::cloud)) && has_data(colour))
     ensure_layer(colour);
-  for (Layer l : {Layer::mesh, Layer::walls, Layer::components, Layer::frustums,
-                  Layer::panoramas, Layer::passes, Layer::graph})
+  for (Layer l :
+       {Layer::mesh, Layer::walls, Layer::openings, Layer::components,
+        Layer::frustums, Layer::panoramas, Layer::passes, Layer::graph})
     if (visible_.value(static_cast<int>(l)) && has_data(l))
       ensure_layer(l);
   view_->request_render();
@@ -406,9 +410,11 @@ void Viewer3DWorkspace::rebuild_panel() {
   for (const auto &c : s.clouds)
     if (c.name == "cloud")
       cloud_points = c.point_count;
-  std::size_t db_walls = 0;
-  if (open && session_.db())
+  std::size_t db_walls = 0, db_openings = 0;
+  if (open && session_.db()) {
     db_walls = session_.db()->walls().size();
+    db_openings = session_.db()->openings().size();
+  }
 
   auto row = [&](Layer l, const QString &name, const QString &count) {
     auto *w = new QWidget;
@@ -474,6 +480,9 @@ void Viewer3DWorkspace::rebuild_panel() {
   row(Layer::mesh, "Mesh", meshes ? QString::number(meshes) : QString());
   row(Layer::walls, "Vægge",
       db_walls ? format_count(static_cast<qulonglong>(db_walls)) : QString());
+  row(Layer::openings, "Åbninger",
+      db_openings ? format_count(static_cast<qulonglong>(db_openings))
+                  : QString());
   row(Layer::components, "Bygningsdele",
       format_count(static_cast<qulonglong>(s.components.total_count)));
   row(Layer::frustums, "Kamerafrustummer",

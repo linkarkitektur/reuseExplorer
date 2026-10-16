@@ -426,6 +426,57 @@ removes walls and joins, and needs `--force` when any wall is locked.
 `io::load_solid_model` reads both, so `rux analyze solid --reference plan.yaml`
 scores a project's walls directly.
 
+### `openings` (`rux create openings`)
+
+Per wall of the `walls` table, in its storey's level frame
+(`reconstruction/openings.hpp`, `detect_openings`): an (s, z) raster of 10 cm
+cells over the face, s from the wall's start (x0, y0), z between the floor and
+ceiling measured in front of the wall (`local_levels`; the storey's where none
+is found). A cell is solid when a point lies in the wall's slab (half the
+thickness + `slab_margin_m`), occluded when something stands within `front_m`
+(1.2 m) in front of the face on a side the wall was seen from
+(`face_a_points` / `face_b_points`) — a wall missing behind a cabinet is not an
+opening — and open otherwise. The non-solid cells are opened
+morphologically, split into components and fitted with rectangles, kept when
+big enough, mostly non-solid, partly seen through and framed by wall on both
+sides; rectangles split by a mullion are merged. Kind: sill below
+`door_max_sill_m` with the head at the ceiling → `opening`, with a door's
+height → `door`, else `window`; a low-silled rectangle the camera path walks
+through reaches the floor (nobody walks through a window).
+
+| | |
+|---|---|
+| Consumes | `cloud`, `walls`, `storeys` (+ labels, instances, glass confidence images, sensor poses as optional evidence) |
+| Produces | `openings` (table, schema v34: one row per opening, a stable GUID — see below) |
+| Options  | `OpeningOptions` (`libs/reusex/include/reconstruction/openings.hpp`), parameter keys are its field names; plus `guid_match_m`, `guid_min_overlap` (`core::OpeningIdentityOptions`, `core/opening_identity.hpp`). One table, `pipeline::opening_parameter_table()`, defines the keys, the CLI flags and their bounds |
+| Checks   | `cloud` present; ≥1 wall; ≥1 storey |
+
+Each row: the host wall by GUID (`wall_guid`, `OpeningRecord::wall`), `kind`
+(door | window | opening), `s_start` / `s_end` along the host's axis from its
+(x0, y0), `z_sill` / `z_head` in the level frame, `state` (open | closed |
+unknown: a door is `open` when its leaf stands in the quarter-cylinder it
+sweeps), `is_external` (the host wall's, until spaces exist),
+`source_instance_guid` (the `instances` row with most points on it, when
+`instances` is aligned with `cloud`), `confidence` (from the geometry alone,
+at most 0.7, raised by agreeing evidence: labels, the instance, glass, camera
+path crossings) and `metadata` (the evidence: fill, jambs, local levels,
+label shares, crossings, glass share, the leaf and `swing` left | right seen
+from the side it opens to). The host is named by GUID, not by a foreign key:
+a `walls` re-run replaces its rows but keeps their GUIDs, so the openings
+(and a locked one) survive it; an opening whose host is gone is left out of
+`io::load_solid_model` until `openings` runs again.
+
+Identity: a re-detected opening keeps the GUID of the stored opening in the
+same wall whose start lies within `guid_match_m` (0.25 m) and that overlaps
+it by `guid_min_overlap` (half) of the narrower one. Only an unmatched one
+gets a fresh GUID, `uuid5(project_guid, "openings/<wall guid>/<s_start>")`
+with s_start rounded to 5 cm, suffixed until unique. Rows with `locked = 1`
+survive a re-run unchanged. `rux get openings` (or `rux get
+walls.<id>.openings`) prints the table; `rux del openings` removes it, and
+needs `--force` when any opening is locked. `io::load_solid_model` reads it,
+so `rux analyze solid --reference plan.yaml` scores a project's openings
+directly. Replaces `windows` (deprecated, removed with the WP6 solids).
+
 ### `mesh` (`rux create mesh`)
 
 Solidify the cell complex into **one watertight envelope mesh** covering every
@@ -459,7 +510,9 @@ Texture-map the reconstructed mesh from the cloud's colors.
 
 ### `windows` (`rux create windows`)
 
-Derive window building components from the instances and the mesh.
+**Deprecated** — replaced by `openings`; removed when the WP6 solids land.
+The command prints a deprecation warning. Derive window building components
+from the instances and the mesh.
 
 | | |
 |---|---|
@@ -638,7 +691,7 @@ rasterizer.
 
 ```
 import → [graph_init] → [graph_discover] → (optimize|register) → clouds → planes → [storeys] → rooms → mesh → texture
-                                                                                   ↘ storeys → classify → walls
+                                                                                   ↘ storeys → classify → walls → openings
                                                     ↘ annotate → project → instances → windows
                                                     ↘ gsplat (leaf: produces `splat`)
 ```

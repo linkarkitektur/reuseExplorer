@@ -836,6 +836,33 @@ class ProjectDB {
   /// action).
   void delete_walls();
 
+  // --- Openings (schema v34, solid-model WP5) ---
+
+  /// Store the openings of one detection run. Replaces every opening whose
+  /// `locked` is 0 by @p openings; a locked opening is never touched (a
+  /// record whose guid a locked row holds is skipped, the locked row wins).
+  /// One SAVEPOINT. The host wall is named by its guid
+  /// (OpeningRecord::wall, column wall_guid), not by a foreign key: a walls
+  /// re-run replaces those rows but keeps their GUIDs. @p run_id is the
+  /// pipeline_log row that produced them (-1 = none).
+  /// @returns the number of openings written.
+  /// @throws std::invalid_argument for an empty guid or host, a kind other
+  ///         than door | window | opening, a state other than open | closed
+  ///         | unknown, a source other than detected | manual | imported, an
+  ///         empty extent (s_end <= s_start or z_head <= z_sill), or two
+  ///         openings sharing a guid; std::runtime_error on a read-only or
+  ///         pre-v34 project.
+  size_t save_openings(const std::vector<core::OpeningRecord> &openings,
+                       int run_id = -1);
+  /// Every stored opening, by host wall guid, then s_start. Empty for a
+  /// pre-v34 project.
+  std::vector<core::OpeningRecord> openings() const;
+  std::optional<core::OpeningRecord>
+  opening_by_guid(std::string_view guid) const;
+  bool has_openings() const;
+  /// Delete every opening, locked ones included (an explicit user action).
+  void delete_openings();
+
   // --- Scans (multi-session import, #129) ---
 
   /// One row of the `scans` table.  Each `rux import` creates one record;

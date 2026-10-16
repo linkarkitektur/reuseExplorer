@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "database/wall_router.hpp"
+#include "database/opening_router.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -134,11 +135,14 @@ DataPayload WallRouter::get(const std::vector<PathComponent> &components) {
   if (components.size() == 1)
     return j;
   const auto &prop = components[1].value;
+  if (prop == "openings") // the openings in this wall (schema v34)
+    return openings_json(*db_, match->guid);
   if (j.contains(prop))
     return j.at(prop);
   std::string available;
   for (const auto &[k, _] : j.items())
     available += (available.empty() ? "" : ", ") + k;
+  available += ", openings";
   throw std::runtime_error("Unknown property: " + prop +
                            "\nAvailable properties: " + available);
 }

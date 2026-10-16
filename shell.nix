@@ -156,6 +156,9 @@ in
         ccache # Cache C++ compilation to speed up rebuilds
         ninja # Faster build system alternative to Make
         bear # Generate compile_commands.json for LSP/clangd
+        # Pushes the local `nix build .#ci` to reusex.cachix.org, so CI on
+        # the same commit substitutes it (docs/guides/ci-cache.md)
+        cachix
 
         # C++ development tools
         clang-tools # Includes clang-format, clang-tidy, clang-rename

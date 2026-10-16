@@ -50,10 +50,11 @@ const std::vector<PipelineStage> &all_stages() {
       PipelineStage::project,        PipelineStage::planes,
       PipelineStage::storeys,        PipelineStage::rooms,
       PipelineStage::instances,      PipelineStage::classify,
-      PipelineStage::walls,          PipelineStage::mesh,
-      PipelineStage::texture,        PipelineStage::windows,
-      PipelineStage::materials,      PipelineStage::survey,
-      PipelineStage::attributes,     PipelineStage::gsplat,
+      PipelineStage::walls,          PipelineStage::openings,
+      PipelineStage::mesh,           PipelineStage::texture,
+      PipelineStage::windows,        PipelineStage::materials,
+      PipelineStage::survey,         PipelineStage::attributes,
+      PipelineStage::gsplat,
   };
   return stages;
 }

@@ -258,31 +258,44 @@ Two workflows, split by whether they need the nix closure:
 | Workflow | Triggers | Jobs |
 |---|---|---|
 | `.github/workflows/lint.yml` | push (main) + PR | clang-format, REUSE/SPDX |
-| `.github/workflows/ci.yml` | push (main) + PR + `workflow_dispatch` | `nix build .#checks.x86_64-linux.tests` (CPU variant + ctest): substituted if `scripts/ci-local.sh` pushed it, else built |
+| `.github/workflows/ci.yml` | push (main) + PR + `workflow_dispatch` | `nix build .#ci` (CPU variant: package + ctest + install check), substitute-first: compiles only what nobody pushed |
 
-**Build locally, let CI confirm** (reusex-37v). `checks.tests`' output is a
-pass stamp (ctest log, no runtime closure). Before pushing a PR, on a clean,
-committed tree:
+**Build locally, let CI confirm** (reusex-37v, reusex-uk8). What CI realises
+is one flake output, `.#ci`, and you build exactly that — no script. Build
+and test are **two derivations**: `checks.cpu` (= `packages.cpu`) compiles
+ReUseX once into `out` (the installed package ruxd builds against) and
+`testsuite` (test binaries + ctest files); `checks.tests` (= `cpu.check`,
+`default.nix`) only runs ctest and the package-consumer install check against
+them and outputs a pass stamp with no references. `.#ci` links all three.
+Before pushing a branch, on a clean, committed tree, from the dev shell
+(it has `cachix`):
 
 ```bash
-scripts/ci-local.sh        # nix build .#checks... for HEAD (--cores 4), push the stamp
-scripts/ci-local.sh --check  # would CI hit for HEAD?
+nix build .#ci --print-out-paths | cachix push reusex
 ```
 
 CI checks out the **PR head commit** (not GitHub's merge commit), evaluates
-the same derivation, tries `nix build --max-jobs 0` (substitute only) and
-compiles nothing when the stamp is in **https://reusex.cachix.org**; the job
-log prints the derivation and says which path it took. Without a stamp it
-falls back to the full build (~25-45 min). The derivation is the same
-locally and in CI because `src` is `lib.fileset`-narrowed in `default.nix`:
-edits to `docs/`, `.github/`, `CLAUDE.md`, most of `scripts/` do not change
-it, while any file the build or a test reads must be in that fileset (a test
-reading a file outside it fails only in the nix build). The local nix build
-reuses `/var/cache/ccache` inside the sandbox (`overlays/ccache.nix`), so a
-rebuild after a small change is mostly linking and ctest. Pushing needs a
-Cachix write token (`CACHIX_AUTH_TOKEN` or `cachix authtoken`); in CI the
-token is an **environment** secret on the `CI` environment (hence
-`environment: CI`), and CI itself pushes only from `main`.
+the same derivations, logs them and nix's `--dry-run` plan, and tries
+`nix build .#ci --max-jobs 0` (substitute only). On a miss it builds only
+what is missing (a cached `.#cpu` means tests only, ~5 min; otherwise the full
+compile, ~25-45 min) and a `::notice` says which. On `main` it also proves
+that `github:…#cpu` (what downstream repos fetch) is the same derivation as
+`.#cpu`. The derivations match locally and in CI because the sources are
+`lib.fileset`-narrowed in `default.nix`: the **build** source holds only what
+the compile reads (no `tests/fixtures`, so a GitHub tarball's LFS pointers
+cannot change it), the **test** source adds what tests read at run time
+(`tests/fixtures`, `docs/CONTRACTS.md`, …). Edits to `docs/`, `.github/`,
+`CLAUDE.md`, most of `scripts/` change nothing; a fixture or `CONTRACTS.md`
+edit reruns only the tests. A file a test reads must be in the test fileset
+(it fails only under nix otherwise), and test binaries reach it through
+`source_dir()` / `rux_executable()` (`tests/support/`), whose compiled-in
+paths `checks.tests` overrides with `REUSEX_TEST_SOURCE_DIR` /
+`REUSEX_TEST_RUX_EXECUTABLE`. The local nix build reuses `/var/cache/ccache`
+inside the sandbox (`overlays/ccache.nix`), so a rebuild after a small change
+is mostly linking plus the ~6 min test run. Pushing needs a Cachix write token
+(`cachix authtoken <token>` once, or `CACHIX_AUTH_TOKEN`); in CI the token
+is an **environment** secret on the `CI` environment (hence `environment:
+CI`), and CI itself pushes only from `main`.
 
 The build steps use `shell: bash` (pipefail): GitHub's default `bash -e`
 let `nix build | tee` exit 0 on test failures until reusex-37v.
@@ -509,6 +522,13 @@ and deleted the shims. `include/geometry/` now holds only the real
   bootstrap CI, the bounded wall graph (`detect_walls`, `wall_records`);
   stored by the `walls` stage, whose parameters (keys, CLI flags, bounds)
   all come from one table, `pipeline/wall_parameters.hpp`
+- `openings.hpp`: doors, windows and openings in the wall faces (WP5): an
+  (s, z) face raster with the occluder check (seen side only), rectangle
+  fit, mullion merge, door / window / opening by sill and height, evidence
+  (labels, instances, glass images, camera-path crossings), door leaf ->
+  state and swing, local floor/ceiling per wall (`detect_openings`); stored
+  by the `openings` stage, parameters in one table,
+  `pipeline/opening_parameters.hpp`
 - `solid_metrics.hpp`: the solid-model benchmark (`rux analyze solid`,
   `scripts/bench-solid.sh`): a detected `core::SolidModel` vs a reference plan
   in the solid-model JSON format (`io/solid_model_json.hpp`,
@@ -652,7 +672,11 @@ tree — if a doc mentions `RTABMapDatabase`, that doc is stale.
   `WallJoinRecord`, `save_walls` / `walls()` / `wall_joins()`; written by
   `rux create walls`, `JobStage::walls`; `storey` is the storey idx, a
   re-detected wall keeps the GUID of the stored wall it lies on,
-  `core/wall_identity.hpp`)
+  `core/wall_identity.hpp`). Schema v34 adds `openings`
+  (`core::OpeningRecord`, `save_openings` / `openings()`; written by `rux
+  create openings`, `JobStage::openings`; the host wall is named by GUID,
+  not a foreign key, so openings survive a walls re-run;
+  `core/opening_identity.hpp`)
 - Migrating schema; `LATEST_SCHEMA_VERSION` is defined in
   `src/core/ProjectDB.cpp` — read it there rather than trusting a doc (it moves
   most releases)
@@ -718,7 +742,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | Command | Sub-commands | Source |
 |---|---|---|
 | `import` | `rtabmap`, `mushroom`, `arkitscenes`, `e57`, `ply`, `gsplat`, `materialepas`, `csv`, `360`, `photos` | `src/import/` |
-| `create` | `clouds`, `dense`, `annotate`, `annotate-360`, `material`, `project`, `planes`, `rooms`, `instances`, `storeys`, `classify`, `walls`, `materials`, `survey`, `mesh`, `texture`, `windows` | `src/create/` |
+| `create` | `clouds`, `dense`, `annotate`, `annotate-360`, `material`, `project`, `planes`, `rooms`, `instances`, `storeys`, `classify`, `walls`, `openings`, `materials`, `survey`, `mesh`, `texture`, `windows` (deprecated) | `src/create/` |
 | `export` | `ply`, `e57`, `materialepas`, `csv`, `rhino`, `semantic-images`, `speckle`, `colmap`, `pdf` | `src/export/` |
 | `align` | `360` (content-based panorama pose refinement) | `src/align/` |
 | `edit` | `downsample`, `perturb-poses` (drift synthesis, #338) | `src/edit/` |
@@ -731,7 +755,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | `info` | — (project summary) | `src/info.cpp` |
 | `log` | — (pipeline execution history) | `src/log.cpp` |
 | `view` | — (interactive viewer, needs a display; `--plan gt.yaml --watch` = hot-reloading ground-truth workbench over `populate_scene`, `view/plan_workbench.hpp`) | `src/view/` |
-| `render` | — (headless render to PNG: `--view top\|plan[:h]\|front\|back\|left\|right\|orbit:N\|frame:<id>`, `--section x=<m>\|y=<m>\|<x0>,<y0>:<x1>,<y1>`; layers incl. `frustums`, `panoramas`, `deviation` (cloud coloured by distance to the mesh), `walls` (the walls table: footprints on a sheet over the cut in plan/top, boxes in 3D; assumed or < 50 % seen dimmer — also a Qt 3D layer, "Vægge"); label layers on the `--label-*` token scale; `--qa` writes the mesh-QA contact sheet, `visualize/qa_sheet.hpp`; `--plan gt.yaml --watch` re-renders and prints plan scores on every save, `render_watch.hpp`) | `src/render.cpp` |
+| `render` | — (headless render to PNG: `--view top\|plan[:h]\|front\|back\|left\|right\|orbit:N\|frame:<id>`, `--section x=<m>\|y=<m>\|<x0>,<y0>:<x1>,<y1>`; layers incl. `frustums`, `panoramas`, `deviation` (cloud coloured by distance to the mesh), `walls` (the walls table: footprints on a sheet over the cut in plan/top, boxes in 3D; assumed or < 50 % seen dimmer — also a Qt 3D layer, "Vægge"), `openings` (the openings table: bars on the walls in plan/top, rectangles in both wall faces in 3D, coloured by kind — Qt 3D "Åbninger"); label layers on the `--label-*` token scale; `--qa` writes the mesh-QA contact sheet, `visualize/qa_sheet.hpp`; `--plan gt.yaml --watch` re-renders and prints plan scores on every save, `render_watch.hpp`) | `src/render.cpp` |
 | `assemble` | — (multi-scan assembly) | `src/assemble.cpp` |
 
 With **no** subcommand, `rux` launches the Qt client (help without a display).

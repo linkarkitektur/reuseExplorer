@@ -237,6 +237,7 @@ storey at all (no storeys, walls or spaces) covers everything.
 | `wall_position_rms_m` | RMS of matched detected walls' endpoint distances to the reference axis line | lower |
 | `wall_thickness_err_mean_m` / `_p95_m` | \|detected - reference\| thickness over matched walls whose thickness is known (> 0) and measured (`assumed` false) on both sides; mean and nearest-rank P95. Pairs left out for `assumed` are counted in `counts.thickness_assumed_excluded`, scored pairs in `counts.thickness_pairs` | lower |
 | `opening_recall` / `opening_precision` | matched / reference, matched / detected openings | higher |
+| `opening_iou_mean` | mean over reference openings of the IoU with the detected opening paired one-to-one (greedy by IoU, any overlap, no `opening_match_iou` threshold); 0 for an unpaired one. How close the misses came | higher |
 | `fit_mean_m` | mean distance of the scan cloud's points to the solid mesh | lower |
 | `fit_within_share` | share of those points within `fit_within_m` (2 cm) | higher |
 | `mesh_unsupported_share` | share of the solid mesh's area with no scan point within `support_dist_m` (0.25 m): the reverse direction of the fit, which sees surfaces the scan does not show (fake walls between over-split rooms). `mesh_area_m2` is the area it is a share of, `counts.support_samples` the samples tested | lower |
