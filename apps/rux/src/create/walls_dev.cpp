@@ -10,6 +10,7 @@
 #include "exit_status.hpp"
 
 #include <reusex/core/ProjectDB.hpp>
+#include <reusex/core/normal_orientation.hpp>
 #include <reusex/geometry/transform_utils.hpp>
 #include <reusex/io/solid_model_json.hpp>
 
@@ -74,6 +75,29 @@ void report_reference_angles(
                100.0 * within(5.0));
 }
 
+/// A face as a wall record on its own line (thickness unknown): what W3.2
+/// alone can say.
+reusex::core::WallRecord face_record(const reusex::geometry::WallFace &f,
+                                     const reusex::geometry::AxisFamily &fam,
+                                     const reusex::core::StoreyRecord &st,
+                                     int n) {
+  const Eigen::Vector2d t(-fam.d.y(), fam.d.x());
+  const Eigen::Vector2d a = f.offset * fam.d + f.s0 * t;
+  const Eigen::Vector2d b = f.offset * fam.d + f.s1 * t;
+  reusex::core::WallRecord w;
+  w.guid = fmt::format("face-{}-{}", st.idx, n);
+  w.storey = st.idx;
+  w.x0 = a.x();
+  w.y0 = a.y();
+  w.x1 = b.x();
+  w.y1 = b.y();
+  w.z_base = st.z_floor;
+  w.height = st.z_ceiling - st.z_floor;
+  w.axis_family = f.family;
+  (f.side < 0 ? w.face_a_points : w.face_b_points) = f.point_count;
+  return w;
+}
+
 } // namespace
 
 void setup_subcommand_create_walls_dev(CLI::App &app,
@@ -97,6 +121,13 @@ void setup_subcommand_create_walls_dev(CLI::App &app,
       ->default_val(w.min_family_share);
   sub->add_option("--family-refine", w.family_refine_deg)
       ->default_val(w.family_refine_deg);
+  sub->add_option("--square", w.square_deg)->default_val(w.square_deg);
+  sub->add_option("--face-window", w.face_window_m)
+      ->default_val(w.face_window_m);
+  sub->add_option("--min-peak-points", w.min_peak_points)
+      ->default_val(w.min_peak_points);
+  sub->add_option("--min-column-share", w.min_column_share)
+      ->default_val(w.min_column_share);
 
   sub->callback([opt, global_opt]() {
     rux::finish(run_subcommand_create_walls_dev(*opt, *global_opt));
@@ -108,6 +139,12 @@ int run_subcommand_create_walls_dev(SubcommandCreateWallsDevOptions const &opt,
   try {
     reusex::ProjectDB db(global_opt.project_db, /*readOnly=*/true);
     const auto storeys = db.storeys();
+    if (!db.has_point_cloud("cloud") || !db.has_point_cloud("planes") ||
+        !db.has_point_cloud("plane_normals")) {
+      spdlog::error("walls-dev: needs the cloud, planes and plane_normals "
+                    "clouds");
+      return RuxError::INVALID_ARGUMENT;
+    }
     const auto planes = db.plane_classes();
     if (storeys.empty() || planes.empty()) {
       spdlog::error("walls-dev: needs the storeys and plane_classes tables "
@@ -115,6 +152,15 @@ int run_subcommand_create_walls_dev(SubcommandCreateWallsDevOptions const &opt,
       return RuxError::INVALID_ARGUMENT;
     }
     const auto plane_normals = db.point_cloud_normal("plane_normals");
+    const auto cloud = db.point_cloud_xyzrgb("cloud");
+    const auto plane_labels = db.point_cloud_label("planes");
+    reusex::geometry::WallOptions wopt = opt.walls;
+    const auto orientation = reusex::core::normal_orientation_of(
+        db.point_cloud_provenance("plane_normals").second);
+    wopt.use_normal_sign =
+        orientation && *orientation == reusex::core::kNormalOrientationSensor;
+    spdlog::info("walls-dev: plane normals {} the sensor",
+                 wopt.use_normal_sign ? "face" : "do not (provably) face");
 
     reusex::core::SolidModel ref;
     if (!opt.reference.empty())
@@ -125,14 +171,28 @@ int run_subcommand_create_walls_dev(SubcommandCreateWallsDevOptions const &opt,
     model.storeys = storeys;
     model.provided.walls = true;
     for (const auto &st : storeys) {
-      const auto families = reusex::geometry::axis_families(
-          planes, *plane_normals, st, opt.walls);
+      const auto families =
+          reusex::geometry::axis_families(planes, *plane_normals, st, wopt);
       spdlog::info("storey {}: {} axis families", st.idx, families.size());
       for (const auto &f : families)
         spdlog::info("  family {}: {:.2f} deg, weight {:.0f}{}", f.index,
                      f.angle_deg, f.weight, f.dominant ? " (dominant)" : "");
       if (!opt.reference.empty())
         report_reference_angles(ref, st, families);
+
+      const auto wp = reusex::geometry::wall_points(
+          *cloud, *plane_labels, *plane_normals, planes, st, wopt);
+      const auto faces = reusex::geometry::wall_faces(wp, families, wopt);
+      spdlog::info("  {} wall points, {} other points, {} faces",
+                   wp.points.size(), wp.others.size(), faces.size());
+      for (size_t k = 0; k < faces.size(); ++k) {
+        const auto &f = faces[k];
+        const auto fam =
+            std::find_if(families.begin(), families.end(),
+                         [&](const auto &x) { return x.index == f.family; });
+        model.walls.push_back(
+            face_record(f, *fam, st, static_cast<int>(model.walls.size())));
+      }
     }
 
     if (!opt.output.empty()) {
