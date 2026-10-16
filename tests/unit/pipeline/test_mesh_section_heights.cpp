@@ -70,9 +70,7 @@ TEST_CASE("MeshSectionHeights_Storeys_FloorsAndCeilingsInWorldZ",
   CHECK(h[2] == Approx(4.3));
   CHECK(h[3] == Approx(6.43));
 
-  MeshStageOptions stage;
-  CHECK(mesh_options_for(db, stage, {}).section_heights.empty()); // off
-  stage.use_storey_sections = true;
+  MeshStageOptions stage; // on by default (reusex-x8s)
   CHECK(mesh_options_for(db, stage, {}).section_heights == h);
   stage.use_storey_sections = false;
   CHECK(mesh_options_for(db, stage, {}).section_heights.empty());

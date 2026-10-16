@@ -37,19 +37,25 @@ struct MeshStageOptions {
   /// NewOffice it left the uncovered share unchanged (36.9% -> 37.3%) while
   /// adding a third section (5020 cells, over the 5000 default limit).
   bool use_plane_classes = false;
-  /// Only storey floors and ceilings become section planes of the cell
-  /// complex when the project has a storeys table (key "storey_sections";
-  /// reusex-z1v.3.4): MeshOptions::section_heights from
-  /// mesh_section_heights(). No effect without storeys.
+  /// Only the horizontal planes inside the building become section planes
+  /// of the cell complex when the project has a storeys table (key
+  /// "storey_sections"; reusex-z1v.3.4, reusex-x8s): MeshOptions::
+  /// section_heights from mesh_section_heights(), see
+  /// geometry::select_section_planes(). Storey floors and ceilings, split
+  /// levels and an attic ceiling under the roof stay; planes outside the
+  /// building's height and the invented slab faces under its lowest floor
+  /// and over its top ceiling go. No effect without storeys.
   ///
-  /// Off by default: measured 2026-10-16 (reusex-sba) it drops planes the
-  /// storeys table does not describe but the mesh needs. On house1 it left
-  /// out the split-level floor (mean deviation 12.2 -> 16.6 cm, unsupported
-  /// mesh 24.6% -> 34.8% against storey-local walls alone); on house2 it cut
-  /// the attic above the top storey's ceiling off the mesh (P95 deviation
-  /// 86 -> 127 cm). It does make NewOffice fit max_cells (16659 -> 1851
-  /// cells) by dropping horizontals at 6-10 m and over the ceiling.
-  bool use_storey_sections = false;
+  /// On by default since 2026-10-16 (reusex-x8s). Measured against off (same
+  /// build): NewOffice fits max_cells (16659 > 5000 -> 1851 cells; its
+  /// horizontals at -2.5 and 6-10 m are tilted planes force_orthogonal_planes
+  /// moved out of the building); house2 4699 -> 4136 cells, mean deviation
+  /// 28.8 -> 26.2 cm, unsupported 26.3% -> 26.2%, and the attic fits the
+  /// cell budget for every wall (reusex-e6z); house1 959 -> 521 cells, mean
+  /// 12.4 -> 12.2 cm, unsupported 24.7% -> 24.6%, split level kept. The
+  /// first rule (only planes near a storey height, reusex-sba) dropped
+  /// house1's split level and house2's attic and stayed off.
+  bool use_storey_sections = true;
 };
 
 /// Read the mesh stage's JSON parameters ("" = defaults). Unknown keys are
