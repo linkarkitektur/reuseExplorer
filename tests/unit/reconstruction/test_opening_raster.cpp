@@ -219,6 +219,29 @@ TEST_CASE("Openings_OneSidedWall_IgnoresWhatIsBehindIt",
   CHECK(detect(pts).empty());
 }
 
+TEST_CASE("FaceRaster_OneSidedWallOfUnknownThickness_BodyLiesBehindTheFace",
+          "[reconstruction][openings]") {
+  // reusex-v8p: a one-sided wall's axis is its seen face (+y here) and its
+  // thickness unknown (-1). Its body lies behind the face (-y), so the slab
+  // is [-2 h - margin, +margin] about the face, not +-(h + margin): a sill
+  // board 10 cm in front of the lower part of a window hides it (occluded),
+  // it is not wall.
+  std::vector<Eigen::Vector3d> pts;
+  os::add_face(pts, 0.0, kLen, kH, {{2.0, 3.2, 0.9, 2.0}});
+  for (double s = 2.025; s < 3.2; s += 0.05)
+    for (double z = 0.925; z < 1.2; z += 0.05)
+      pts.emplace_back(s, 0.10, z);
+  auto w = os::wall(kLen, kH, -1.0);
+  w.face_a_points = 5000; // seen from +t = +y
+  w.face_b_points = 0;
+  const auto r = face_raster(pts, w, 0.0, kH);
+  // s = 2.5, z = 1.0: the board in front: occluded, not solid.
+  CHECK(r.at(25, 9) == FaceCellState::occluded);
+  const auto rects = fit_openings(r, 0.0, kH);
+  REQUIRE(rects.size() == 1);
+  CHECK_THAT(rects[0].z_sill, WithinAbs(0.9, 0.11));
+}
+
 TEST_CASE("Openings_DeskInFrontOfAWindow_StillAWindow",
           "[reconstruction][openings]") {
   // A desk top (0.75 m) standing in front of the lower part of a window

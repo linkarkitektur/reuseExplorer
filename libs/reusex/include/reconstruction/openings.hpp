@@ -197,7 +197,10 @@ struct FaceRaster {
 /// when |t| <= half thickness + slab_margin_m, and as an occluder when
 /// further out but within front_m of the face, on a side the wall was seen
 /// from (WallRecord::face_a_points > 0 for +t, face_b_points for -t; both
-/// when neither is known).
+/// when neither is known). A one-sided wall of unknown thickness (thickness
+/// <= 0, points on one face only) has its axis on its seen face
+/// (reusex-v8p): its slab is taken 2 x unknown_half_thickness_m deep behind
+/// that face, as face_levels() and door_leaf() do.
 ///
 /// @throws std::invalid_argument for a zero-length axis, a non-positive
 ///         cell, or z_ceiling - ceiling_clear_m <= z_floor + floor_clear_m.

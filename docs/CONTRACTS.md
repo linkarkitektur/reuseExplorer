@@ -354,8 +354,10 @@ CI and its lean, whether it is external (no room evidence beyond one face),
 and the bounded wall graph: faces snapped to their points, collinear walls
 bridged over doorways, corner and tee joins, and the share of each wall's
 face area that has evidence (`seen_share`). A wall seen from one side only is
-`assumed`: its thickness is `default_thickness_m` and its axis lies half of
-that behind the seen face.
+`assumed`: its axis is the seen face and its `thickness` is −1 (unknown), as
+reference plans draw external walls (reusex-v8p); `default_thickness_m` is
+only the body the stage assumes behind that face for its seen share and
+external test.
 
 | | |
 |---|---|
@@ -371,7 +373,8 @@ The stage refuses (invalid input) plane classes whose `point_count` does not
 match the plane's inliers in `planes`: `planes` ran again after `classify`,
 so re-run `classify`.
 
-Each row: the axis `(x0, y0)–(x1, y1)` (the wall's centre line, level frame),
+Each row: the axis `(x0, y0)–(x1, y1)` (the wall's centre line, or the seen
+face of a one-sided wall; level frame),
 `z_base` / `height` (the storey's floor and height), `thickness` with
 `thickness_ci_lo` / `thickness_ci_hi` (−1 when assumed), `lean_deg`,
 `is_external`, `assumed`, `seen_share` (−1 n/a), `face_a_points` /

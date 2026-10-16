@@ -143,10 +143,16 @@ presentation details like key order in a hand-edited file.
   walls and a boundary its space and wall by `guid`. A `guid` is any
   non-empty string unique in the document (authored plans can use `"w1"`;
   the pipeline writes RFC 4122 v5 UUIDs).
-- **Walls** are centre lines (`axis`) with a `thickness` (`-1` = unknown, for
-  a source that only sees one face). `assumed: true` means the thickness was
-  defaulted rather than measured; `seen_share` is the fraction of the wall's
-  face with scan evidence (`-1` = not computed).
+- **Walls** are centre lines (`axis`) with a `thickness`. A wall whose
+  thickness is unknown (`-1`) because only one face was seen -- an external
+  wall scanned from inside -- has its `axis` **on that seen face**, not half
+  a guessed thickness behind it (reusex-v8p). Reference plans and the walls
+  stage both follow this: an assumed centre line would charge every
+  one-sided wall the guess (about 0.1 m per endpoint). `assumed: true` means
+  the thickness was defaulted rather than measured (the walls stage writes
+  `-1` for a one-sided wall and keeps a defaulted thickness only for a wall
+  whose two faces it saw but could not measure between); `seen_share` is the
+  fraction of the wall's face with scan evidence (`-1` = not computed).
 - **Spaces** have one `outer` ring and optional `holes`, in either winding.
   Every ring is simple (it does not touch or cross itself) and has non-zero
   area (at least 3 non-collinear points); every hole lies strictly inside
@@ -234,7 +240,7 @@ storey at all (no storeys, walls or spaces) covers everything.
 | `room_count_error` | detected spaces - reference spaces (signed) | 0 |
 | `room_iou_mean` | mean over reference spaces of the 2D IoU with the detected space matched to it; unmatched = 0 | higher |
 | `wall_recall` / `wall_precision` | matched / reference walls, matched / detected walls | higher |
-| `wall_position_rms_m` | RMS of matched detected walls' endpoint distances to the reference axis line | lower |
+| `wall_position_rms_m` | RMS of matched detected walls' endpoint distances to the reference axis line; face to face when exactly one of the pair has measured faces (see Matching) | lower |
 | `wall_thickness_err_mean_m` / `_p95_m` | \|detected - reference\| thickness over matched walls whose thickness is known (> 0) and measured (`assumed` false) on both sides; mean and nearest-rank P95. Pairs left out for `assumed` are counted in `counts.thickness_assumed_excluded`, scored pairs in `counts.thickness_pairs` | lower |
 | `opening_recall` / `opening_precision` | matched / reference, matched / detected openings | higher |
 | `opening_iou_mean` | mean over reference openings of the IoU with the detected opening paired one-to-one (greedy by IoU, any overlap, no `opening_match_iou` threshold); 0 for an unpaired one. How close the misses came | higher |
@@ -253,7 +259,13 @@ report is deterministic (STANDARDS §6):
   extents projected on the reference axis overlap by at least
   `wall_match_min_overlap` (0.5) of their union (a 1D IoU), so a short
   fragment lying on the line cannot take the full wall's place. Closest
-  midpoint first.
+  midpoint first. Distances are face to face when the two walls follow
+  different conventions: when exactly one of them has known faces
+  (thickness > 0 and not `assumed`), the other's axis -- a seen face, or a
+  defaulted guess -- is measured to the nearer of those two faces; otherwise
+  axis to axis. A one-sided detected wall on the inner face of a measured
+  reference wall therefore scores 0, as does a measured detected wall whose
+  inner face lies on a one-sided reference axis.
 - **Spaces** on the same storey: exact 2D IoU (CGAL boolean set operations
   on polygons with holes), highest first.
 - **Openings** on the same storey (their host walls' storeys): the detected

@@ -137,7 +137,8 @@ const std::vector<WallParameter> &wall_parameter_table() {
        "Confidence level of the thickness interval.", WALL(ci_level), 0.5,
        0.999},
       {"default_thickness_m", "--default-thickness", "Assumed thickness [m]",
-       "Thickness given to a wall seen from one side only.",
+       "Body assumed behind a wall seen from one side only (its axis is the "
+       "seen face, its stored thickness -1).",
        WALL(default_thickness_m), 0.0, 2.0},
       {"external_strip_near_m", "--external-strip-near",
        "External strip from [m]",

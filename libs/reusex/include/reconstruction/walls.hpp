@@ -132,7 +132,9 @@ struct WallOptions {
   int bootstrap_samples = 200;
   unsigned seed = 0;
   double ci_level = 0.95;
-  /// Thickness given to a wall seen from one side only (assumed) [m].
+  /// Body assumed behind a wall seen from one side only, for its seen share,
+  /// the external test and the graph's collinearity [m]. Its axis is the
+  /// seen face and its record's thickness -1 (unknown; reusex-v8p).
   double default_thickness_m = 0.2;
   /// External test: a strip from near to far beyond each face [m]...
   double external_strip_near_m = 0.1, external_strip_far_m = 0.6;
@@ -350,13 +352,17 @@ ThicknessFit measure_thickness(const WallFace &lo, const WallFace &hi,
 struct WallSegment {
   int family = 0;                               ///< AxisFamily::index
   Eigen::Vector2d d = Eigen::Vector2d::UnitX(); ///< the family's normal
-  double axis_offset = 0.0;                     ///< centre line: p . d [m]
+  /// The axis, p . d [m]: the centre line of a wall with two faces (or a
+  /// crossed pair), the seen face of a one-sided wall (reusex-v8p).
+  double axis_offset = 0.0;
   double s0 = 0.0, s1 = 0.0; ///< extent along t = d rotated +90 deg [m]
   /// The faces at mid-height [m]; NaN for a side that was not seen.
   double face_lo = std::numeric_limits<double>::quiet_NaN();
   double face_hi = std::numeric_limits<double>::quiet_NaN();
   int face_lo_index = -1, face_hi_index = -1; ///< into the faces, -1 none
-  double thickness = 0.0; ///< measured, or default_thickness_m if assumed
+  /// Measured, or default_thickness_m if assumed (a one-sided wall's body
+  /// behind its face; its record says -1).
+  double thickness = 0.0;
   double thickness_ci_lo = -1.0, thickness_ci_hi = -1.0; ///< -1: none
   double lean_deg = 0.0;
   bool assumed = false;             ///< one side seen: thickness defaulted
@@ -370,10 +376,11 @@ struct WallSegment {
 /// The walls of a storey from its faces and their pairing (W3.3): a pair is
 /// a wall with a measured thickness (measure_thickness; when it cannot fit,
 /// the profile peaks and no CI); a crossed pair a wall halfway between its
-/// faces with an assumed thickness; a one-sided stretch is an assumed wall of
-/// default_thickness_m whose body lies behind the seen face (away from the
-/// side it was seen from; with no normal sign, away from the side with
-/// more floor-level evidence). External test: a strip from
+/// faces with an assumed thickness; a one-sided stretch is an assumed wall
+/// whose axis is the seen face (reusex-v8p) and whose body, default_thickness_m
+/// deep, lies behind it (away from the side it was seen from; with no
+/// normal sign, away from the side with more floor-level evidence). External
+/// test: a strip from
 /// external_strip_near_m to external_strip_far_m beyond each face, below
 /// external_max_z_m above the floor, holding fewer than min_room_density
 /// non-wall points per m^2 on either side.
@@ -454,8 +461,10 @@ detect_walls(const Cloud &cloud, const CloudL &planes,
 /// frame. The guid is the stable key W3.5 hashes into a deterministic GUID:
 /// "walls/<storey idx>/<x0>,<y0>,<x1>,<y1>" with the axis endpoints rounded
 /// to 5 cm (a "#n" suffix keeps two walls that round alike apart). z_base /
-/// height are the storey's floor and height; an assumed wall carries
-/// default thickness and no CI; a flagged wall carries
+/// height are the storey's floor and height; a one-sided wall has its axis
+/// on its seen face and thickness -1 (unknown, reusex-v8p), any other
+/// assumed wall the default thickness; assumed walls carry no CI; a flagged
+/// wall carries
 /// {"low_seen_share": true} as metadata.
 std::pair<std::vector<core::WallRecord>, std::vector<core::WallJoinRecord>>
 wall_records(const WallGraph &graph, const core::StoreyRecord &storey);

@@ -109,16 +109,44 @@ double angle_deg(const Axis &a, const Axis &b) {
   return std::acos(c) * 180.0 / M_PI;
 }
 
+/// Signed distance of (x, y) from the infinite line through @p a (+ to the
+/// left of its direction) [m].
+double signed_off_line(const Axis &a, double x, double y) {
+  return (y - a.ay) * a.dx - (x - a.ax) * a.dy;
+}
+
+/// Half the thickness of a wall whose faces are known: measured (> 0, not
+/// assumed); 0 for a wall drawn on one face (thickness -1, reusex-v8p) or
+/// with a defaulted thickness, whose axis is all there is to compare.
+double face_half(const core::WallRecord &w) {
+  return w.thickness > 0.0 && !w.assumed ? 0.5 * w.thickness : 0.0;
+}
+
+/// Distance of a detected wall's axis point (x, y) from reference axis
+/// @p r (reusex-v8p): axis to axis when both walls have known faces or
+/// neither has; when only one does, from the other's axis (a face) to the
+/// nearer of its two faces -- a one-sided wall is drawn on its seen face.
+double wall_dist(const Axis &r, double r_half, double d_half, double x,
+                 double y) {
+  const double sd = signed_off_line(r, x, y);
+  if ((r_half > 0.0) == (d_half > 0.0))
+    return std::abs(sd);
+  const double h = r_half > 0.0 ? r_half : d_half;
+  return std::min(std::abs(sd - h), std::abs(sd + h));
+}
+
 /// Whether detected axis @p d can be reference axis @p r: near-parallel, its
-/// midpoint close to r's line, and covering enough of r along r (1D IoU of
-/// the two extents projected on r >= wall_match_min_overlap).
-bool walls_compatible(const Axis &r, const Axis &d,
-                      const SolidMetricsOptions &opt, double &mid_dist) {
+/// midpoint close to r's line (wall_dist(), face to face for a one-sided
+/// wall), and covering enough of r along r (1D IoU of the two extents
+/// projected on r >= wall_match_min_overlap).
+bool walls_compatible(const Axis &r, double r_half, const Axis &d,
+                      double d_half, const SolidMetricsOptions &opt,
+                      double &mid_dist) {
   if (angle_deg(r, d) > opt.wall_match_angle_deg)
     return false;
   const double ex = d.ax + d.dx * d.length, ey = d.ay + d.dy * d.length;
   const double mx = 0.5 * (d.ax + ex), my = 0.5 * (d.ay + ey);
-  mid_dist = off_line(r, mx, my);
+  mid_dist = wall_dist(r, r_half, d_half, mx, my);
   if (mid_dist > opt.wall_match_dist_m)
     return false;
   const double s0 = along(r, d.ax, d.ay), s1 = along(r, ex, ey);
@@ -155,7 +183,8 @@ void compare_walls(const core::SolidModel &det, const core::SolidModel &ref,
       if (ref.walls[i].storey != det.walls[j].storey)
         continue;
       double mid = 0.0;
-      if (walls_compatible(ra[i], da[j], opt, mid))
+      if (walls_compatible(ra[i], face_half(ref.walls[i]), da[j],
+                           face_half(det.walls[j]), opt, mid))
         cands.push_back({mid, i, j});
     }
   const auto matches = greedy_match(std::move(cands), ra.size(), da.size(),
@@ -170,10 +199,11 @@ void compare_walls(const core::SolidModel &det, const core::SolidModel &ref,
   std::vector<double> thick_err;
   for (const auto &m : matches) {
     const auto &dw = det.walls[m.det];
-    const double d0 = off_line(ra[m.ref], dw.x0, dw.y0);
-    const double d1 = off_line(ra[m.ref], dw.x1, dw.y1);
-    sq += d0 * d0 + d1 * d1;
     const auto &rw = ref.walls[m.ref];
+    const double rh = face_half(rw), dh = face_half(dw);
+    const double d0 = wall_dist(ra[m.ref], rh, dh, dw.x0, dw.y0);
+    const double d1 = wall_dist(ra[m.ref], rh, dh, dw.x1, dw.y1);
+    sq += d0 * d0 + d1 * d1;
     if (rw.thickness > 0.0 && dw.thickness > 0.0) {
       if (rw.assumed || dw.assumed)
         ++r.thickness_assumed_excluded;

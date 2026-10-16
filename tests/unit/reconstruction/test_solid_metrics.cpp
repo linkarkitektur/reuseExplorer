@@ -150,6 +150,47 @@ TEST_CASE("CompareSolidModels_WallsOffsetByThreeCentimetres_RmsIsTheOffset",
   CHECK_THAT(r.wall_position_rms_m.value(), WithinAbs(0.03, 1e-9));
 }
 
+TEST_CASE("CompareSolidModels_OneSidedWalls_ComparedFaceToFace",
+          "[reconstruction][solid_metrics]") {
+  // reusex-v8p: a wall of unknown thickness (-1) is drawn on its one seen
+  // face. Against a wall of known thickness it is scored by its distance to
+  // the nearer face of that wall, not to its centre line.
+  SECTION("detected one-sided on the inner face of a 0.3 m reference wall") {
+    const SolidModel ref = box_reference(); // south wall: faces y = +-0.15
+    SolidModel det;
+    det.walls = {wall("a", 0, 0.15, 6, 0.15, -1.0)};
+    const auto r = compare_solid_models(det, ref);
+    REQUIRE(r.matched_walls == 1);
+    CHECK_THAT(r.wall_position_rms_m.value(), WithinAbs(0.0, 1e-9));
+  }
+  SECTION("reference one-sided on the inner face, detected measured") {
+    SolidModel ref;
+    ref.walls = {wall("s", 0, 0.15, 6, 0.15, -1.0)};
+    SolidModel det;
+    det.walls = {wall("a", 0, 0.0, 6, 0.0, 0.3)};
+    const auto r = compare_solid_models(det, ref);
+    REQUIRE(r.matched_walls == 1);
+    CHECK_THAT(r.wall_position_rms_m.value(), WithinAbs(0.0, 1e-9));
+  }
+  SECTION("both one-sided: the faces themselves, 2 cm apart") {
+    SolidModel ref;
+    ref.walls = {wall("s", 0, 0.15, 6, 0.15, -1.0)};
+    SolidModel det;
+    det.walls = {wall("a", 0, 0.17, 6, 0.17, -1.0)};
+    const auto r = compare_solid_models(det, ref);
+    CHECK_THAT(r.wall_position_rms_m.value(), WithinAbs(0.02, 1e-9));
+  }
+  SECTION("an assumed (defaulted) thickness has no faces to compare") {
+    SolidModel ref;
+    ref.walls = {wall("s", 0, 0.15, 6, 0.15, -1.0)};
+    SolidModel det;
+    det.walls = {wall("a", 0, 0.0, 6, 0.0, 0.3)};
+    det.walls[0].assumed = true;
+    const auto r = compare_solid_models(det, ref);
+    CHECK_THAT(r.wall_position_rms_m.value(), WithinAbs(0.15, 1e-9));
+  }
+}
+
 TEST_CASE("CompareSolidModels_ThicknessErrors_MeanAndP95",
           "[reconstruction][solid_metrics]") {
   const SolidModel ref = box_reference();

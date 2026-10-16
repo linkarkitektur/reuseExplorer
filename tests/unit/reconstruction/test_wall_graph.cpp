@@ -87,9 +87,9 @@ TEST_CASE("JoinWalls_RectangularRoom_FourCorners", "[walls][join_walls]") {
   REQUIRE(g.walls.size() == 4);
   CHECK(count(g, WallJoinKind::corner) == 4);
   CHECK(count(g, WallJoinKind::tee) == 0);
-  // One-sided walls: their axes sit half a default thickness outside the
-  // room, and the corners meet on those axes.
-  const double h = 0.5 * WallOptions{}.default_thickness_m;
+  // One-sided walls: their axes are the seen (inner) faces, and the
+  // corners meet on those (reusex-v8p).
+  const double h = 0.0;
   for (const auto &j : g.joins) {
     const auto pa = end_point(g.walls[static_cast<size_t>(j.a)], j.at_a);
     const auto pb = end_point(g.walls[static_cast<size_t>(j.b)], j.at_b);
@@ -102,7 +102,7 @@ TEST_CASE("JoinWalls_RectangularRoom_FourCorners", "[walls][join_walls]") {
   for (const auto &w : g.walls) {
     CHECK(w.assumed);
     CHECK(w.is_external);
-    CHECK(w.seen_share > 0.8); // the corner overhang is not seen
+    CHECK(w.seen_share > 0.9); // the faces meet: nothing overhangs
     CHECK_FALSE(w.low_seen);
   }
 }
@@ -223,6 +223,16 @@ TEST_CASE("WallRecords_Graph_StableKeysAndJoinGuids", "[walls][join_walls]") {
     CHECK_THAT(w.height, WithinAbs(2.5, 1e-12));
     CHECK(w.assumed);
     CHECK(w.thickness_ci_lo == -1.0);
+    // One-sided: the axis is the inner face, the thickness unknown
+    // (reusex-v8p), as the reference plans draw external walls.
+    CHECK(w.thickness == -1.0);
+    const bool on_x = std::abs(w.x0 - w.x1) < 1e-9;
+    if (on_x)
+      CHECK_THAT(std::min(std::abs(w.x0), std::abs(w.x0 - 4.0)),
+                 WithinAbs(0.0, 0.01));
+    else
+      CHECK_THAT(std::min(std::abs(w.y0), std::abs(w.y0 - 3.0)),
+                 WithinAbs(0.0, 0.01));
   }
   CHECK(walls[0].guid != walls[1].guid);
   REQUIRE(joins.size() == 4);
@@ -263,4 +273,36 @@ TEST_CASE("JoinWalls_FacadeWithWindowNiches_IsOneWallOnThePierFace",
   CHECK_THAT(g.walls[0].face_hi, WithinAbs(1.0, 0.005));
   CHECK_THAT(g.walls[0].s0, WithinAbs(0.0, 0.05));
   CHECK_THAT(g.walls[0].s1, WithinAbs(y, 0.05));
+}
+
+TEST_CASE("JoinWalls_OneSidedWallSeenFromBothRooms_StaysOneWall",
+          "[walls][join_walls]") {
+  // A 0.2 m wall at x = 1.0 .. 1.2 whose west face is seen over y 0..2 and
+  // whose east face over y 2.6..4.6 (two rooms, the doorway between them
+  // hidden): two one-sided stretches whose seen faces differ by the
+  // thickness. With axes on the faces they are still collinear (their bodies
+  // coincide) and bridge into one wall.
+  auto wp = storey_points();
+  add_face(wp, {1.0, 0}, {1.0, 2}, {-1, 0}, 0.0, 2.5, 0.003, 120);
+  add_face(wp, {1.2, 2.6}, {1.2, 4.6}, {1, 0}, 0.0, 2.5, 0.003, 121);
+  const auto g = graph_of(wp);
+  REQUIRE(g.walls.size() == 1);
+  CHECK_THAT(g.walls[0].s0, WithinAbs(0.0, 0.05));
+  CHECK_THAT(g.walls[0].s1, WithinAbs(4.6, 0.05));
+}
+
+TEST_CASE("JoinWalls_OneSidedWall_SnapsToItsFaceNotIntoTheRoom",
+          "[walls][join_walls]") {
+  // Furniture faces 6 cm in front of a one-sided wall must not pull the
+  // snapped face (and with it the axis) into the room.
+  auto wp = storey_points();
+  add_face(wp, {1.0, 0}, {1.0, 4}, {1, 0}, 0.0, 2.5, 0.003, 130);
+  add_face(wp, {1.06, 1}, {1.06, 3}, {1, 0}, 0.0, 0.9, 0.003, 131);
+  const auto g = graph_of(wp);
+  REQUIRE_FALSE(g.walls.empty());
+  const auto w = std::max_element(
+      g.walls.begin(), g.walls.end(),
+      [](const auto &a, const auto &b) { return a.s1 - a.s0 < b.s1 - b.s0; });
+  CHECK_THAT(w->axis_offset, WithinAbs(1.0, 0.01));
+  CHECK_THAT(w->face_hi, WithinAbs(1.0, 0.01));
 }

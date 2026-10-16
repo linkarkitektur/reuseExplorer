@@ -1121,15 +1121,18 @@ std::vector<WallSegment> measure_walls(const std::vector<WallFace> &faces,
                                    opt)
                  ? 1
                  : -1;
+    // The axis is the seen face (reusex-v8p): the thickness is unknown, and
+    // the reference plans draw a one-sided wall on its seen face too. The
+    // assumed body (default_thickness_m) lies behind it, away from the side
+    // it was seen from; body() and the external test use that.
+    w.axis_offset = o;
     if (side > 0) { // seen from +d: the wall's body lies below the face
       w.face_hi = o;
-      w.axis_offset = o - 0.5 * t;
       w.points_hi = samples_in(f, sp.s0, sp.s1);
       w.face_hi_index = sp.face;
       w.is_external = external(fam, o - t, o, w.s0, w.s1);
     } else {
       w.face_lo = o;
-      w.axis_offset = o + 0.5 * t;
       w.points_lo = samples_in(f, sp.s0, sp.s1);
       w.face_lo_index = sp.face;
       w.is_external = external(fam, o, o + t, w.s0, w.s1);
@@ -1145,23 +1148,36 @@ std::vector<WallSegment> measure_walls(const std::vector<WallFace> &faces,
 
 namespace {
 
-/// The face offsets a wall occupies: [lo, hi] (a one-sided wall's unseen
-/// face sits a default thickness behind the seen one).
+/// The face offsets a wall occupies: [lo, hi]. A one-sided wall's unseen
+/// face sits its (default) thickness behind the seen one; a wall with no
+/// face (a crossed pair) is its axis +- half its thickness.
 std::pair<double, double> body(const WallSegment &w) {
-  const double lo =
-      std::isfinite(w.face_lo) ? w.face_lo : w.axis_offset - 0.5 * w.thickness;
-  const double hi =
-      std::isfinite(w.face_hi) ? w.face_hi : w.axis_offset + 0.5 * w.thickness;
-  return {lo, hi};
+  const bool lo_seen = std::isfinite(w.face_lo);
+  const bool hi_seen = std::isfinite(w.face_hi);
+  if (lo_seen && hi_seen)
+    return {w.face_lo, w.face_hi};
+  if (hi_seen)
+    return {w.face_hi - w.thickness, w.face_hi};
+  if (lo_seen)
+    return {w.face_lo, w.face_lo + w.thickness};
+  return {w.axis_offset - 0.5 * w.thickness, w.axis_offset + 0.5 * w.thickness};
 }
 
+/// The middle of a wall's body: its centre line, whatever its axis is.
+double body_centre(const WallSegment &w) {
+  const auto [lo, hi] = body(w);
+  return 0.5 * (lo + hi);
+}
+
+/// The axis from the faces: the middle of two, the one seen face of a
+/// one-sided wall (reusex-v8p); unchanged with none.
 void set_axis_from_faces(WallSegment &w) {
   if (std::isfinite(w.face_lo) && std::isfinite(w.face_hi))
     w.axis_offset = 0.5 * (w.face_lo + w.face_hi);
   else if (std::isfinite(w.face_hi))
-    w.axis_offset = w.face_hi - 0.5 * w.thickness;
+    w.axis_offset = w.face_hi;
   else if (std::isfinite(w.face_lo))
-    w.axis_offset = w.face_lo + 0.5 * w.thickness;
+    w.axis_offset = w.face_lo;
 }
 
 /// Median offset of the family's wall evidence seen from @p side within
@@ -1180,7 +1196,9 @@ double median_offset(const EvidenceIndex &ev, size_t fam, int side, double o0,
 /// a wide pass, then a narrow one around the result.
 void snap(WallSegment &w, const EvidenceIndex &ev, size_t fam,
           const WallOptions &opt) {
-  const double axis = w.axis_offset;
+  // A face never snaps past the middle of the body (a one-sided wall's
+  // axis is its face, so the axis cannot be the bound).
+  const double axis = body_centre(w);
   for (const double r : {opt.snap_wide_m, opt.snap_narrow_m}) {
     if (std::isfinite(w.face_lo)) {
       const double m = median_offset(ev, fam, -1, w.face_lo - r,
@@ -1204,13 +1222,14 @@ void snap(WallSegment &w, const EvidenceIndex &ev, size_t fam,
 }
 
 /// Are two walls of one family on the same line? Compare a face both saw,
-/// else the axes.
+/// else the middles of their bodies (one wall seen from opposite sides in
+/// two stretches).
 bool collinear(const WallSegment &a, const WallSegment &b, double tol) {
   if (std::isfinite(a.face_lo) && std::isfinite(b.face_lo))
     return std::abs(a.face_lo - b.face_lo) <= tol;
   if (std::isfinite(a.face_hi) && std::isfinite(b.face_hi))
     return std::abs(a.face_hi - b.face_hi) <= tol;
-  return std::abs(a.axis_offset - b.axis_offset) <= tol;
+  return std::abs(body_centre(a) - body_centre(b)) <= tol;
 }
 
 /// The one face a one-sided wall was seen on: +1 its face_hi, -1 its
@@ -1284,11 +1303,10 @@ void merge_into(WallSegment &a, const WallSegment &b) {
   a.s1 = std::max(a.s1, b.s1);
   a.points_lo += b.points_lo;
   a.points_hi += b.points_hi;
-  if (a.assumed) {
-    a.axis_offset = wa * a.axis_offset + wb * b.axis_offset;
-  } else {
+  if (std::isfinite(a.face_lo) || std::isfinite(a.face_hi))
     set_axis_from_faces(a);
-  }
+  else // crossed pairs: no face, the axis is all there is
+    a.axis_offset = wa * a.axis_offset + wb * b.axis_offset;
 }
 
 } // namespace
@@ -1564,7 +1582,9 @@ wall_records(const WallGraph &graph, const core::StoreyRecord &storey) {
     w.y1 = b.y();
     w.z_base = storey.z_floor;
     w.height = storey.z_ceiling - storey.z_floor;
-    w.thickness = g.thickness;
+    // One-sided: the axis is the seen face and the thickness unknown
+    // (reusex-v8p); the default thickness was only the body the graph used.
+    w.thickness = seen_side(g) != 0 ? -1.0 : g.thickness;
     w.thickness_ci_lo = g.assumed ? -1.0 : g.thickness_ci_lo;
     w.thickness_ci_hi = g.assumed ? -1.0 : g.thickness_ci_hi;
     w.lean_deg = g.lean_deg;
