@@ -8,12 +8,17 @@
 #include "stage_prerequisites.hpp"
 
 #include <reusex/core/ProjectDB.hpp>
+#include <reusex/core/pose_edits.hpp>
+#include <reusex/io/pose_edits.hpp>
 #include <reusex/slam/PlaneGraphOptimizer.hpp>
 #include <reusex/slam/optimize_parameters.hpp>
 
 #include <fmt/format.h>
+#include <fmt/ranges.h>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
+
+#include <optional>
 
 const std::vector<std::pair<std::string, bool>> &optimize_moved_flags() {
   static const std::vector<std::pair<std::string, bool>> flags = {
@@ -101,6 +106,7 @@ EXAMPLES:
     && rux optimize --loop-trust      # External learned-matcher edges
   rux optimize --min-observations 3 --assoc-distance 0.15
   rux optimize --no-gnc               # Plain Levenberg-Marquardt (no robustness)
+  rux optimize --edits edits.yaml --dry-run  # Steer the solve with pose edits
 
 WORKFLOW:
   1. rux import rtabmap scan.db       # Import sensor frames
@@ -321,6 +327,23 @@ NOTES:
       ->default_val(opt->manhattan_up)
       ->check(CLI::IsMember({"auto", "x", "y", "z"}));
 
+  // --- Pose edits (reusex-rcv.1.3) ---
+  sub->add_option(
+         "--edits", opt->edits,
+         "Pose-edits file (reusex.pose_edits.v1, YAML or JSON; "
+         "docs/design/pose-edits.md): anchors (with selectable fixed axes), "
+         "block moves, same-surface and relative constraints, edge "
+         "rejections, lowered into extra factors of the solve. Prints each "
+         "edit's residual. Refused when its project_guid names another "
+         "project")
+      ->check(CLI::ExistingFile);
+  sub->add_option("--edit-inlier-cost", opt->edit_inlier_cost,
+                  "GNC-TLS inlier threshold of the pose-edit factors (0.5 * "
+                  "whitened squared residual): generous but finite, so a "
+                  "contradictory edit is reported rather than obeyed")
+      ->default_val(opt->edit_inlier_cost)
+      ->check(CLI::PositiveNumber);
+
   // --- Flags that moved to `rux graph discover` (2026-10-13) ---
   // Registered hidden so a stale script gets a pointer instead of
   // "unknown option" (spec D5).
@@ -439,6 +462,7 @@ plane_graph_options(SubcommandOptimizeOptions const &opt) {
   options.manhattan_sigma_deg = opt.manhattan_sigma_deg;
   options.manhattan_max_angle_deg = opt.manhattan_max_angle_deg;
   options.manhattan_level_max_angle_deg = opt.manhattan_level_max_angle_deg;
+  options.edit_inlier_cost = opt.edit_inlier_cost;
   options.manhattan_up =
       opt.manhattan_up == "x"
           ? reusex::geometry::ManhattanUp::x
@@ -484,17 +508,28 @@ int run_subcommand_optimize(SubcommandOptimizeOptions const &opt,
     reusex::geometry::apply_optimize_parameters(options, dry_run,
                                                 optimize_stage_parameters(opt));
 
+    // Pose edits: read (strict) and checked against this project before
+    // anything is logged or solved.
+    std::optional<reusex::core::PoseEdits> edits;
+    if (!opt.edits.empty()) {
+      edits = reusex::io::read_pose_edits(opt.edits, db.project_guid());
+      spdlog::info("Pose edits: {} edits from {} (frame {})",
+                   edits->edits.size(), opt.edits, edits->frame);
+    }
+
     int logId = db.log_pipeline_start(
         "pose_optimization_plane_graph",
         fmt::format(
-            R"({{"min_observations":{},"assoc_rounds":{},"no_gnc":{},"assoc_normal_angle":{},"assoc_distance":{},"max_planes_per_frame":{},"min_plane_inliers":{},"plane_noise":"{}","use_gnc":{},"iterations":{},"seed":{},"dry_run":{},"loop_trust":{}}})",
+            R"({{"min_observations":{},"assoc_rounds":{},"no_gnc":{},"assoc_normal_angle":{},"assoc_distance":{},"max_planes_per_frame":{},"min_plane_inliers":{},"plane_noise":"{}","use_gnc":{},"iterations":{},"seed":{},"dry_run":{},"loop_trust":{},"edits":{}}})",
             opt.min_observations, opt.assoc_rounds, opt.no_gnc,
             opt.assoc_normal_angle, opt.assoc_distance,
             opt.max_planes_per_frame, opt.min_plane_inliers,
             opt.no_plane_inlier_weight ? "uniform" : opt.plane_noise,
-            !opt.no_gnc, opt.iterations, opt.seed, dry_run, opt.loop_trust));
+            !opt.no_gnc, opt.iterations, opt.seed, dry_run, opt.loop_trust,
+            nlohmann::json(opt.edits).dump()));
 
-    auto result = reusex::geometry::optimize_sensor_poses(db, options, dry_run);
+    auto result = reusex::geometry::optimize_sensor_poses(
+        db, options, dry_run, edits ? &*edits : nullptr);
 
     db.log_pipeline_end(logId, true);
 
@@ -524,12 +559,26 @@ int run_subcommand_optimize(SubcommandOptimizeOptions const &opt,
     if (result.loop_edges > 0)
       spdlog::info("Loop closure: {} wide-baseline edges added to the graph",
                    result.loop_edges);
+    if (edits) {
+      spdlog::info("Pose edits: {} factors, {} stored edges rejected{}",
+                   result.edit_factors, result.edges_rejected_by_edits,
+                   result.edits_skipped.empty()
+                       ? std::string()
+                       : fmt::format(", not lowered: {}",
+                                     fmt::join(result.edits_skipped, ", ")));
+      for (const auto &r : result.edit_residuals)
+        spdlog::info("  edit {:<24} {:>8.4f} m {:>7.3f} deg  chi2 {:>9.2f}  "
+                     "{} factor(s)  {}",
+                     r.tag, r.trans_m, r.rot_deg, r.chi2, r.factors,
+                     r.gnc_inlier ? "honoured" : "NOT HONOURED");
+    }
 
     // Mirrors the library guard (PlaneGraphOptimizer::optimize): the poses are
     // only left untouched when there is NEITHER a landmark NOR a loop edge to
     // constrain them. With loop edges but no landmarks the graph was solved and
     // the poses WERE written, so this must not short-circuit.
-    if (result.landmarks == 0 && result.loop_edges == 0) {
+    if (result.landmarks == 0 && result.loop_edges == 0 &&
+        result.edit_factors == 0) {
       spdlog::warn("No plane landmarks reached the minimum observation count "
                    "and no loop edges were added; poses were left unchanged. "
                    "Try lowering --min-observations or relaxing "

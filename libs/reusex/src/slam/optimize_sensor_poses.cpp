@@ -14,8 +14,10 @@
 #include "core/ProjectDB.hpp"
 #include "core/SensorIntrinsics.hpp"
 #include "core/logging.hpp"
+#include "core/pose_edits.hpp"
 #include "core/pose_graph.hpp"
 #include "slam/PlaneGraphOptimizer.hpp"
+#include "slam/pose_edit_lowering.hpp"
 #include "slam/pose_graph.hpp"
 #include "slam/pose_graph_conventions.hpp"
 
@@ -77,7 +79,8 @@ int newest_success(const std::vector<ProjectDB::PipelineLogEntry> &log,
 
 PlaneGraphResult optimize_sensor_poses(ProjectDB &db,
                                        const PlaneGraphOptions &options,
-                                       bool dry_run) {
+                                       bool dry_run,
+                                       const core::PoseEdits *edits) {
   // --- 0. The stored graph; initialise it when it has no usable odometry --
   auto stored = db.list_pose_graph_edges();
   bool initialised = false;
@@ -161,6 +164,31 @@ PlaneGraphResult optimize_sensor_poses(ProjectDB &db,
   for (size_t k = 0; k < frames.size(); ++k)
     index_of[frames[k].node_id] = static_cast<int>(k);
 
+  // Pose edits (reusex-rcv.1.3): lowered over the frames that are solved.
+  slam::LoweredEdits lowered;
+  if (edits != nullptr && !edits->edits.empty()) {
+    std::vector<int> node_order;
+    node_order.reserve(frames.size());
+    for (const auto &f : frames)
+      node_order.push_back(f.node_id);
+    lowered = slam::lower_pose_edits(db, *edits, node_order);
+    core::info("PlaneGraph: {} pose edits -> {} priors, {} relative / "
+               "surface constraints, {} edge rejections, {} skipped",
+               edits->edits.size(), lowered.priors.size(),
+               lowered.surfaces.size(), lowered.tombstones.size(),
+               lowered.skipped.size());
+  }
+  auto tombstoned = [&](const ProjectDB::PoseGraphEdge &s) {
+    const int a = std::min(s.from_node_id, s.to_node_id);
+    const int b = std::max(s.from_node_id, s.to_node_id);
+    return std::any_of(lowered.tombstones.begin(), lowered.tombstones.end(),
+                       [&](const slam::EdgeTombstone &t) {
+                         return t.from == a && t.to == b &&
+                                t.edge_type == s.edge_type;
+                       });
+  };
+  int rejected_by_edits = 0;
+
   std::vector<GraphEdge> edges;
   int rejected = 0, no_measurement_odometry = 0, no_measurement_loop = 0,
       missing_frame = 0, panorama = 0;
@@ -168,6 +196,10 @@ PlaneGraphResult optimize_sensor_poses(ProjectDB &db,
     const auto &s = stored[k];
     if (s.status == pg::kStatusRejected) {
       ++rejected;
+      continue;
+    }
+    if (tombstoned(s)) {
+      ++rejected_by_edits;
       continue;
     }
     if (!s.transform) {
@@ -214,6 +246,11 @@ PlaneGraphResult optimize_sensor_poses(ProjectDB &db,
                missing_frame);
   if (rejected > 0)
     core::info("PlaneGraph: {} rejected edges left out of the solve", rejected);
+  if (lowered.tombstones.size() > static_cast<size_t>(rejected_by_edits))
+    core::warn("PlaneGraph: {} reject_edge edits name no active stored edge "
+               "({} matched)",
+               lowered.tombstones.size() - rejected_by_edits,
+               rejected_by_edits);
   const int graph_edges = static_cast<int>(edges.size());
 
   // --- 3. Connectivity bridge (spec review focus 3) ------------------------
@@ -242,7 +279,10 @@ PlaneGraphResult optimize_sensor_poses(ProjectDB &db,
 
   // --- 4. Solve -------------------------------------------------------------
   PlaneGraphOptimizer optimizer(options);
-  PlaneGraphResult result = optimizer.optimize_graph(frames, edges);
+  PlaneGraphResult result =
+      optimizer.optimize_graph(frames, edges, lowered.priors, lowered.surfaces);
+  result.edits_skipped = lowered.skipped;
+  result.edges_rejected_by_edits = rejected_by_edits;
   result.graph_edges = graph_edges;
   result.bridge_edges = bridged;
   result.graph_initialised = initialised;
@@ -252,7 +292,8 @@ PlaneGraphResult optimize_sensor_poses(ProjectDB &db,
     core::info("PlaneGraph dry-run: poses NOT written back");
     return result;
   }
-  if (result.landmarks == 0 && result.loop_edges == 0) {
+  if (result.landmarks == 0 && result.loop_edges == 0 &&
+      result.edit_factors == 0) {
     core::warn(
         "PlaneGraph: no landmarks or loop edges — poses NOT written back");
     return result;
