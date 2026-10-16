@@ -4,6 +4,7 @@
 
 #include "analyze.hpp"
 #include "analyze/accuracy.hpp"
+#include "analyze/drift.hpp"
 #include "analyze/quality.hpp"
 #include "analyze/solid.hpp"
 
@@ -25,6 +26,9 @@ SUBCOMMANDS:
   accuracy     Ground-truth accuracy / completeness / F-score (JSON)
   solid        Typed building model vs a reference plan (walls, spaces,
                openings, point-to-solid fit)
+  drift        Where the stored poses disagree: pass-to-pass residual vs
+               the noise floor, segment pairs, segment ICP suggestions,
+               through-wall crossings (JSON)
 
 TYPICAL WORKFLOW:
   1. rux import rtabmap scan.db        # Import sensor data
@@ -41,6 +45,7 @@ NOTES:
   setup_subcommand_analyze_quality(*sub, global_opt);
   setup_subcommand_analyze_accuracy(*sub, global_opt);
   setup_subcommand_analyze_solid(*sub, global_opt);
+  setup_subcommand_analyze_drift(*sub, global_opt);
 
   sub->require_subcommand(1);
 }
