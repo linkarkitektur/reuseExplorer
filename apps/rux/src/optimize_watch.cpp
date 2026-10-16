@@ -269,6 +269,17 @@ std::vector<std::int64_t> edited_nodes(const reusex::core::PoseEdits &edits,
   return {out.begin(), out.end()};
 }
 
+std::optional<std::size_t> predecessor_of(const std::vector<int> &graph_index,
+                                          std::size_t k) {
+  if (k >= graph_index.size() || graph_index[k] <= 0)
+    return std::nullopt;
+  const int want = graph_index[k] - 1;
+  for (std::size_t i = 0; i < graph_index.size(); ++i)
+    if (graph_index[i] == want)
+      return i;
+  return std::nullopt;
+}
+
 Eigen::Matrix4d fit_rigid_delta(const std::vector<Eigen::Matrix4d> &from,
                                 const std::vector<Eigen::Matrix4d> &to) {
   Eigen::Matrix4d out = Eigen::Matrix4d::Identity();
@@ -1116,14 +1127,27 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
           runs.begin(), runs.end(),
           [](const auto &a, const auto &b) { return a.frames < b.frames; });
       std::vector<Eigen::Matrix4d> from, to;
+      std::size_t first_at = s.ids.size();
       for (std::size_t i = 0; i < nodes.size(); ++i)
         if (nodes[i] >= best->first && nodes[i] <= best->last) {
+          if (first_at == s.ids.size())
+            first_at = at[i];
           from.push_back(s.initial[at[i]]);
           to.push_back(g.delta * r.poses[at[i]]);
         }
-      // The suggestion is measured on the candidate; a move applies to the
-      // initial poses: fit initial -> corrected candidate.
-      const Eigen::Matrix4d delta_world = fit_rigid_delta(from, to);
+      // The suggestion is measured on the candidate; a move is written on
+      // the initial poses. reusex-9fx: it is lowered as a junction to the
+      // node before the block (pose_edit_lowering.hpp), so the delta must
+      // give the corrected candidate's offset there:
+      //   initial_p^-1 * delta * initial_a = cand_p^-1 * g * cand_a.
+      // Without a node before the block it falls back to absolute priors:
+      // fit initial -> corrected candidate over the block.
+      const auto pred = predecessor_of(s.graph_index, first_at);
+      const Eigen::Matrix4d delta_world =
+          pred ? Eigen::Matrix4d(s.initial[*pred] * r.poses[*pred].inverse() *
+                                 g.delta * r.poses[first_at] *
+                                 s.initial[first_at].inverse())
+               : fit_rigid_delta(from, to);
       const Eigen::Matrix4d delta_doc = to_doc * delta_world * to_doc.inverse();
       Eigen::Vector3d c = Eigen::Vector3d::Zero();
       for (const auto &f : from)

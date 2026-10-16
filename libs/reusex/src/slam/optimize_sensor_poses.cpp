@@ -250,7 +250,7 @@ StoredGraphSolve solve_stored_pose_graph(const ProjectDB &db,
                        });
   };
 
-  int rejected_by_edits = 0, panorama = 0;
+  int rejected_by_edits = 0, cut_by_moves = 0, panorama = 0;
   std::vector<GraphEdge> edges;
   edges.reserve(graph.edges.size());
   for (const auto &s : graph.edges) {
@@ -258,6 +258,13 @@ StoredGraphSolve solve_stored_pose_graph(const ProjectDB &db,
       continue;
     if (tombstoned(s)) {
       ++rejected_by_edits;
+      continue;
+    }
+    // reusex-9fx: a move replaces the odometry into its block with its
+    // junction factor.
+    if (s.solver->kind == GraphEdge::Kind::odometry &&
+        slam::cuts_odometry_edge(lowered, s.solver->i, s.solver->j)) {
+      ++cut_by_moves;
       continue;
     }
     if (s.panorama)
@@ -270,11 +277,23 @@ StoredGraphSolve solve_stored_pose_graph(const ProjectDB &db,
                lowered.tombstones.size() - rejected_by_edits,
                rejected_by_edits);
   const int graph_edges = static_cast<int>(edges.size());
+  if (!lowered.cuts.empty()) {
+    core::info("PlaneGraph: {} move junction(s) replace {} odometry edges "
+               "into the moved blocks",
+               lowered.cuts.size(), cut_by_moves);
+    if (cut_by_moves == 0)
+      core::warn("PlaneGraph: the {} move junction{} cut no stored odometry "
+                 "edge (the stored graph has none into the block); the "
+                 "junction is added on top of what holds the block",
+                 lowered.cuts.size(), lowered.cuts.size() == 1 ? "" : "s");
+  }
 
   // --- 3. Connectivity bridge (spec review focus 3) ------------------------
   Components comp(static_cast<int>(frames.size()));
   for (const auto &e : edges)
     comp.unite(e.i, e.j);
+  for (const auto &c : lowered.cuts) // the junction holds the cut together
+    comp.unite(c.from, c.to);
   int bridged = 0;
   for (int k = 0; k + 1 < static_cast<int>(frames.size()); ++k) {
     if (comp.find(k) == comp.find(k + 1))

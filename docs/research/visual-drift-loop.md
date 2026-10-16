@@ -308,7 +308,7 @@ interchangeable (`reusex-rcv.1.16`).
 | edit | factor(s) | why this form |
 |---|---|---|
 | anchor | `PriorFactor<Pose3>`, information ~0 on masked DoFs | pins the middle of a trajectory, the gap gt_curator had |
-| move | a prior per node of the range at `delta · initial`, sigma x √n | the block carries one anchor's authority; its odometry keeps it rigid inside |
+| move | one `BetweenFactor` from the node before the range to its first node at `initial_p⁻¹ · delta · initial_a`, replacing the odometry into the range (a cut); absolute priors per node only without a node before it (`reusex-9fx`, §9.8) | the block keeps its odometry shape and follows what comes before it, so the plane factors of the full solve do not fight it; the first lowering (a prior per node at `delta · initial`, sigma x √n) pinned the drifted shape in the world |
 | relative | `BetweenFactor`, `known_inlier` | identical to a confirmed manual edge |
 | same_surface | ICP between the two regions' points → `BetweenFactor` with information `JᵀWJ` (rank ~1-3, along the wall normal) | constrains only what the doubled wall actually measures |
 | on_plan_wall | the same against the plan face | a person's "this is wall W" |

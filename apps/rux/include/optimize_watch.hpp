@@ -183,11 +183,19 @@ std::vector<std::int64_t> edited_nodes(const reusex::core::PoseEdits &edits,
 
 /// The rigid delta D (about the world origin) that best moves the poses
 /// @p from onto @p to (each pose contributes its origin and the tips of its
-/// unit axes; Kabsch, no scale). A segment ICP correction measured on a
-/// candidate solve, D_c * candidate, becomes the `move` delta on the
-/// initial poses the solve seeds from: fit(initial -> D_c * candidate).
+/// unit axes; Kabsch, no scale). A segment ICP correction of a block that
+/// starts the solve (no node before it, so the move is lowered as absolute
+/// priors), D_c * candidate, becomes the `move` delta on the initial poses
+/// the solve seeds from: fit(initial -> D_c * candidate).
 Eigen::Matrix4d fit_rigid_delta(const std::vector<Eigen::Matrix4d> &from,
                                 const std::vector<Eigen::Matrix4d> &to);
+
+/// reusex-9fx: the index into @p graph_index (per frame id: its index in the
+/// solve, or -1) of the frame solved just before the frame at @p k, which a
+/// `move` starting at k is lowered against (its junction). nullopt when k
+/// is not solved or is the first solved frame.
+std::optional<std::size_t> predecessor_of(const std::vector<int> &graph_index,
+                                          std::size_t k);
 
 /// reusex-rcv.1.18: the pose-graph edges of @p graph as the graph layer
 /// draws them, coloured by the candidate solve @p result (its per-edge

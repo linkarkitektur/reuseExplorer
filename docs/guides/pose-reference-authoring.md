@@ -70,8 +70,10 @@ rux analyze drift / the block  ->  write / edit e.yaml  ->  save
      the reference, split by side of the last edited node: `upstream`
      (towards the gauge, frame 0) and `downstream` (the carried tail).
      Movement is not shear: drift accumulates from the gauge, so a correct
-     move of segment k carries k+1..n with it and spreads its correction
-     over the links before it. **Shear** is an untouched segment moved
+     move of segment k carries k+1..n with it. A move is a junction to the
+     node before its block (`reusex-9fx`), so it no longer bends the links
+     before it; upstream movement now comes from the plane factors or other
+     edits. **Shear** is an untouched segment moved
      (> `--shear-flag`) to where it fits the other passes WORSE than in the
      reference (its cross-segment residual up by more than 1 mm and 10%);
      those are the nodes counted `in segments that now fit worse <- SHEAR`
@@ -81,9 +83,12 @@ rux analyze drift / the block  ->  write / edit e.yaml  ->  save
    - `sampling`: the residuals depend on the frame step and depth stride
      (reusex-74q), so compare cycles only at the same `--drift-frame-step` /
      `--drift-depth-stride` / `--segments`.
-4. **Paste a suggestion.** The `suggestions` are segment-ICP moves already
-   refitted onto the initial poses the solve starts from, in the file's
-   frame, as YAML items that paste under `edits:`. Paste ONE move per cycle
+4. **Paste a suggestion.** The `suggestions` are segment-ICP moves, written
+   on the initial poses in the file's frame so that the block's offset to
+   the node before it is the corrected candidate's (a move is lowered as
+   that one junction, `reusex-9fx`: the block keeps its odometry shape and
+   follows the trajectory before it in the full solve), as YAML items that
+   paste under `edits:`. Paste ONE move per cycle
    (the first is the best; each is measured against all other segments as
    they are). A segment that changes storey is split, and the note says
    which nodes were left out. A suggestion whose range overlaps an existing

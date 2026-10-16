@@ -123,11 +123,26 @@ edits:
       kitchen wall doubled 12 cm
 ```
 
-Lowering: one prior per node of the range at `delta * initial`, each with its
-sigma scaled by sqrt(n), so the block as a whole carries one anchor's
-authority; the odometry inside the range keeps it rigid, and the odometry
-into and out of it absorbs the break. A move pins the block absolutely, so
-the rest of the trajectory stays where the graph puts it.
+Lowering (`reusex-9fx`): a move corrects where the block sits relative to
+the trajectory BEFORE it, not a place in the world. It becomes one relative
+factor from the node solved just before the block (`p`) to the block's first
+node (`a`), at the corrected offset `initial_p^-1 * delta * initial_a`, with
+the move's sigma, and it **cuts** the odometry chain there: every odometry
+edge from before `a` to `a` or later is left out of the solve (loop edges
+stay). The block keeps the shape its own odometry gives it, carries the tail
+after it, and follows `p` wherever the rest of the solve (plane factors,
+loops, other edits) puts it; nothing before the block is pulled toward it.
+On the initial poses this is the same placement as before: the block's
+first node lands at `delta * initial_a`.
+
+The earlier lowering, one absolute prior per node at `delta * initial` with
+information / n, pinned the block's *initial* (drifted) shape at one world
+place. A delta fitted on a `--fast` candidate then fought the plane factors
+of the full solve, and the correction spread over the softer odometry chain
+before the block (regression 221). It is still the fallback when there is no
+node before the block (it holds the gauge), when the block is not one run of
+the solve (a node list with holes), or when the move has a DoF mask (a cut
+would leave the masked DoFs unconstrained); the solve logs which.
 
 ### `relative`: a manual edge
 
@@ -221,7 +236,8 @@ status were `rejected`; the project's `pose_graph_edges` row is not changed
 ## Residuals and contradictions
 
 Every edit is reported after the solve: its translation and rotation error
-over the constrained DoFs (the worst node of a move), its chi-square
+over the constrained DoFs (a move: its junction, or the worst node of the
+absolute fallback), its chi-square
 (whitened squared residual), and whether GNC kept it as an inlier. Edit
 factors are not GNC known inliers: they get the large but finite TLS
 threshold `edit_inlier_cost` (`rux optimize --edit-inlier-cost`), so an edit

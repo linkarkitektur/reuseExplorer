@@ -11,7 +11,15 @@
 // the stored edges a solve leaves out.
 //
 //   anchor        -> one PosePrior, DoF-masked in the document frame's axes
-//   move          -> one PosePrior per node at delta * initial pose, each
+//   move          -> one SurfaceConstraint from the node before the block
+//                    to its first node at the corrected offset
+//                    (initial_p^-1 * delta * initial_first), full sigma, and
+//                    a ChainCut: the odometry into the block is left out, so
+//                    the block keeps its own odometry shape, carries its
+//                    tail, and follows the trajectory before it wherever
+//                    the solve puts that (reusex-9fx). A block with no node
+//                    before it, with holes, or with a DoF mask falls back to
+//                    one PosePrior per node at delta * initial pose, each
 //                    with its information divided by n (sigma * sqrt(n)), so
 //                    the block carries one anchor's authority
 //   relative      -> one SurfaceConstraint with full (DoF-masked) information
@@ -29,6 +37,8 @@
 
 #include <reusex/core/pose_edits.hpp>
 #include <reusex/slam/PlaneGraphOptimizer.hpp>
+
+#include <Eigen/Core>
 
 #include <string>
 #include <vector>
@@ -60,10 +70,20 @@ struct SameSurfaceOptions {
   unsigned seed = 42;
 };
 
+/// Where a `move` cuts the odometry chain: every odometry edge from before
+/// solve index `to` to `to` or later is left out of the solve, and the move's
+/// junction factor (from `from` = to - 1 to `to`) takes its place.
+struct ChainCut {
+  int from = -1;   ///< solve index of the node before the block
+  int to = -1;     ///< solve index of the block's first node
+  std::string tag; ///< the edit's id
+};
+
 struct LoweredEdits {
   std::vector<geometry::PosePrior> priors;
   std::vector<geometry::SurfaceConstraint> surfaces;
   std::vector<EdgeTombstone> tombstones;
+  std::vector<ChainCut> cuts; ///< one per move lowered as a junction
   /// Ids of edits that were read but not lowered (on_plan_wall), each
   /// warned about with the reason.
   std::vector<std::string> skipped;
@@ -94,5 +114,20 @@ struct LoweredEdits {
 LoweredEdits lower_pose_edits(const ProjectDB &db, const core::PoseEdits &edits,
                               const std::vector<int> &node_order,
                               const SameSurfaceOptions &surface_options = {});
+
+/// Lower one `move` edit @p e over the solve indices @p block (sorted; the
+/// nodes it names that are in the solve) and append its factors / cut to
+/// @p out. @p initial and @p local are the stored-convention initial pose
+/// and local_transform of every solve index; @p doc_to_world maps the edits'
+/// document frame to world. lower_pose_edits() calls it; exposed so the
+/// lowering can be tested on a synthetic graph without a database.
+void lower_move(const core::PoseEdit &e, const std::vector<int> &block,
+                const std::vector<Eigen::Matrix4d> &initial,
+                const std::vector<Eigen::Matrix4d> &local,
+                const Eigen::Matrix4d &doc_to_world, LoweredEdits &out);
+
+/// Whether a move's cut in @p lowered leaves the odometry edge between solve
+/// indices @p i and @p j out of the solve.
+bool cuts_odometry_edge(const LoweredEdits &lowered, int i, int j);
 
 } // namespace reusex::slam

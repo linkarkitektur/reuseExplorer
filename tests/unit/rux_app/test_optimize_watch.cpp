@@ -198,6 +198,18 @@ TEST_CASE("pose_change and fit_rigid_delta", "[rux_app][optimize][watch]") {
   CHECK(rux::pose_change(ids, to, from, &mask).nodes == 1);
 }
 
+TEST_CASE("predecessor_of: the frame solved just before",
+          "[rux_app][optimize][watch]") {
+  // ids 1..5; frame 3 has no surfels (not solved).
+  const std::vector<int> graph_index{0, 1, -1, 2, 3};
+  CHECK_FALSE(rux::predecessor_of(graph_index, 0)); // the first solved
+  CHECK(rux::predecessor_of(graph_index, 1) == std::size_t{0});
+  CHECK_FALSE(rux::predecessor_of(graph_index, 2));             // not solved
+  CHECK(rux::predecessor_of(graph_index, 3) == std::size_t{1}); // skips 3
+  CHECK(rux::predecessor_of(graph_index, 4) == std::size_t{3});
+  CHECK_FALSE(rux::predecessor_of(graph_index, 9));
+}
+
 TEST_CASE("storey_runs splits a segment at a storey change",
           "[rux_app][optimize][watch]") {
   reusex::core::StoreyRecord s0, s1;
@@ -321,14 +333,13 @@ TEST_CASE("OptimizeWatchSession: suggestion pastes, re-solves, keeps the last "
     const double med = cross[lo] + (cross[hi] - cross[lo]) * (pos - lo);
     CHECK(*p1.cross_segment_median_m == med);
   }
-  // A move alone drags the pass no edit names along (reusex-sb2): the shear
-  // indicator shows it and the suggestions offer a guard anchor.
+  // reusex-9fx: the move is a junction to the node before the pass, so the
+  // pass no edit names stays where it was (an absolute move dragged it
+  // along, reusex-sb2, and needed a guard anchor): no shear, no guard.
   CHECK(p1.shear.untouched == static_cast<std::size_t>(kPerPass));
-  CHECK(p1.shear.change.max_m > 0.0);
-  if (p1.shear.flagged > 0) {
-    CHECK_THAT(p1.report, ContainsSubstring("<- SHEAR"));
-    CHECK_THAT(p1.suggestions_yaml, ContainsSubstring("kind: anchor"));
-  }
+  CHECK(p1.shear.change.max_m < 1e-3);
+  CHECK(p1.shear.flagged == 0);
+  CHECK_THAT(p1.suggestions_yaml, !ContainsSubstring("kind: anchor"));
 
   // A broken file: the last good solve stays on screen, the error names
   // the edit.
@@ -530,6 +541,57 @@ TEST_CASE("OptimizeWatchSession: --fast starts from plain optimize, shows it, "
   REQUIRE(d1.beats_reference);
   CHECK(*d1.beats_reference ==
         (*d1.cross_segment_median_m < *d1.reference_cross_segment_median_m));
+}
+
+TEST_CASE("OptimizeWatchSession: a move that wins in --fast keeps its gain "
+          "in the full solve",
+          "[rux_app][optimize][watch]") {
+  // reusex-9fx: the loop pastes a suggestion found in --fast cycles (no
+  // plane factors) and keeps it in one full solve (plane factors on). The
+  // full solve must not give back what --fast won.
+  TempDir dir("optimize_watch_fast_to_full");
+  const fs::path project = dir.path / "p.rux";
+  const fs::path edits = dir.path / "e.yaml";
+  make_project(project);
+  write(edits, kHeader + "edits: []\n");
+  RuxOptions global;
+  global.project_db = project;
+  auto opt = watch_options(edits);
+  opt.min_plane_inliers = SubcommandOptimizeOptions{}.min_plane_inliers;
+
+  auto error = [](const std::vector<Eigen::Matrix4d> &poses) {
+    double s = 0.0;
+    for (int k = 0; k < 2 * kPerPass; ++k)
+      s += (poses[static_cast<std::size_t>(k)].topRightCorner<3, 1>() -
+            true_pose(k).topRightCorner<3, 1>())
+               .squaredNorm();
+    return std::sqrt(s / (2 * kPerPass));
+  };
+
+  rux::OptimizeWatchSession fast(opt, global);
+  const auto f0 = fast.pass(true);
+  INFO(f0.report);
+  REQUIRE(f0.solved);
+  REQUIRE_FALSE(f0.suggestion_items.empty());
+  write(edits, kHeader + "edits:\n" + f0.suggestion_items.front());
+  const auto f1 = fast.pass(true);
+  INFO(f1.report);
+  REQUIRE(f1.solved);
+
+  auto full_opt = opt;
+  full_opt.fast = false;
+  rux::OptimizeWatchSession full(full_opt, global);
+  const auto g1 = full.pass(true);
+  INFO(g1.report);
+  REQUIRE(g1.solved);
+
+  const double reference = error(f0.poses), won = error(f1.poses),
+               kept = error(g1.poses);
+  INFO("rms vs truth: plain optimize " << reference << ", --fast with the "
+                                       << "move " << won << ", full solve "
+                                       << "with the move " << kept);
+  REQUIRE(won < reference - 0.01); // the move is a real gain in --fast
+  CHECK(kept <= won + 0.002);      // and the full solve keeps it
 }
 
 TEST_CASE("candidate_graph_edges colours by the candidate solve",

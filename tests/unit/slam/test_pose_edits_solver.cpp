@@ -597,16 +597,29 @@ TEST_CASE("PoseEditsSolver_MoveAndRejectEdge_ThroughTheDatabase",
   x.edge_type = std::string(pg::kTypeLoopClosure);
   edits.edits.push_back(x);
 
+  std::vector<Eigen::Vector3d> before;
+  for (int k = 0; k < 10; ++k)
+    before.push_back(position(db, k));
   const auto r =
       geometry::optimize_sensor_poses(db, wall_options(), false, &edits);
   REQUIRE(r.converged);
   CHECK(r.edges_rejected_by_edits == 1);
   REQUIRE(r.edit_residuals.size() == 1);
   CHECK(r.edit_residuals[0].tag == "m-pass-b");
-  CHECK(r.edit_residuals[0].factors == 5);
+  // reusex-9fx: one junction factor from node 4 into the block, in place of
+  // the odometry link 4 -> 5.
+  CHECK(r.edit_residuals[0].factors == 1);
+  CHECK(r.bridge_edges == 0); // the junction holds the cut together
   for (int k = 5; k < 10; ++k) {
     INFO("frame " << k << " at " << position(db, k).transpose());
-    CHECK(std::abs(position(db, k).z()) < 0.01);
+    CHECK(std::abs(position(db, k).z()) < 1e-3);
+  }
+  // Nothing before the block moves: the correction goes into the junction,
+  // not into the odometry chain before it (the regression-221 shear an
+  // absolute move caused without a guard anchor).
+  for (int k = 0; k < 5; ++k) {
+    INFO("frame " << k << " moved " << (position(db, k) - before[k]).norm());
+    CHECK((position(db, k) - before[k]).norm() < 1e-4);
   }
   // The stored edge itself is untouched (the edit is a tombstone in memory).
   bool found = false;

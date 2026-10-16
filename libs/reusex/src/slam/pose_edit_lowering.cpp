@@ -296,6 +296,81 @@ Eigen::Matrix4d fit_onto_plane(const std::vector<Eigen::Vector3d> &pts,
 
 } // namespace
 
+void lower_move(const core::PoseEdit &e, const std::vector<int> &block,
+                const std::vector<Eigen::Matrix4d> &initial,
+                const std::vector<Eigen::Matrix4d> &local,
+                const Eigen::Matrix4d &doc_to_world, LoweredEdits &out) {
+  if (block.empty())
+    fail(e, "no node of the move is in the solve");
+  const Eigen::Matrix4d to_doc = doc_to_world.inverse();
+  // Default pivot: centroid of the moved nodes' initial positions, in the
+  // document frame (where the delta is written).
+  Eigen::Vector3d pivot = Eigen::Vector3d::Zero();
+  for (const int k : block)
+    pivot += (to_doc * initial[static_cast<size_t>(k)].col(3)).head<3>();
+  pivot /= static_cast<double>(block.size());
+  const Eigen::Matrix4d D =
+      doc_to_world * e.delta.to_matrix(pivot) * to_doc; // world delta
+  auto optical = [&](int k, const Eigen::Matrix4d &stored) {
+    return Eigen::Matrix4d(stored * local[static_cast<size_t>(k)]);
+  };
+
+  // reusex-9fx: a move is a correction of where the block sits relative to
+  // the trajectory BEFORE it, not a place in the world. Lowered as one
+  // junction factor from the node before the block to its first node, at
+  // the corrected offset, replacing the odometry into the block (a cut):
+  // the block keeps its own odometry shape and carries its tail, and the
+  // rest of the solve (plane factors, loops) may still move the whole
+  // thing. Absolute per-node targets pinned the block's DRIFTED shape at a
+  // world place fitted on one candidate; the full solve's plane factors
+  // then fought them (fast 535 -> full 561 mm ATE on 41069051 d1.0).
+  const int first = block.front();
+  const bool contiguous =
+      block.back() - first + 1 == static_cast<int>(block.size());
+  if (first > 0 && contiguous && e.dofs == core::Dof::all) {
+    const int p = first - 1;
+    const Eigen::Matrix4d &Xp = initial[static_cast<size_t>(p)];
+    const Eigen::Matrix4d &Xa = initial[static_cast<size_t>(first)];
+    geometry::SurfaceConstraint s;
+    s.i = p;
+    s.j = first;
+    s.T_ij = optical(p, Xp).inverse() * optical(first, D * Xa);
+    s.information = information_stored_to_optical(
+        masked_information(e), local[static_cast<size_t>(first)]);
+    s.tag = e.id;
+    out.surfaces.push_back(std::move(s));
+    out.cuts.push_back({p, first, e.id});
+    return;
+  }
+  // No node before the block (it holds the gauge), a block with holes, or a
+  // DoF mask (a cut would leave the masked DoFs unconstrained): the block is
+  // pinned absolutely, one prior per node at delta * initial with its
+  // information divided by n, so it carries one anchor's authority.
+  core::info("pose edit '{}': move lowered as {} absolute node priors ({})",
+             e.id, block.size(),
+             first == 0    ? "the block starts the solve: no node before it"
+             : !contiguous ? "the block is not one run of the solve"
+                           : "a DoF mask");
+  const Matrix6d I =
+      masked_information(e, 1.0 / static_cast<double>(block.size()));
+  for (const int k : block) {
+    geometry::PosePrior pr;
+    pr.i = k;
+    pr.pose = optical(k, D * initial[static_cast<size_t>(k)]);
+    pr.information = I;
+    pr.axes = to_doc.topLeftCorner<3, 3>();
+    pr.tag = e.id;
+    out.priors.push_back(std::move(pr));
+  }
+}
+
+bool cuts_odometry_edge(const LoweredEdits &lowered, int i, int j) {
+  const int lo = std::min(i, j), hi = std::max(i, j);
+  return std::any_of(
+      lowered.cuts.begin(), lowered.cuts.end(),
+      [&](const ChainCut &c) { return lo < c.to && hi >= c.to; });
+}
+
 LoweredEdits lower_pose_edits(const ProjectDB &db, const core::PoseEdits &edits,
                               const std::vector<int> &node_order,
                               const SameSurfaceOptions &so) {
@@ -335,28 +410,13 @@ LoweredEdits lower_pose_edits(const ProjectDB &db, const core::PoseEdits &edits,
       break;
     }
     case PoseEditKind::move: {
-      const auto ks = solve_indices(e, e.nodes, index_of, "nodes");
-      // Default pivot: centroid of the moved nodes' initial positions, in
-      // the document frame (where the delta is written).
-      Eigen::Vector3d pivot = Eigen::Vector3d::Zero();
-      for (const int k : ks) {
-        const Eigen::Vector4d p =
-            frame.to_doc * nodes[static_cast<size_t>(k)].initial.col(3);
-        pivot += p.head<3>();
+      std::vector<Eigen::Matrix4d> initial(nodes.size()), local(nodes.size());
+      for (size_t k = 0; k < nodes.size(); ++k) {
+        initial[k] = nodes[k].initial;
+        local[k] = nodes[k].local;
       }
-      pivot /= static_cast<double>(ks.size());
-      const Eigen::Matrix4d D = frame.delta_to_world(e.delta.to_matrix(pivot));
-      const Matrix6d I =
-          masked_information(e, 1.0 / static_cast<double>(ks.size()));
-      for (const int k : ks) {
-        geometry::PosePrior p;
-        p.i = k;
-        p.pose = optical(k, D * nodes[static_cast<size_t>(k)].initial);
-        p.information = I;
-        p.axes = frame.to_doc.topLeftCorner<3, 3>();
-        p.tag = e.id;
-        out.priors.push_back(std::move(p));
-      }
+      lower_move(e, solve_indices(e, e.nodes, index_of, "nodes"), initial,
+                 local, frame.to_world, out);
       break;
     }
     case PoseEditKind::relative: {
