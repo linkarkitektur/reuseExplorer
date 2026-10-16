@@ -45,7 +45,13 @@ rux analyze drift / the block  ->  write / edit e.yaml  ->  save
        --render qa/h2.png --json qa/metrics.json --plan plan.yaml
    ```
 
-   Every cycle re-solves from the initial poses (edits never compound),
+   At load the loop solves the graph once WITHOUT edits and with the plane
+   factors on: the **reference**, exactly what plain `rux optimize` gives
+   (the `reference` line; `qa/h2.ref.passes.png` / `.ref.front.png`).
+   `--fast` cycles then solve on top of it -- odometry linearised at the
+   reference, no plane factors -- so an edit corrects plain optimize's
+   trajectory, not the drifted odometry (`reusex-rcv.1.21`). Every cycle
+   re-solves from there (edits never compound),
    back-projects a preview cloud with the candidate poses (the stored cloud
    is not touched, and is usually stale against the poses anyway), writes
    per storey `qa/h2.s<k>.passes.png` (plan cut, points coloured by capture
@@ -55,10 +61,22 @@ rux analyze drift / the block  ->  write / edit e.yaml  ->  save
 3. **Read the block.** The numbers that matter, in order:
    - `cross-segment` median (segment pairs matched only against each other)
      and the `worst segment pairs`: where the passes disagree;
-   - `shear (untouched)`, printed next to them: how far the nodes that NO
-     edit names moved against the solve without edits. A GT-free residual
-     improves when an edit shears the whole trajectory (reusex-sb2,
-     regression-221), so a gain with `<- SHEAR` is not a gain yet;
+   - `vs plain optimize`: the same cross-segment median and pass-to-pass for
+     the reference, and the verdict (`better` / `the same` / `WORSE than
+     no edits`). An edit set that does not beat it is worse than doing
+     nothing: keep no edit (`reusex-rcv.1.24`). Differences under about
+     1 mm are sampling noise;
+   - `shear (untouched)`: how the nodes that NO edit names moved against
+     the reference, split by side of the last edited node: `upstream`
+     (towards the gauge, frame 0) and `downstream` (the carried tail).
+     Movement is not shear: drift accumulates from the gauge, so a correct
+     move of segment k carries k+1..n with it and spreads its correction
+     over the links before it. **Shear** is an untouched segment moved
+     (> `--shear-flag`) to where it fits the other passes WORSE than in the
+     reference (its cross-segment residual up by more than 1 mm and 10%);
+     those are the nodes counted `in segments that now fit worse <- SHEAR`
+     and the only ones a gain is discounted for (reusex-sb2,
+     regression-221, `reusex-rcv.1.22`);
    - each edit's residual and `honoured` / `NOT HONOURED`;
    - `sampling`: the residuals depend on the frame step and depth stride
      (reusex-74q), so compare cycles only at the same `--drift-frame-step` /
@@ -69,17 +87,21 @@ rux analyze drift / the block  ->  write / edit e.yaml  ->  save
    (the first is the best; each is measured against all other segments as
    they are). A segment that changes storey is split, and the note says
    which nodes were left out. A suggestion whose range overlaps an existing
-   move says `REPLACES <id>`: delete that one. When untouched segments
-   moved, shear guards follow: one all-DoF anchor per moved segment at the
-   pose the no-edit solve gives it.
+   move says `REPLACES <id>`: delete that one. The segment that holds the
+   gauge (frame 0's prior) is never suggested: its move outvotes the gauge
+   and drags the whole trajectory along (`reusex-rcv.1.23`); the block says
+   so in a comment. When an untouched segment sheared, a shear guard
+   follows: one all-DoF anchor at its middle node, at the pose plain
+   optimize (the reference) gives it -- never at a drifted pose.
 5. **Look** at the passes / graph / drift PNGs: a doubled wall closing is the
    evidence, not the number. Keep an edit only if the residuals improve
    without shear and its own residual is small; otherwise revert it. A file
    that does not parse, or an edit that cannot be lowered, keeps the last
    good solve on screen and prints the error naming the edit.
 6. **Finish without `--fast`**: the plane factors move the trajectory too,
-   so check the final file with the full solve, then `--apply` on the copy
-   and `rux create clouds`.
+   so check the final file with the full solve, and keep it only if its
+   `vs plain optimize` line says `better`; then `--apply` on the copy and
+   `rux create clouds`.
 
 ### A worked example: house2 (2026-10-16)
 
@@ -232,7 +254,10 @@ found that the loop above, driven by its own rules, does **not** yet beat
 plain `rux optimize`: the shear guards pin untouched nodes at their drifted
 `--fast` poses, the shear indicator flags a correct downstream correction,
 and suggestions on the gauge segment move the whole trajectory
-(`reusex-rcv.1.21`-`.24`). Until those are fixed: run the no-edit full solve
-(an empty edits file without `--fast`) next to every candidate and keep no
-edit that does not beat it on the cross-segment median and in the passes
-plan cut, and treat any loop-made reference as unproven.
+(`reusex-rcv.1.21`-`.24`). With those fixed (the reference, fit-based shear,
+no gauge suggestions) the re-run ends <= plain `optimize` on 8 of 9 cells
+and better on 4 ([§9.7](../research/visual-drift-loop.md#97-re-run-after-the-fixes-2026-10-16-reusex-rcv121-24));
+the one loss was flagged `WORSE than no edits` by its own block. So: keep
+the final edits only when the full solve's `vs plain optimize` verdict is
+`better`, compare the passes cut with `.ref.passes.png`, and treat a
+loop-made reference as DRAFT until scored.

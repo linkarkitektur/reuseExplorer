@@ -35,10 +35,12 @@
 #include <csignal>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <numeric>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <utility>
 
 namespace fs = std::filesystem;
@@ -138,6 +140,15 @@ std::array<double, 3> ypr_deg(const Eigen::Matrix3d &r) {
 /// link that holds the break; relax them in the file for a gentler pull.
 constexpr double kMoveSigmaM = 0.005;
 constexpr double kMoveSigmaDeg = 0.1;
+
+/// A sheared segment fits worse than in the reference by more than this
+/// (and by more than kShearWorseRel of the reference): about the noise of a
+/// segment's median residual at the pinned sampling (calibration §9.4).
+constexpr double kShearWorseM = 0.001;
+constexpr double kShearWorseRel = 0.10;
+/// The candidate's cross-segment median within this of the reference's
+/// counts as the same (the verdict line still prints the difference).
+constexpr double kSameAsReferenceM = 1e-4;
 
 double round_to(double v, double step) { return std::round(v / step) * step; }
 
@@ -352,6 +363,119 @@ storey_runs(const std::vector<std::int64_t> &nodes,
   return merged;
 }
 
+ShearIndicator shear_indicator(const std::vector<std::int64_t> &ids,
+                               const std::vector<Eigen::Matrix4d> &poses,
+                               const std::vector<Eigen::Matrix4d> &reference,
+                               const std::vector<bool> &untouched,
+                               const std::vector<ShearSegmentFit> &segments,
+                               double flag_m) {
+  ShearIndicator sh;
+  if (poses.size() != ids.size() || reference.size() != ids.size() ||
+      untouched.size() != ids.size())
+    return sh;
+  sh.change = pose_change(ids, poses, reference, &untouched);
+  sh.untouched = sh.change.nodes;
+  // The side of the last edited node each untouched node is on.
+  std::int64_t last_edited = std::numeric_limits<std::int64_t>::min();
+  for (std::size_t k = 0; k < ids.size(); ++k)
+    if (!untouched[k])
+      last_edited = std::max(last_edited, ids[k]);
+  const bool any_edit = last_edited != std::numeric_limits<std::int64_t>::min();
+  auto moved = [&](std::size_t k) {
+    return (poses[k].topRightCorner<3, 1>() -
+            reference[k].topRightCorner<3, 1>())
+        .norm();
+  };
+  for (std::size_t k = 0; k < ids.size(); ++k)
+    if (untouched[k] && moved(k) > flag_m)
+      ++(any_edit && ids[k] > last_edited ? sh.downstream_moved
+                                          : sh.upstream_moved);
+
+  for (const auto &f : segments) {
+    ShearIndicator::Segment seg;
+    seg.index = f.index;
+    seg.first_node = f.first_node;
+    seg.last_node = f.last_node;
+    seg.residual_m = f.residual_m;
+    seg.reference_residual_m = f.reference_residual_m;
+    seg.downstream = any_edit && f.first_node > last_edited;
+    bool edited = false;
+    std::size_t moved_nodes = 0;
+    for (std::size_t k = 0; k < ids.size(); ++k) {
+      if (ids[k] < f.first_node || ids[k] > f.last_node)
+        continue;
+      if (!untouched[k]) {
+        edited = true;
+        break;
+      }
+      const double m = moved(k);
+      seg.max_m = std::max(seg.max_m, m);
+      if (m > flag_m)
+        ++moved_nodes;
+    }
+    if (edited)
+      continue;
+    if (seg.max_m > flag_m) {
+      if (f.residual_m && f.reference_residual_m) {
+        // Worse by more than the sampling noise of a segment median.
+        const double margin =
+            std::max(kShearWorseM, kShearWorseRel * *f.reference_residual_m);
+        seg.sheared = *f.residual_m > *f.reference_residual_m + margin;
+      } else {
+        seg.sheared = !seg.downstream; // no overlap to judge: conservative
+      }
+    }
+    if (seg.sheared)
+      sh.flagged += moved_nodes;
+    sh.segments.push_back(seg);
+  }
+  if (segments.empty())
+    sh.flagged = sh.upstream_moved;
+  return sh;
+}
+
+std::map<int, double>
+segment_cross_residuals(const reusex::slam::DriftReport &report) {
+  std::map<int, std::vector<double>> by;
+  for (const auto &p : report.pairs)
+    if (p.a != p.b) {
+      by[p.a].push_back(p.residual_m);
+      by[p.b].push_back(p.residual_m);
+    }
+  std::map<int, double> out;
+  for (auto &[k, v] : by)
+    if (auto m = median(std::move(v)))
+      out[k] = *m;
+  return out;
+}
+
+reusex::geometry::StoredPoseGraph
+fast_graph_at(const reusex::geometry::StoredPoseGraph &graph,
+              const std::vector<Eigen::Matrix4d> &reference) {
+  if (reference.size() != graph.frames.size())
+    throw std::invalid_argument(
+        fmt::format("fast_graph_at: {} reference poses for {} frames",
+                    reference.size(), graph.frames.size()));
+  reusex::geometry::StoredPoseGraph out = graph;
+  std::vector<Eigen::Matrix4d> optical(reference.size());
+  for (std::size_t k = 0; k < out.frames.size(); ++k) {
+    auto &f = out.frames[k];
+    optical[k] = reference[k] * out.local[k];
+    f.world_pose.matrix() = optical[k];
+    f.points =
+        std::make_shared<reusex::Cloud>(); // no plane factors: no surfels
+    f.normals = std::make_shared<reusex::CloudN>();
+  }
+  out.seed_stored = reference;
+  for (auto &e : out.edges)
+    if (e.solver) {
+      const auto i = static_cast<std::size_t>(e.solver->i);
+      const auto j = static_cast<std::size_t>(e.solver->j);
+      e.solver->T_ij = optical[i].inverse() * optical[j];
+    }
+  return out;
+}
+
 std::vector<viz::GraphLayerEdge>
 candidate_graph_edges(const reusex::geometry::StoredPoseGraph &graph,
                       const std::vector<std::string> &stored_status,
@@ -389,7 +513,15 @@ struct OptimizeWatchSession::State {
   std::vector<int> graph_index;        ///< per id: index in graph, or -1
   std::vector<Eigen::Matrix4d> stored; ///< per id: `transform` at load
   std::vector<Eigen::Matrix4d> initial;
-  std::vector<Eigen::Matrix4d> baseline; ///< the solve without edits
+  /// reusex-rcv.1.21 / .24: the no-edit FULL solve (plain `rux optimize`),
+  /// per id. What shear, the guards and the "vs plain optimize" line
+  /// measure against, and what `--fast` cycles solve on top of.
+  std::vector<Eigen::Matrix4d> reference;
+  std::optional<reusex::slam::DriftReport> reference_drift;
+  std::optional<double> reference_cross_m;
+  std::map<int, double> reference_segment_m; ///< per segment, cross pairs
+  std::string reference_note;   ///< why the reference is not the full solve
+  std::int64_t gauge_node = -1; ///< the frame the gauge prior holds
   std::vector<reusex::core::StoreyRecord> storeys;
   std::optional<reusex::core::SolidModel> plan;
   std::string plan_note;
@@ -489,17 +621,13 @@ bool OptimizeWatchSession::State::load(std::string &out) {
 
     for (const auto &e : db->list_pose_graph_edges())
       edge_status.push_back(e.status);
-    auto loaded = geometry::load_stored_pose_graph(*db, options);
-    if (opt.fast) // no plane factors: the solve needs no surfels at all
-      for (auto &f : loaded.frames) {
-        f.points = std::make_shared<Cloud>();
-        f.normals = std::make_shared<CloudN>();
-      }
-    graph = std::move(loaded);
+    // The full options (plane factors on), for the reference solve.
+    const auto full_options = plane_graph_options(opt);
+    auto loaded = geometry::load_stored_pose_graph(*db, full_options);
 
     std::map<int, int> index_of;
-    for (std::size_t k = 0; k < graph->frames.size(); ++k)
-      index_of[graph->frames[k].node_id] = static_cast<int>(k);
+    for (std::size_t k = 0; k < loaded.frames.size(); ++k)
+      index_of[loaded.frames[k].node_id] = static_cast<int>(k);
     graph_index.assign(ids.size(), -1);
     stored.resize(ids.size());
     initial.resize(ids.size());
@@ -509,11 +637,34 @@ bool OptimizeWatchSession::State::load(std::string &out) {
       initial[k] = stored[k];
       if (auto it = index_of.find(id); it != index_of.end()) {
         graph_index[k] = it->second;
-        initial[k] = graph->seed_stored[static_cast<std::size_t>(it->second)];
+        initial[k] = loaded.seed_stored[static_cast<std::size_t>(it->second)];
       }
     }
-    const auto base = geometry::solve_stored_pose_graph(*db, *graph, options);
-    baseline = aligned(base);
+    gauge_node = loaded.frames.front().node_id;
+
+    // reusex-rcv.1.21 / .24: the reference is the no-edit FULL solve. Under
+    // --fast the cycles solve the graph linearised at it (fast_graph_at): an
+    // edit bends plain optimize's trajectory, not the drifted odometry.
+    const auto tr = Clock::now();
+    std::vector<Eigen::Matrix4d> ref_graph = loaded.seed_stored;
+    try {
+      ref_graph =
+          geometry::solve_stored_pose_graph(*db, loaded, full_options).poses;
+    } catch (const std::exception &e) {
+      reference_note = fmt::format("the full solve FAILED ({}); the initial "
+                                   "poses stand in",
+                                   e.what());
+    }
+    const double reference_seconds = seconds_since(tr);
+    if (opt.fast) {
+      graph = fast_graph_at(loaded, ref_graph);
+    } else {
+      graph = std::move(loaded);
+    }
+    reference = stored;
+    for (std::size_t k = 0; k < ids.size(); ++k)
+      if (graph_index[k] >= 0)
+        reference[k] = ref_graph[static_cast<std::size_t>(graph_index[k])];
 
     // One cache serves both: the preview samples as the drift does.
     const auto tc = Clock::now();
@@ -528,14 +679,39 @@ bool OptimizeWatchSession::State::load(std::string &out) {
         depth_cache->frames.size(), depth_cache->samples(),
         static_cast<double>(depth_cache->bytes()) / (1024.0 * 1024.0),
         seconds_since(tc), sampling.frame_step, sampling.depth_stride);
+    // The reference's own drift numbers, once.
+    try {
+      reference_drift =
+          slam::diagnose_drift(*db, drift_options(), plan ? &*plan : nullptr,
+                               reference, &*depth_cache);
+      std::vector<double> cross;
+      for (const auto &p : reference_drift->pairs)
+        if (p.a != p.b)
+          cross.push_back(p.residual_m);
+      reference_cross_m = median(cross);
+      reference_segment_m = segment_cross_residuals(*reference_drift);
+    } catch (const std::exception &e) {
+      reference_note +=
+          fmt::format("{}its drift diagnostics FAILED: {}",
+                      reference_note.empty() ? "" : "; ", e.what());
+    }
     load_seconds = seconds_since(t0);
     out += fmt::format(
         "graph                 {} of {} frames solved, {} "
-        "stored edges{}; loaded in {:.1f} s (incl. the no-edit "
-        "solve)\n",
+        "stored edges{}; loaded in {:.1f} s (incl. the reference solve)\n",
         graph->frames.size(), graph->frames_total, graph->edges.size(),
         graph->odometry_in_memory ? ", odometry derived in memory" : "",
         load_seconds);
+    out += fmt::format(
+        "reference             plain optimize (the no-edit full solve, plane "
+        "factors on; {:.1f} s): cross-segment {}, pass-to-pass {}{}\n",
+        reference_seconds, mm(reference_cross_m),
+        mm(reference_drift ? reference_drift->residual_median_m
+                           : std::optional<double>{}),
+        reference_note.empty() ? "" : "; " + reference_note);
+    if (opt.fast)
+      out += "                      --fast cycles solve on top of it (no "
+             "plane factors): an edit must beat it\n";
     return true;
   } catch (const std::exception &e) {
     load_error = e.what();
@@ -706,14 +882,6 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
   for (std::size_t k = 0; k < s.ids.size(); ++k)
     untouched[k] =
         !std::binary_search(touched.begin(), touched.end(), s.ids[k]);
-  r.shear.change = pose_change(s.ids, r.poses, s.baseline, &untouched);
-  r.shear.untouched = r.shear.change.nodes;
-  for (std::size_t k = 0; k < s.ids.size(); ++k)
-    if (untouched[k] && (r.poses[k].topRightCorner<3, 1>() -
-                         s.baseline[k].topRightCorner<3, 1>())
-                                .norm() > s.opt.shear_flag_m)
-      ++r.shear.flagged;
-
   // --- drift diagnostics on the candidate poses -----------------------------
   const slam::DriftDiagnosticsOptions dopt = s.drift_options();
   std::optional<slam::DriftReport> drift;
@@ -730,25 +898,24 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
     drift_seconds = seconds_since(td);
   }
 
-  // Per drift segment with no edited node: the largest untouched move.
-  if (drift)
-    for (const auto &g : drift->segments) {
-      ShearIndicator::Segment seg{g.index, g.first_node, g.last_node, 0.0};
-      bool edited = false;
-      for (std::size_t k = 0; k < s.ids.size(); ++k) {
-        if (s.ids[k] < g.first_node || s.ids[k] > g.last_node)
-          continue;
-        if (!untouched[k]) {
-          edited = true;
-          break;
-        }
-        seg.max_m = std::max(seg.max_m, (r.poses[k].topRightCorner<3, 1>() -
-                                         s.baseline[k].topRightCorner<3, 1>())
-                                            .norm());
+  // reusex-rcv.1.22: shear against the reference, judged by the fit.
+  {
+    std::vector<ShearSegmentFit> fits;
+    if (drift) {
+      const auto cand = segment_cross_residuals(*drift);
+      for (const auto &g : drift->segments) {
+        ShearSegmentFit f{g.index, g.first_node, g.last_node, {}, {}};
+        if (auto it = cand.find(g.index); it != cand.end())
+          f.residual_m = it->second;
+        if (auto it = s.reference_segment_m.find(g.index);
+            it != s.reference_segment_m.end())
+          f.reference_residual_m = it->second;
+        fits.push_back(f);
       }
-      if (!edited)
-        r.shear.segments.push_back(seg);
     }
+    r.shear = shear_indicator(s.ids, r.poses, s.reference, untouched, fits,
+                              s.opt.shear_flag_m);
+  }
 
   std::vector<std::string> warnings;
   if (drift) {
@@ -773,36 +940,84 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
                        mm(r.cross_segment_median_m), cross.size(),
                        mm(d.halves.within_m), mm(d.halves.across_m));
   }
-  // reusex-sb2: the GT-free numbers above reward a sheared trajectory; this
-  // line says how much of the trajectory NO edit asked to move did move.
+  // reusex-rcv.1.24: plain optimize on the same sampling, every cycle: the
+  // edits must beat doing nothing.
+  r.reference_cross_segment_median_m = s.reference_cross_m;
+  if (s.reference_drift)
+    r.reference_pass_to_pass_m = s.reference_drift->residual_median_m;
+  const auto vs_reference = pose_change(s.ids, r.poses, s.reference);
+  if (r.cross_segment_median_m && s.reference_cross_m) {
+    const double diff = *r.cross_segment_median_m - *s.reference_cross_m;
+    r.beats_reference = diff < -kSameAsReferenceM;
+    out += fmt::format(
+        "vs plain optimize     cross-segment {} vs {} ({}: {:+.1f} mm; under "
+        "~1 mm is sampling noise); pass-to-pass {} vs {}; poses median "
+        "{:.4f} m, max {:.3f} m from it\n",
+        mm(r.cross_segment_median_m), mm(s.reference_cross_m),
+        *r.beats_reference         ? "better"
+        : diff > kSameAsReferenceM ? "WORSE than no edits"
+                                   : "the same",
+        diff * 1000.0,
+        mm(drift ? drift->residual_median_m : std::optional<double>{}),
+        mm(r.reference_pass_to_pass_m), vs_reference.median_m,
+        vs_reference.max_m);
+  } else {
+    out += fmt::format("vs plain optimize     n/a (no cross-segment median"
+                       "{})\n",
+                       s.reference_note.empty() ? "" : "; " + s.reference_note);
+  }
+  j["reference"] = {
+      {"cross_segment_median_m",
+       s.reference_cross_m ? json(*s.reference_cross_m) : json()},
+      {"residual_median_m",
+       r.reference_pass_to_pass_m ? json(*r.reference_pass_to_pass_m) : json()},
+      {"beats", r.beats_reference ? json(*r.beats_reference) : json()},
+      {"pose_change", change_json(vs_reference)},
+      {"note", s.reference_note}};
+  // reusex-sb2 / rcv.1.22: the GT-free numbers above reward a sheared
+  // trajectory; this says which untouched parts moved and whether they now
+  // fit worse than in plain optimize (that, not movement, is shear).
   out += fmt::format(
-      "shear (untouched)     {} nodes no edit names: vs the no-edit solve "
-      "median {:.4f} m, p90 {:.3f} m, max {:.3f} m (node {}); {} moved > "
-      "{:.2f} m{}\n",
+      "shear (untouched)     {} nodes no edit names: vs plain optimize "
+      "median {:.4f} m, p90 {:.3f} m, max {:.3f} m (node {}); moved > {:.2f} "
+      "m: {} upstream (gauge side), {} downstream (carried tail, expected); "
+      "{} in segments that now fit worse{}\n",
       r.shear.untouched, r.shear.change.median_m, r.shear.change.p90_m,
-      r.shear.change.max_m, r.shear.change.max_node, r.shear.flagged,
-      s.opt.shear_flag_m, r.shear.flagged > 0 ? "  <- SHEAR" : "");
+      r.shear.change.max_m, r.shear.change.max_node, s.opt.shear_flag_m,
+      r.shear.upstream_moved, r.shear.downstream_moved, r.shear.flagged,
+      r.shear.flagged > 0 ? "  <- SHEAR" : "");
   {
     std::vector<std::string> segs;
     for (const auto &g : r.shear.segments)
       if (g.max_m > s.opt.shear_flag_m)
-        segs.push_back(fmt::format("seg {} ({}-{}) {:.3f} m", g.index,
-                                   g.first_node, g.last_node, g.max_m));
+        segs.push_back(fmt::format(
+            "seg {} ({}-{}) {:.3f} m, {} vs {}{}{}", g.index, g.first_node,
+            g.last_node, g.max_m, mm(g.residual_m), mm(g.reference_residual_m),
+            g.downstream ? ", carried" : "", g.sheared ? " SHEARED" : ""));
     if (!segs.empty())
-      out += fmt::format("                      untouched segments moved: "
-                         "{}\n",
+      out += fmt::format("                      untouched segments moved "
+                         "(residual vs plain optimize): {}\n",
                          fmt::join(segs, "; "));
   }
   j["shear"] = {{"untouched", r.shear.untouched},
                 {"flagged", r.shear.flagged},
+                {"upstream_moved", r.shear.upstream_moved},
+                {"downstream_moved", r.shear.downstream_moved},
+                {"reference", "no-edit full solve"},
                 {"flag_m", s.opt.shear_flag_m},
                 {"change", change_json(r.shear.change)}};
   j["shear"]["segments"] = json::array();
   for (const auto &g : r.shear.segments)
-    j["shear"]["segments"].push_back({{"segment", g.index},
-                                      {"first_node", g.first_node},
-                                      {"last_node", g.last_node},
-                                      {"max_m", g.max_m}});
+    j["shear"]["segments"].push_back(
+        {{"segment", g.index},
+         {"first_node", g.first_node},
+         {"last_node", g.last_node},
+         {"max_m", g.max_m},
+         {"residual_m", g.residual_m ? json(*g.residual_m) : json()},
+         {"reference_residual_m",
+          g.reference_residual_m ? json(*g.reference_residual_m) : json()},
+         {"downstream", g.downstream},
+         {"sheared", g.sheared}});
 
   if (drift) {
     const auto &d = *drift;
@@ -865,9 +1080,22 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
     std::string yaml;
     j["suggestions"] = json::array();
     int emitted = 0;
+    std::string gauge_comment;
     for (const auto &g : sug) {
       if (emitted >= s.opt.suggestions || g.after_m >= g.before_m)
         break;
+      // reusex-rcv.1.23: the segment holding the gauge prior is never
+      // suggested. Its move outvotes the one gauge prior and the whole
+      // trajectory follows it rigidly: it is the inverse move of all the
+      // others, which the suggestions for those segments already cover.
+      if (s.gauge_node >= g.first_node && s.gauge_node <= g.last_node) {
+        gauge_comment = fmt::format(
+            "  # seg {} ({}-{}: {:.1f} -> {:.1f} mm) holds the gauge (node "
+            "{}): not suggested -- moving it moves the whole trajectory\n",
+            g.segment, g.first_node, g.last_node, g.before_m * 1000.0,
+            g.after_m * 1000.0, s.gauge_node);
+        continue;
+      }
       // The segment's nodes and where the candidate solve puts them.
       std::vector<std::int64_t> nodes;
       std::vector<Eigen::Vector3d> positions;
@@ -967,15 +1195,17 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
                                   {"split", !left_out.empty()}});
       ++emitted;
     }
-    // Shear guards: pin each untouched segment that moved at its middle
-    // node, all six DoF, where the solve without edits had it (the
+    // Shear guards: pin each SHEARED untouched segment (moved, and fits
+    // worse than in plain optimize) at its middle node, all six DoF, where
+    // the reference -- the no-edit FULL solve -- has it (reusex-rcv.1.21:
+    // never at the drifted --fast pose, which froze the drift). The
     // regression-221 lesson: anchors in the middle, not relative
-    // constraints between the ends). Measured on house2: [x, y, yaw]
-    // anchors leave the vertical shear in place. Without such a segment the
-    // untouched node that moved most is pinned instead.
+    // constraints between the ends; measured on house2, [x, y, yaw] anchors
+    // leave the vertical shear in place. Without residuals the untouched
+    // node that moved most is pinned instead.
     std::vector<std::pair<std::size_t, double>> guards; // index, moved
     for (const auto &g : r.shear.segments) {
-      if (g.max_m <= s.opt.shear_flag_m)
+      if (!g.sheared)
         continue;
       std::vector<std::size_t> in;
       for (std::size_t k = 0; k < s.ids.size(); ++k)
@@ -985,7 +1215,7 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
       if (!in.empty())
         guards.emplace_back(in[in.size() / 2], g.max_m);
     }
-    if (guards.empty() && r.shear.change.max_m > s.opt.shear_flag_m &&
+    if (guards.empty() && r.shear.segments.empty() && r.shear.flagged > 0 &&
         r.shear.change.max_node >= 0) {
       const auto it =
           std::find(s.ids.begin(), s.ids.end(), r.shear.change.max_node);
@@ -998,17 +1228,17 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
       a.kind = core::PoseEditKind::anchor;
       a.nodes.first = a.nodes.last = s.ids[k];
       a.pose.source = core::PoseSpec::Source::given;
-      a.pose.value = readable(to_doc * s.baseline[k]);
+      a.pose.value = readable(to_doc * s.reference[k]);
       a.sigma_trans_m = 2.0 * kMoveSigmaM;
       a.sigma_rot_deg = 2.0 * kMoveSigmaDeg;
       a.note = fmt::format("cycle {}: shear guard, no edit names node {} "
-                           "but it or its segment moved {:.3f} m from the "
-                           "no-edit solve",
+                           "but its segment moved {:.3f} m from plain "
+                           "optimize and fits worse",
                            r.index, s.ids[k], moved);
       const std::string comment =
-          fmt::format("  # shear guard: node {} (moved up to {:.3f} m without "
-                      "an edit naming it); pin it where the no-edit solve "
-                      "had it\n",
+          fmt::format("  # shear guard: node {} (its segment moved up to "
+                      "{:.3f} m without an edit naming it and fits worse); "
+                      "pin it where plain optimize had it\n",
                       s.ids[k], moved);
       const std::string item = comment + edit_yaml(a);
       r.suggestion_items.push_back(item);
@@ -1016,9 +1246,12 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
       j["suggestions"].push_back({{"id", a.id}, {"shear_guard", true}});
     }
     r.suggestions_yaml = yaml;
+    if (!gauge_comment.empty())
+      j["gauge_segment_skipped"] = true;
     out += "suggestions           (paste under `edits:`: ONE move per cycle, "
            "the first is the best -- each is measured against the others as "
            "they are -- plus the shear guards when offered)\n";
+    out += gauge_comment;
     out +=
         yaml.empty() ? "  # none: no segment move lowers its residual\n" : yaml;
     j["suggestions_yaml"] = yaml;
@@ -1128,6 +1361,29 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
       o.view = viz::ViewPreset::front;
       o.layers = {viz::Layer::passes};
       write("front", o);
+      // reusex-rcv.1.24: plain optimize (the reference) once, at load, so
+      // every cycle's passes can be laid next to it: <stem>.ref.*.png.
+      if (first) {
+        viz::RenderOptions ref = base;
+        ref.poses = s.reference;
+        ref.preview = std::make_shared<const viz::PreviewCloud>(
+            viz::preview_cloud(*s.db, popt, s.reference,
+                               s.depth_cache ? &*s.depth_cache : nullptr));
+        ref.edits.reset();
+        ref.graph_edges.reset();
+        ref.drift_heatmap.reset();
+        for (const auto &[prefix, h] : cuts) {
+          viz::RenderOptions q = ref;
+          q.view = viz::ViewPreset::plan;
+          q.cut = true;
+          q.cut_height = h;
+          q.layers = {viz::Layer::passes};
+          write("ref." + prefix + "passes", q);
+        }
+        ref.view = viz::ViewPreset::front;
+        ref.layers = {viz::Layer::passes};
+        write("ref.front", ref);
+      }
       r.rendered = true;
     } catch (const std::exception &e) {
       r.render_error = e.what();

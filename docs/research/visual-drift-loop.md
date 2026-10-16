@@ -60,6 +60,10 @@ layer) and a scored benchmark (`rux analyze solid`, `scripts/bench-solid.sh`)
   shear guards pin the drift in place and its shear indicator flags the
   correct fix. Watch the cross-segment median (Spearman +0.47 with true ATE)
   and always compare with plain `optimize` before keeping an edit.
+  **Re-run after the fixes (§9.7):** with the loop solving on top of plain
+  `optimize` and comparing every cycle with it, the final is <= `optimize`
+  on 8 of 9 cells (better on 4, by 4-38% ATE), and the one loss is flagged
+  `WORSE than no edits` by the block itself.
 - **Most promising whacky ideas** (§5): wall doubling as an explicit factor,
   the floor plan as fixed landmarks, rigid sub-maps glued by overlap.
   Measured: per-frame plan fitting is too noisy to anchor anything by itself;
@@ -486,7 +490,8 @@ trusted, does the loop move poses toward the truth, and do its GT-free
 numbers (pass-to-pass residual, cross-segment median, shear) track the true
 error?
 
-**Answer: no, not as the loop and its guide stand today.** Driven by the
+**Answer: no, not as the loop and its guide stood then** (the re-run after
+the fixes is §9.7). Driven by the
 guide's own policy, from the renders and the metrics block only, the loop
 left the true error where the drift put it (final ATE 0.92-1.04x the drifted
 start on all six full-drift cells), while plain `rux optimize` halved it. Its
@@ -675,3 +680,78 @@ scripts/bench-drift-loop.sh report <out>
 opens the originals beyond `cp`). The session log holds one JSON line per
 round (edits hash, metrics, wall time), so a run is replayable from the
 edits files under `<cell>/r<k>/edits.yaml`.
+
+### 9.7 Re-run after the fixes (2026-10-16, `reusex-rcv.1.21`-`.24`)
+
+**What changed in the loop.** (1) The no-edit FULL solve -- plain
+`rux optimize` -- is solved once at load and is the **reference**: every
+block prints `vs plain optimize` (cross-segment and pass-to-pass of both,
+and a verdict), and `<stem>.ref.passes.png` / `.ref.front.png` render it once
+(`.24`). (2) `--fast` cycles solve the graph linearised at the reference
+(every edge measures the reference's relative pose, no plane factors), so an
+edit bends plain optimize's trajectory instead of the drifted odometry, and
+the final full solve no longer has to undo a drifted shape (`.21`). (3) The
+shear indicator measures against the reference and splits the moved
+untouched nodes into upstream (gauge side) and downstream (carried tail);
+only an untouched segment that moved AND now fits worse (its cross-segment
+residual up by more than 1 mm and 10%) counts as shear, and only it gets a
+guard, anchored at the reference pose (`.22`, `.21`). On the first run's
+rounds, "moved away from the full solve" already separated the bad gauge
+moves (469-1507 nodes) from the good yaw moves (0 nodes; 719 / 757 moved
+toward it), where the old count was -0.93 against ATE. (4) The segment that
+holds the gauge prior is never suggested (`.23`).
+
+**The run.** Same nine cells (same seeds, so the same drifted masters), same
+policy scripts unchanged (`step.py` / `paste.py`: top move per round, guards
+when a round shears without a gain, revert to the best cross-segment round,
+at most 6 rounds, then the best round's edits in one full solve), blind
+(`scripts/bench-drift-loop.sh`, scores in `hidden/` read after the last
+cell).
+
+| cell | start | `optimize` | loop before (final) | loop now: best fast / final | edits kept | final vs optimize | verdict line |
+|---|---|---|---|---|---|---|---|
+| 48 full d0.25 | 124.1 | 37.3 | 116.4 | 37.3 / 37.3 | 0 | = | the same |
+| 48 full d1.0 | 482.4 | 274.4 | 482.5 | 274.4 / **318.1** | 2 | worse | WORSE (+0.7 mm) |
+| 48 yaw d0.25 | 155.5 | 31.9 | 45.7 | 31.4 / 31.9 | 0 | = | the same |
+| 50 full d0.25 | 119.3 | 73.9 | 110.0 | 62.2 / **54.7** | 2 | better | the same (-0.0 mm) |
+| 50 full d1.0 | 452.4 | 258.5 | 439.2 | 204.8 / **248.4** | 7 | better | better (-14.9 mm) |
+| 50 yaw d0.25 | 149.2 | 46.8 | 55.8 | 29.4 / **28.9** | 4 | better | better (-1.2 mm) |
+| 51 full d0.25 | 175.0 | 78.9 | 181.4 | 76.5 / 78.9 | 0 | = | the same |
+| 51 full d1.0 | 737.4 | 619.1 | 727.4 | 521.0 / **561.4** | 2 | better | better (-5.2 mm) |
+| 51 yaw d0.25 | 284.1 | 34.2 | 34.2 | 28.1 / 34.2 | 0 | = | the same |
+
+ATE in mm (translation RMSE vs the seed, no alignment). F@50mm of the final
+is within 0.013 of `optimize` on every cell (0.262 vs 0.275 on 48 full d1.0,
+0.302 vs 0.298 on 50 full d1.0, 0.807 vs 0.811 on 50 yaw).
+
+- **Final <= optimize on 8 of 9 cells** (was 1 of 9): better on 4 (-26%,
+  -4%, -38%, -9% ATE), equal on 4 (the policy kept no edit: no suggestion
+  beat the reference), worse on 1. Acceptance (1) of `reusex-rcv.1.7`
+  (<= 0.5x start AND <= optimize): 6 of 9 (was 1).
+- **The one loss is visible to the loop.** On 48 full d1.0 the fast rounds
+  beat the reference (17.2 vs 20.0 mm cross-segment) but the full solve of
+  the same edits did not (20.7 vs 20.0 mm), and its block says
+  `WORSE than no edits`. The guide's last step (keep the final only if the
+  verdict is `better`) reverts it: then the loop ends worse than `optimize`
+  on **no** cell, better on 3. It also drops the 50 full d0.25 gain, whose
+  verdict was `the same` (-0.0 mm) at 54.7 vs 73.9 mm true ATE: the
+  cross-segment median does not see a 19 mm ATE gain at this drift.
+- **The fast-to-full step still costs.** Best fast round vs final full:
+  205 -> 248 and 521 -> 561 mm at d1.0. Moves are absolute targets fitted
+  on the fast candidate; the plane factors pull against part of them.
+- **GT-free numbers.** Within a cell the fast rounds now differ by a few mm
+  of ATE around `optimize`, so the per-cell Spearman of cross-segment vs ATE
+  is lower (mean +0.36 over all solves, was +0.57) -- the rounds being
+  ranked are all close to the reference. The verdict line (final vs
+  reference) agreed with the true ATE ordering on 8 of 9 cells. The new
+  shear count flagged 0-329 nodes per round; it ranks positively with ATE on
+  4 cells and negatively on 3 (no flags on 2), so it is still not an
+  acceptance number.
+- **Renders.** `50 yaw d0.25` r7 vs `.ref.passes.png`: the lower long wall
+  and the middle partition are one thin line in the loop's cut and a
+  slightly doubled band in the reference's. `48 full d1.0`: both cuts are
+  smeared by the tilt drift; the loop's right-hand wall run is fanned
+  wider than the reference's, matching the WORSE verdict.
+
+Per-round logs, edits, blocks and PNGs: the scratch run
+`drift-loop-fix/cells/<cell>/r<k>/` of this session (not committed).
