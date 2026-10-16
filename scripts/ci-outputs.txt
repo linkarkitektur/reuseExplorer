@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 Povl Filip Sonne-Frederiksen
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Everything CI realises, in one list read by BOTH scripts/ci-local.sh and
+# .github/workflows/ci.yml, so the two cannot drift (reusex-uk8).
+#
+#   scripts/ci-local.sh  builds every line (all outputs, `^*`) and pushes
+#                        every output path to reusex.cachix.org.
+#   ci.yml               realises each line in order, substitute-only first
+#                        (`--max-jobs 0`), building only on a miss, and says
+#                        which in the log.
+#
+# Format: <scope> <installable>
+#   all   CI realises it on every run (pull requests and main)
+#   main  CI realises it only on pushes to main
+#
+# Keep checks.tests first: other local tooling waits for a running ci-local
+# by matching `nix build .*checks.x86_64-linux.tests` in the process list.
+
+# The pass stamp: ctest + package install check against .#cpu (no compile).
+all   .#checks.x86_64-linux.tests
+# The CPU package downstream repos (ruxd) build against. ci.yml also checks
+# that `github:ReUse-X/ReUseX/<sha>#cpu`, the ref they fetch, is this same
+# derivation. ci-local.sh pushes its `testsuite` output too, so a CI run
+# that misses only the stamp reruns the tests without compiling.
+main  .#cpu

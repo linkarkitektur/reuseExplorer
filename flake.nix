@@ -138,44 +138,24 @@
         };
       };
 
-      # Hermetic build-and-test gate: builds the CPU variant with the unit
-      # tests enabled and runs ctest inside the sandbox. The CPU variant is
-      # used so the check needs no GPU (works in CI and on any machine).
-      # Run with: nix build .#checks.x86_64-linux.tests  (or nix flake check)
-      # For the fast incremental dev loop use scripts/check.sh instead.
+      # Hermetic test gate for the CPU variant (no GPU needed: works in CI
+      # and on any machine). Run with: nix build .#checks.x86_64-linux.tests
+      # (or nix flake check). For the fast incremental dev loop use
+      # scripts/check.sh instead.
       #
-      # The output is a pass stamp, not the package (reusex-37v): once the
-      # build, ctest and the install check have passed, $out is replaced by
-      # the ctest log. Its existence in a store means "this exact derivation
-      # passed". scripts/ci-local.sh builds it locally and pushes it to
-      # reusex.cachix.org; CI on the same commit then substitutes the stamp
-      # (a few KiB, no runtime closure) and compiles nothing. Keeping the
-      # installed package out of the output is what makes pushing one per PR
-      # affordable on the 5 GB Cachix tier. The package itself is .#cpu.
-      checks.tests = self.packages.${system}.cpu.overrideAttrs (old: {
-        pname = old.pname + "-tests";
-        doCheck = true;
-        # Builds tests/package/consumer against the installed package
-        # (find_package(ReUseX)); see installCheckPhase in default.nix.
-        doInstallCheck = true;
-        checkPhase = ''
-          runHook preCheck
-          # --parallel: the suite is dominated by per-process loader
-          # overhead, so this is a near-linear speedup (#268). Safe since
-          # #262 gave temp files pid-unique names.
-          ctest --output-on-failure --parallel "''${NIX_BUILD_CORES:-1}" \
-            --output-log "$TMPDIR/ctest.log"
-          runHook postCheck
-        '';
-        # Last hook of the last phase that needs the installed package.
-        postInstallCheck = ''
-          rm -rf "$out"
-          mkdir -p "$out"
-          cp "$TMPDIR/ctest.log" "$out/ctest.log"
-          echo "${old.pname}-${old.version}: build, ctest and install check passed" \
-            > "$out/passed"
-        '';
-      });
+      # Build and test are two derivations (reusex-uk8):
+      #   packages.cpu   compiles once, with BUILD_TESTS=ON. `out` is the
+      #                  installed package (bin/rux, the ReUseX CMake package
+      #                  ruxd builds against); `testsuite` holds the test
+      #                  binaries and ctest files.
+      #   checks.tests   (= cpu.check, default.nix) runs ctest over
+      #                  `testsuite` and the package-consumer install check
+      #                  against `out`. It compiles nothing of ReUseX, and its
+      #                  output is a pass stamp with no references.
+      # scripts/ci-local.sh builds both locally and pushes `out`, `testsuite`
+      # and the stamp to reusex.cachix.org; CI on the same commit then
+      # substitutes the stamp (and, on main, `.#cpu`) and compiles nothing.
+      checks.tests = self.packages.${system}.cpu.check;
 
       packages = let
         # Get all custom packages
@@ -212,6 +192,7 @@
           cudaSupport ? false,
           rocmSupport ? false,
           withLibtorch ? true,
+          withTestsOutput ? false,
         }: let
           variantPkgs = import nixpkgs {
             inherit system;
@@ -223,14 +204,16 @@
           };
         in
           variantPkgs.callPackage ./default.nix {
-            inherit cudaSupport withLibtorch;
+            inherit cudaSupport withLibtorch withTestsOutput;
             # The CUDA path already gets ccache via cudaPackages.backendStdenv
             # (overlays/ccache.nix); wrap the plain stdenv so the CPU/ROCm
             # ReUseX compiles are cached too.
             stdenv = variantPkgs.ccacheStdenv;
           };
 
-        reusexCpu = mkReusex {};
+        # The variant CI tests: carries the `testsuite` output and
+        # passthru.check (checks.tests above).
+        reusexCpu = mkReusex {withTestsOutput = true;};
         reusexRocm = mkReusex {rocmSupport = true;};
         reusexCpuNoTorch = mkReusex {withLibtorch = false;};
       in

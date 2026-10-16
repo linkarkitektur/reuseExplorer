@@ -28,6 +28,7 @@
 //   - a command that does no work at all     (--version)
 //   - a command that does real work and succeeds (info on a real project)
 
+#include "../support/rux_executable.hpp"
 #include "../support/temp_path.hpp"
 
 #include <reusex/core/ProjectDB.hpp>
@@ -41,11 +42,6 @@
 #include <string>
 
 #include <sys/wait.h>
-
-#ifndef REUSEX_RUX_EXECUTABLE
-#error                                                                         \
-    "REUSEX_RUX_EXECUTABLE must be defined by the build (see tests/CMakeLists.txt)"
-#endif
 
 namespace fs = std::filesystem;
 using reusex::test_support::TempPath;
@@ -66,8 +62,8 @@ CommandResult run_rux(const std::string &args) {
   const TempPath log("rux_exit_codes", ".log");
 
   std::ostringstream cmd;
-  cmd << REUSEX_RUX_EXECUTABLE << ' ' << args << " > " << log.path.string()
-      << " 2>&1";
+  cmd << reusex::test_support::rux_executable() << ' ' << args << " > "
+      << log.path.string() << " 2>&1";
 
   const int status = std::system(cmd.str().c_str());
 

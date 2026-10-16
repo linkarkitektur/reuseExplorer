@@ -14,6 +14,7 @@
 //   a) stdout contains only valid JSON (no log lines),
 //   b) stderr contains at least one spdlog-shaped line.
 
+#include "../support/rux_executable.hpp"
 #include "../support/temp_path.hpp"
 
 #include <reusex/core/ProjectDB.hpp>
@@ -29,11 +30,6 @@
 #include <string>
 
 #include <sys/wait.h>
-
-#ifndef REUSEX_RUX_EXECUTABLE
-#error                                                                         \
-    "REUSEX_RUX_EXECUTABLE must be defined by the build (see tests/CMakeLists.txt)"
-#endif
 
 namespace fs = std::filesystem;
 using reusex::test_support::TempPath;
@@ -52,8 +48,8 @@ SplitResult run_rux_split(const std::string &args) {
   const TempPath err_file("rux_log_stderr_err", ".txt");
 
   std::ostringstream cmd;
-  cmd << REUSEX_RUX_EXECUTABLE << ' ' << args << " >" << out_file.path.string()
-      << " 2>" << err_file.path.string();
+  cmd << reusex::test_support::rux_executable() << ' ' << args << " >"
+      << out_file.path.string() << " 2>" << err_file.path.string();
 
   const int status = std::system(cmd.str().c_str()); // NOLINT
 
