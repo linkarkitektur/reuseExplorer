@@ -18,17 +18,20 @@
 # repos (repo split, P4, 2026-10-09).
 #
 # The local equivalents of this workflow are:
-#   scripts/check.sh                          (fast incremental build + ctest)
-#   nix build .#checks.x86_64-linux.tests     (hermetic build + ctest)
-#   scripts/ci-local.sh                       (the same, then push the pass
-#                                              stamp to Cachix for this job)
+#   scripts/check.sh                (fast incremental build + ctest)
+#   nix build .#ci --print-out-paths | cachix push reusex
+#                                   (exactly what this job realises, then
+#                                    pushed so this job can substitute it)
 #
-# CI is meant to *confirm*, not to build (reusex-37v). checks.tests' output
-# is a small pass stamp (flake.nix). Run scripts/ci-local.sh on the commit
-# you push and it lands in reusex.cachix.org; this job then evaluates the
-# same derivation, substitutes the stamp and compiles nothing. Only when no
-# one pushed a stamp for this exact derivation does it fall back to the full
-# hermetic build (~25-45 min on a 4-vCPU runner).
+# CI is meant to *confirm*, not to build (reusex-37v, reusex-uk8). Build and
+# test are separate derivations (flake.nix): `.#cpu` compiles ReUseX once
+# (outputs `out`, the package, and `testsuite`, the test binaries) and
+# `checks.tests` runs ctest + the install check against them and leaves a
+# small pass stamp. `.#ci` is both. Build and push it locally on the commit
+# you push, and this job evaluates the same derivations, substitutes them and
+# compiles nothing. Only on a miss does it build, and then only what is
+# missing: with `.#cpu` cached it just runs the tests (~5 min), without it
+# the full compile (~25-45 min on a 4-vCPU runner).
 
 name: CI
 
@@ -79,8 +82,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           # On a pull request, test the branch head, not GitHub's synthetic
-          # refs/pull/N/merge commit: the head is what scripts/ci-local.sh
-          # built locally, so only its derivation can be a cache hit. The
+          # refs/pull/N/merge commit: the head is what the developer built
+          # (nix build .#ci) and pushed, so only its derivation can be a cache hit. The
           # source is lib.fileset-narrowed (default.nix), so the merge commit
           # gives the same derivation anyway whenever main has not touched a
           # build-relevant file since the branch point; when it has, the merge
@@ -100,66 +103,90 @@ jobs:
           name: reusex
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           # Read from the cache everywhere; write only from main. PRs get
-          # their pass stamp into the cache from scripts/ci-local.sh, not
-          # from here; fork PRs get no secrets, so pushing could never work
+          # their `.#ci` into the cache from the developer's push, not from
+          # here; fork PRs get no secrets, so pushing could never work
           # there anyway. Reads are unaffected: the cache is public.
           skipPush: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
 
-      # Prints the derivation and output path first, so a local
-      # `nix path-info --derivation .#checks.x86_64-linux.tests` on the same
-      # commit can be compared against this log.
-      #
-      # Then tries a substitute-only realisation (`--max-jobs 0`: nix may
-      # download, never build). That succeeds when scripts/ci-local.sh pushed
-      # this derivation's pass stamp, and the job is done in seconds. On a
-      # miss it falls back to the full build: CPU variant (WITH_CUDA=OFF, the
-      # runners have no GPU), BUILD_TESTS=ON, ctest and the package install
-      # check inside the sandbox.
+      # `.#ci` (flake.nix) is everything CI realises: the pass stamp
+      # (checks.tests: ctest + package install check, no compile) and the
+      # CPU package with its testsuite output (checks.cpu = packages.cpu).
+      # The developer ran the same `nix build .#ci` and pushed it before
+      # pushing the branch (docs/guides/ci-cache.md), so:
+      #   1. print the derivations and nix's plan (`--dry-run`: what it
+      #      would fetch, what it would build), so a local
+      #      `nix path-info --derivation .#ci` on the same commit can be
+      #      compared against this log;
+      #   2. try a substitute-only realisation (`--max-jobs 0`: nix may
+      #      download, never build). A hit means the job compiled and ran
+      #      nothing;
+      #   3. on a miss, build what is missing. If the plan contains the
+      #      ReUseX build itself, that is the full compile (CPU variant,
+      #      WITH_CUDA=OFF: the runners have no GPU, ~25-45 min); otherwise
+      #      the package was cached and only the tests run.
+      # Each branch ends with a ::notice saying which path it took.
       #
       # `shell: bash` matters: GitHub's *default* shell is `bash -e {0}`,
       # without pipefail, and with it `nix build ... | tee` exited 0 whatever
       # nix did. That is how bench_solid_compare_selftest failed on every run
       # (main included) while the job stayed green, until reusex-37v.
-      #
-      # The full build's output is teed to build-warnings.log so the
-      # warning-sync step below can parse compiler diagnostics without a
-      # second compile.
-      - name: Build and run tests (substitute if ci-local.sh pushed it)
+      - name: nix build .#ci (substitute first, build only on a miss)
         id: tests
         shell: bash
         run: |
-          attr='.#checks.x86_64-linux.tests'
-          drv=$(nix path-info --derivation "$attr")
-          out=$(nix eval --raw "$attr.outPath")
-          echo "commit:     $(git rev-parse HEAD)"
-          echo "derivation: $drv"
-          echo "output:     $out"
-          if nix build "$attr" --max-jobs 0 --no-link --print-build-logs; then
-            echo "built=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=checks.tests substituted::$out came from reusex.cachix.org (pushed by scripts/ci-local.sh); nothing was compiled or re-run here."
-            cat "$out/passed"
+          echo "commit:  $(git rev-parse HEAD)"
+          echo "ci:      $(nix path-info --derivation .#ci)"
+          echo "cpu:     $(nix path-info --derivation .#checks.x86_64-linux.cpu)"
+          echo "tests:   $(nix path-info --derivation .#checks.x86_64-linux.tests)"
+          plan=$(nix build .#ci --dry-run 2>&1 || true)
+          echo "$plan"
+          echo "compiled=false" >> "$GITHUB_OUTPUT"
+          if nix build .#ci --max-jobs 0 --no-link --print-build-logs; then
+            echo "::notice title=.#ci substituted::Everything came from reusex.cachix.org (pushed after a local nix build .#ci); nothing was compiled or tested here."
           else
-            echo "built=true" >> "$GITHUB_OUTPUT"
-            echo "::notice title=checks.tests built::No pass stamp for $drv in the cache; running the full build + ctest. Run scripts/ci-local.sh before pushing to skip this."
-            nix build "$attr" --no-link --print-build-logs 2>&1 | tee build-warnings.log
+            if grep -qE -- '-ReUseX-[0-9.]+\.drv' <<<"$plan"; then
+              echo "compiled=true" >> "$GITHUB_OUTPUT"
+              echo "::notice title=.#ci built (full compile)::Neither the pass stamp nor the .#cpu package of this commit is in the cache: compiling, then testing. Push the local nix build .#ci before pushing the branch to skip this."
+            else
+              echo "::notice title=.#ci built (tests only)::The .#cpu package of this commit was cached but the pass stamp was not: running ctest + the install check, no compile."
+            fi
+            nix build .#ci --no-link --print-build-logs 2>&1 | tee build-warnings.log
           fi
+          cat "$(nix path-info .#ci)/tests/passed"
 
-      # The installable CPU package (headers + libs + CMake config) is what
-      # downstream repos (ReUse-X/ruxd) build against. Build it exactly the
-      # way they fetch it - as a github: flake ref of this commit, not from
-      # the checkout (`.#cpu` gives a different source, hence a different
-      # store path) - so the cachix action pushes the path they will ask for.
-      - name: Build CPU package for downstream consumers
+      # Downstream repos (ReUse-X/ruxd) fetch the CPU package as a github:
+      # flake ref of this commit. That must be the very path realised above
+      # as part of `.#ci` (checks.cpu = packages.cpu), or they would find nothing in
+      # the cache: the build source leaves out the LFS fixtures a GitHub
+      # tarball carries as pointers (default.nix), so the two are the same
+      # derivation. This step proves it on every main push; if they ever
+      # differ it says so and builds the github: ref (the cachix action
+      # then pushes it).
+      - name: Check the CPU package for downstream consumers
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: nix build "github:${{ github.repository }}/${{ github.sha }}#cpu" --print-build-logs
+        shell: bash
+        run: |
+          ref="github:${{ github.repository }}/${{ github.sha }}#cpu"
+          ref_drv=$(nix path-info --derivation "$ref")
+          local_drv=$(nix path-info --derivation .#checks.x86_64-linux.cpu)
+          echo "github: ref derivation: $ref_drv"
+          echo "checkout derivation:    $local_drv"
+          if [[ "$ref_drv" == "$local_drv" ]]; then
+            nix build "$ref" --max-jobs 0 --no-link
+            echo "::notice title=downstream .#cpu = checkout .#cpu::$ref is the derivation realised above; nothing to build."
+          else
+            echo "::warning title=downstream .#cpu differs::$ref evaluates to a different derivation than .#cpu from the checkout; building it. Fix the fileset in default.nix (reusex-uk8)."
+            nix build "$ref" --no-link --print-build-logs
+          fi
 
       # Parse GCC/Clang warning lines from the build log and sync them to
       # GitHub issues (create new, close fixed, skip existing).  Only runs on
       # main-branch pushes — PRs and fork runs do not write issues.
-      # Skipped when the result was substituted: there is no build log then,
-      # and an empty log would read as "every warning fixed" and close them.
+      # Skipped unless this job compiled `.#cpu`: a substituted package has no
+      # compiler log, and an empty log would read as "every warning fixed"
+      # and close them.
       - name: Sync warning issues
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.tests.outputs.built == 'true'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.tests.outputs.compiled == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/file_build_warnings.py build-warnings.log

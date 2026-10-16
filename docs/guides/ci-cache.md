@@ -1,14 +1,21 @@
 # CI binary cache (`reusex.cachix.org`) and local-first CI
 
-**In short (reusex-37v):** build and test locally with `scripts/ci-local.sh`
-before pushing a PR; CI then substitutes the result from Cachix and compiles
+**In short (reusex-37v, reusex-uk8):** before pushing a branch, build what
+CI builds and push it to Cachix with one plain command:
+
+```bash
+nix build .#ci --print-out-paths | cachix push reusex
+```
+
+CI then runs the same `nix build .#ci`, substitutes everything and compiles
 nothing. The sections "Build locally, CI confirms" and "Local ccache" below
 describe that flow; the rest of this page is about the cache itself.
 
-`.github/workflows/ci.yml` builds `.#checks.x86_64-linux.tests` — the CPU
-variant of ReUseX with `BUILD_TESTS=ON`, plus `ctest` — on stock GitHub-hosted
-runners. That is only possible because the parts of the dependency closure
-that `cache.nixos.org` cannot serve come pre-built from our own Cachix cache:
+`.github/workflows/ci.yml` realises `.#ci` — the CPU variant of ReUseX with
+`BUILD_TESTS=ON`, its ctest run and the package install check — on stock
+GitHub-hosted runners. That is only possible because the parts of the
+dependency closure that `cache.nixos.org` cannot serve come pre-built from
+our own Cachix cache:
 
 - **Cache**: <https://reusex.cachix.org>
 - **Visibility**: public. Reads need no token; `nix` fetches from it as an
@@ -24,86 +31,170 @@ that `cache.nixos.org` cannot serve come pre-built from our own Cachix cache:
   not declare `environment: CI` sees `secrets.CACHIX_AUTH_TOKEN` as the empty
   string and silently degrades to a read-only, push-skipping run.
 
-## Build locally, CI confirms (reusex-37v)
+## Build locally, CI confirms
 
 A full CI build + ctest took 25-45 min per PR on a 4-vCPU runner. It does not
-have to: `checks.tests` is a pure derivation, so once anyone has realised it
-and pushed the output to `reusex.cachix.org`, every other machine evaluating
-the same derivation can substitute it instead of building it.
+have to: every output CI needs is a pure derivation, so once anyone has
+realised it and pushed it to `reusex.cachix.org`, every other machine
+evaluating the same derivation substitutes it instead of building it.
+
+### The derivations (`flake.nix`, `default.nix`)
+
+| Output | What it is | Compiles? |
+|---|---|---|
+| `checks.cpu` = `packages.cpu`, output `out` | the installed CPU package: `bin/rux`, headers, static libs, `lib/cmake/ReUseX` — what ruxd builds against | yes, once |
+| `checks.cpu` = `packages.cpu`, output `testsuite` | the test executables plus every `CTestTestfile.cmake` and `catch_discover_tests` list, with the build's absolute paths replaced by placeholders | (same build) |
+| `checks.tests` = `packages.cpu.check` | runs ctest over `testsuite` and `tests/package/consumer` against `out`; output is a pass stamp (`ctest.log`, `passed`) with **no references** (`allowedReferences = []`) | no (only the few-line consumer) |
+| `packages.ci` | a `runCommand` linking the three paths above | no |
+
+Before reusex-uk8, `checks.tests` was `packages.cpu.overrideAttrs` with
+`doCheck`/`doInstallCheck`: one derivation that compiled, tested and kept only
+the stamp. So the compiled package was never a cached output of that work,
+the main-branch "build the CPU package for downstream consumers" step
+compiled it again from scratch, and a fixture edit recompiled the library.
+
+`checks.tests` runs binaries compiled in another sandbox, so the two
+compiled-in paths they need are overridable at run time: the test source
+tree (`reusex::test_support::source_dir()`, env `REUSEX_TEST_SOURCE_DIR`) and
+the `rux` the integration tests spawn (`rux_executable()`, env
+`REUSEX_TEST_RUX_EXECUTABLE`, pointed at the installed `out/bin/rux`). The
+ctest files get their placeholders substituted in a writable copy of the
+build tree under `$TMPDIR`.
+
+### The one command, locally and in CI
 
 ```bash
-# On a clean, committed tree, before pushing (or before opening the PR):
-scripts/ci-local.sh          # build .#checks.x86_64-linux.tests for HEAD, push the stamp
-scripts/ci-local.sh --check  # would CI on HEAD be a cache hit?
-scripts/ci-local.sh --no-push
+# From the dev shell (it carries cachix), on a clean, committed tree:
+nix build .#ci --print-out-paths | cachix push reusex
 ```
 
-What each piece does:
+- **No script.** The maintainer's rule (2026-10-16): "it should be a flake
+  output and we just run nix build … no custom scripts — that just risks
+  things diverging." What CI realises is defined only by `packages.ci` in
+  `flake.nix`; `scripts/ci-local.sh` (reusex-37v) is gone.
+- **Clean tree.** A flake built from a dirty tree hashes the uncommitted
+  changes (nix prints `warning: Git tree … is dirty`), so CI can never
+  evaluate that derivation. Untracked files are fine; flakes do not see them.
+- **What gets pushed.** `cachix push` takes the `ci` path's closure and
+  uploads only what neither `reusex.cachix.org` nor its upstream
+  `cache.nixos.org` already has. The dependencies are already there (CI
+  substitutes them on every run), so in practice that is our own outputs:
+  `cachix` reported `Pushing 4 paths (536 are already present)` for
+  `.#ci` on `b914f307`: `ReUseX-0.0.5` (`out`, 81.3 MiB NAR / 23.8 MiB
+  compressed), `ReUseX-0.0.5-testsuite` (74.0 / 26.8 MiB), the
+  `ReUseX-tests` stamp (435 KiB / 74 KiB) and `reusex-ci` (848 B), about
+  **51 MiB per pushed commit**, ~1 % of the tier.
+- **Resources.** Nix's own `cores` / `max-jobs` from `nix.conf` apply. On
+  the dev machine (RAM faults at high load) add `--cores 8 --max-jobs 1`.
+- **Token.** `cachix authtoken <token>` once (stored in
+  `~/.config/cachix/cachix.dhall`) or `CACHIX_AUTH_TOKEN` in the
+  environment; a personal token with write access to `reusex`.
+- **Checking first.** `nix build .#ci --dry-run` prints what nix would fetch
+  and what it would build; if it would build nothing, CI will not either.
 
-- **The output is a pass stamp** (`flake.nix`, `checks.tests`): once the
-  build, `ctest` and the package install check have passed inside the
-  sandbox, `$out` is replaced by `ctest.log` and a `passed` file. No runtime
-  references, a few KiB. Its presence in a store means "this exact derivation
-  built and passed". The installable package is `.#cpu`, unchanged.
-- **`scripts/ci-local.sh`** refuses a dirty tree (the hash would include
-  uncommitted changes CI never sees), prints the commit, derivation and
-  output path, skips everything if the stamp is already in the cache, builds
-  with `--cores 4 --max-jobs 1` (`CI_LOCAL_CORES` / `CI_LOCAL_MAX_JOBS`;
-  the dev machine had RAM faults at higher `-j`), and pushes the one stamp
-  path with `cachix push reusex`. It needs a write token: `CACHIX_AUTH_TOKEN`,
-  or `cachix authtoken <token>` once (stored in
-  `~/.config/cachix/cachix.dhall`); without one it says so before building.
-  `cachix` comes from the flake's nixpkgs if it is not on `PATH`.
-- **`ci.yml`** checks out the **PR head commit** (`pull_request.head.sha`),
-  not GitHub's synthetic `refs/pull/N/merge`, because the head is what was
-  built locally. It prints the derivation, then runs
-  `nix build --max-jobs 0` — substitute only, never build. On a hit the job
-  logs `checks.tests substituted` (a `::notice`) and `copying path
-  '…-ReUseX-tests-…' from 'https://reusex.cachix.org'`, and is done. On a miss
-  it logs `checks.tests built` and runs the full build exactly as before.
-- **Warning issues** (`scripts/file_build_warnings.py`) are synced only after
-  a real build on `main`: a substituted run has no compiler log, and an empty
-  log would read as "every warning fixed".
+`ci.yml` (one step) checks out the **PR head commit**
+(`pull_request.head.sha`), not GitHub's synthetic `refs/pull/N/merge`,
+because the head is what was built locally. It then:
+
+1. prints the commit and the `ci`, `cpu` and `tests` derivations, and nix's
+   `--dry-run` plan, for comparison with a local
+   `nix path-info --derivation .#ci`;
+2. runs `nix build .#ci --max-jobs 0` — substitute only, never build. On a
+   hit it logs the `::notice` **`.#ci substituted`** and is done;
+3. on a miss runs `nix build .#ci`, which builds only what is missing, and
+   says which case it is: **`.#ci built (tests only)`** when the plan does not
+   contain the `ReUseX-<version>.drv` (the package was cached, so only ctest
+   and the install check run, ~6 min), **`.#ci built (full compile)`** when
+   it does.
+
+On `main` a second step evaluates `github:ReUse-X/ReUseX/<sha>#cpu` (the
+ref downstream repos fetch), compares its derivation with `.#cpu`'s and,
+equal, realises it substitute-only (`::notice downstream .#cpu = checkout
+.#cpu`); if they ever differ it warns and builds it, and the cachix action
+pushes it.
+
+**Warning issues** (`scripts/file_build_warnings.py`) are synced only when
+the job compiled ReUseX on `main`: a substituted package has no compiler log,
+and an empty log would read as "every warning fixed".
 
 To make this automatic before every push, an alias is enough (deliberately
 not a pre-push hook: git-hooks.nix and bd own the hooks directory, and
 pre-commit hides a long hook's output until it ends):
 
 ```bash
-git config --local alias.cipush '!scripts/ci-local.sh && git push'
+git config --local alias.cipush \
+  '!nix build .#ci --print-out-paths | cachix push reusex && git push'
 git cipush -u origin my-branch
 ```
 
 ### Why the local and CI derivations are identical
 
-Nothing commit-specific enters the derivation:
+Nothing commit-specific enters a derivation:
 
-- `src` is `lib.fileset.toSource` over the paths the build and the tests
-  read (`default.nix`): `CMakeLists.txt`, `cmake/`, `LICENSE.md`, `libs/`,
-  `apps/rux/`, `bindings/`, `tests/`, `docs/CONTRACTS.md`,
-  `python/reusex_sam3/engine-build.json`, and the two
-  `scripts/*bench_solid_compare*` files one ctest runs. The store path of the
-  source is a hash of those files' contents only — not of the commit, its
-  message or the rest of the tree. The nix files (`flake.nix`, `default.nix`,
-  `overlays/`, `pkgs/`, `flake.lock`) matter only through what they evaluate
-  to.
-- LFS fixtures are real content on both sides: CI checks out with
-  `lfs: true`, and a local `git+file` flake reads the smudged working tree.
-- The CPU variant is selected by attribute name (`checks.tests` is
-  `packages.cpu` + checks), so the dev machine's CUDA default never leaks in.
+- Sources are `lib.fileset.toSource` sets (`default.nix`), whose store paths
+  hash the files' contents only — not the commit, its message or the rest of
+  the tree:
+  - the **build** source (`buildFileset`): `CMakeLists.txt`, `cmake/`,
+    `LICENSE.md`, `libs/`, `apps/rux/`, `bindings/`, `tests/` **minus
+    `tests/fixtures`**, `python/reusex_sam3/engine-build.json`;
+  - the **test** source (`testFileset`, used only by `checks.tests`): the
+    build source plus `tests/fixtures`, `docs/CONTRACTS.md`,
+    `docs/design/pose-edits.{md,schema.json}` and the four
+    `scripts/*bench_*compare*.py` files ctest runs.
+
+  The nix files (`flake.nix`, `default.nix`, `overlays/`, `pkgs/`,
+  `flake.lock`) matter only through what they evaluate to.
+- **LFS.** `tests/fixtures/scans/office_corridor.rux` is the one LFS file
+  either set holds. CI checks out with `lfs: true` and a local `git+file`
+  flake reads the smudged work tree, so the test source matches. A `github:`
+  flake ref, though, is a GitHub tarball with the LFS **pointer** — which is
+  why the fixtures are out of the build source: with them in, `github:…#cpu`
+  and `.#cpu` were different derivations and every `main` push compiled the
+  downstream package that nobody had pushed. Measured on `9734c6a4` (before)
+  with a `git archive` tree whose `.rux` was swapped for its pointer:
+  `.#cpu` `4hz4vc6k…` vs `63rfnbjy…`; on this branch both give `2c24b4qn…` (commit `b914f307`).
+- The CPU variant is selected by attribute name, so the dev machine's CUDA
+  default never leaks in.
 - The ccache wrapper (`overlays/ccache.nix`) is part of the derivation on
   both sides; whether `/var/cache/ccache` exists is decided at build time,
   inside the builder, so it does not affect the hash.
 
-Measured on this branch (commit `f12c67fc`):
+Measured on this branch (commit `b914f307`), derivation hashes of
+`.#cpu` / `checks.tests` / `.#ci`:
 
-| Change on top of the commit | `checks.tests` derivation |
-|---|---|
-| none (clean tree) | `084ds3wkbsba95xqvdq30jd49cn5qiyn` |
-| `docs/DIRECTION.md`, `CLAUDE.md`, `.github/workflows/ci.yml`, `scripts/check.sh` edited | `084ds3wkbsba95xqvdq30jd49cn5qiyn` (unchanged) |
-| one comment line appended to `libs/reusex/src/core/logging.cpp` | `0ppbs1jig1qhr6i4akd29mynjcas9jl5` (changed) |
+| Change on top of the commit | `cpu` | `tests` | `ci` |
+|---|---|---|---|
+| none (clean tree) | `2c24b4qn…` | `0apawa5j…` | `rm65n13f…` |
+| `docs/DIRECTION.md`, `CLAUDE.md`, `.github/workflows/ci.yml` edited | unchanged | unchanged | unchanged |
+| `docs/CONTRACTS.md` edited | unchanged | changed | changed |
+| `tests/fixtures/scans/README.md` edited | unchanged | changed | changed |
+| a test `.cpp` edited | changed | changed | changed |
+| `libs/reusex/src/core/logging.cpp` edited | changed | changed | changed |
 
-CI-vs-local: the CI job prints the derivation it evaluated; it must equal `nix path-info --derivation .#checks.x86_64-linux.tests` run locally on the same commit (see the PR that introduced this, below).
+So a contract or fixture edit reruns only the tests (`.#cpu` stays
+substitutable). A test *source* edit does rebuild `.#cpu`: the test binaries
+are compiled in the same CMake build as the package — compiling once is the
+point of the split — but with sandbox ccache only the edited TU misses.
+
+CI-vs-local: the CI job prints the derivations it evaluated; they must equal
+`nix path-info --derivation .#ci` (etc.) run locally on the same commit
+(PR #62, run 38946617047, commit `b914f307`: CI printed `rm65n13f…`,
+`2c24b4qn…`, `0apawa5j…`, the local values above, fetched 537 paths / 1.3 GiB
+and built nothing: the `nix build .#ci` step took 45 s, the whole job
+1 min 1 s). The `github:ReUse-X/ReUseX/b914f307…#cpu` ref evaluated locally
+also gives `2c24b4qn…`.
+
+**Hash identity is not output identity.** Substitution keys on the
+derivation hash, so the scheme needs only that local and CI *evaluate* the
+same derivation (above). It does not need — or prove — that two builds of it
+are bit-identical; Nix does not guarantee that
+([CS SYD, "Nix does not guarantee reproducibility"](https://cs-syd.eu/posts/2025-03-14-nix-does-not-guarantee-reproducibility)).
+It would matter only for content-addressed derivations. It is not a
+given here: `nix build .#cpu --rebuild` of `b914f307` without ccache
+produced an `out` that differs from the ccache-built one in exactly one
+file, the pybind11 module `reusex/_reusex.cpython-313-x86_64-linux-gnu.so`
+(3 541 336 vs 3 529 016 bytes); every static library, header, CMake file and
+`bin/rux` was identical. Harmless for substitution, tracked as reusex-knw.
 
 The flip side: a file that a test reads at run time but that is outside the
 fileset exists in a dev build tree and not in the sandbox, so that test fails
@@ -124,20 +215,21 @@ The step now declares `shell: bash` (`-eo pipefail`).
 ### Trust
 
 A substituted stamp means "someone holding a reusex.cachix.org write token
-built this derivation and it passed". Cachix signs what it serves, so the
-stamp cannot be forged by a third party, but a token holder could push
-anything under that path. That is the same trust CI already placed in the
-dependency paths in the cache. The full build is still what runs on any
-commit nobody pushed a stamp for, and on every `main` push whose merge
-commit differs (in build-relevant files) from the PR head that was checked.
+built this derivation and it passed"; a substituted package, "… built this
+derivation". Cachix signs what it serves, so neither can be forged by a
+third party, but a token holder could push anything under those paths. That
+is the same trust CI already placed in the dependency paths in the cache.
+The build still runs on any commit nobody pushed `.#ci` for, and on every
+`main` push whose merge commit differs (in build- or test-relevant files)
+from the PR head that was pushed.
 
 ### Alternatives considered
 
 | Option | CI time, warm / cold | Guarantees | Cost |
 |---|---|---|---|
-| **Cachix-substituted stamp** (chosen) | ~2-3 min when `ci-local.sh` ran / full build otherwise | hermetic (same derivation as CI), bound to exact inputs | one script; developer runs it (≈ a local nix build, ccache-warm) |
+| **Cachix-substituted `.#ci`** (chosen) | ~2-3 min when the developer pushed it / tests only or full build otherwise | hermetic (same derivation as CI), bound to exact inputs | one `nix build`, ccache-warm locally |
 | Dev-shell CI + ccache via `actions/cache` | ~10 min (restore + link + ctest ~4 min) / ~25 min | not hermetic (dev-shell build, impure env); needs a CPU-only CI devshell, ccache dir in the 10 GB Actions cache | moderate; CI still compiles and runs ctest every time |
-| "Attestation": `ci-local.sh` posts a commit status, CI only lints | seconds / — | only the developer's word; nothing binds the status to what was built | low; but strictly weaker than the stamp, which costs the same |
+| "Attestation": a local script posts a commit status, CI only lints | seconds / — | only the developer's word; nothing binds the status to what was built | low; but strictly weaker than the stamp, which costs the same |
 
 The stamp gives the attestation's CI time with a guarantee bound to the
 derivation's inputs, so (3) adds nothing. (2) would speed up the fallback
@@ -186,9 +278,9 @@ carries the absolute path by design. Tree 2 was a clone in a scratch
 directory (its own toplevel as base dir), which is the harder case; a
 `.worktrees/*` checkout shares the main checkout's base dir.
 
-### Inside the nix sandbox (`nix build`, `scripts/ci-local.sh`)
+### Inside the nix sandbox (`nix build .#ci`)
 
-`packages.cpu` (and so `checks.tests`) is built with `ccacheStdenv` from
+`packages.cpu` (the only derivation of `.#ci` that compiles ReUseX) is built with `ccacheStdenv` from
 `overlays/ccache.nix`, which points ccache at `/var/cache/ccache`. On the dev
 machine NixOS makes that directory (`programs.ccache`, `root:nixbld 0770`)
 and exposes it to the sandbox (`sandbox-paths` contains `/var/cache/ccache`;
@@ -197,8 +289,8 @@ GitHub runner — the wrapper falls back to an empty per-build cache, which is
 why the derivation and its hash are the same on both sides. The sandbox
 always builds in `/build/source`, so no base-dir setting is needed there.
 
-Measured with `nix build .#checks.x86_64-linux.tests --cores 8 --max-jobs 2`
-on the dev machine (other builds running alongside), each after a
+Measured before reusex-uk8 (build and tests still one derivation) with
+`nix build .#checks.x86_64-linux.tests --cores 8 --max-jobs 2` on the dev machine (other builds running alongside), each after a
 one-line change (a `static_assert` appended to
 `libs/reusex/src/segmentation/downsample.cpp`):
 
@@ -208,9 +300,19 @@ one-line change (a `static_assert` appended to
 | one-line change, **sandbox ccache** (all build TUs hit but the changed one) | 42 s | **54 s** | 3 min 19 s | 1 min 2 s | **6 min 11 s** |
 | one-line change, **no ccache** (`--option sandbox-paths` without `/var/cache/ccache`) | 40 s | 19 min 19 s | 3 min 33 s | 1 min 2 s | 24 min 50 s |
 
-So a `scripts/ci-local.sh` run after a small change costs about six
+So a local `nix build .#ci` after a small change costs about six to eight
 minutes, nearly all of it ctest and the package install check, which no
-cache can skip because they are the point. The stats come from a throwaway
+cache can skip because they are the point. Measured after the split
+(reusex-uk8, `--cores 8 --max-jobs 1`, sandbox ccache warm):
+
+| Change | `.#cpu` configure | build | `checks.tests` (ctest 2064 tests + install check) | wall |
+|---|---:|---:|---:|---:|
+| two test TUs + `tests/support/source_dir.cpp` changed (first build of the branch) | 47 s | 1 min 30 s | 5 min 51 s | 8 min 34 s |
+| two test TUs reformatted (clang-format), then `cachix push` | 42 s | 1 min 8 s | 5 min 9 s | 7 min 41 s (incl. dev shell entry and push) |
+| `.#cpu` cold: same commit, `--rebuild`, **no ccache** (`--option sandbox-paths` without `/var/cache/ccache`) | 43 s | 21 min 25 s | — | 22 min 18 s |
+
+A change that touches only test run-time data (a fixture, `CONTRACTS.md`)
+skips the first two columns: `.#cpu` is unchanged and substituted. The stats come from a throwaway
 derivation reading `/var/cache/ccache` from inside the sandbox
 (`ccache --print-stats`; the directory is `root:nixbld 0770`). No `nix.conf`
 change is needed on the dev machine: `sandbox-paths` already lists
@@ -251,25 +353,24 @@ uploads the delta, not 9.62 GiB. Note `libtorch` and OpenCV are the paths
 where compression pays off most; the npm dep tarball is already compressed and
 is the single biggest line item.
 
-The `ReUseX-tests` output is not part of that seeding: since reusex-37v it
-is a pass stamp of a few KiB, pushed per commit by `scripts/ci-local.sh`
-(below).
+Our own per-commit outputs are not part of that seeding; they are pushed
+with `.#ci` per branch (next sections).
 
 ## Seeding / topping up from a dev machine
 
 ```bash
 # 1. Build the exact thing CI builds
-nix build .#checks.x86_64-linux.tests
+nix build .#ci
 
 # 2. Push the full build closure; upstream-cached paths are skipped
 nix-store -q --requisites --include-outputs \
-  $(nix path-info --derivation .#checks.x86_64-linux.tests) \
+  $(nix path-info --derivation .#ci) \
   | grep -v '\.drv$' \
   | cachix push reusex
 ```
 
 You need a personal Cachix auth token (`cachix authtoken <token>`, stored in
-`~/.config/cachix/cachix.dhall`). `cachix` is not in the dev shell; use
+`~/.config/cachix/cachix.dhall`). `cachix` is in the dev shell; elsewhere use
 `nix run nixpkgs#cachix -- …`.
 
 To see what a push *would* cost before doing it:
@@ -283,15 +384,22 @@ nix path-info --json $(…path list…) \
 
 Two design decisions keep the cache from growing without bound:
 
-1. **CI writes only from `main`, and per-PR results are stamps.** A commit
-   that touches any build-relevant file produces a distinct `ReUseX-tests`
-   output path. That output used to be the whole installed package (static
-   libraries, `rux`, a runtime closure); it is now a pass stamp (the ctest
-   log and a `passed` file, no references), so the one path
-   `scripts/ci-local.sh` pushes per commit costs a few KiB. `ci.yml` still
-   sets `skipPush` for everything that is not a push to `main`: on `main`
-   the cachix action pushes whatever the job built (dependency paths after an
-   overlay bump, the `.#cpu` package downstream repos fetch).
+1. **CI writes only from `main`; per-branch outputs come from the
+   developer's push, and they are small.** A pushed `.#ci` adds our own
+   outputs only: about **51 MiB compressed per pushed commit** (`out`
+   23.8 MiB, `testsuite` 26.8 MiB, stamp 74 KiB), so ~100 pushed commits
+   fit in the tier next to the ~0.5 GiB of dependencies. That is the price
+   of CI compiling nothing on `main` too: before reusex-uk8 a PR pushed only
+   the 74 KiB stamp, and every `main` push compiled `.#cpu` in CI and pushed
+   its 24 MiB anyway. Delete old `ReUseX-*` outputs first when the cache
+   fills (below). The stamp has no references; `out` and
+   `testsuite` reference only dependency paths that are already in the cache
+   (static ReUseX libraries, so no shared build-tree libraries). A commit
+   that changes only tests' run-time data adds just a new stamp, since
+   `.#cpu` is unchanged. `ci.yml` sets `skipPush` for everything that is not
+   a push to `main`: on `main` the cachix action pushes whatever the job
+   built (dependency paths after an overlay bump, or `.#ci` when nobody
+   pushed it).
 
 2. **Only the CPU variant is cached.** The CUDA closure (TensorRT, cuOpt,
    CUDA-enabled OpenCV, the `.cu` kernels) is many times larger than the whole
@@ -313,9 +421,10 @@ warning if a future dependency bump changes this.
 
 ## Where the time actually goes (full-build fallback)
 
-This is what a CI run costs when no pass stamp was pushed for its
-derivation. With one, the job substitutes a few KiB and skips all of it
-("Build locally, CI confirms" above).
+This is what a CI run cost when nothing was pushed for its derivation
+(measured before reusex-uk8). With `.#ci` pushed, the job substitutes and
+skips all of it ("Build locally, CI confirms" above); with only `.#cpu`
+cached, it skips the compile and runs the tests.
 
 Measured on a green PR run (25 min 39 s wall, all of it on `ubuntu-latest`,
 4 vCPU):
@@ -349,20 +458,18 @@ source-touching PRs still take ~25 min.
 ### Filtered `src`: doc-only changes are pure cache hits
 
 `default.nix` uses `lib.fileset.toSource` to include only the files the C++
-build actually needs: `CMakeLists.txt`, `cmake/`, `libs/`, `apps/rux/`,
-`bindings/`, `tests/`, and specific docs files the test suite reads at
-runtime (`docs/CONTRACTS.md`, and since reusex-37v the two
-`scripts/*bench_solid_compare*` files a ctest runs). `apps/ruxd/` and
-`docs/gui/` moved to the standalone `ruxd` repo (repo split, P4, 2026-10-09)
-and no longer appear here.
+build needs (`buildFileset`) and, for the test run, the files tests read at
+run time on top (`testFileset`); "Why the local and CI derivations are
+identical" above lists both. `apps/ruxd/` and `docs/gui/` moved to the
+standalone `ruxd` repo (repo split, P4, 2026-10-09) and no longer appear here.
 
-Everything else — `docs/`, `.github/`, `*.md`, `apps/blender/`, `tools/`,
-`.claude/`, `python/` (except `engine-build.json`), the rest of `scripts/` —
-is excluded from the source. (`overlays/`, `pkgs/` and `flake.lock` are not
-in the source either, but they change the derivation through the
-dependencies they evaluate to.) A PR that only touches excluded paths
-produces the same `ReUseX-tests` derivation hash, so if that derivation's
-stamp is already in the cache, CI substitutes it instead of recompiling.
+Everything else — `docs/` (but the three test-read files), `.github/`,
+`*.md`, `apps/blender/`, `tools/`, `.claude/`, `python/` (except
+`engine-build.json`), the rest of `scripts/` — is excluded from both.
+(`overlays/`, `pkgs/` and `flake.lock` are not in the sources either, but
+they change the derivations through the dependencies they evaluate to.) A PR
+that only touches excluded paths produces the same `.#ci` derivation, so if
+it is already in the cache, CI substitutes it instead of recompiling.
 
 **Verification performed in #357:**
 
