@@ -368,3 +368,35 @@ TEST_CASE("ValidateStage_PlanesUnsatisfiedChain_HintOrdersPrerequisites",
   // Ordered: import comes before the stage that consumes what it produces.
   CHECK(hint.find("rux import") < hint.find("rux create clouds"));
 }
+
+TEST_CASE("ValidateStage_RoomsWithoutOptionalInputs_Passes",
+          "[core][validate][stage]") {
+  // W5.4: walls / openings / storeys are optional inputs of `rooms`; a
+  // project that never ran those stages still validates, and the missing
+  // ones are no issue (they would be, as required inputs).
+  TempDB tmp;
+  ProjectDB db(tmp.path);
+  seedMeshInputs(db, 32, 5);
+  db.delete_point_cloud("rooms");
+  auto report = reusex::core::validate_stage(db, PipelineStage::rooms);
+  INFO(report.issues.size() << " issue(s)");
+  REQUIRE(report.ok());
+  CHECK(report.error_count() == 0);
+  for (const auto &issue : report.issues) {
+    INFO(issue.message);
+    CHECK(issue.message.find("walls") == std::string::npos);
+    CHECK(issue.message.find("openings") == std::string::npos);
+  }
+}
+
+TEST_CASE("ValidateStage_RoomsOptionalNormalsMisaligned_ReportsError",
+          "[core][validate][stage]") {
+  // An optional input that IS present is checked like any other: a
+  // `normals` cloud of the wrong size is an alignment error.
+  TempDB tmp;
+  ProjectDB db(tmp.path);
+  seedMeshInputs(db, 32, 5);
+  db.save_point_cloud("normals", *makeNormalCloud(31), "create_clouds");
+  auto report = reusex::core::validate_stage(db, PipelineStage::rooms);
+  CHECK_FALSE(report.ok());
+}
