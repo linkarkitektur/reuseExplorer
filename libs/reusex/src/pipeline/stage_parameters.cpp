@@ -354,6 +354,19 @@ const std::vector<ParameterDescriptor> &mesh_parameters() {
                 "called furniture or clutter (reusex-z1v.4.3). Off (the "
                 "default) uses every plane.",
                 pipeline::MeshStageOptions{}.use_plane_classes),
+        boolean("storey_sections", "Storey sections only",
+                "When `create storeys` has run, only the storey floors and "
+                "ceilings become section planes of the cell complex; table "
+                "tops and invented slab faces no longer slice the building "
+                "(reusex-z1v.3.4). Off by default: it also drops split "
+                "levels and attics the storeys table does not describe.",
+                pipeline::MeshStageOptions{}.use_storey_sections),
+        boolean("storey_local", "Storey-local walls",
+                "Give each section of the cell complex only the walls whose "
+                "height reaches into it, so one storey's walls do not cut "
+                "the others (reusex-sba). Off extends every wall through "
+                "every section.",
+                d.storey_local),
         optional_of(ParameterType::string, "filter", "Point filter",
                     "Filter expression restricting which points are meshed. "
                     "Empty means the whole cloud."),
