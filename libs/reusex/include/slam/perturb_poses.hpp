@@ -70,6 +70,19 @@ class ProjectDB;
 
 namespace reusex::geometry {
 
+/// Which rotation axes the drift acts on (reusex-xka).
+enum class DriftMode {
+  /// All six DoF of every relative step (the #338 model). On a single
+  /// revisited room this is tilt-dominated (41069048 d0.25: median tilt
+  /// 5.6 deg vs yaw 1.1 deg).
+  full,
+  /// Heading drift only: rotation about the world `up` axis and horizontal
+  /// translation, so every camera's tilt and height stay exactly on the seed.
+  /// The failure mode of the houses (yaw drift across rooms they never
+  /// revisit, gravity keeping roll and pitch honest).
+  yaw,
+};
+
 /// Parameters for synthetic trajectory drift (#338).
 ///
 /// The primary knob is `drift_scale`; the base gains below set the CHARACTER of
@@ -78,6 +91,12 @@ namespace reusex::geometry {
 /// magnitude, so changing a base gain changes the shape of the deformation
 /// without changing how large it is.
 struct PoseDriftOptions {
+  /// Which axes drift (reusex-xka). `full` is the #338 model.
+  DriftMode mode = DriftMode::full;
+  /// World up axis for DriftMode::yaw (unit length after normalisation).
+  /// ReUseX worlds are z-up (ARKitScenes, RTABMap imports).
+  Eigen::Vector3d up = Eigen::Vector3d::UnitZ();
+
   /// RNG seed (STANDARDS §6). Different seeds give different realisations of
   /// the same drift statistics — the intended way to get an ensemble.
   unsigned seed = 42;

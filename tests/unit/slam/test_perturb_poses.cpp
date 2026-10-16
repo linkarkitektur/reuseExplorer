@@ -323,3 +323,81 @@ TEST_CASE("perturb_sensor_poses_WithoutGraph_OnlySnapshots",
   for (int k = 1; k <= 60; ++k)
     CHECK(*db.initial_pose(k) == db.sensor_frame_pose(k));
 }
+
+// ---------------------------------------------------------------------------
+// Yaw-drift mode (reusex-xka, reusex-rcv.1.7). The default drift is
+// tilt-dominated on single-room scans (41069048 d0.25: median tilt 5.6 deg vs
+// yaw 1.1 deg), which is not how the houses fail: they drift in heading across
+// rooms they never revisit, while gravity keeps roll and pitch honest. The yaw
+// mode must inject drift ONLY about the world up axis and only horizontally,
+// so the camera's tilt and height stay exactly on the seed.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// room_trajectory() with real OPTICAL cameras (x right, y down, z forward),
+/// looking horizontally: camera y maps to world -z. The plain fixture's camera
+/// z IS world up, which would make "tilt" and "yaw" indistinguishable.
+std::vector<Eigen::Matrix4d> optical_room_trajectory() {
+  auto poses = room_trajectory();
+  const Eigen::Matrix3d level =
+      Eigen::AngleAxisd(-M_PI / 2.0, Eigen::Vector3d::UnitX())
+          .toRotationMatrix();
+  for (auto &P : poses)
+    P.block<3, 3>(0, 0) = P.block<3, 3>(0, 0) * level;
+  return poses;
+}
+
+/// The world up axis as seen in the camera frame: a pose's tilt.
+Eigen::Vector3d up_in_camera(const Eigen::Matrix4d &P) {
+  return P.block<3, 3>(0, 0).transpose() * Eigen::Vector3d::UnitZ();
+}
+
+} // namespace
+
+TEST_CASE("perturb_trajectory_YawMode_KeepsTiltAndHeightOnSeed",
+          "[slam][drift]") {
+  auto poses = optical_room_trajectory();
+  const auto seed_poses = poses;
+  PoseDriftOptions opt;
+  opt.mode = reusex::geometry::DriftMode::yaw;
+  const PoseDriftResult r = perturb_trajectory(poses, opt);
+
+  REQUIRE(r.calibrated);
+  REQUIRE(r.max_position_error > 0.1); // drift really was injected
+  for (size_t k = 0; k < poses.size(); ++k) {
+    INFO("frame " << k);
+    REQUIRE((up_in_camera(poses[k]) - up_in_camera(seed_poses[k])).norm() <
+            1e-9);
+    REQUIRE_THAT(poses[k](2, 3), WithinAbs(seed_poses[k](2, 3), 1e-9));
+  }
+}
+
+TEST_CASE("perturb_trajectory_YawMode_RealisesRequestedRatio",
+          "[slam][drift]") {
+  for (double scale : {0.25, 1.0}) {
+    auto poses = optical_room_trajectory();
+    PoseDriftOptions opt;
+    opt.mode = reusex::geometry::DriftMode::yaw;
+    opt.drift_scale = scale;
+    const PoseDriftResult r = perturb_trajectory(poses, opt);
+    INFO("drift_scale = " << scale);
+    REQUIRE(r.calibrated);
+    REQUIRE_THAT(r.drift_ratio,
+                 WithinRel(opt.target_drift_ratio * scale, 1e-3));
+  }
+}
+
+TEST_CASE("perturb_trajectory_FullMode_TiltsTheCameras", "[slam][drift]") {
+  // The contrast that makes the yaw mode worth having: the default model
+  // perturbs all three rotation axes, so the cameras' tilt drifts too.
+  auto poses = optical_room_trajectory();
+  const auto seed_poses = poses;
+  perturb_trajectory(poses, PoseDriftOptions{});
+  double worst_tilt = 0.0;
+  for (size_t k = 0; k < poses.size(); ++k)
+    worst_tilt =
+        std::max(worst_tilt,
+                 (up_in_camera(poses[k]) - up_in_camera(seed_poses[k])).norm());
+  REQUIRE(worst_tilt > 0.01);
+}

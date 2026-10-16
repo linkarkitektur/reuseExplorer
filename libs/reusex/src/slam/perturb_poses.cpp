@@ -156,6 +156,8 @@ PoseDriftResult perturb_trajectory(std::vector<Eigen::Matrix4d> &poses,
 
   // --- Integrate the drifted chain at amplitude `a` ------------------------
   std::vector<Eigen::Matrix4d> drifted(n);
+  const bool yaw_only = opt.mode == DriftMode::yaw;
+  const Eigen::Vector3d up = opt.up.normalized();
   auto integrate = [&](double a) {
     drifted[0] = poses[0]; // gauge: frame 0 stays on the seed
     for (int i = 0; i + 1 < n; ++i) {
@@ -166,7 +168,24 @@ PoseDriftResult perturb_trajectory(std::vector<Eigen::Matrix4d> &poses,
                           opt.rot_walk_gain * rs * walk[i].head<3>());
       xi.tail<3>() = a * (opt.trans_bias_gain * s * bias[i].tail<3>() +
                           opt.trans_walk_gain * rs * walk[i].tail<3>());
-      drifted[i + 1] = drifted[i] * rel[i] * se3::exp(xi);
+      const Eigen::Matrix4d predicted = drifted[i] * rel[i];
+      if (yaw_only) {
+        // Rotate only about the world up axis (expressed in the body frame of
+        // the predicted pose) and translate only horizontally. Both survive
+        // se3::exp: its V matrix maps a vector orthogonal to the rotation
+        // axis to one orthogonal to it, so heights and tilts stay on the seed
+        // exactly. One noise channel per DoF: the calibration rescales the
+        // amplitude, so the reduced number of channels changes nothing else.
+        const Eigen::Matrix3d R = predicted.block<3, 3>(0, 0);
+        const Eigen::Vector3d up_body = R.transpose() * up;
+        const double yaw = a * (opt.rot_bias_gain * s * bias[i][2] +
+                                opt.rot_walk_gain * rs * walk[i][2]);
+        Eigen::Vector3d t_world = R * xi.tail<3>();
+        t_world -= t_world.dot(up) * up;
+        xi.head<3>() = yaw * up_body;
+        xi.tail<3>() = R.transpose() * t_world;
+      }
+      drifted[i + 1] = predicted * se3::exp(xi);
     }
   };
   auto ratio_at = [&](double a) {
@@ -279,9 +298,9 @@ PoseDriftResult perturb_sensor_poses(ProjectDB &db, const PoseDriftOptions &opt,
   const auto r = perturb_trajectory(poses, opt);
 
   core::info("PoseDrift: {} frames, extent {:.2f} m, path {:.2f} m, seed {}, "
-             "drift_scale {:.3f}",
+             "drift_scale {:.3f}, mode {}",
              r.frames, r.trajectory_extent, r.path_length, opt.seed,
-             opt.drift_scale);
+             opt.drift_scale, opt.mode == DriftMode::yaw ? "yaw" : "full");
   core::info("PoseDrift: amplitude {:.5g} ({}), realised drift ratio {:.3f} "
              "(target {:.3f}) = {:.3f} m median distant-pair disagreement",
              r.amplitude, r.calibrated ? "calibrated" : "NOT calibrated",
