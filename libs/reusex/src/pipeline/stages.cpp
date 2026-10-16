@@ -22,6 +22,7 @@
 #include "reusex/core/storey_identity.hpp"
 #include "reusex/core/validate.hpp"
 #include "reusex/core/wall_identity.hpp"
+#include "reusex/geometry/level_frame.hpp"
 #include "reusex/geometry/transform_utils.hpp"
 #include "reusex/io/reusex.hpp"
 #include "reusex/reconstruction/mesh.hpp"
@@ -680,8 +681,9 @@ StageResult run_mesh(ProjectDB &db, const StageContext & /*ctx*/,
 
   auto [planes, centroids, inliers] =
       reusex::io::getPlanes(plane_labels, plane_normals, plane_centroids);
-  if (parsed.use_plane_classes)
-    options.plane_roles = mesh_plane_roles(db, inliers);
+  // parsed.options is `options`, filter included: this adds the plane roles
+  // and storey section heights the project provides.
+  options = mesh_options_for(db, parsed, inliers);
 
   pcl::PolygonMeshPtr mesh_result = geometry::mesh(
       cloud, normals, planes, centroids, inliers, rooms, options);
@@ -1425,6 +1427,9 @@ MeshStageOptions mesh_options_from_parameters(std::string_view parameters) {
                                       st.min_footprint_overlap);
   out.use_plane_classes =
       param_or(params, "plane_classes", out.use_plane_classes);
+  out.use_storey_sections =
+      param_or(params, "storey_sections", out.use_storey_sections);
+  options.storey_local = param_or(params, "storey_local", options.storey_local);
   const auto solver_str = param_or<std::string>(params, "solver", "auto");
   try {
     options.solver = geometry::parse_solver_choice(solver_str);
@@ -1465,6 +1470,34 @@ mesh_plane_roles(const ProjectDB &db, const std::vector<IndicesPtr> &inliers) {
         core::PlaneRole::unknown);
   }
   return roles;
+}
+
+std::vector<double> mesh_section_heights(const ProjectDB &db) {
+  std::vector<double> heights;
+  if (!db.has_storeys())
+    return heights;
+  for (const auto &s : db.storeys()) {
+    const auto frame = geometry::LevelFrame::from_record(s);
+    heights.push_back(frame.world_z_at(s.z_floor));
+    heights.push_back(frame.world_z_at(s.z_ceiling));
+  }
+  return heights;
+}
+
+geometry::MeshOptions mesh_options_for(const ProjectDB &db,
+                                       const MeshStageOptions &stage,
+                                       const std::vector<IndicesPtr> &inliers) {
+  geometry::MeshOptions options = stage.options;
+  if (stage.use_plane_classes)
+    options.plane_roles = mesh_plane_roles(db, inliers);
+  if (stage.use_storey_sections) {
+    options.section_heights = mesh_section_heights(db);
+    if (!options.section_heights.empty())
+      info("mesh: section planes from the storeys table, storey floor/ceiling "
+           "heights [{:.2f}] m",
+           fmt::join(options.section_heights, ", "));
+  }
+  return options;
 }
 
 // --- StageResult ----------------------------------------------------------

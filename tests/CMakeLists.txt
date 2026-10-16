@@ -269,6 +269,11 @@ if(INTEGRATION_TEST_SOURCES)
         ${CMAKE_BINARY_DIR}/generated
     )
 
+    # test_render_view.cpp / test_real_scan_fixture.cpp locate
+    # tests/fixtures/scans/office_corridor.rux through
+    # reusex::test_support::source_dir(); see TEST_SUPPORT_SOURCE_DIR_TU above.
+    target_sources(reusex_integration_tests PRIVATE "${TEST_SUPPORT_SOURCE_DIR_TU}")
+
     # test_cli_exit_codes.cpp asserts the process exit code of the real binary
     # (#299) — the one thing no in-process test can observe — so it needs the
     # path to `rux` and an explicit build-order dependency on it. `tests` is
@@ -382,6 +387,14 @@ if(Python3_Interpreter_FOUND)
              COMMAND ${Python3_EXECUTABLE}
                      ${CMAKE_SOURCE_DIR}/scripts/test_bench_solid_compare.py)
     set_tests_properties(bench_solid_compare_selftest PROPERTIES LABELS bench)
+
+    # Regression guard for reusex-4hy: a __FILE__-derived fixture path breaks
+    # under the dev shell's shared ccache (CCACHE_BASEDIR, #55) but not in the
+    # nix sandbox build, so it slips past CI unless something greps for it.
+    add_test(NAME check_no_file_macro_paths
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/support/check_no_file_macro_paths.py)
+    set_tests_properties(check_no_file_macro_paths PROPERTIES LABELS lint)
 
     # scripts/bench-poses-compare.py gates the pose-reference benchmark
     # (reusex-rcv.1.6); its self-test needs only python3.

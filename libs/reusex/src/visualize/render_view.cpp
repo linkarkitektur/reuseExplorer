@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <stdexcept>
 #include <string>
 
@@ -204,12 +205,156 @@ void draw_deviation_legend(cv::Mat &image, const DeviationStats &all,
   }
 }
 
+// ── Drift-loop legends (reusex-rcv.1.4) ──────────────────────────────────────
+
+enum class Corner { top_left, top_right, bottom_right };
+
+/// One legend box: optional colour ramp, then rows of text, each with an
+/// optional swatch. Hershey text: ASCII only, deterministic.
+struct LegendRow {
+  std::string text;
+  std::optional<std::array<std::uint8_t, 3>> swatch;
+};
+struct LegendRamp {
+  std::function<std::array<std::uint8_t, 3>(double)> color; ///< t in [0, 1]
+  std::vector<std::pair<double, std::string>> ticks;        ///< t, label
+};
+
+void draw_legend_box(cv::Mat &image, Corner corner,
+                     const std::vector<LegendRow> &rows,
+                     const std::optional<LegendRamp> &ramp) {
+  const double s = std::clamp(image.cols / 1600.0, 0.5, 2.0);
+  const int font = cv::FONT_HERSHEY_SIMPLEX;
+  const double fs = 0.55 * s;
+  const int th = std::max(1, static_cast<int>(std::lround(s)));
+  const int pad = static_cast<int>(10 * s);
+  const int line = static_cast<int>(22 * s);
+  const int sw = static_cast<int>(14 * s);
+  const int bar_w = static_cast<int>(320 * s);
+  const int bar_h = static_cast<int>(14 * s);
+  int text_w = ramp ? bar_w : 0;
+  for (const auto &r : rows) {
+    int base = 0;
+    text_w =
+        std::max(text_w, cv::getTextSize(r.text, font, fs, th, &base).width +
+                             (r.swatch ? sw + pad : 0));
+  }
+  const int box_w = text_w + 2 * pad;
+  const int box_h = pad + (ramp ? bar_h + line + pad / 2 : 0) +
+                    static_cast<int>(rows.size()) * line + pad / 2;
+  const int x0 = corner == Corner::top_left ? pad : image.cols - box_w - pad;
+  const int y0 =
+      corner == Corner::bottom_right ? image.rows - box_h - pad : pad;
+  if (x0 < 0 || y0 < 0 || x0 + box_w > image.cols || y0 + box_h > image.rows)
+    return; // too small an image for a legend
+  cv::Mat roi = image(cv::Rect(x0, y0, box_w, box_h));
+  roi *= 0.25;
+  const cv::Scalar white(240, 240, 240);
+  int y = y0 + pad;
+  const int bx = x0 + pad;
+  if (ramp) {
+    for (int i = 0; i < bar_w; ++i) {
+      const auto c = ramp->color(static_cast<double>(i) / (bar_w - 1));
+      cv::line(image, {bx + i, y}, {bx + i, y + bar_h},
+               cv::Scalar(c[2], c[1], c[0]), 1);
+    }
+    for (const auto &[t, label] : ramp->ticks) {
+      const int px = bx + static_cast<int>(t * (bar_w - 1));
+      cv::line(image, {px, y + bar_h}, {px, y + bar_h + line / 4}, white, th);
+      int base = 0;
+      const int w = cv::getTextSize(label, font, fs * 0.85, th, &base).width;
+      cv::putText(
+          image, label,
+          {std::clamp(px - w / 2, bx, bx + bar_w - w), y + bar_h + line}, font,
+          fs * 0.85, white, th, cv::LINE_AA);
+    }
+    y += bar_h + line + pad / 2;
+  }
+  for (const auto &r : rows) {
+    int tx = bx;
+    if (r.swatch) {
+      const auto &c = *r.swatch;
+      cv::rectangle(image, cv::Rect(bx, y + line / 2 - sw + 2, sw, sw),
+                    cv::Scalar(c[2], c[1], c[0]), cv::FILLED);
+      tx += sw + pad;
+    }
+    cv::putText(image, r.text, {tx, y + line / 2 + 2}, font, fs, white, th,
+                cv::LINE_AA);
+    y += line;
+  }
+}
+
+/// "12.3 mm".
+std::string mm_text(double m) { return fmt::format("{:.1f} mm", 1e3 * m); }
+
+void draw_drift_legends(cv::Mat &image, const DriftLegendInfo &lg,
+                        const LabelPalette &palette) {
+  if (lg.passes_drawn && !lg.passes.empty()) {
+    std::vector<LegendRow> rows;
+    rows.push_back(
+        {fmt::format("passes: {} points by capture segment", lg.pass_points),
+         std::nullopt});
+    for (const auto &p : lg.passes)
+      rows.push_back({fmt::format("seg {:>2}  nodes {}-{}", p.index,
+                                  p.first_node, p.last_node),
+                      p.rgb});
+    draw_legend_box(image, Corner::top_left, rows, std::nullopt);
+  }
+  if (lg.graph_drawn) {
+    const GraphLayerOptions g = lg.graph;
+    LegendRamp ramp;
+    const double top = 1.2 * g.residual_bad;
+    ramp.color = [g, top](double t) { return residual_color(t * top, g); };
+    ramp.ticks = {
+        {0.0, "0"},
+        {g.residual_good / top, fmt::format("{:.1f}", g.residual_good)},
+        {g.residual_bad / top, fmt::format("{:.1f}", g.residual_bad)}};
+    std::vector<LegendRow> rows{
+        {fmt::format("pose graph: {} nodes, path by segment", lg.graph_nodes),
+         std::nullopt},
+        {fmt::format("{} edges by residual (0.5 chi2)", lg.graph_edges),
+         std::nullopt},
+        {fmt::format("{} above {:.1f}, {} never solved", lg.graph_edges_bad,
+                     g.residual_bad, lg.graph_edges_unsolved),
+         g.unsolved_rgb}};
+    if (lg.graph_pins > 0)
+      rows.push_back(
+          {fmt::format("{} pose-edit pins", lg.graph_pins), g.pin_rgb});
+    draw_legend_box(image, Corner::top_right, rows, ramp);
+  }
+  if (lg.drift_drawn) {
+    const DriftLayerOptions d = lg.drift;
+    LegendRamp ramp;
+    const double top = 1.2 * d.bad_m;
+    ramp.color = [d, top](double t) { return drift_color(t * top, d); };
+    ramp.ticks = {{0.0, "0"},
+                  {d.good_m / top, mm_text(d.good_m)},
+                  {d.bad_m / top, mm_text(d.bad_m)}};
+    std::vector<LegendRow> rows{
+        {std::string("pass-to-pass residual per cell") +
+             (lg.drift_storey
+                  ? fmt::format(", storey {}{}", *lg.drift_storey,
+                                lg.drift_storey_name.empty()
+                                    ? std::string()
+                                    : " (" + lg.drift_storey_name + ")")
+                  : std::string()),
+         std::nullopt},
+        {fmt::format(
+             "{} cells, worst {}{}", lg.drift_cells, mm_text(lg.drift_max_m),
+             lg.noise_floor_m ? ", noise floor " + mm_text(*lg.noise_floor_m)
+                              : std::string()),
+         std::nullopt}};
+    draw_legend_box(image, Corner::bottom_right, rows, ramp);
+  }
+  (void)palette;
+}
+
 void validate(const RenderOptions &opts) {
   if (opts.layers.empty())
     throw std::runtime_error(
         "render: no layers selected — pass at least one of "
         "cloud, labels, planes, rooms, instances, mesh, "
-        "components, frustums, panoramas, deviation");
+        "components, frustums, panoramas, deviation, passes, graph, drift");
   if (opts.width <= 0 || opts.height <= 0)
     throw std::runtime_error("render: image size must be positive (got " +
                              std::to_string(opts.width) + "x" +
@@ -281,6 +426,12 @@ std::string_view to_string(Layer layer) {
     return "panoramas";
   case Layer::deviation:
     return "deviation";
+  case Layer::passes:
+    return "passes";
+  case Layer::graph:
+    return "graph";
+  case Layer::drift:
+    return "drift";
   case Layer::walls:
     return "walls";
   case Layer::openings:
@@ -328,7 +479,8 @@ const std::vector<Layer> &all_layers() {
   static const std::vector<Layer> layers{
       Layer::cloud,     Layer::labels,    Layer::planes,     Layer::rooms,
       Layer::instances, Layer::mesh,      Layer::components, Layer::frustums,
-      Layer::panoramas, Layer::deviation, Layer::walls,      Layer::openings};
+      Layer::panoramas, Layer::deviation, Layer::passes,     Layer::graph,
+      Layer::drift,     Layer::walls,     Layer::openings};
   return layers;
 }
 
@@ -438,11 +590,19 @@ cv::Mat render_view(const ProjectDB &db, const RenderOptions &opts,
   scene.mesh_style = opts.mesh_style;
   scene.deviation = opts.deviation;
   scene.frame_quantile = opts.frame_quantile;
+  scene.passes = opts.passes;
+  scene.graph = opts.graph;
+  scene.drift = opts.drift;
+  scene.drift_heatmap = opts.drift_heatmap;
+  scene.edits = opts.edits;
+  scene.poses = opts.poses;
+  scene.preview = opts.preview;
+  scene.graph_edges = opts.graph_edges;
   scene.plan_placement =
       opts.view == ViewPreset::top || opts.view == ViewPreset::plan
           ? PlanPlacement::above_scene
           : PlanPlacement::level;
-  const SceneInfo info = populate_scene(renderer, db, scene);
+  SceneInfo info = populate_scene(renderer, db, scene);
   const SceneBounds &bounds = info.bounds;
   const SceneBounds &frame = info.frame_bounds;
 
@@ -450,6 +610,9 @@ cv::Mat render_view(const ProjectDB &db, const RenderOptions &opts,
   if (opts.cut || opts.view == ViewPreset::plan) {
     const CutPlane cut = resolve_cut_plane(db, bounds, opts.cut_height);
     apply_cut_plane(renderer, cut.z);
+    // The drift heatmap of the storey the cut lies in, unless one was named.
+    if (!opts.drift.storey && opts.drift_heatmap)
+      show_drift_storey_at(info, cut.z, scene);
     core::info("render: cut plane at z={:.3f} m — {:.2f} m above the {} floor "
                "at z={:.3f}",
                cut.z, cut.height, cut.from_planes ? "detected" : "bounding-box",
@@ -562,6 +725,8 @@ cv::Mat render_view(const ProjectDB &db, const RenderOptions &opts,
   if (info.deviation && opts.legend)
     draw_deviation_legend(image, *info.deviation, info.deviation_planar,
                           opts.deviation, opts.mesh_name);
+  if (opts.legend)
+    draw_drift_legends(image, info.drift_legend, default_label_palette());
   if (out_info != nullptr) {
     out_info->drawn_points = info.drawn_points;
     out_info->drawn_faces = info.drawn_faces;
@@ -574,6 +739,7 @@ cv::Mat render_view(const ProjectDB &db, const RenderOptions &opts,
         info.display_bounds ? info.display_bounds->max : frame.max;
     out_info->deviation = info.deviation;
     out_info->deviation_planar = info.deviation_planar;
+    out_info->drift_legend = info.drift_legend;
   }
 
   core::info("render: {} points, {} faces -> {}x{} in {:.2f}s",

@@ -12,9 +12,9 @@
 #include "slam/drift_diagnostics.hpp"
 
 #include "core/ProjectDB.hpp"
+#include "core/frame_depth_cache.hpp"
 #include "core/logging.hpp"
 #include "core/solid_model.hpp"
-#include "slam/frame_pair_icp.hpp"
 
 #include <Eigen/Eigenvalues>
 #include <Eigen/Geometry>
@@ -42,6 +42,7 @@
 #include <stdexcept>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -123,13 +124,14 @@ struct CloudAdaptor {
 /// tens of millions of them from all threads at once.
 class Tree {
     public:
-  explicit Tree(PointCloud::Ptr cloud)
+  explicit Tree(PointCloud::Ptr cloud,
+                unsigned int build_threads = kTreeBuildThreads)
       : cloud_(std::move(cloud)), adaptor_{cloud_.get()},
         index_(3, adaptor_,
                nanoflann::KDTreeSingleIndexAdaptorParams(
                    kTreeLeafSize,
                    nanoflann::KDTreeSingleIndexAdaptorFlags::None,
-                   kTreeBuildThreads)) {}
+                   build_threads)) {}
 
   /// The @p k nearest points within @p radius (all when radius <= 0),
   /// ascending; returns how many. Thread-safe, allocation-free after the
@@ -161,6 +163,26 @@ class Tree {
     return n;
   }
 
+  /// knn() with the squared radius given as the float nanoflann compares
+  /// against (strictly: a point at exactly @p r2 is not found).
+  std::size_t knn_r2(const pcl::PointXYZ &p, int k, float r2,
+                     std::vector<std::uint32_t> &idx,
+                     std::vector<float> &d2) const {
+    const auto kk = static_cast<std::size_t>(std::min<std::size_t>(
+        static_cast<std::size_t>(std::max(k, 0)), cloud_->size()));
+    idx.resize(kk);
+    d2.resize(kk);
+    if (kk == 0)
+      return 0;
+    nanoflann::RKNNResultSet<float, std::uint32_t, std::size_t> rs(kk, r2);
+    rs.init(idx.data(), d2.data());
+    index_.findNeighbors(rs, p.data);
+    const std::size_t n = rs.size();
+    idx.resize(n);
+    d2.resize(n);
+    return n;
+  }
+
     private:
   using Index = nanoflann::KDTreeSingleIndexAdaptor<
       nanoflann::L2_Simple_Adaptor<float, CloudAdaptor>, CloudAdaptor, 3,
@@ -170,19 +192,17 @@ class Tree {
   Index index_;
 };
 
-std::unique_ptr<Tree> make_tree(const PointCloud::Ptr &cloud) {
-  return std::make_unique<Tree>(cloud);
+std::unique_ptr<Tree>
+make_tree(const PointCloud::Ptr &cloud,
+          unsigned int build_threads = kTreeBuildThreads) {
+  return std::make_unique<Tree>(cloud, build_threads);
 }
 
-/// PCA surface normal of point @p i of @p cloud from its @p k nearest
-/// neighbours (itself included), as the prototype's normals(); NaN where
-/// fewer than 3 neighbours exist. The sign is arbitrary.
-Eigen::Vector3f normal_at(const PointCloud &cloud, const Tree &tree, int k,
-                          std::size_t i) {
-  // Per-thread scratch: a query must not allocate (millions of them).
-  thread_local std::vector<std::uint32_t> idx;
-  thread_local std::vector<float> d2;
-  if (tree.knn(cloud[i], k, 0.0, idx, d2) < 3)
+/// PCA normal of the points @p idx of @p cloud, in that order (the order the
+/// sums run in); NaN for fewer than 3. The sign is arbitrary.
+template <class Indices>
+Eigen::Vector3f normal_of(const PointCloud &cloud, const Indices &idx) {
+  if (idx.size() < 3)
     return Eigen::Vector3f::Constant(NAN);
   Eigen::Vector3d mean = Eigen::Vector3d::Zero();
   for (const auto j : idx)
@@ -199,11 +219,82 @@ Eigen::Vector3f normal_at(const PointCloud &cloud, const Tree &tree, int k,
   return eig.eigenvectors().col(0).cast<float>();
 }
 
+/// PCA surface normal of point @p i of @p cloud from its @p k nearest
+/// neighbours (itself included), as the prototype's normals(); NaN where
+/// fewer than 3 neighbours exist.
+Eigen::Vector3f normal_at(const PointCloud &cloud, const Tree &tree, int k,
+                          std::size_t i) {
+  // Per-thread scratch: a query must not allocate (millions of them).
+  thread_local std::vector<std::uint32_t> idx;
+  thread_local std::vector<float> d2;
+  tree.knn(cloud[i], k, 0.0, idx, d2);
+  return normal_of(cloud, idx);
+}
+
+/// Bit mask of the segments a point's normal neighbourhood touches
+/// (reusex-rcv.1.17): a target cloud that keeps every one of them computes
+/// the same normal, so it can take the pooled one. All bits = unknown.
+using SegmentMask = std::uint64_t;
+constexpr SegmentMask kAllSegments = ~SegmentMask{0};
+constexpr int kMaxMaskedSegments = 64;
+
+/// pca_normals() that also records each point's neighbourhood mask
+/// (@p point_segment: the segment of every point; empty = no masks).
+std::vector<Eigen::Vector3f>
+pca_normals_masked(const PointCloud &cloud, const Tree &tree, int k,
+                   const std::vector<int> &point_segment,
+                   std::vector<SegmentMask> &mask) {
+  const auto n = static_cast<std::int64_t>(cloud.size());
+  std::vector<Eigen::Vector3f> out(cloud.size());
+  mask.assign(cloud.size(), kAllSegments);
+  const bool masked = point_segment.size() == cloud.size();
+#pragma omp parallel for schedule(dynamic, 256)
+  for (std::int64_t i = 0; i < n; ++i) {
+    const auto ui = static_cast<std::size_t>(i);
+    thread_local std::vector<std::uint32_t> idx;
+    thread_local std::vector<float> d2;
+    tree.knn(cloud[ui], k, 0.0, idx, d2);
+    out[ui] = normal_of(cloud, idx);
+    if (masked) {
+      SegmentMask m = 0;
+      for (const auto j : idx)
+        m |= SegmentMask{1} << point_segment[j];
+      mask[ui] = m;
+    }
+  }
+  return out;
+}
+
+/// Axis-aligned bounds of a point set, for skipping a k-d tree no point of
+/// which can lie within a search radius.
+struct Box {
+  Eigen::Vector3f lo =
+      Eigen::Vector3f::Constant(std::numeric_limits<float>::infinity());
+  Eigen::Vector3f hi =
+      Eigen::Vector3f::Constant(-std::numeric_limits<float>::infinity());
+  void add(const pcl::PointXYZ &p) {
+    lo = lo.cwiseMin(p.getVector3fMap());
+    hi = hi.cwiseMax(p.getVector3fMap());
+  }
+  /// True when no point inside lies within squared distance @p r2 of @p p
+  /// as nanoflann measures it (float). The margin keeps the test
+  /// conservative against float rounding: a skipped tree has no match.
+  [[nodiscard]] bool beyond(const pcl::PointXYZ &p, float r2) const {
+    double d = 0.0;
+    for (int a = 0; a < 3; ++a) {
+      const double e = std::max({static_cast<double>(lo[a]) - p.data[a],
+                                 static_cast<double>(p.data[a]) - hi[a], 0.0});
+      d += e * e;
+    }
+    return d > static_cast<double>(r2) * (1.0 + 1e-4) + 1e-9;
+  }
+};
+
 std::vector<Eigen::Vector3f> pca_normals(const PointCloud &cloud,
                                          const Tree &tree, int k) {
   const auto n = static_cast<std::int64_t>(cloud.size());
   std::vector<Eigen::Vector3f> out(cloud.size());
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(dynamic, 256)
   for (std::int64_t i = 0; i < n; ++i)
     out[static_cast<std::size_t>(i)] =
         normal_at(cloud, tree, k, static_cast<std::size_t>(i));
@@ -214,8 +305,8 @@ std::vector<Eigen::Vector3f> pca_normals(const PointCloud &cloud,
 /// squared distance, or -1 when there is none. Bounded by the radius (the
 /// prototype's distance_upper_bound): an unbounded exact search from a
 /// point far from the target visits most of the tree. Allocation-free.
-std::pair<int, float> nearest(const Tree &tree, const pcl::PointXYZ &p,
-                              double radius) {
+std::pair<int, float> nearest_in(const Tree &tree, const pcl::PointXYZ &p,
+                                 double radius) {
   thread_local std::vector<std::uint32_t> idx;
   thread_local std::vector<float> d2;
   if (tree.knn(p, 1, radius, idx, d2) < 1)
@@ -247,6 +338,49 @@ double plane_residual(const pcl::PointXYZ &p, const pcl::PointXYZ &q,
       static_cast<double>((p.getVector3fMap() - q.getVector3fMap()).dot(n)));
 }
 
+/// Which segments have a point in each cubic cell of the pooled cloud: a
+/// search ball tells which segment trees can hold a point inside it, so the
+/// others are not searched (reusex-rcv.1.17).
+struct SegmentGrid {
+  double cell = 0.25;
+  std::unordered_map<std::uint64_t, SegmentMask> cells;
+
+  static std::uint64_t key(std::int64_t x, std::int64_t y, std::int64_t z) {
+    constexpr std::uint64_t m = (std::uint64_t{1} << 21) - 1;
+    return ((static_cast<std::uint64_t>(x) & m) << 42) |
+           ((static_cast<std::uint64_t>(y) & m) << 21) |
+           (static_cast<std::uint64_t>(z) & m);
+  }
+  [[nodiscard]] std::int64_t index(double v) const {
+    return static_cast<std::int64_t>(std::floor(v / cell));
+  }
+  void build(const PointCloud &cloud, const std::vector<int> &segment) {
+    cells.clear();
+    for (std::size_t i = 0; i < cloud.size(); ++i) {
+      const auto &p = cloud[i];
+      cells[key(index(p.x), index(p.y), index(p.z))] |= SegmentMask{1}
+                                                        << segment[i];
+    }
+  }
+  /// The segments that may have a point within squared distance @p r2 of
+  /// @p p (conservatively: the cells covering the ball's bounds).
+  [[nodiscard]] SegmentMask near(const pcl::PointXYZ &p, float r2) const {
+    const double r = std::sqrt(static_cast<double>(r2)) * (1.0 + 1e-4) + 1e-6;
+    const auto x0 = index(p.x - r), x1 = index(p.x + r);
+    const auto y0 = index(p.y - r), y1 = index(p.y + r);
+    const auto z0 = index(p.z - r), z1 = index(p.z + r);
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1) > 64)
+      return kAllSegments;
+    SegmentMask m = 0;
+    for (auto x = x0; x <= x1; ++x)
+      for (auto y = y0; y <= y1; ++y)
+        for (auto z = z0; z <= z1; ++z)
+          if (const auto it = cells.find(key(x, y, z)); it != cells.end())
+            m |= it->second;
+    return m;
+  }
+};
+
 /// A target cloud of the segment matching (sens2.py / halves.py): its tree,
 /// and its normals computed on first use (each one depends only on the
 /// cloud, so laziness does not change a result; it skips the many points no
@@ -257,60 +391,427 @@ struct SegmentCloud {
   int k = 12;
   std::vector<Eigen::Vector3f> normals;
   std::vector<char> has_normal;
+  Box box;
+  /// reusex-rcv.1.17: a segment's cloud takes the pooled normal of a point
+  /// whose pooled neighbourhood lies in this segment alone (the same
+  /// neighbours, the same sums). Unset = always compute.
+  std::vector<std::size_t> global; ///< pooled index per point
+  const std::vector<Eigen::Vector3f> *pooled_normals = nullptr;
+  const std::vector<SegmentMask> *pooled_mask = nullptr;
+  SegmentMask own = 0;
+
+  [[nodiscard]] std::size_t size() const { return cloud ? cloud->size() : 0; }
+  [[nodiscard]] const pcl::PointXYZ &point(std::size_t j) const {
+    return (*cloud)[j];
+  }
+  [[nodiscard]] const Eigen::Vector3f &normal(std::size_t j) const {
+    return normals[j];
+  }
+
+  const SegmentGrid *grid = nullptr; ///< with own: skip empty balls
+
+  /// Nearest point within @p gate (the radius nanoflann gets as a float
+  /// square): its index and squared distance, or -1. @p qmask: the
+  /// segments the query has a point of within the gate (a pooled point's
+  /// precomputed mask), or kAllSegments = ask the grid.
+  [[nodiscard]] std::pair<long, float>
+  nearest(const pcl::PointXYZ &p, double gate, long /*hint*/ = -1,
+          SegmentMask qmask = kAllSegments) const {
+    const auto r2 = static_cast<float>(gate * gate);
+    if (!tree || box.beyond(p, r2))
+      return {-1, 0.0f};
+    if (own != 0 && !(qmask & own))
+      return {-1, 0.0f};
+    if (qmask == kAllSegments && grid && !(grid->near(p, r2) & own))
+      return {-1, 0.0f};
+    const auto [j, d2] = nearest_in(*tree, p, gate);
+    return {j, d2};
+  }
 
   /// Compute the normals of @p hits (indices into cloud, -1 ignored) that
   /// are not known yet.
-  void ensure_normals(const std::vector<int> &hits) {
+  void ensure_normals(const std::vector<long> &hits) {
     std::vector<std::size_t> todo;
-    for (const int h : hits)
+    for (const long h : hits)
       if (h >= 0 && !has_normal[static_cast<std::size_t>(h)]) {
         has_normal[static_cast<std::size_t>(h)] = 1;
         todo.push_back(static_cast<std::size_t>(h));
       }
     const auto n = static_cast<std::int64_t>(todo.size());
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(dynamic, 256)
     for (std::int64_t i = 0; i < n; ++i) {
       const auto j = todo[static_cast<std::size_t>(i)];
-      normals[j] = normal_at(*cloud, *tree, k, j);
+      if (pooled_mask && (*pooled_mask)[global[j]] == own)
+        normals[j] = (*pooled_normals)[global[j]];
+      else
+        normals[j] = normal_at(*cloud, *tree, k, j);
     }
   }
 };
 
 SegmentCloud segment_cloud(const PointCloud &all,
-                           const std::vector<std::size_t> &idx, int k) {
+                           const std::vector<std::size_t> &idx, int k,
+                           unsigned int build_threads = kTreeBuildThreads) {
   SegmentCloud s;
   s.k = k;
   s.cloud = make_cloud(idx.size());
-  for (std::size_t i = 0; i < idx.size(); ++i)
+  for (std::size_t i = 0; i < idx.size(); ++i) {
     (*s.cloud)[i] = all[idx[i]];
+    s.box.add(all[idx[i]]);
+  }
   s.normals.assign(idx.size(), Eigen::Vector3f::Constant(NAN));
   s.has_normal.assign(idx.size(), 0);
   if (!idx.empty())
-    s.tree = make_tree(s.cloud);
+    s.tree = make_tree(s.cloud, build_threads);
   return s;
 }
+
+/// ICP re-matches nearly the same points every iteration. Per point: its
+/// kKeep nearest union points within gate + slack at the position of its
+/// last search, and the distance of the next nearest. After the point has
+/// moved by delta, no other point can be nearer than that distance minus
+/// delta, so the nearest of the kept candidates is the nearest point when
+/// it is nearer still (and a point with none within gate + slack has none
+/// within the gate while delta < slack), with a margin far above float
+/// rounding. Only the others are searched again: the matches are the ones
+/// a search would return (reusex-rcv.1.17).
+struct NnTracker {
+  static constexpr double kSlack = 0.03;  ///< [m] beyond the gate
+  static constexpr double kMargin = 1e-4; ///< [m] decisions this clear only
+  static constexpr int kKeep = 3;         ///< candidates kept per point
+  std::vector<Eigen::Vector3f> ref;       ///< query position of the search
+  /// Its kKeep nearest (-1: fewer within gate + slack).
+  std::vector<std::array<long, kKeep>> cand;
+  /// Squared distance of the next nearest (gate + slack squared: none).
+  std::vector<float> bound;
+  std::vector<char> valid;
+  std::size_t searched = 0, kept = 0; ///< statistics
+  void reset(std::size_t n) {
+    ref.assign(n, Eigen::Vector3f::Zero());
+    std::array<long, kKeep> none{};
+    none.fill(-1);
+    cand.assign(n, none);
+    bound.assign(n, 0.0f);
+    valid.assign(n, 0);
+  }
+};
+
+/// The union of every segment's cloud but one (halves.py: a segment against
+/// all the others), searched through the per-segment trees instead of a
+/// tree of its own (reusex-rcv.1.17: building that tree once per segment
+/// was half the drift diagnostics' time; searching the pooled tree with the
+/// segment's own points skipped is slower still, they crowd every query).
+/// Indices are pooled indices.
+///
+/// The nearest point is the minimum over the segments by (squared
+/// distance, pooled index) and a normal's k neighbours are the k smallest
+/// per-segment candidates in that order: what a tree of the union finds,
+/// up to which of several points at the same distance (to float rounding)
+/// it picks -- that depends on a k-d tree's shape, so the suggestions
+/// moved by up to 0.04 mm / 0.0003 deg on house2 against the union trees
+/// this replaced, every other number of the report bit for bit the same.
+struct UnionTarget {
+  const PointCloud *cloud = nullptr;               ///< pooled
+  const std::vector<SegmentCloud> *segs = nullptr; ///< by segment
+  const std::vector<int> *point_segment = nullptr; ///< pooled -> segment
+  const std::vector<Eigen::Vector3f> *pooled_normals = nullptr;
+  const std::vector<SegmentMask> *pooled_mask = nullptr; ///< may be null
+  const SegmentGrid *grid = nullptr;                     ///< may be null
+  int exclude = -1;
+  int k = 12;
+  std::size_t points = 0;               ///< in the union
+  std::vector<Eigen::Vector3f> normals; ///< pooled-indexed
+  std::vector<char> has_normal;
+  std::vector<std::size_t> touched;
+
+  /// Start over for another excluded segment (keeps the buffers).
+  void reset(int excluded) {
+    for (const auto j : touched)
+      has_normal[j] = 0;
+    touched.clear();
+    if (normals.size() != cloud->size()) {
+      normals.assign(cloud->size(), Eigen::Vector3f::Constant(NAN));
+      has_normal.assign(cloud->size(), 0);
+    }
+    exclude = excluded;
+    points = 0;
+    for (std::size_t b = 0; b < segs->size(); ++b)
+      if (static_cast<int>(b) != exclude)
+        points += (*segs)[b].size();
+  }
+
+  [[nodiscard]] std::size_t size() const { return points; }
+  [[nodiscard]] const pcl::PointXYZ &point(std::size_t j) const {
+    return (*cloud)[j];
+  }
+  [[nodiscard]] const Eigen::Vector3f &normal(std::size_t j) const {
+    return normals[j];
+  }
+
+  /// Segments that may hold a point within @p r2 of @p p.
+  [[nodiscard]] SegmentMask candidates(const pcl::PointXYZ &p, float r2) const {
+    return grid ? grid->near(p, r2) : kAllSegments;
+  }
+  [[nodiscard]] bool may_hold(SegmentMask m, std::size_t b) const {
+    return static_cast<int>(b) != exclude &&
+           (b >= static_cast<std::size_t>(kMaxMaskedSegments) ||
+            (m >> b) & SegmentMask{1});
+  }
+  static float above(float d2) {
+    return std::nextafter(d2, std::numeric_limits<float>::infinity());
+  }
+
+  /// Nearest union point within @p gate. @p hint, a pooled index (the last
+  /// iteration's match), names the segment searched first, @p qmask the
+  /// segments the query has a point of within the gate (or kAllSegments):
+  /// neither changes the result, the minimum by (squared distance, pooled
+  /// index).
+  [[nodiscard]] std::pair<long, float>
+  nearest(const pcl::PointXYZ &p, double gate, long hint = -1,
+          SegmentMask qmask = kAllSegments) const {
+    std::array<std::pair<float, long>, NnTracker::kKeep + 1> out{};
+    int found = 0;
+    best_of(p, gate, hint, qmask, 1, out, found);
+    if (found < 1)
+      return {-1, 0.0f};
+    return {out[0].second, out[0].first};
+  }
+
+  /// The NnTracker::kKeep + 1 nearest union points within @p radius.
+  void nearest_k(const pcl::PointXYZ &p, double radius, long hint,
+                 std::array<std::pair<float, long>, NnTracker::kKeep + 1> &out,
+                 int &found) const {
+    best_of(p, radius, hint, kAllSegments, NnTracker::kKeep + 1, out, found);
+  }
+
+  /// The @p cap (<= NnTracker::kKeep + 1) nearest union points within
+  /// @p radius, ascending by (squared distance, pooled index).
+  void best_of(const pcl::PointXYZ &p, double radius, long hint,
+               SegmentMask qmask, int cap,
+               std::array<std::pair<float, long>, NnTracker::kKeep + 1> &out,
+               int &found) const {
+    thread_local std::vector<std::uint32_t> idx;
+    thread_local std::vector<float> d2;
+    const auto r2 = static_cast<float>(radius * radius);
+    const auto ucap = static_cast<std::size_t>(cap);
+    found = 0;
+    // Once full, only a point at most as far as the last can still enter
+    // (an equal distance too: the lower index wins the tie).
+    auto limit = [&] { return found < cap ? r2 : above(out[ucap - 1].first); };
+    auto search = [&](std::size_t b) {
+      const auto &sg = (*segs)[b];
+      const float lim = limit();
+      if (!sg.tree || sg.box.beyond(p, lim))
+        return;
+      const auto n = sg.tree->knn_r2(p, cap, lim, idx, d2);
+      for (std::size_t m = 0; m < n; ++m) {
+        const std::pair<float, long> c{d2[m],
+                                       static_cast<long>(sg.global[idx[m]])};
+        std::size_t at;
+        if (found < cap)
+          at = static_cast<std::size_t>(found++);
+        else if (c < out[ucap - 1])
+          at = ucap - 1;
+        else
+          continue;
+        out[at] = c;
+        for (; at > 0 && out[at] < out[at - 1]; --at)
+          std::swap(out[at], out[at - 1]);
+      }
+    };
+    std::size_t first = segs->size();
+    if (hint >= 0) {
+      first = static_cast<std::size_t>(
+          (*point_segment)[static_cast<std::size_t>(hint)]);
+      if (static_cast<int>(first) != exclude)
+        search(first);
+    }
+    const SegmentMask m =
+        qmask != kAllSegments ? qmask : candidates(p, limit());
+    for (std::size_t b = 0; b < segs->size(); ++b)
+      if (b != first && may_hold(m, b))
+        search(b);
+  }
+
+  /// nanoflann's squared distance (L2_Simple_Adaptor::evalMetric, float)
+  /// from @p p to pooled point @p j.
+  [[nodiscard]] float metric(const pcl::PointXYZ &p, std::size_t j) const {
+    float result = 0.0f;
+    for (int d = 0; d < 3; ++d) {
+      const float diff = p.data[d] - (*cloud)[j].data[d];
+      result += diff * diff;
+    }
+    return result;
+  }
+
+  /// The k nearest union points of pooled point @p j, by (squared
+  /// distance, pooled index).
+  void neighbours(std::size_t j, std::vector<std::size_t> &out) const {
+    thread_local std::vector<std::uint32_t> idx;
+    thread_local std::vector<float> d2;
+    thread_local std::vector<std::pair<float, std::size_t>> cand;
+    cand.clear();
+    const pcl::PointXYZ &p = (*cloud)[j];
+    const auto kk = static_cast<std::size_t>(k);
+    auto take = [&](const SegmentCloud &sg) {
+      if (!sg.tree)
+        return;
+      if (cand.size() < kk) {
+        sg.tree->knn(p, k, 0.0, idx, d2);
+      } else {
+        const float lim = above(cand.back().first);
+        if (sg.box.beyond(p, lim))
+          return;
+        sg.tree->knn_r2(p, k, lim, idx, d2);
+      }
+      for (std::size_t m = 0; m < idx.size(); ++m)
+        cand.emplace_back(d2[m], sg.global[idx[m]]);
+      std::sort(cand.begin(), cand.end());
+      if (cand.size() > kk)
+        cand.resize(kk);
+    };
+    // Its own segment first: the tightest bound for the others, which are
+    // searched only where the grid has a point within the k-th distance.
+    const int own = (*point_segment)[j];
+    take((*segs)[static_cast<std::size_t>(own)]);
+    const SegmentMask m = cand.size() < kk
+                              ? kAllSegments
+                              : candidates(p, above(cand.back().first));
+    for (std::size_t b = 0; b < segs->size(); ++b)
+      if (static_cast<int>(b) != own && may_hold(m, b))
+        take((*segs)[b]);
+    out.clear();
+    for (const auto &c : cand)
+      out.push_back(c.second);
+  }
+
+  void ensure_normals(const std::vector<long> &hits) {
+    std::vector<std::size_t> todo;
+    for (const long h : hits)
+      if (h >= 0 && !has_normal[static_cast<std::size_t>(h)]) {
+        has_normal[static_cast<std::size_t>(h)] = 1;
+        todo.push_back(static_cast<std::size_t>(h));
+      }
+    touched.insert(touched.end(), todo.begin(), todo.end());
+    const SegmentMask ex = exclude >= 0 && exclude < kMaxMaskedSegments
+                               ? SegmentMask{1} << exclude
+                               : kAllSegments;
+    const auto n = static_cast<std::int64_t>(todo.size());
+#pragma omp parallel for schedule(dynamic, 256)
+    for (std::int64_t i = 0; i < n; ++i) {
+      const auto j = todo[static_cast<std::size_t>(i)];
+      if (pooled_mask && ((*pooled_mask)[j] & ex) == 0) {
+        normals[j] = (*pooled_normals)[j];
+        continue;
+      }
+      thread_local std::vector<std::size_t> nb;
+      neighbours(j, nb);
+      normals[j] = normal_of(*cloud, nb);
+    }
+  }
+};
+
+/// Optional help for match(): neither changes its result.
+struct MatchAids {
+  /// Per query point (unmoved pooled points only): the segments with a
+  /// point within the gate.
+  const std::vector<SegmentMask> *query_mask = nullptr;
+  NnTracker *tracker = nullptr; ///< UnionTarget only
+};
 
 /// Point-to-plane residuals of @p pts (moved by @p r, @p t about @p c)
 /// against @p target within @p gate; NaN for a miss. Also the matched
 /// target index (-1 for a miss).
+template <class Target>
 void match(const std::vector<Eigen::Vector3d> &pts, const Eigen::Matrix3d &r,
-           const Eigen::Vector3d &t, const Eigen::Vector3d &c,
-           SegmentCloud &target, double gate, std::vector<double> &res,
-           std::vector<int> &hit) {
+           const Eigen::Vector3d &t, const Eigen::Vector3d &c, Target &target,
+           double gate, std::vector<double> &res, std::vector<long> &hit,
+           const MatchAids &aids = {}) {
   const auto n = static_cast<std::int64_t>(pts.size());
   res.assign(pts.size(), kNaN);
+  // The previous call's matches (ICP's last iteration) only order the
+  // search; they do not change its result.
+  std::vector<long> hint;
+  hint.swap(hit);
+  if (hint.size() != pts.size())
+    hint.assign(pts.size(), -1);
   hit.assign(pts.size(), -1);
   const double gate2 = gate * gate;
+  const auto r2f = static_cast<float>(gate2);
+  NnTracker *tr = aids.tracker;
+  if (tr && tr->ref.size() != pts.size())
+    tr->reset(pts.size());
+  std::size_t searched = 0, kept = 0;
   std::vector<Eigen::Vector3d> moved(pts.size());
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(dynamic, 256) reduction(+ : searched, kept)
   for (std::int64_t i = 0; i < n; ++i) {
     const auto ui = static_cast<std::size_t>(i);
     moved[ui] = r * pts[ui] + t + c;
     pcl::PointXYZ p;
     p.getVector3fMap() = moved[ui].cast<float>();
-    const auto [j, d2] = nearest(*target.tree, p, gate);
+    if constexpr (requires { target.metric(p, ui); }) {
+      if (tr) {
+        const double slack_r = gate + NnTracker::kSlack;
+        auto &cand = tr->cand[ui];
+        if (tr->valid[ui]) {
+          const double delta = (p.getVector3fMap().template cast<double>() -
+                                tr->ref[ui].template cast<double>())
+                                   .norm();
+          if (cand[0] < 0) {
+            if (slack_r - delta > gate + NnTracker::kMargin) {
+              ++kept;
+              continue; // still nothing within the gate
+            }
+          } else {
+            // The nearest candidate now, by (squared distance, index) as a
+            // search orders them; no other point can be closer than the
+            // next nearest was, less delta.
+            std::pair<float, long> best{std::numeric_limits<float>::max(), -1};
+            for (const long q : cand)
+              if (q >= 0) {
+                const std::pair<float, long> c{
+                    target.metric(p, static_cast<std::size_t>(q)), q};
+                if (best.second < 0 || c < best)
+                  best = c;
+              }
+            if (std::sqrt(static_cast<double>(best.first)) +
+                    NnTracker::kMargin <
+                std::sqrt(static_cast<double>(tr->bound[ui])) - delta) {
+              ++kept;
+              if (best.first < r2f && static_cast<double>(best.first) < gate2)
+                hit[ui] = best.second;
+              continue;
+            }
+          }
+        }
+        ++searched;
+        std::array<std::pair<float, long>, NnTracker::kKeep + 1> nn{};
+        int found = 0;
+        target.nearest_k(p, slack_r, cand[0] >= 0 ? cand[0] : hint[ui], nn,
+                         found);
+        tr->ref[ui] = p.getVector3fMap();
+        tr->valid[ui] = 1;
+        for (int m = 0; m < NnTracker::kKeep; ++m)
+          cand[static_cast<std::size_t>(m)] =
+              m < found ? nn[static_cast<std::size_t>(m)].second : -1;
+        tr->bound[ui] = found > NnTracker::kKeep
+                            ? nn[NnTracker::kKeep].first
+                            : static_cast<float>(slack_r * slack_r);
+        if (found > 0 && nn[0].first < r2f &&
+            static_cast<double>(nn[0].first) < gate2)
+          hit[ui] = nn[0].second;
+        continue;
+      }
+    }
+    const SegmentMask qm =
+        aids.query_mask ? (*aids.query_mask)[ui] : kAllSegments;
+    const auto [j, d2] = target.nearest(p, gate, hint[ui], qm);
     if (j >= 0 && static_cast<double>(d2) < gate2)
       hit[ui] = j;
+  }
+  if (tr) {
+    tr->searched += searched;
+    tr->kept += kept;
   }
   target.ensure_normals(hit);
 #pragma omp parallel for schedule(static)
@@ -319,13 +820,14 @@ void match(const std::vector<Eigen::Vector3d> &pts, const Eigen::Matrix3d &r,
     if (hit[ui] < 0)
       continue;
     const auto j = static_cast<std::size_t>(hit[ui]);
-    const Eigen::Vector3f &nn = target.normals[j];
+    const Eigen::Vector3f &nn = target.normal(j);
     if (!nn.allFinite()) {
       hit[ui] = -1;
       continue;
     }
-    res[ui] = (moved[ui] - (*target.cloud)[j].getVector3fMap().cast<double>())
-                  .dot(nn.cast<double>());
+    res[ui] =
+        (moved[ui] - target.point(j).getVector3fMap().template cast<double>())
+            .dot(nn.template cast<double>());
   }
 }
 
@@ -340,9 +842,9 @@ std::vector<double> finite_abs(const std::vector<double> &v) {
 
 /// halves.py + icp.py: robust point-to-plane ICP of @p pts onto @p target,
 /// about the centroid of @p pts. Fills the suggestion's numbers.
-void segment_icp(const std::vector<Eigen::Vector3d> &world_pts,
-                 SegmentCloud &target, const DriftDiagnosticsOptions &o,
-                 SegmentSuggestion &s) {
+template <class Target>
+void segment_icp(const std::vector<Eigen::Vector3d> &world_pts, Target &target,
+                 const DriftDiagnosticsOptions &o, SegmentSuggestion &s) {
   Eigen::Vector3d c = Eigen::Vector3d::Zero();
   for (const auto &p : world_pts)
     c += p;
@@ -354,8 +856,11 @@ void segment_icp(const std::vector<Eigen::Vector3d> &world_pts,
   Eigen::Matrix3d r = Eigen::Matrix3d::Identity();
   Eigen::Vector3d t = Eigen::Vector3d::Zero();
   std::vector<double> res;
-  std::vector<int> hit;
-  match(pts, r, t, c, target, o.icp_max_corr_m, res, hit);
+  std::vector<long> hit;
+  NnTracker tracker;
+  MatchAids aids;
+  aids.tracker = &tracker;
+  match(pts, r, t, c, target, o.icp_max_corr_m, res, hit, aids);
   {
     auto a = finite_abs(res);
     s.before_m = median(a).value_or(kNaN);
@@ -366,7 +871,7 @@ void segment_icp(const std::vector<Eigen::Vector3d> &world_pts,
   for (int it = 0; it < o.icp_iterations; ++it) {
     ++iterations;
     if (it > 0)
-      match(pts, r, t, c, target, o.icp_max_corr_m, res, hit);
+      match(pts, r, t, c, target, o.icp_max_corr_m, res, hit, aids);
     // Normal equations summed in a FIXED number of chunks, each in index
     // order, then the chunks in order: parallel, yet independent of the
     // thread count (STANDARDS §6).
@@ -385,7 +890,8 @@ void segment_icp(const std::vector<Eigen::Vector3d> &world_pts,
           continue;
         const Eigen::Vector3d a = r * pts[i] + t; // centred
         const Eigen::Vector3d n =
-            target.normals[static_cast<std::size_t>(hit[i])].cast<double>();
+            target.normal(static_cast<std::size_t>(hit[i]))
+                .template cast<double>();
         const double ri = res[i];
         const double w =
             std::abs(ri) < o.huber_m ? 1.0 : o.huber_m / std::abs(ri);
@@ -417,9 +923,10 @@ void segment_icp(const std::vector<Eigen::Vector3d> &world_pts,
     if (x.norm() < kIcpConverged)
       break;
   }
-  core::debug("analyze drift: segment {} ICP: {} iterations", s.segment,
-              iterations);
-  match(pts, r, t, c, target, o.icp_max_corr_m, res, hit);
+  match(pts, r, t, c, target, o.icp_max_corr_m, res, hit, aids);
+  core::debug("analyze drift: segment {} ICP: {} iterations, {} searches, "
+              "{} matches kept",
+              s.segment, iterations, tracker.searched, tracker.kept);
   {
     auto a = finite_abs(res);
     s.after_m = median(a).value_or(kNaN);
@@ -681,10 +1188,20 @@ trajectory_wall_crossings(std::span<const std::int64_t> node_ids,
   return out;
 }
 
+core::DepthSampling drift_depth_sampling(const DriftDiagnosticsOptions &o) {
+  core::DepthSampling s;
+  s.frame_step = o.frame_step;
+  s.depth_stride = o.depth_stride;
+  s.min_depth_m = o.min_depth_m;
+  s.max_depth_m = o.max_depth_m;
+  return s;
+}
+
 DriftReport diagnose_drift(const ProjectDB &db,
                            const DriftDiagnosticsOptions &o,
                            const core::SolidModel *plan,
-                           std::span<const Eigen::Matrix4d> poses_override) {
+                           std::span<const Eigen::Matrix4d> poses_override,
+                           const core::FrameDepthCache *depth_cache) {
   if (o.segments < 1 || o.frame_step < 1 || o.depth_stride < 1 ||
       o.normal_neighbours < 3 || o.revisit_neighbours < 1 ||
       o.floor_max_frames < 1 || !(o.cell_m > 0) || !(o.doubled_voxel_m > 0) ||
@@ -696,6 +1213,7 @@ DriftReport diagnose_drift(const ProjectDB &db,
         "normal_neighbours >= 3, cell and bin sizes > 0");
   const reusex::stopwatch clock;
   DriftReport r;
+  r.cell_m = o.cell_m;
   r.pose_source =
       o.pose_source == DriftPoseSource::initial ? "initial" : "current";
 
@@ -706,6 +1224,12 @@ DriftReport diagnose_drift(const ProjectDB &db,
                                 std::to_string(poses_override.size()) +
                                 " poses for " + std::to_string(ids.size()) +
                                 " sensor frames");
+  if (depth_cache && !depth_cache->matches(drift_depth_sampling(o), ids.size()))
+    throw std::invalid_argument(
+        "diagnose_drift: the depth cache was made with another frame step, "
+        "depth stride or depth range, or for another project (" +
+        std::to_string(depth_cache->frames_total) + " frames, this one has " +
+        std::to_string(ids.size()) + ")");
 
   // ---- poses of every frame ------------------------------------------------
   std::size_t initial_missing = 0;
@@ -762,10 +1286,11 @@ DriftReport diagnose_drift(const ProjectDB &db,
                               static_cast<std::size_t>(o.segments - 1)));
 
   // ---- back-projection -----------------------------------------------------
-  FramePairIcpOptions bp;
-  bp.pixel_step = o.depth_stride;
-  bp.min_depth_m = static_cast<float>(o.min_depth_m);
-  bp.max_depth_m = static_cast<float>(o.max_depth_m);
+  // From the cache, or one frame at a time from the database: the same
+  // pixels through the same formula (core::pose_frame_points(), which is
+  // slam::frame_pose_frame_points() bit for bit).
+  const auto min_f = static_cast<float>(o.min_depth_m);
+  const auto max_f = static_cast<float>(o.max_depth_m);
   Pooled pooled;
   std::size_t no_depth = 0, no_pose = 0;
   for (std::size_t k = 0; k < nf; ++k) {
@@ -778,10 +1303,18 @@ DriftReport diagnose_drift(const ProjectDB &db,
       continue;
     }
     std::vector<std::array<float, 3>> pts;
-    try {
-      pts = frame_pose_frame_points(db, static_cast<int>(f.node_id), bp);
-    } catch (const std::runtime_error &e) {
-      core::debug("analyze drift: frame {} skipped: {}", f.node_id, e.what());
+    if (depth_cache) {
+      pts = core::pose_frame_points(depth_cache->frames[k], min_f, max_f);
+    } else {
+      const auto frame =
+          core::cache_depth_frame(db, static_cast<int>(f.node_id),
+                                  o.depth_stride, o.min_depth_m, o.max_depth_m);
+      pts = core::pose_frame_points(frame, min_f, max_f);
+    }
+    if (pts.empty()) {
+      core::debug("analyze drift: frame {} skipped: no depth between {} and "
+                  "{} m",
+                  f.node_id, o.min_depth_m, o.max_depth_m);
       ++no_depth;
       continue;
     }
@@ -814,7 +1347,19 @@ DriftReport diagnose_drift(const ProjectDB &db,
               clock.elapsed());
   // ---- pooled pass-to-pass residual and noise floor ------------------------
   const auto tree = make_tree(pooled.cloud);
-  const auto normals = pca_normals(cloud, *tree, o.normal_neighbours);
+  core::debug("analyze drift: pooled tree at {:.2f} s", clock.elapsed());
+  // The segment of every point, and which segments each point's normal
+  // neighbourhood touches: the segment targets below reuse these normals.
+  std::vector<int> point_segment(cloud.size());
+  for (std::size_t i = 0; i < cloud.size(); ++i)
+    point_segment[i] =
+        frames[static_cast<std::size_t>(pooled.frame[i])].segment;
+  std::vector<SegmentMask> normal_mask;
+  const auto normals = pca_normals_masked(
+      cloud, *tree, o.normal_neighbours,
+      o.segments <= kMaxMaskedSegments ? point_segment : std::vector<int>{},
+      normal_mask);
+  core::debug("analyze drift: pooled normals at {:.2f} s", clock.elapsed());
   std::vector<double> far_res(cloud.size(), kNaN),
       floor_res(cloud.size(), kNaN);
   {
@@ -822,7 +1367,7 @@ DriftReport diagnose_drift(const ProjectDB &db,
     const double r2 = o.revisit_radius_m * o.revisit_radius_m;
     const int kk =
         std::min<int>(o.revisit_neighbours, static_cast<int>(cloud.size()));
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(dynamic, 256)
     for (std::int64_t i = 0; i < n; ++i) {
       const auto ui = static_cast<std::size_t>(i);
       thread_local std::vector<std::uint32_t> idx;
@@ -866,18 +1411,66 @@ DriftReport diagnose_drift(const ProjectDB &db,
 
   core::debug("analyze drift: pooled residual done at {:.1f} s",
               clock.elapsed());
+  // ---- storeys (the cells' keys and the doubled-wall bands) ---------------
+  std::vector<core::StoreyRecord> storeys;
+  if (plan && !plan->storeys.empty())
+    storeys = plan->storeys;
+  else if (db.has_storeys())
+    storeys = db.storeys();
+  std::sort(storeys.begin(), storeys.end(),
+            [](const auto &a, const auto &b) { return a.idx < b.idx; });
+
   // ---- per frame and per cell ----------------------------------------------
   {
+    // reusex-98o: with storeys, a residual point is binned in the level
+    // frame of the storey whose [z_floor, z_ceiling] band is nearest (inside
+    // one = distance 0; ties to the lower storey), so storeys stacked in one
+    // footprint get separate cells.
+    const bool by_storey = o.cells_by_storey && !storeys.empty();
+    std::vector<Eigen::Matrix4d> to_level;
+    if (by_storey)
+      for (const auto &s : storeys) {
+        to_level.push_back(to_matrix(s.level_transform));
+        DriftStorey d;
+        d.idx = s.idx;
+        d.name = s.name;
+        d.z_floor = s.z_floor;
+        d.z_ceiling = s.z_ceiling;
+        d.level_transform = s.level_transform;
+        r.storeys.push_back(d);
+      }
+    struct CellAcc {
+      std::vector<double> res, z;
+    };
     std::vector<std::vector<double>> per_frame(nf);
-    std::map<std::pair<std::int64_t, std::int64_t>, std::vector<double>> cells;
+    std::map<std::tuple<int, std::int64_t, std::int64_t>, CellAcc> cells;
     for (std::size_t i = 0; i < cloud.size(); ++i) {
       if (!std::isfinite(far_res[i]))
         continue;
       per_frame[static_cast<std::size_t>(pooled.frame[i])].push_back(
           far_res[i]);
-      cells[{static_cast<std::int64_t>(std::floor(cloud[i].x / o.cell_m)),
-             static_cast<std::int64_t>(std::floor(cloud[i].y / o.cell_m))}]
-          .push_back(far_res[i]);
+      const Eigen::Vector3d w = cloud[i].getVector3fMap().cast<double>();
+      int key = -1;
+      Eigen::Vector3d p = w;
+      if (by_storey) {
+        double best = std::numeric_limits<double>::infinity();
+        for (std::size_t s = 0; s < storeys.size(); ++s) {
+          const Eigen::Vector3d l = to_level[s].topLeftCorner<3, 3>() * w +
+                                    to_level[s].topRightCorner<3, 1>();
+          const double d = std::max(
+              {storeys[s].z_floor - l.z(), l.z() - storeys[s].z_ceiling, 0.0});
+          if (d < best) {
+            best = d;
+            key = storeys[s].idx;
+            p = l;
+          }
+        }
+      }
+      auto &c =
+          cells[{key, static_cast<std::int64_t>(std::floor(p.x() / o.cell_m)),
+                 static_cast<std::int64_t>(std::floor(p.y() / o.cell_m))}];
+      c.res.push_back(far_res[i]);
+      c.z.push_back(p.z());
     }
     std::vector<double> frame_meds;
     for (std::size_t k = 0; k < nf; ++k) {
@@ -900,13 +1493,15 @@ DriftReport diagnose_drift(const ProjectDB &db,
     r.frame_residual_median_m = median(frame_meds);
     r.frame_residual_p90_m = percentile(frame_meds, 90.0);
     for (auto &kv : cells) {
-      if (static_cast<int>(kv.second.size()) < o.min_cell_points)
+      if (static_cast<int>(kv.second.res.size()) < o.min_cell_points)
         continue;
       DriftCell c;
-      c.x = (static_cast<double>(kv.first.first) + 0.5) * o.cell_m;
-      c.y = (static_cast<double>(kv.first.second) + 0.5) * o.cell_m;
-      c.points = kv.second.size();
-      c.residual_m = *median(kv.second);
+      c.storey = std::get<0>(kv.first);
+      c.x = (static_cast<double>(std::get<1>(kv.first)) + 0.5) * o.cell_m;
+      c.y = (static_cast<double>(std::get<2>(kv.first)) + 0.5) * o.cell_m;
+      c.points = kv.second.res.size();
+      c.residual_m = *median(kv.second.res);
+      c.z_m = *percentile(kv.second.z, 10.0);
       r.cells.push_back(c);
     }
   }
@@ -943,12 +1538,61 @@ DriftReport diagnose_drift(const ProjectDB &db,
       r.segments.push_back(d);
   }
 
+  // One cloud + tree per segment, built once: the pair targets here and,
+  // pooled, the "all the others" targets of the suggestions below.
+  const reusex::stopwatch tb;
+  const bool masked = o.segments <= kMaxMaskedSegments;
+  SegmentGrid grid;
+  // Per point: the segments with a point within the larger match gate (the
+  // unmoved queries below look them up instead of the grid).
+  std::vector<SegmentMask> near_mask;
+  if (masked) {
+    grid.build(cloud, point_segment);
+    const auto rm = static_cast<float>(
+        std::pow(std::max(o.match_radius_m, o.icp_max_corr_m), 2));
+    near_mask.resize(cloud.size());
+    const auto n = static_cast<std::int64_t>(cloud.size());
+#pragma omp parallel for schedule(static)
+    for (std::int64_t i = 0; i < n; ++i)
+      near_mask[static_cast<std::size_t>(i)] =
+          grid.near(cloud[static_cast<std::size_t>(i)], rm);
+  }
+  std::vector<SegmentCloud> segs(static_cast<std::size_t>(o.segments));
+  // The segments' trees side by side, each built on one thread (a tree is a
+  // function of its points, not of the threads that build it).
+#pragma omp parallel for schedule(dynamic, 1)
+  for (int b = 0; b < o.segments; ++b) {
+    auto &sg = segs[static_cast<std::size_t>(b)];
+    sg = segment_cloud(cloud, seg_idx[static_cast<std::size_t>(b)],
+                       o.normal_neighbours, /*build_threads=*/1);
+    sg.global = seg_idx[static_cast<std::size_t>(b)];
+    if (masked) {
+      sg.pooled_normals = &normals;
+      sg.pooled_mask = &normal_mask;
+      sg.own = SegmentMask{1} << b;
+      sg.grid = &grid;
+    }
+  }
+  const double seg_tree_s = tb.elapsed();
+
+  // Each segment's points' near masks, in segment order (match() queries).
+  std::vector<std::vector<SegmentMask>> seg_masks(
+      static_cast<std::size_t>(o.segments));
+  std::vector<MatchAids> seg_aids(static_cast<std::size_t>(o.segments));
+  if (masked)
+    for (int a = 0; a < o.segments; ++a) {
+      auto &m = seg_masks[static_cast<std::size_t>(a)];
+      for (const auto i : seg_idx[static_cast<std::size_t>(a)])
+        m.push_back(near_mask[i]);
+      seg_aids[static_cast<std::size_t>(a)].query_mask = &m;
+    }
+
   // sens2.py: every ordered pair (a into b).
   for (int b = 0; b < o.segments; ++b) {
     const auto &ib = seg_idx[static_cast<std::size_t>(b)];
     if (ib.size() < 3)
       continue;
-    auto target = segment_cloud(cloud, ib, o.normal_neighbours);
+    auto &target = segs[static_cast<std::size_t>(b)];
     for (int a = 0; a < o.segments; ++a) {
       if (a == b)
         continue;
@@ -957,9 +1601,10 @@ DriftReport diagnose_drift(const ProjectDB &db,
       for (std::size_t i = 0; i < ia.size(); ++i)
         pts[i] = cloud[ia[i]].getVector3fMap().cast<double>();
       std::vector<double> res;
-      std::vector<int> hit;
+      std::vector<long> hit;
       match(pts, Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero(),
-            Eigen::Vector3d::Zero(), target, o.match_radius_m, res, hit);
+            Eigen::Vector3d::Zero(), target, o.match_radius_m, res, hit,
+            seg_aids[static_cast<std::size_t>(a)]);
       auto v = finite_abs(res);
       if (static_cast<int>(v.size()) < o.min_pair_points)
         continue;
@@ -991,26 +1636,34 @@ DriftReport diagnose_drift(const ProjectDB &db,
                                    o.segments, o.min_pair_points,
                                    o.match_radius_m));
 
-  core::debug("analyze drift: segment pairs done at {:.1f} s", clock.elapsed());
+  core::debug("analyze drift: segment pairs done at {:.1f} s ({:.2f} s in "
+              "segment trees and grid)",
+              clock.elapsed(), seg_tree_s);
   // halves.py: each segment against the union of all the others.
+  double sugg_icp_s = 0.0;
   if (o.segments > 1) {
+    UnionTarget target;
+    target.cloud = &cloud;
+    target.segs = &segs;
+    target.point_segment = &point_segment;
+    target.pooled_normals = &normals;
+    target.pooled_mask = masked ? &normal_mask : nullptr;
+    target.grid = masked ? &grid : nullptr;
+    target.k = o.normal_neighbours;
     for (int a = 0; a < o.segments; ++a) {
-      std::vector<std::size_t> ib;
-      ib.reserve(cloud.size());
-      for (std::size_t i = 0; i < cloud.size(); ++i)
-        if (frames[static_cast<std::size_t>(pooled.frame[i])].segment != a)
-          ib.push_back(i);
       const auto &ia = seg_idx[static_cast<std::size_t>(a)];
-      if (ib.size() < 3 || ia.empty())
+      target.reset(a);
+      if (target.size() < 3 || ia.empty())
         continue;
-      auto target = segment_cloud(cloud, ib, o.normal_neighbours);
+      const reusex::stopwatch ti;
       std::vector<Eigen::Vector3d> pts(ia.size());
       for (std::size_t i = 0; i < ia.size(); ++i)
         pts[i] = cloud[ia[i]].getVector3fMap().cast<double>();
       std::vector<double> res;
-      std::vector<int> hit;
+      std::vector<long> hit;
       match(pts, Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero(),
-            Eigen::Vector3d::Zero(), target, o.icp_max_corr_m, res, hit);
+            Eigen::Vector3d::Zero(), target, o.icp_max_corr_m, res, hit,
+            seg_aids[static_cast<std::size_t>(a)]);
       std::vector<Eigen::Vector3d> overlap;
       for (std::size_t i = 0; i < pts.size(); ++i)
         if (hit[i] >= 0)
@@ -1031,10 +1684,13 @@ DriftReport diagnose_drift(const ProjectDB &db,
       s.points = overlap.size();
       segment_icp(overlap, target, o, s);
       r.suggestions.push_back(s);
+      sugg_icp_s += ti.elapsed();
     }
   }
 
-  core::debug("analyze drift: suggestions done at {:.1f} s", clock.elapsed());
+  core::debug("analyze drift: suggestions done at {:.1f} s ({:.2f} s "
+              "matching + ICP)",
+              clock.elapsed(), sugg_icp_s);
   // ---- crossings -----------------------------------------------------------
   if (plan) {
     std::vector<std::int64_t> cids;
@@ -1050,16 +1706,11 @@ DriftReport diagnose_drift(const ProjectDB &db,
   core::debug("analyze drift: crossings done at {:.1f} s", clock.elapsed());
   // ---- doubled walls -------------------------------------------------------
   if (o.doubled_walls) {
-    std::vector<core::StoreyRecord> st;
-    if (plan && !plan->storeys.empty())
-      st = plan->storeys;
-    else if (db.has_storeys())
-      st = db.storeys();
-    if (st.empty())
+    if (storeys.empty())
       core::info("analyze drift: no storeys (plan or project); the doubled-"
                  "wall patches are skipped");
     else
-      r.doubled_walls = doubled_walls(pooled, st, o);
+      r.doubled_walls = doubled_walls(pooled, storeys, o);
   }
 
   core::info("analyze drift: {} frames ({} points), pass-to-pass {} mm vs "
@@ -1138,10 +1789,20 @@ std::string drift_report_to_json(const DriftReport &r, int indent) {
   }
   j["cells"] = json::array();
   for (const auto &c : r.cells)
-    j["cells"].push_back({{"x", c.x},
+    j["cells"].push_back({{"storey", c.storey},
+                          {"x", c.x},
                           {"y", c.y},
+                          {"z_m", c.z_m},
                           {"residual_m", c.residual_m},
                           {"points", c.points}});
+  j["cell_m"] = r.cell_m;
+  j["storeys"] = json::array();
+  for (const auto &s : r.storeys)
+    j["storeys"].push_back({{"idx", s.idx},
+                            {"name", s.name},
+                            {"z_floor", s.z_floor},
+                            {"z_ceiling", s.z_ceiling},
+                            {"level_transform", s.level_transform}});
   if (r.crossings) {
     json c = {{"steps", r.crossings->steps},
               {"crossings", r.crossings->crossings.size()},

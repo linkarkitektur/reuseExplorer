@@ -19,7 +19,7 @@
 namespace reusex::geometry {
 
 std::optional<FrameSurfels>
-extract_frame_surfels(ProjectDB &db, int node_id,
+extract_frame_surfels(const ProjectDB &db, int node_id,
                       const SurfelExtractionParams &params) {
   cv::Mat color = db.sensor_frame_image(node_id);
   cv::Mat depth16 = db.sensor_frame_depth(node_id); // CV_16UC1 mm

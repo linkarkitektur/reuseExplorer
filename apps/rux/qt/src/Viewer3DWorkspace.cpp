@@ -311,11 +311,19 @@ bool Viewer3DWorkspace::has_data(Layer l) const {
     return s.sensor_frames.total_count > 0;
   case Layer::panoramas:
     return s.panoramic_images.total_count > 0;
+  case Layer::passes:
+  case Layer::graph:
+    return s.sensor_frames.total_count > 0;
   case Layer::walls:
     return db->has_walls();
   case Layer::openings:
     return db->has_openings();
   case Layer::deviation:
+  case Layer::drift:
+    // TODO: Let the 3D workspace draw the drift heatmap
+    // category=Visualization estimate=4h bead=reusex-lbz
+    // The layer needs a drift report (rux analyze drift -o); the workspace
+    // has no way to pick one yet, so it is not offered.
     return false;
   }
   return false;
@@ -362,8 +370,9 @@ void Viewer3DWorkspace::activate() {
                            : Layer::cloud;
   if (visible_.value(static_cast<int>(Layer::cloud)) && has_data(colour))
     ensure_layer(colour);
-  for (Layer l : {Layer::mesh, Layer::walls, Layer::openings, Layer::components,
-                  Layer::frustums, Layer::panoramas})
+  for (Layer l :
+       {Layer::mesh, Layer::walls, Layer::openings, Layer::components,
+        Layer::frustums, Layer::panoramas, Layer::passes, Layer::graph})
     if (visible_.value(static_cast<int>(l)) && has_data(l))
       ensure_layer(l);
   view_->request_render();
@@ -480,6 +489,11 @@ void Viewer3DWorkspace::rebuild_panel() {
       format_count(static_cast<qulonglong>(s.sensor_frames.total_count)));
   row(Layer::panoramas, "Panoramaer",
       format_count(static_cast<qulonglong>(s.panoramic_images.total_count)));
+  // The drift loop (reusex-rcv.1.4): depth back-projected and coloured by
+  // capture segment, and the camera path with the pose-graph edges.
+  row(Layer::passes, "Gennemløb (optagetid)",
+      format_count(static_cast<qulonglong>(s.sensor_frames.total_count)));
+  row(Layer::graph, "Posegraf", QString());
 
   auto *rule2 = new QFrame;
   rule2->setObjectName("rule");
