@@ -57,7 +57,8 @@ auto dist_plane_point(const Eigen::Vector4d &plane,
 auto make_pairs(EigenVectorContainer<double, 4> &planes,
                 std::vector<IndicesPtr> &inliers,
                 EigenVectorContainer<double, 3> &centroids,
-                const double threshold, const double new_plane_offset)
+                const double threshold, const double new_plane_offset,
+                const double max_crossed_gap)
     -> std::vector<std::pair<size_t, size_t>> {
 
   using Vector3 = Eigen::Vector3d;
@@ -117,6 +118,34 @@ auto make_pairs(EigenVectorContainer<double, 4> &planes,
       const Vector3 n = -planes[keep].head<3>();
       planes[turn].head<3>() = n;
       planes[turn][3] = -n.dot(centroids[turn].head<3>());
+
+      // A wall is the slab behind both of its faces (CellComplex gives a
+      // cell a pair's wall id only there). When the two rooms' scans drifted
+      // apart by more than the wall is thick, the faces cross: each lies in
+      // front of the other, and no cell is behind both, so the pair can
+      // never become a wall and the rooms on either side merge (house1's
+      // partition i-n1, crossed by 0.09 m, reusex-wm0). Faces this close
+      // whose normals point at each other cannot bound a gap a sensor
+      // looked into: they are one wall, so swap their positions -- the slab
+      // then spans the stretch where the two scans overlap, on the wall's
+      // axis, and each face keeps its normal towards its own room. Farther
+      // apart they stay where they were measured.
+      const double crossed_by =
+          planes[keep].head<3>().dot(centroids[turn].head<3>()) +
+          planes[keep][3];
+      if (crossed_by > 0.0 && crossed_by <= max_crossed_gap) {
+        const Vector3 n_keep = planes[keep].head<3>();
+        const Vector3 c_keep = centroids[keep].head<3>();
+        planes[keep][3] = -n_keep.dot(centroids[turn].head<3>());
+        planes[turn][3] = n_keep.dot(c_keep); // normal -n_keep
+        reusex::debug("make_pairs: faces {} and {} cross by {:.3f} m (one "
+                      "wall seen from two drifted scans): slab between them",
+                      i, best_j, crossed_by);
+      } else if (crossed_by > 0.0) {
+        reusex::debug("make_pairs: faces {} and {} look at each other "
+                      "{:.3f} m apart (over {:.2f} m): left where measured",
+                      i, best_j, crossed_by, max_crossed_gap);
+      }
 
       pairs.emplace_back(i, best_j);
       paired[best_j] = true;
