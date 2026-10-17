@@ -347,3 +347,65 @@ TEST_CASE("Spaces_OneSidedWall_UsesItsAxisAsTheFace",
     CHECK(b.s_start == Approx(0.0).margin(1e-6));
   }
 }
+
+TEST_CASE("Spaces_RoomInsideAnotherRoomsFace_KeepsItsCells",
+          "[segmentation][spaces]") {
+  // A 10 x 8 room whose south-west 3 x 3 corner the band grid cut off as a
+  // room of its own (clutter, no wall in the walls table): one face, two
+  // rooms. The corner room is a guest of the big one's face.
+  Grid G(-1.0, 11.0, -1.0, 9.0);
+  G.fill(0.05, 9.95, 0.05, 7.95, 1);
+  G.fill(0.0, 3.05, 0.0, 3.05, 0); // the clutter line, unlabelled
+  G.fill(0.05, 2.95, 0.05, 2.95, 2);
+  const std::vector<core::WallRecord> walls = {
+      wall("s", -0.1, -0.1, 10.1, -0.1),
+      wall("e", 10.1, -0.1, 10.1, 8.1),
+      wall("n", 10.1, 8.1, -0.1, 8.1),
+      wall("w", -0.1, 8.1, -0.1, -0.1),
+  };
+  const auto r = polygonise_spaces({G.g}, {storey0()}, walls);
+  REQUIRE(r.spaces.size() == 2);
+  const auto &big = r.spaces[0];
+  const auto &corner = r.spaces[1];
+  // The guest grows over the unlabelled line to the walls: 3.05 x 3.05.
+  CHECK(corner.area == Approx(3.05 * 3.05).epsilon(0.01));
+  CHECK(corner.polygon.outer.size() == 4);
+  CHECK(big.area == Approx(80.0 - 3.05 * 3.05).epsilon(0.01));
+  CHECK(big.polygon.outer.size() == 6);
+  CHECK(big.polygon.holes.empty());
+  CHECK(find_boundary(r, corner.guid, "s", "a") != nullptr);
+  CHECK(find_boundary(r, corner.guid, "w", "a") != nullptr);
+  CHECK(find_boundary(r, corner.guid, "n", "a") == nullptr);
+}
+
+TEST_CASE("Spaces_MissingExteriorWall_ClosedByTheInterior",
+          "[segmentation][spaces]") {
+  // Walls on three sides; the east one was not detected. The storey's
+  // interior outline closes the face, so the room is still a face with
+  // straight edges, not its raster.
+  Grid G(-1.0, 8.0, -1.0, 5.0);
+  G.fill(0.05, 5.95, 0.05, 3.95, 1);
+  for (int r = 0; r < G.g.height; ++r)
+    for (int c = 0; c < G.g.width; ++c) {
+      const double x = (G.g.col0 + c + 0.5) * G.cell;
+      const double y = (G.g.row0 + r + 0.5) * G.cell;
+      G.g.interior[G.g.index(c, r)] =
+          x > -0.2 && x < 6.2 && y > -0.2 && y < 4.2 ? 1 : 0;
+    }
+  const std::vector<core::WallRecord> walls = {
+      wall("s", -0.1, -0.1, 6.1, -0.1),
+      wall("n", 6.1, 4.1, -0.1, 4.1),
+      wall("w", -0.1, 4.1, -0.1, -0.1),
+  };
+  const auto r = polygonise_spaces({G.g}, {storey0()}, walls);
+  REQUIRE(r.spaces.size() == 1);
+  CHECK(r.spaces[0].polygon.outer.size() == 4);
+  CHECK(r.spaces[0].area == Approx(6.2 * 4.0).epsilon(0.01));
+  CHECK(r.stats[0].arrangement_share == Approx(1.0).margin(1e-6));
+
+  SpacesOptions open;
+  open.close_at_interior = false;
+  const auto raster = polygonise_spaces({G.g}, {storey0()}, walls, open);
+  REQUIRE(raster.spaces.size() == 1);
+  CHECK(raster.stats[0].arrangement_share < 0.5);
+}

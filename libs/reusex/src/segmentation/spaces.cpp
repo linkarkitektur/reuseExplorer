@@ -54,16 +54,6 @@ Vec2 to_vec(const Point &p) {
   return {CGAL::to_double(p.x()), CGAL::to_double(p.y())};
 }
 
-double signed_area(const std::vector<Point> &ring) {
-  double a = 0.0;
-  for (size_t i = 0; i < ring.size(); ++i) {
-    const Vec2 p = to_vec(ring[i]);
-    const Vec2 q = to_vec(ring[(i + 1) % ring.size()]);
-    a += p.x() * q.y() - q.x() * p.y();
-  }
-  return 0.5 * a;
-}
-
 /// Drop the vertices of a closed ring that lie on the line through their
 /// neighbours (exactly), until none is left.
 std::vector<Point> drop_collinear(std::vector<Point> ring) {
@@ -115,20 +105,15 @@ split_at_repeats(const std::vector<Point> &walk) {
   return loops;
 }
 
-/// The region bounded by a set of directed edges with the region on their
-/// left (every vertex as many edges in as out). Edges are chained into
-/// closed walks, split into simple loops, and the loops' interiors combined
-/// by symmetric difference: for loops that never cross, that is the region
-/// whatever the chaining at a pinch vertex. @p loop_areas, when set,
-/// receives each loop's signed area (> 0: counter-clockwise, an outer
-/// boundary; < 0: a hole).
-PolygonSet region_from_edges(const std::vector<std::pair<Point, Point>> &edges,
-                             std::vector<double> *loop_areas = nullptr) {
+/// Chain directed edges (every vertex as many in as out) into closed walks
+/// and split those into simple loops without collinear vertices.
+std::vector<std::vector<Point>>
+trace_loops(const std::vector<std::pair<Point, Point>> &edges) {
   std::map<Point, std::vector<size_t>> out;
   for (size_t i = 0; i < edges.size(); ++i)
     out[edges[i].first].push_back(i);
   std::vector<uint8_t> used(edges.size(), 0);
-  PolygonSet set;
+  std::vector<std::vector<Point>> loops;
   for (size_t e0 = 0; e0 < edges.size(); ++e0) {
     if (used[e0])
       continue;
@@ -155,20 +140,110 @@ PolygonSet region_from_edges(const std::vector<std::pair<Point, Point>> &edges,
     }
     for (auto &loop : split_at_repeats(walk)) {
       loop = drop_collinear(std::move(loop));
-      if (loop.size() < 3)
-        continue;
-      Polygon poly(loop.begin(), loop.end());
-      const auto orient = poly.orientation();
-      if (orient == CGAL::COLLINEAR)
-        continue;
-      if (loop_areas)
-        loop_areas->push_back(signed_area(loop));
-      if (orient == CGAL::CLOCKWISE)
-        poly.reverse_orientation();
-      set.symmetric_difference(poly);
+      if (loop.size() >= 3)
+        loops.push_back(std::move(loop));
     }
   }
+  return loops;
+}
+
+/// The region bounded by a set of directed edges with the region on their
+/// left: the loops of trace_loops() combined by symmetric difference -- for
+/// loops that never cross, that is the region whatever the chaining at a
+/// pinch vertex.
+PolygonSet
+region_from_edges(const std::vector<std::pair<Point, Point>> &edges) {
+  PolygonSet set;
+  for (const auto &loop : trace_loops(edges)) {
+    Polygon poly(loop.begin(), loop.end());
+    const auto orient = poly.orientation();
+    if (orient == CGAL::COLLINEAR)
+      continue;
+    if (orient == CGAL::CLOCKWISE)
+      poly.reverse_orientation();
+    set.symmetric_difference(poly);
+  }
   return set;
+}
+
+/// The directed cell edges around the cells where @p in holds (the region
+/// on their left), on the level-frame lattice of @p g.
+template <typename In>
+std::vector<std::pair<Point, Point>> cell_edges(const RoomGrid &g,
+                                                const In &in) {
+  std::vector<std::pair<Point, Point>> edges;
+  const double cell = g.cell_size;
+  auto corner = [&](int c, int r) {
+    return Point((g.col0 + c) * cell, (g.row0 + r) * cell);
+  };
+  auto is = [&](int c, int r) {
+    return c >= 0 && r >= 0 && c < g.width && r < g.height && in(g.index(c, r));
+  };
+  for (int r = 0; r < g.height; ++r)
+    for (int c = 0; c < g.width; ++c) {
+      if (!is(c, r))
+        continue;
+      if (!is(c, r - 1))
+        edges.emplace_back(corner(c, r), corner(c + 1, r));
+      if (!is(c + 1, r))
+        edges.emplace_back(corner(c + 1, r), corner(c + 1, r + 1));
+      if (!is(c, r + 1))
+        edges.emplace_back(corner(c + 1, r + 1), corner(c, r + 1));
+      if (!is(c - 1, r))
+        edges.emplace_back(corner(c, r + 1), corner(c, r));
+    }
+  return edges;
+}
+
+/// Douglas-Peucker on an open polyline [first, last] (both kept).
+void simplify_run(const std::vector<Vec2> &pts, size_t first, size_t last,
+                  double tol, std::vector<uint8_t> &keep) {
+  if (last <= first + 1)
+    return;
+  const Vec2 a = pts[first];
+  const Vec2 d = pts[last] - a;
+  const double len = d.norm();
+  double worst = -1.0;
+  size_t at = first;
+  for (size_t i = first + 1; i < last; ++i) {
+    const Vec2 v = pts[i] - a;
+    const double dist =
+        len > 1e-12 ? std::abs(d.x() * v.y() - d.y() * v.x()) / len : v.norm();
+    if (dist > worst) {
+      worst = dist;
+      at = i;
+    }
+  }
+  if (worst > tol) {
+    keep[at] = 1;
+    simplify_run(pts, first, at, tol, keep);
+    simplify_run(pts, at, last, tol, keep);
+  }
+}
+
+/// A closed loop simplified to within @p tol (Douglas-Peucker from its
+/// first point and the point farthest from it).
+std::vector<Vec2> simplify_loop(const std::vector<Point> &loop, double tol) {
+  std::vector<Vec2> pts;
+  pts.reserve(loop.size() + 1);
+  for (const auto &p : loop)
+    pts.push_back(to_vec(p));
+  if (pts.size() < 4)
+    return pts;
+  size_t far = 0;
+  for (size_t i = 1; i < pts.size(); ++i)
+    if ((pts[i] - pts[0]).squaredNorm() > (pts[far] - pts[0]).squaredNorm())
+      far = i;
+  pts.push_back(pts[0]);
+  std::vector<uint8_t> keep(pts.size(), 0);
+  keep[0] = keep[far] = keep.back() = 1;
+  simplify_run(pts, 0, far, tol, keep);
+  simplify_run(pts, far, pts.size() - 1, tol, keep);
+  std::vector<Vec2> out;
+  for (size_t i = 0; i + 1 < pts.size(); ++i)
+    if (keep[i])
+      out.push_back(pts[i]);
+  return out;
 }
 
 double area_of(const PolygonWithHoles &p) {
@@ -190,30 +265,9 @@ double area_of(const PolygonSet &s) {
 /// The raster region of room @p label: the cells' outline (cell corners on
 /// the level-frame lattice), holes included.
 PolygonSet raster_region(const RoomGrid &g, const std::vector<int32_t> &labels,
-                         int32_t label, std::vector<double> *loop_areas) {
-  std::vector<std::pair<Point, Point>> edges;
-  const double cell = g.cell_size;
-  auto corner = [&](int c, int r) {
-    return Point((g.col0 + c) * cell, (g.row0 + r) * cell);
-  };
-  auto is = [&](int c, int r) {
-    return c >= 0 && r >= 0 && c < g.width && r < g.height &&
-           labels[g.index(c, r)] == label;
-  };
-  for (int r = 0; r < g.height; ++r)
-    for (int c = 0; c < g.width; ++c) {
-      if (!is(c, r))
-        continue;
-      if (!is(c, r - 1))
-        edges.emplace_back(corner(c, r), corner(c + 1, r));
-      if (!is(c + 1, r))
-        edges.emplace_back(corner(c + 1, r), corner(c + 1, r + 1));
-      if (!is(c, r + 1))
-        edges.emplace_back(corner(c + 1, r + 1), corner(c, r + 1));
-      if (!is(c - 1, r))
-        edges.emplace_back(corner(c, r + 1), corner(c, r));
-    }
-  return region_from_edges(edges, loop_areas);
+                         int32_t label) {
+  return region_from_edges(
+      cell_edges(g, [&](size_t i) { return labels[i] == label; }));
 }
 
 /// The room labels with every pocket a room encloses filled with the room
@@ -303,6 +357,10 @@ struct FaceInfo {
   std::map<int32_t, size_t> cells; ///< room -> cell centres inside
   enum Class { mixed, empty, pure } cls = mixed;
   int32_t label = 0; ///< the room of a pure face
+  /// Other rooms that live mostly in a pure face (a meeting room the wall
+  /// graph does not close off): they keep their cells, the face's room
+  /// gets the rest.
+  std::vector<int32_t> guests;
   bool sliver = false;
 };
 
@@ -634,6 +692,19 @@ auto polygonise_spaces(const std::vector<RoomGrid> &grids,
           add(W.a - ext, b + ext);
         }
       }
+      // The outline of the storey's interior closes what the wall graph
+      // leaves open (a gap between two offset wall runs, a doorway with no
+      // wall either side, a missing exterior wall), so a room there is
+      // still a face rather than part of the unbounded one.
+      if (o.close_at_interior && g.interior.size() == g.labels.size()) {
+        const auto loops = trace_loops(
+            cell_edges(g, [&](size_t i) { return g.interior[i] != 0; }));
+        for (const auto &loop : loops) {
+          const auto pts = simplify_loop(loop, o.interior_simplify_m);
+          for (size_t i = 0; i < pts.size(); ++i)
+            add(pts[i], pts[(i + 1) % pts.size()]);
+        }
+      }
       std::sort(keys.begin(), keys.end());
       keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
       std::vector<Segment> segs;
@@ -705,6 +776,10 @@ auto polygonise_spaces(const std::vector<RoomGrid> &grids,
         ++faces[face_index.at(&*f)].cells[filled[g.index(c, r)]];
       }
 
+      std::map<int32_t, size_t> room_cells;
+      for (int32_t l : filled)
+        if (l > 0)
+          ++room_cells[l];
       for (auto &fi : faces) {
         if (fi.sliver)
           continue;
@@ -725,21 +800,26 @@ auto polygonise_spaces(const std::vector<RoomGrid> &grids,
         const double second_share =
             static_cast<double>(second) * cell_area / area;
         const double share = static_cast<double>(total) * cell_area / area;
-        if (top_share >= o.pure_min_share &&
-            second_share <= o.other_max_share) {
+        if (top_share >= o.pure_min_share) {
           fi.cls = FaceInfo::pure;
           fi.label = top_label;
+          for (const auto &[l, n] : fi.cells)
+            if (l != top_label &&
+                static_cast<double>(n) >=
+                    o.guest_min_share * static_cast<double>(room_cells[l]))
+              fi.guests.push_back(l);
         } else if (share <= o.empty_max_share) {
           fi.cls = FaceInfo::empty;
         } else {
           fi.cls = FaceInfo::mixed;
         }
         debug("spaces: storey {}: face {:.2f} m^2: rooms cover {:.2f}, room "
-              "{} {:.2f}, next {:.2f} -> {}",
+              "{} {:.2f}, next {:.2f} -> {} ({} guest(s))",
               g.storey_idx, fi.area, share, top_label, top_share, second_share,
               fi.cls == FaceInfo::pure    ? "pure"
               : fi.cls == FaceInfo::empty ? "empty"
-                                          : "mixed");
+                                          : "mixed",
+              fi.guests.size());
       }
       // A sliver takes the class of the neighbour it shares the longest
       // edge with (a gap between two almost collinear faces, a wall end
@@ -797,26 +877,89 @@ auto polygonise_spaces(const std::vector<RoomGrid> &grids,
     auto info_of = [&](Arr::Face_const_handle f) -> const FaceInfo & {
       return faces[face_index.at(&*f)];
     };
+    auto is_guest = [](const FaceInfo &fi, int32_t L) {
+      return std::find(fi.guests.begin(), fi.guests.end(), L) !=
+             fi.guests.end();
+    };
     // Everything a face decides: pure faces and empty ones.
     PolygonSet decided;
-    if (!faces.empty())
+    bool any_guest = false;
+    if (!faces.empty()) {
       decided = region_of_faces(arr, [&](Arr::Face_const_handle f) {
         return info_of(f).cls != FaceInfo::mixed;
       });
+      for (const auto &fi : faces)
+        any_guest = any_guest || !fi.guests.empty();
+    }
+    // The raster of every room (guests keep theirs inside a host's face).
+    // A guest's raster grown by guest_grow_m over unlabelled cells, so it
+    // reaches the walls its host's face is bounded by (the room cells stop
+    // a wall's half-width short of them) instead of leaving the host a
+    // ring around it.
+    std::set<int32_t> all_guests;
+    for (const auto &fi : faces)
+      all_guests.insert(fi.guests.begin(), fi.guests.end());
+    const int grow = static_cast<int>(std::lround(o.guest_grow_m / cell));
+    std::map<int32_t, PolygonSet> raster;
+    for (const int32_t L : labels) {
+      if (!all_guests.count(L) || grow <= 0) {
+        raster.emplace(L, raster_region(g, filled, L));
+        continue;
+      }
+      std::vector<int32_t> grown = filled;
+      for (int r = 0; r < g.height; ++r)
+        for (int c = 0; c < g.width; ++c) {
+          if (filled[g.index(c, r)] != 0)
+            continue;
+          bool near = false;
+          for (int dr = -grow; dr <= grow && !near; ++dr)
+            for (int dc = -grow; dc <= grow && !near; ++dc) {
+              const int cc = c + dc;
+              const int rr = r + dr;
+              near = dc * dc + dr * dr <= grow * grow && cc >= 0 && rr >= 0 &&
+                     cc < g.width && rr < g.height &&
+                     filled[g.index(cc, rr)] == L;
+            }
+          if (near)
+            grown[g.index(c, r)] = L;
+        }
+      raster.emplace(L, raster_region(g, grown, L));
+    }
 
     // --- 3. polygons per room --------------------------------------------
     double total_area = 0.0;
     double arrangement_area = 0.0;
     for (const int32_t L : labels) {
-      PolygonSet region = raster_region(g, filled, L, nullptr);
+      PolygonSet region = raster.at(L);
       const int furniture_holes = furniture[L];
       PolygonSet from_faces;
       if (!faces.empty()) {
-        region.difference(decided);
+        // Its raster outside every decided face but those it is a guest in.
+        bool guest_somewhere = false;
+        for (const auto &fi : faces)
+          guest_somewhere = guest_somewhere || is_guest(fi, L);
+        region.difference(guest_somewhere
+                              ? region_of_faces(arr,
+                                                [&](Arr::Face_const_handle f) {
+                                                  const auto &fi = info_of(f);
+                                                  return fi.cls !=
+                                                             FaceInfo::mixed &&
+                                                         !is_guest(fi, L);
+                                                })
+                              : decided);
+        // Its own faces, less the cells of their guests.
         from_faces = region_of_faces(arr, [&](Arr::Face_const_handle f) {
           const auto &fi = info_of(f);
           return fi.cls == FaceInfo::pure && fi.label == L;
         });
+        if (any_guest) {
+          std::set<int32_t> guests;
+          for (const auto &fi : faces)
+            if (fi.cls == FaceInfo::pure && fi.label == L)
+              guests.insert(fi.guests.begin(), fi.guests.end());
+          for (const int32_t M : guests)
+            from_faces.difference(raster.at(M));
+        }
         region.join(from_faces);
       }
       std::vector<PolygonWithHoles> pieces;

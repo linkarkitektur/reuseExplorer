@@ -16,32 +16,44 @@
 ///     (axis +- thickness / 2; a one-sided wall, thickness -1, has its axis
 ///     on its seen face, so the axis itself), each run join_extension_m past
 ///     both ends so corners and tees close, plus an end cap across each
-///     thick wall's ends. Dangling stubs (an extension that hits nothing) are
+///     thick wall's ends, plus the simplified outline of the storey's
+///     interior (RoomGrid::interior), which closes what the wall graph
+///     leaves open. Dangling stubs (an extension that hits nothing) are
 ///     removed.
-///  2. Labelling: every bounded face counts the room cells of the grid
-///     whose centres it holds. A face is *pure* to room L when L covers at
-///     least pure_min_share of its area and no other room more than
-///     other_max_share; *empty* when rooms cover at most empty_max_share
-///     (a wall body, the courtyard); *mixed* otherwise (the wall graph does
-///     not separate two rooms there, or a room only partly fills it). A
-///     face too small to judge by its cells (below small_face_area, or
-///     thinner than one cell) takes its longest neighbour's class.
-///  3. Polygons: room L = (its pure faces) U (its raster cells outside every
-///     pure or empty face), so where the wall graph closes a room the
-///     polygon is the walls' faces, and where it does not (a missing wall,
-///     no walls table at all) the raster outline of the room fills in. The
-///     largest piece is the space; holes below min_hole_area are filled.
+///  2. Labelling: the furniture pockets each room encloses are filled with
+///     the room; then every bounded face counts the room cells whose
+///     centres it holds. A face is *pure* to room L when L covers at least
+///     pure_min_share of its area -- another room with at least
+///     guest_min_share of its cells in it is its *guest* (a meeting room
+///     the wall graph does not close off); *empty* when rooms cover at most
+///     empty_max_share (a wall body, the courtyard); *mixed* otherwise (the
+///     wall graph does not separate two rooms there). A face too small to
+///     judge by its cells (below small_face_area, or thinner than one cell)
+///     takes its longest neighbour's class, or is empty between two rooms.
+///  3. Polygons: room L = (its pure faces minus their guests' cells) U (its
+///     cells outside every pure or empty face but those it is a guest in),
+///     so where the wall graph closes a room the polygon is the walls'
+///     faces, and where it does not (no walls table at all, two rooms in
+///     one face) the raster outline of the room fills in. A guest's cells
+///     are grown by guest_grow_m to the walls first. The largest piece is
+///     the space; holes below min_hole_area are filled; vertices are
+///     snapped to 1 um.
 ///  4. Metrics: area (outer minus holes), perimeter (outer ring), volume
 ///     (area x storey height), compactness 4 pi A / P^2; kind: corridor when
 ///     the minimum-area bounding rectangle's aspect exceeds
 ///     corridor_min_aspect, open_plan when the room is at least
-///     open_plan_min_area and its raster holds at least open_plan_min_holes
-///     furniture holes, else room.
+///     open_plan_min_area and encloses at least open_plan_min_holes
+///     furniture pockets, else room.
 ///  5. Boundaries: every polygon edge that lies on a wall face (within
 ///     boundary_tolerance_m and boundary_max_angle_deg) is a space boundary
 ///     of that wall, side "a" when the space lies left of the wall's axis
 ///     seen from (x0, y0) to (x1, y1), "b" right; per (space, wall, side)
 ///     the s range is the hull of those edges projected on the axis.
+///
+/// Measured (reusex-z1v.6.2, room IoU / count error against the reference
+/// plans; band rooms after walls -> openings, defaults): raster outline of
+/// the same rooms NewOffice 0.764 / +1, house1 0.716 / 0, house2 0.580 / 0
+/// -> polygonised 0.891 / +1, 0.801 / 0, 0.601 / 0.
 ///
 /// Coordinates are in each storey's level frame, as the grid and the walls.
 /// The room id of the grid is the space's room_label (the "rooms" cloud's
@@ -71,10 +83,20 @@ struct SpacesOptions {
   /// house2): 0.5 m 0.799 / 0.752 / 0.579, 2 m 0.844 / 0.796 / 0.606, 3 m
   /// 0.849 / 0.809 / 0.590, whole lines (100 m) 0.851 / 0.779 / 0.591.
   double join_extension_m = 2.0;
+  /// Also insert the outline of the storey's interior (RoomGrid::interior,
+  /// simplified to interior_simplify_m), so that rooms the wall graph does
+  /// not close are faces bounded by it rather than the unbounded face.
+  bool close_at_interior = true;
+  double interior_simplify_m = 0.1;
   /// A face is pure to a room covering this share of its area...
   double pure_min_share = 0.5;
-  /// ...when no other room covers more than this share of it.
-  double other_max_share = 0.25;
+  /// Another room with at least this share of its cells in a pure face is
+  /// its guest (a meeting room the wall graph does not close off): it keeps
+  /// its raster cells there, and the face's room gets the rest.
+  double guest_min_share = 0.5;
+  /// A guest's cells are grown by this over unlabelled cells [m], so it
+  /// reaches the walls of its host's face.
+  double guest_grow_m = 0.15;
   /// A face that rooms cover at most this share of is empty (no space).
   double empty_max_share = 0.1;
   /// A face smaller than this [m^2] (a wall end poking past a corner) or
