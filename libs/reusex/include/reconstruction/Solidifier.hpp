@@ -141,8 +141,15 @@ struct SolidifierOptions {
   /// Weight on the wall/complexity term of the objective (was hardcoded).
   double alpha = 0.04;
 
-  /// Relative MIP gap tolerance. Negative => use the solver default.
-  double mip_gap = -1.0;
+  /// Relative MIP gap tolerance, the same for cuOpt and HiGHS. Negative =>
+  /// the solver's own default (cuOpt 1e-2, HiGHS 1e-4). A small room is
+  /// worth a few tenths of an objective in the hundreds, so a loose gap lets
+  /// the solver stop at a labelling without it: house2's stair hall (about
+  /// 0.03 net in a section objective of -372) was dropped at cuOpt's 1e-2
+  /// and at 1e-4 alike, and which labelling came back changed from run to
+  /// run (reusex-uur). At 1e-6 both backends reach the same optimum on
+  /// house1, house2 and NewOffice in the same solve time.
+  double mip_gap = 1e-6;
 
   /// Solve the MIP per horizontal section (storey) instead of monolithically,
   /// when the arrangement has more than one section and enough cells
