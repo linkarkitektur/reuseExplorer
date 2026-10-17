@@ -73,6 +73,11 @@ struct MeshOptions {
   /// (wall_z_ranges()), so one storey's walls no longer cut every other
   /// storey. Off: every wall spans every section (the behaviour before sba).
   bool storey_local = true;
+  /// Two floors or ceilings merge only when their patches' heights differ
+  /// by less than this [m] (merge_planes' horizontal_distance_threshold,
+  /// reusex-2kd): a split level's ceilings, or a flat ceiling beside a
+  /// lower sloped one, stay apart. Walls keep the 0.5 m merge distance.
+  double horizontal_merge_m = 0.3;
   /// A wall reaches a section when its z-range overlaps it by this much [m]
   /// (by half the section for a thinner one, i.e. a slab).
   double section_overlap_m = CellComplex::default_min_section_overlap_m;

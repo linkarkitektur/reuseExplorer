@@ -244,8 +244,8 @@ pcl::PolygonMeshPtr mesh(CloudConstPtr cloud, CloudNConstPtr normals,
 
   planes = regularizePlanes<double, PointT>(planes, cloud, inliers, 10.0);
 
-  std::tie(planes, inliers, centroids) =
-      merge_planes(planes, inliers, centroids, cloud);
+  std::tie(planes, inliers, centroids) = merge_planes(
+      planes, inliers, centroids, cloud, 0.1, 0.5, opt.horizontal_merge_m);
   reusex::debug("Number of planes after merging: {}", planes.size());
 
   planes = force_orthogonal_planes(planes, centroids);

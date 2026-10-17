@@ -292,7 +292,8 @@ auto merge_planes(EigenVectorContainer<double, 4> const &planes_,
                   std::vector<IndicesPtr> const &inliers_,
                   EigenVectorContainer<double, 3> const &centroids_,
                   CloudConstPtr cloud, const double angle_threshold,
-                  const double distance_threshold)
+                  const double distance_threshold,
+                  const double horizontal_distance_threshold)
     -> std::tuple<EigenVectorContainer<double, 4>, std::vector<IndicesPtr>,
                   EigenVectorContainer<double, 3>> {
   reusex::trace("Merge planes (agglomerative) with angle threshold {} and "
@@ -321,6 +322,15 @@ auto merge_planes(EigenVectorContainer<double, 4> const &planes_,
   // between them is below this. Split-wall halves scanned from two viewpoints
   // sit within a plane thickness of each other.
   const double adjacency_gap_m = coplanar_tol_m;
+  // Two floors or ceilings merge only within this height difference: a split
+  // level's two floors, or a ceiling beside a lower sloped one, stand apart
+  // by a few decimetres and must stay two planes (reusex-2kd).
+  const double horizontal_tol_m =
+      horizontal_distance_threshold > 0.0
+          ? std::max(horizontal_distance_threshold, reusex::kToleranceCoplanarM)
+          : std::numeric_limits<double>::infinity();
+  // |n_z| above this: a floor or ceiling, as in force_orthogonal_planes.
+  constexpr double kHorizontalNz = 0.9;
   // A pair may merge only when its (dimensionless) plane distance is below
   // this.
   constexpr double kMergeDistanceThreshold = 1.0;
@@ -379,6 +389,14 @@ auto merge_planes(EigenVectorContainer<double, 4> const &planes_,
     }
     dist = plane_distance(a.plane, a.centroid, b.plane, b.centroid,
                           angle_tol_rad, coplanar_tol_m);
+    // Two floors or ceilings: their patches' heights must agree too. The
+    // plane distance alone is measured at the midpoint of the centroids, where
+    // a sloped ceiling (or the refit of one) passes close to a flat one it
+    // runs up to, metres away from either patch (house1, reusex-2kd).
+    if (std::abs(a.plane[2]) > kHorizontalNz &&
+        std::abs(b.plane[2]) > kHorizontalNz &&
+        std::abs(a.centroid.z() - b.centroid.z()) >= horizontal_tol_m)
+      return false;
     if (dist >= kMergeDistanceThreshold)
       return false;
     return bbox_gap(a.bbox, b.bbox) <= adjacency_gap_m;
