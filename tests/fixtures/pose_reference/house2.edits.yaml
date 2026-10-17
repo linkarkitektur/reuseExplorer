@@ -1,0 +1,308 @@
+# SPDX-FileCopyrightText: 2026 Povl Filip Sonne-Frederiksen
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# house2 pose reference: the edits -- DRAFT, maintainer review pending (reusex-rcv.1.8).
+#
+# The provenance half of the house2 pose reference (docs/guides/pose-reference-authoring.md);
+# house2.trajectory.tum next to it is the frozen result. Written with the drift-correction
+# loop (rux optimize --edits --watch, rux analyze drift) plus hand fits checked against plan
+# cuts, sections and the colour images. Not ground truth: an agent's best reading of the scan.
+#
+# Source scan: scan archive house-2_c582d1f758/reusex/project.rux (384 frames, two storeys),
+# the copy the solid-model plan house2.plan.yaml was drawn on (clouds/planes regenerated,
+# `rux create storeys`; sha256 118645e0bbe2...e461 at schema v32). Nothing derived from the
+# scan except these two files is committed; point $REUSEX_HOUSE2_RUX at such a copy.
+#
+# Starting poses (reusex-m53): sensor_frames.transform as the RTABMap import wrote it
+# (c582d1f758-reimported.db, pipeline_log 2026-06-01); the log has no optimize, register or
+# pose-edit entry. initial_transform is NULL on all 384 frames, so every solve seeds from
+# transform. Moves are deltas on these poses.
+#
+# Replay (on a COPY; deterministic, reproduces house2.trajectory.tum to the last digit):
+#   rux -p copy.rux optimize --edits house2.edits.yaml \
+#       --odometry-robust --prior-sigma-trans 1 --prior-sigma-rot 1
+#   rux -p copy.rux export trajectory -o house2.trajectory.tum
+# The three solver flags are part of the reference:
+#  - --odometry-robust: the tail (384-389) was captured walking fast down the stair and the
+#    hall (motion blur), and its odometry links are wrong by 10-13 deg. With odometry as
+#    known inliers a move there either drags the whole graph (up to 1.7 m) or is fought off
+#    (41-62% realised); robust odometry lets GNC drop the broken links. Plain optimize
+#    with all three flags is unchanged (cross-segment 28.4 mm, pass-to-pass 13.8 mm).
+#  - --prior-sigma-trans 1 --prior-sigma-rot 1: move m-1-33 holds node 1, the gauge; the
+#    default 1 mm / 0.06 deg gauge prior would fight it. The guards fix the gauge instead.
+# The g-* anchors are guards: one all-DoF anchor at its plain-optimize pose on 3 nodes of
+# every segment no move names, so each move is measured against the rest as plain optimize
+# has it and cannot drag the trajectory (without them the first tail move rotated the whole
+# graph about the gauge).
+#
+# Frame: world. Coordinates quoted in the notes are in storey 0's level frame (the frame of
+# the plan cuts and of house2.plan.yaml): level = world + (-5.92, -4.63, +1.59) m, rotated
+# less than 0.2 deg.
+#
+# Result (rux analyze drift, defaults, --plan house2.plan.yaml; 12 segments for the pairs):
+#                                 stored poses     plain optimize   this reference
+#   noise floor                   7.2 mm           7.3 mm           7.2 mm
+#   pass-to-pass median (p90)     15.9 (56.1) mm   13.8 (43.8) mm   11.0 (36.2) mm = 1.5x floor
+#   frames above the flag         63 of 248        26 of 250        14 of 258
+#   segment-pair median           53.1 mm          28.4 mm          23.7 mm
+#   worst segment pair            130.3 mm         105.2 mm         116.0 mm (*)
+#   through-wall crossings        8 of 13          7 of 12          6 of 11, all at doorways (**)
+#   doubled-wall patches, s0      197/724 (0.27)   193/737 (0.26)   190/703 (0.27)
+#   doubled-wall patches, s1      87/394 (0.22)    89/401 (0.22)    89/400 (0.22)
+# (*) seg 0 into seg 2: the two faces of the 0.18 m bathroom wall i0-bath-w, seen from the
+#     south-west room by seg 0 and from the bathroom by seg 2, fall inside the 0.3 m pair
+#     gate; in plain optimize they were 0.5 m apart, outside it. Next: seg 1 into seg 3
+#     81.9 mm, seg 11 into seg 8 72.6 mm (corridor / landing on storey 1).
+# (**) 196->197 i0-n-s (images 195-197 pass a door frame into the passage); 294->295 and
+#     317->318 i1-long-w at s 1.26 / 1.23 m (images 293 and 319: doorways into bedroom W;
+#     the plan's o1-corr-w-1 sits at s 0.1-0.7, conf 0.6); 320->321 i1-e-s at s 0.36 m
+#     (image 319: the door into bedroom E at the corridor corner); 335->336 i1-e-ne at
+#     s 0.54 m (image 334: the door into bedroom NE); 384->385 i0-stair-s at s 1.89 m, the
+#     stair-hall opening into living room S (images 383-385; plain optimize and the stored
+#     poses cross it too). Gone: 4->5 x0-w (seg 0's tilt), 388->389 i0-hall-n (the tail).
+#
+# Unresolved (DRAFT):
+#  - the storeys' headings: in plan-axis terms (house2.plan.yaml, drawn on the stored poses;
+#    plain optimize and this reference turn storey 1 by only 1.1-1.6 deg against them, and
+#    storey 0 by -1.6 .. +1.6 deg per segment) storey 1 sits ~4 deg off storey 0 over the
+#    gable room and ~8 deg off it in the north; within storey 1 the gable room and the
+#    bedrooms differ by ~6.5 deg, within storey 0 the south and the north halves by ~3.5 deg.
+#    Only the stair links the storeys and the north rooms were scanned in single passes, so no
+#    pass-to-pass number sees this and no edit here touches it: it needs a stacked-facade or
+#    plan constraint (follow-up bead).
+#  - seg 7 (230-261) in living room S is ~6 deg off segs 2-4; a hand move (238-243) made
+#    pass-to-pass and both doubled shares worse and was dropped, as were the seg 1 and seg 11
+#    suggestions (pass-to-pass worse). Seg 8's was a wash (storey-1 doubled share 0.22 ->
+#    0.19 in one solve, gone with denser guards).
+#  - the doubled-wall share is not reduced: most two-layered patches are the stair treads
+#    and furniture, common to every solve (see the guide's worked example).
+schema: reusex.pose_edits.v1
+project_guid: "aea63482-121e-41e0-95db-555f427bfc48"
+frame: world
+edits:
+  - id: m-384-385
+    kind: move
+    nodes: [384, 385]
+    delta: {matrix: [0.977977, -0.208580, 0.007438, 0.666792, 0.208668, 0.977884, -0.014174, -1.360397, -0.004317, 0.015413, 0.999872, 0.334931, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.005, rot_deg: 0.1}
+    note: >-
+      living room S. Images: 384 looks south from the stair-hall doorway at the open
+      conservatory door, 385 at the room's north-west corner with the door to the tiled hall.
+      Plain optimize drew both ~10 deg rotated, 0.9 m west and 9 cm low: the diagonal ghost
+      wall at (-1.3, -5.5) in the storey-0 cut. Hand fit against passes 1-245: 2D ICP from a
+      yaw x shift grid (yaw +9.6 deg; within 3 cm 0.16 -> 0.99), then 6-DoF point-to-plane
+      (median 19.6 -> 9.8 mm), refitted once on the edited full solve. Cameras then run 383
+      (1.6, -3.7) -> 384 (1.9, -4.2) -> 385 (1.6, -4.7), down the stair into the room. Sigma 5
+      mm / 0.1 deg: at 2 cm / 0.5 deg the full solve's plane factors pulled 384 back onto the
+      ghost (realised 62%).
+  - id: m-386-389
+    kind: move
+    nodes: [386, 389]
+    delta: {matrix: [0.975905, -0.218180, -0.002680, 0.667514, 0.218170, 0.975904, -0.003556, -1.414890, 0.003391, 0.002885, 0.999990, 0.252377, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.02, rot_deg: 0.5}
+    note: >-
+      tiled hall. Images 386-389 look down the hall to the back door at the utility end. Plain
+      optimize put these cameras at y -3.6, north of hall wall i0-hall-n (the stored 388 -> 389
+      through-wall crossing), and drew the hall walls 1 m north, rotated 12 deg, 15 cm low and
+      tilted. Hand fit against passes 1-245: 2D ICP from a hall-centred start (yaw +12 deg;
+      within 3 cm 0.27 -> 0.89), then 6-DoF point-to-plane (median 28 -> 13.6 mm), refitted
+      once on the edited full solve. Section along the hall (y -4.3): floor, ceiling and the
+      back-door wall then coincide with passes 1-69; cameras at y -4.3 .. -4.8, inside the
+      hall.
+  - id: m-1-33
+    kind: move
+    nodes: [1, 33]
+    delta: {matrix: [0.999597, 0.027198, -0.008155, 0.091399, -0.027199, 0.999630, -0.000112, 0.080901, 0.008149, 0.000334, 0.999967, -0.041141, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.005, rot_deg: 0.1}
+    note: >-
+      seg 0 (1-33: utility room + hall, the first pass; images 2-5 look down the hall and at
+      the coat hook and cupboard on the utility west wall). analyze drift segment ICP against
+      all other passes: 35.9 -> 13.5 mm, 1.6 deg / 0.13 m. Section x = -5.0: plain optimize had
+      seg 0's floor 4-5 cm above seg 1's and tilted, the back-door frames' ceiling 15 cm apart
+      and the end of hall wall i0-hall-n doubled; after the move floor, ceiling and the north
+      wall coincide, and bathroom wall i0-bath-w reads as one ~0.2 m wall from both sides
+      (plan: 0.18 m). This segment holds the gauge (node 1): replay with --prior-sigma-trans 1
+      --prior-sigma-rot 1 (header).
+  - id: m-102-133
+    kind: move
+    nodes: [102, 133]
+    delta: {matrix: [0.999392, -0.027621, 0.021273, -0.109869, 0.027863, 0.999549, -0.011160, -0.155544, -0.020955, 0.011746, 0.999711, 0.190870, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.005, rot_deg: 0.1}
+    note: >-
+      seg 3 (102-133: living room S -> conservatory loop -> back; images 110-135 glazed walls
+      and a deck floor). analyze drift segment ICP against all other passes: 21.3 -> 13.3 mm,
+      2.1 deg. Plan cut: the stair-s wall and the living-room west wall as seg 3 saw them were
+      sloped ~2 deg against seg 2; after the move they overlay. Worst pair seg 7 into seg 3
+      94.6 -> 34.6 mm.
+  - id: m-134-165
+    kind: move
+    nodes: [134, 165]
+    delta: {matrix: [0.999931, -0.011748, -0.000670, -0.079361, 0.011745, 0.999922, -0.004313, -0.100247, 0.000721, 0.004305, 0.999990, 0.066405, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.005, rot_deg: 0.1}
+    note: >-
+      seg 4 (134-165: conservatory -> living room S -> stair hall -> room NE). analyze drift
+      segment ICP against all other passes: 19.8 -> 16.5 mm, 0.5 deg / 0.08 m. Pairs seg 7 <->
+      seg 4 54 / 50 -> 39 / 37 mm, seg 4 into seg 3 20 -> 12 mm; pass-to-pass 11.0 -> 10.8 mm
+      (fast cycle).
+  - id: g-42
+    kind: anchor
+    node: 42
+    pose: {matrix: [0.873471, 0.308198, -0.376912, 3.063702, -0.413024, 0.059143, -0.908798, 0.334885, -0.257798, 0.949482, 0.178953, 0.141489, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 42 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-54
+    kind: anchor
+    node: 54
+    pose: {matrix: [-0.618288, -0.784171, -0.052872, 2.803779, -0.027606, -0.045562, 0.998580, 0.452959, -0.785466, 0.618870, 0.006522, -0.112386, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 54 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-64
+    kind: anchor
+    node: 64
+    pose: {matrix: [0.605849, 0.022736, -0.795255, 4.025374, -0.795313, -0.008575, -0.606138, -0.201906, -0.020601, 0.999705, 0.012887, 0.209573, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 64 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-75
+    kind: anchor
+    node: 75
+    pose: {matrix: [-0.574905, 0.035604, -0.817445, 3.836560, -0.814236, 0.073585, 0.575852, -1.600699, 0.080654, 0.996653, -0.013314, 0.259476, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 75 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-86
+    kind: anchor
+    node: 86
+    pose: {matrix: [0.300705, 0.320502, 0.898251, 4.513462, 0.685972, 0.581651, -0.437178, -0.188509, -0.662585, 0.747637, -0.044950, -0.069529, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 86 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-96
+    kind: anchor
+    node: 96
+    pose: {matrix: [0.408588, 0.155365, -0.899398, 5.759561, -0.809781, -0.392910, -0.435748, -0.179921, -0.421082, 0.906358, -0.034727, 0.273811, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 96 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-171
+    kind: anchor
+    node: 171
+    pose: {matrix: [0.361169, 0.932089, -0.027709, 9.472617, -0.206928, 0.051136, -0.977019, 4.551351, -0.909251, 0.358603, 0.211344, -0.135137, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 171 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-182
+    kind: anchor
+    node: 182
+    pose: {matrix: [-0.802084, -0.022197, 0.596799, 7.894011, 0.595765, 0.039762, 0.802174, 6.724572, -0.041536, 0.998963, -0.018668, 0.227627, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 182 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-192
+    kind: anchor
+    node: 192
+    pose: {matrix: [-0.546312, 0.001039, -0.837581, 4.145178, -0.837544, -0.010180, 0.546275, 9.428975, -0.007959, 0.999948, 0.006432, 0.143499, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 192 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-203
+    kind: anchor
+    node: 203
+    pose: {matrix: [0.994081, -0.098387, -0.046069, 4.284753, -0.043341, 0.029685, -0.998619, 5.344614, 0.099619, 0.994705, 0.025245, 0.171686, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 203 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-214
+    kind: anchor
+    node: 214
+    pose: {matrix: [-0.426545, 0.307636, -0.850541, 4.989763, -0.679656, 0.511438, 0.525831, 3.193767, 0.596764, 0.802366, -0.009065, 0.094268, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 214 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-224
+    kind: anchor
+    node: 224
+    pose: {matrix: [-0.624112, -0.693014, -0.360856, 3.313355, -0.216760, -0.290146, 0.932111, 4.035463, -0.750666, 0.659960, 0.030865, -0.071920, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 224 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-235
+    kind: anchor
+    node: 235
+    pose: {matrix: [-0.873899, 0.001358, -0.486106, 4.756236, -0.485913, -0.030816, 0.873464, 0.450110, -0.013794, 0.999524, 0.027590, 0.113038, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 235 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-246
+    kind: anchor
+    node: 246
+    pose: {matrix: [-0.855319, 0.472700, 0.212093, 7.332063, 0.169411, -0.131695, 0.976707, 1.028077, 0.489621, 0.871327, 0.032560, 0.412341, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 246 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-256
+    kind: anchor
+    node: 256
+    pose: {matrix: [-0.199614, -0.130292, 0.971174, 5.483505, 0.974907, 0.073267, 0.210211, 1.587203, -0.098543, 0.988765, 0.112397, 2.770733, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 256 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-267
+    kind: anchor
+    node: 267
+    pose: {matrix: [0.559279, 0.235666, -0.794776, 3.030456, -0.676536, -0.424300, -0.601887, -1.235364, -0.479067, 0.874318, -0.077866, 3.123901, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 267 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-278
+    kind: anchor
+    node: 278
+    pose: {matrix: [-0.954282, -0.223286, 0.198718, 4.038207, 0.201464, 0.010652, 0.979438, -0.231944, -0.220811, 0.974695, 0.034819, 3.225664, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 278 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-288
+    kind: anchor
+    node: 288
+    pose: {matrix: [-0.044422, 0.095233, -0.994463, 7.319081, -0.971823, -0.234779, 0.020927, 2.450907, -0.231486, 0.967372, 0.102979, 2.966789, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 288 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-299
+    kind: anchor
+    node: 299
+    pose: {matrix: [0.185941, -0.042981, 0.981620, 3.307782, 0.980036, 0.079686, -0.182151, 3.624130, -0.070392, 0.995893, 0.056940, 2.926873, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 299 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-310
+    kind: anchor
+    node: 310
+    pose: {matrix: [-0.068461, 0.025033, -0.997340, 4.115058, -0.994015, -0.087018, 0.066049, 8.230986, -0.085133, 0.995892, 0.030840, 2.898861, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 310 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-320
+    kind: anchor
+    node: 320
+    pose: {matrix: [0.446125, -0.016034, 0.894827, 5.569301, 0.892861, 0.076582, -0.443773, 3.676660, -0.061412, 0.996934, 0.048481, 2.958621, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 320 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-331
+    kind: anchor
+    node: 331
+    pose: {matrix: [-0.128175, -0.046793, 0.990647, 6.996980, 0.988890, 0.069802, 0.131244, 5.150556, -0.075290, 0.996463, 0.037326, 3.018999, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 331 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-342
+    kind: anchor
+    node: 342
+    pose: {matrix: [0.737311, 0.352099, 0.576540, 7.778256, 0.534538, 0.217787, -0.816602, 9.168587, -0.413088, 0.910272, -0.027634, 2.927941, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 342 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-352
+    kind: anchor
+    node: 352
+    pose: {matrix: [0.086588, -0.076448, 0.993307, 5.895796, 0.922049, -0.371421, -0.108962, 9.717264, 0.377265, 0.925312, 0.038328, 3.133232, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 352 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-362
+    kind: anchor
+    node: 362
+    pose: {matrix: [-0.255793, -0.022068, -0.966480, 5.638871, -0.966700, 0.013914, 0.255533, 9.825794, 0.007809, 0.999660, -0.024892, 2.890245, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 362 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-371
+    kind: anchor
+    node: 371
+    pose: {matrix: [0.003055, 0.301019, -0.953613, 4.399790, -0.795848, -0.576676, -0.184584, 3.717305, -0.605489, 0.759495, 0.237803, 2.811458, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 371 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"
+  - id: g-379
+    kind: anchor
+    node: 379
+    pose: {matrix: [0.592526, 0.805198, 0.023837, 6.490671, 0.013477, 0.019678, -0.999716, 1.433062, -0.805438, 0.592679, 0.000808, 1.298410, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "shear guard: node 379 held at its plain-optimize pose (ref: the no-edit full solve), all DoF"

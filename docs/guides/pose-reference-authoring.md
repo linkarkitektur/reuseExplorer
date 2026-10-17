@@ -155,6 +155,106 @@ frame cache (12 MB here, reported on the `frame cache` line); each cycle
 only re-transforms it (reusex-rcv.1.17). NewOffice (3876 frames) runs a
 `--fast` cycle in 12.4 s.
 
+### The house2 reference, start to DRAFT (2026-10-17, `reusex-rcv.1.8`)
+
+The worked example above stopped at "the doubled wall is the next thing to
+look at". This one carries house2 through to the committed DRAFT,
+`tests/fixtures/pose_reference/house2.{edits.yaml,trajectory.tum}`. The
+edits file's header has the full provenance, the replay command and the
+per-crossing notes; this section is how it was found.
+
+**0. Record what you start from.** On the plan's copy of house2 (sha256
+`118645e0...`, schema v32) all 384 `initial_transform`s are NULL and the
+pipeline log has no optimize/register entry: the solve seeds from
+`sensor_frames.transform` as the RTABMap import wrote it (`reusex-m53`).
+Plain `rux optimize` on a second copy gives the reference trajectory, and
+`rux analyze drift --plan house2.plan.yaml` on both gives the baseline:
+pass-to-pass 15.9 mm stored, 13.8 mm plain optimize (floor 7.2 mm),
+segment-pair median 53.1 / 28.4 mm, crossings 8/13 / 7/12.
+
+**1. Suggestions alone made it worse.** The top suggestions (seg 11 split
+at the stair, then seg 3) both ended `WORSE than no edits`: a move of one
+segment carries the rest of the trajectory with it in `--fast`, which has
+no plane factors to hold it, and the segment ICP had measured the move
+against the others *as they were*. The fix that made every later step
+legible: guards on every segment no move names (all-DoF anchors at the
+plain-optimize pose, three per segment, sigma 1 cm / 0.2 deg). With them a
+move is measured and solved against plain optimize's trajectory, and
+`shear` stays at 0.
+
+**2. Look, do not trust a colour.** The reference's storey-0 passes cut
+showed rotated yellow walls through the hall and the bathroom. With 12
+segments and 8 pass colours, seg 3 and seg 11 are both yellow; a cut that
+colours single nodes (here a matplotlib back-projection of the frame depth
+in the level frame) showed it was 384-389 alone, the last six frames. Their
+colour images (rotate the iPad frames 90 deg to read them) show the walk
+down the stair into living room S and down the tiled hall to the back
+door, with motion blur. Plain optimize had put cameras 388-389 north of the
+hall wall (the stored `388 -> 389` through-wall crossing).
+
+**3. Fit from a start the images allow.** A 2D wall-band ICP of 386-389
+against passes 1-245 from yaw grid starts alone found a wrong minimum (yaw
++12 deg, the hall walls landed on the kitchen walls one room north, cameras
+inside a wall). Starting from a shift that puts the cameras in the hall
+(the images say they are) gave within-3-cm 0.27 -> 0.89. A section along
+the hall then showed the tail 15 cm low and tilted: a 6-DoF point-to-plane
+refinement brought floor, ceiling and the back-door wall onto passes 1-69.
+384-385 the same way (within-3-cm 0.16 -> 0.99). Each fit became a `move`
+on the stored poses, with the images, the cut and the numbers in its note.
+
+**4. Two solver flags the reference needs.** The tail's odometry links are
+wrong by 10-13 deg. With odometry as known inliers the tail moves either
+dragged the whole graph (up to 1.7 m) or were fought off (41-62%
+realised); `--odometry-robust` lets GNC drop the broken links and leaves
+plain optimize unchanged (28.4 / 13.8 mm). The best remaining suggestion
+was seg 0 (35.9 -> 13.5 mm), which holds the gauge: `--prior-sigma-trans 1
+--prior-sigma-rot 1` frees node 1 and the guards fix the gauge instead. Its
+section showed why it was worth it: seg 0's floor 4-5 cm above seg 1's and
+tilted, the end of the hall's north wall doubled.
+
+**5. Check the full solve, then refit once.** Without `--fast`, the plane
+factors pulled 384 back onto the ghost (`NOT HONOURED`, realised 62%):
+its move needed sigma 5 mm / 0.1 deg. After that, refitting the two tail
+moves on the edited full solve (they had been fitted on the fast one) took
+the segment-pair median from 24.5 to 23.7 mm.
+
+**6. Show the plateau.** Kept: the two tail moves, seg 0, seg 3 and seg 4
+(each `better` and visibly closing walls). Dropped, each tried in its own
+cycle: seg 1 (twice, with sigma 5 mm and 2 cm: pass-to-pass 11.0 -> 11.5 /
+11.7 mm), seg 11 without the tail (11.2 mm, storey-1 doubled share 0.22 ->
+0.24), a hand move of seg 7's living-room frames (pass-to-pass and both doubled
+shares worse, segment-pair median unchanged), seg 8
+(a wash). The remaining suggestions predicted <= 5 mm on one segment.
+A suggestion whose `move` refits onto the stored poses with a large
+residual (45 mm for seg 1 and seg 11) cannot be expressed as one: the stored
+shape of that block differs from plain optimize's, and the move pulls it
+back.
+
+| | stored | plain optimize | DRAFT reference |
+|---|---|---|---|
+| pass-to-pass median (p90) | 15.9 (56.1) mm | 13.8 (43.8) mm | **11.0 (36.2) mm**, 1.5x the floor |
+| frames above the flag | 63 of 248 | 26 of 250 | 14 of 258 |
+| segment-pair median | 53.1 mm | 28.4 mm | 23.7 mm |
+| worst segment pair | 130.3 mm | 105.2 mm | 116.0 mm |
+| through-wall crossings | 8 of 13 | 7 of 12 | 6 of 11, all at doorways |
+| storey-0 doubled-wall patches | 197/724 (0.27) | 193/737 (0.26) | 190/703 (0.27) |
+
+What the numbers miss, read from the renders:
+
+- The worst pair (seg 0 into seg 2) is the two faces of the 0.18 m bathroom
+  wall, seen from either side, falling inside the 0.3 m pair gate once
+  seg 0 is corrected; in plain optimize they were 0.5 m apart, outside it.
+  A worst-pair bound of 2x the floor (`reusex-rcv.1.8`) cannot be met on a
+  scan with thin walls seen from both sides.
+- The doubled-wall share barely moves: mapping the bimodal patches of both
+  solves shows most are common to every solve (the stair treads, kitchen
+  units, furniture against walls); the ones the tail fix removed are offset
+  by a few new ones. Draw doubling, do not score it (§3.4 of the research
+  note says the same).
+- No pass-to-pass number sees the storeys' headings: storey 1 sits ~4 deg
+  off storey 0 over the gable room and ~8 deg in the north, and only the
+  stair links them. The DRAFT leaves this, and says so.
+
 ## Pose references: scoring a trajectory against a frozen ground truth
 
 This half covers the artefact the loop above produces once a cycle's result
@@ -257,11 +357,15 @@ once one exists for a scan.
 ### Marking a draft
 
 A pose reference no maintainer has reviewed is a DRAFT, the same convention
-as a solid-model reference plan: say so in the edits file's top-level
-`note`/`description` field ("DRAFT - needs maintainer review") and keep the
-renders the trajectory was checked against (the drift-correction loop's QA
-output, `reusex-rcv.1.4`/`.5`) next to the review request, so the reviewer
-sees what the author saw. The reviewer removes the mark when the reference is
+as a solid-model reference plan: say so in a comment header at the top of
+both files (the reader accepts no top-level `note` key; `#` lines are
+comments in YAML and in TUM), with the source scan, the poses the solve
+starts from, the replay command with every solver flag the reference needs,
+the before/after numbers and the unresolved areas
+(`tests/fixtures/pose_reference/house2.edits.yaml` is the example), and
+keep the renders the trajectory was checked against (the drift-correction
+loop's QA output, `reusex-rcv.1.4`/`.5`) next to the review request, so the
+reviewer sees what the author saw. The reviewer removes the mark when the reference is
 accepted. Until then, a benchmark regression against a DRAFT reference is a
 signal to look at, not a release blocker.
 
