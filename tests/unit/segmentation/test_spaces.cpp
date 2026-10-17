@@ -188,12 +188,12 @@ TEST_CASE("Spaces_WithoutWalls_AreTheRasterOutline", "[segmentation][spaces]") {
   const auto r = polygonise_spaces({G.g}, {storey0()}, {});
   REQUIRE(r.spaces.size() == 1);
   const auto &s = r.spaces[0];
-  // The labelled cells: 5.9 x 2.9 + 2.9 x 3.0 minus the two pockets, which
-  // are holes of the raster (above min_hole_area).
+  // The room's cells: 5.9 x 2.9 + 2.9 x 3.0, its furniture pockets
+  // filled (they belong to the room, not holes in it).
   const double cells = 5.9 * 2.9 + 2.9 * 3.0;
   CHECK(std::abs(ring_area(s.polygon.outer)) == Approx(cells).epsilon(1e-6));
-  CHECK(s.polygon.holes.size() == 2);
-  CHECK(s.area == Approx(cells - 0.6 * 0.5 - 0.4 * 1.0).epsilon(1e-6));
+  CHECK(s.polygon.holes.empty());
+  CHECK(s.area == Approx(cells).epsilon(1e-6));
   CHECK(s.polygon.outer.size() == 6);
   CHECK(r.boundaries.empty());
   CHECK(r.stats[0].arrangement_share == Approx(0.0));

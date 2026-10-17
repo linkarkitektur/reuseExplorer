@@ -66,8 +66,11 @@ struct SpacesOptions {
   /// BandRoomsOptions::wall_graph_min_seen_share; -1 = not measured, kept).
   double wall_min_seen_share = 0.3;
   /// Wall faces run this far past the wall's ends [m], so a corner or a tee
-  /// with a small detection gap still closes.
-  double join_extension_m = 0.5;
+  /// with a detection gap still closes. Longer only splits rooms into more
+  /// faces, which merge again; measured (room IoU, NewOffice / house1 /
+  /// house2): 0.5 m 0.799 / 0.752 / 0.579, 2 m 0.844 / 0.796 / 0.606, 3 m
+  /// 0.849 / 0.809 / 0.590, whole lines (100 m) 0.851 / 0.779 / 0.591.
+  double join_extension_m = 2.0;
   /// A face is pure to a room covering this share of its area...
   double pure_min_share = 0.5;
   /// ...when no other room covers more than this share of it.

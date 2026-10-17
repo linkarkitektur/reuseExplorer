@@ -189,8 +189,8 @@ double area_of(const PolygonSet &s) {
 
 /// The raster region of room @p label: the cells' outline (cell corners on
 /// the level-frame lattice), holes included.
-PolygonSet raster_region(const RoomGrid &g, int32_t label,
-                         std::vector<double> *loop_areas) {
+PolygonSet raster_region(const RoomGrid &g, const std::vector<int32_t> &labels,
+                         int32_t label, std::vector<double> *loop_areas) {
   std::vector<std::pair<Point, Point>> edges;
   const double cell = g.cell_size;
   auto corner = [&](int c, int r) {
@@ -198,7 +198,7 @@ PolygonSet raster_region(const RoomGrid &g, int32_t label,
   };
   auto is = [&](int c, int r) {
     return c >= 0 && r >= 0 && c < g.width && r < g.height &&
-           g.labels[g.index(c, r)] == label;
+           labels[g.index(c, r)] == label;
   };
   for (int r = 0; r < g.height; ++r)
     for (int c = 0; c < g.width; ++c) {
@@ -214,6 +214,77 @@ PolygonSet raster_region(const RoomGrid &g, int32_t label,
         edges.emplace_back(corner(c, r + 1), corner(c, r));
     }
   return region_from_edges(edges, loop_areas);
+}
+
+/// The room labels with every pocket a room encloses filled with the room
+/// (unlabelled cells only: furniture, a column, band-wall clutter -- not a
+/// room inside a room). @p holes receives, per room, the pockets of at
+/// least @p min_hole_area [m^2].
+std::vector<int32_t> fill_room_pockets(const RoomGrid &g,
+                                       const std::set<int32_t> &rooms,
+                                       double min_hole_area,
+                                       std::map<int32_t, int> &holes) {
+  std::vector<int32_t> filled = g.labels;
+  const int w = g.width;
+  const int h = g.height;
+  const size_t n = filled.size();
+  const double cell_area = g.cell_size * g.cell_size;
+  std::vector<uint8_t> seen(n);
+  std::vector<int> queue;
+  queue.reserve(n);
+  for (const int32_t L : rooms) {
+    // Flood from the border through every cell that is not L.
+    std::fill(seen.begin(), seen.end(), uint8_t{0});
+    queue.clear();
+    auto push = [&](int c, int r) {
+      const size_t i = g.index(c, r);
+      if (!seen[i] && g.labels[i] != L) {
+        seen[i] = 1;
+        queue.push_back(static_cast<int>(i));
+      }
+    };
+    for (int c = 0; c < w; ++c) {
+      push(c, 0);
+      push(c, h - 1);
+    }
+    for (int r = 0; r < h; ++r) {
+      push(0, r);
+      push(w - 1, r);
+    }
+    auto flood = [&](size_t from) {
+      for (size_t k = from; k < queue.size(); ++k) {
+        const int i = queue[k];
+        const int c = i % w;
+        const int r = i / w;
+        if (c > 0)
+          push(c - 1, r);
+        if (c + 1 < w)
+          push(c + 1, r);
+        if (r > 0)
+          push(c, r - 1);
+        if (r + 1 < h)
+          push(c, r + 1);
+      }
+    };
+    flood(0);
+    // What the flood did not reach and is not L is a pocket of L.
+    int count = 0;
+    for (size_t i = 0; i < n; ++i) {
+      if (seen[i] || g.labels[i] == L)
+        continue;
+      const size_t from = queue.size();
+      seen[i] = 1;
+      queue.push_back(static_cast<int>(i));
+      flood(from);
+      if (static_cast<double>(queue.size() - from) * cell_area >= min_hole_area)
+        ++count;
+      for (size_t k = from; k < queue.size(); ++k)
+        if (g.labels[static_cast<size_t>(queue[k])] == 0)
+          filled[static_cast<size_t>(queue[k])] = L;
+    }
+    holes[L] = count;
+  }
+  return filled;
 }
 
 /// One wall of the storey, in the form the arrangement and the boundaries
@@ -281,18 +352,48 @@ std::vector<Point> polygon_points(const Polygon &p) {
   return {p.vertices_begin(), p.vertices_end()};
 }
 
+/// A ring snapped to a 1 um lattice, so that the doubles a SpaceRecord
+/// holds are the points every check below ran on (exact constructions can
+/// put two vertices 1e-16 m apart, which round to one double), without
+/// consecutive repeats.
+std::vector<Point> snapped(const std::vector<Point> &ring) {
+  constexpr double kSnap = 1e6;
+  std::vector<Point> out;
+  out.reserve(ring.size());
+  for (const auto &p : ring) {
+    const Point q(std::round(CGAL::to_double(p.x()) * kSnap) / kSnap,
+                  std::round(CGAL::to_double(p.y()) * kSnap) / kSnap);
+    if (out.empty() || out.back() != q)
+      out.push_back(q);
+  }
+  while (out.size() > 1 && out.front() == out.back())
+    out.pop_back();
+  return out;
+}
+
+/// The simple loops of a snapped ring, without collinear vertices.
+std::vector<std::vector<Point>> clean_loops(const std::vector<Point> &ring) {
+  std::vector<std::vector<Point>> out;
+  for (auto &loop : split_at_repeats(snapped(ring))) {
+    loop = drop_collinear(std::move(loop));
+    if (loop.size() < 3)
+      continue;
+    if (!CGAL::is_simple_2(loop.begin(), loop.end(), K()))
+      continue; // snapping folded it (a sliver below 1 um)
+    out.push_back(std::move(loop));
+  }
+  return out;
+}
+
 /// The chosen piece made valid for a SpaceRecord: a simple outer ring (the
 /// largest loop of a self-touching one), holes of at least min_hole_area
 /// that lie strictly inside it and apart from each other, no collinear
-/// vertices.
+/// vertices, every vertex on a 1 um lattice.
 PolygonWithHoles clean_piece(const PolygonWithHoles &piece,
                              const SpacesOptions &o) {
   Polygon outer;
   double best = 0.0;
-  for (auto &loop : split_at_repeats(polygon_points(piece.outer_boundary()))) {
-    loop = drop_collinear(std::move(loop));
-    if (loop.size() < 3)
-      continue;
+  for (auto &loop : clean_loops(polygon_points(piece.outer_boundary()))) {
     Polygon p(loop.begin(), loop.end());
     const double a = std::abs(CGAL::to_double(p.area()));
     if (a > best) {
@@ -307,10 +408,7 @@ PolygonWithHoles clean_piece(const PolygonWithHoles &piece,
     return out;
   std::vector<Polygon> holes;
   for (auto h = piece.holes_begin(); h != piece.holes_end(); ++h)
-    for (auto &loop : split_at_repeats(polygon_points(*h))) {
-      loop = drop_collinear(std::move(loop));
-      if (loop.size() < 3)
-        continue;
+    for (auto &loop : clean_loops(polygon_points(*h))) {
       Polygon p(loop.begin(), loop.end());
       if (std::abs(CGAL::to_double(p.area())) < o.min_hole_area)
         continue;
@@ -476,6 +574,11 @@ auto polygonise_spaces(const std::vector<RoomGrid> &grids,
       result.stats.push_back(st);
       continue;
     }
+    // Furniture pockets belong to their room: the faces count them and the
+    // raster fallback has no furniture holes.
+    std::map<int32_t, int> furniture;
+    const std::vector<int32_t> filled =
+        fill_room_pockets(g, labels, o.open_plan_min_hole_area, furniture);
 
     // The storey's walls, by guid so the result does not depend on their
     // order.
@@ -572,7 +675,7 @@ auto polygonise_spaces(const std::vector<RoomGrid> &grids,
       std::vector<Point> centres;
       for (int r = 0; r < g.height; ++r)
         for (int c = 0; c < g.width; ++c)
-          if (g.labels[g.index(c, r)] > 0)
+          if (filled[g.index(c, r)] > 0)
             centres.emplace_back((g.col0 + c + 0.5) * cell,
                                  (g.row0 + r + 0.5) * cell);
       using Located =
@@ -599,7 +702,7 @@ auto polygonise_spaces(const std::vector<RoomGrid> &grids,
             g.row0;
         if (c < 0 || r < 0 || c >= g.width || r >= g.height)
           continue;
-        ++faces[face_index.at(&*f)].cells[g.labels[g.index(c, r)]];
+        ++faces[face_index.at(&*f)].cells[filled[g.index(c, r)]];
       }
 
       for (auto &fi : faces) {
@@ -631,6 +734,12 @@ auto polygonise_spaces(const std::vector<RoomGrid> &grids,
         } else {
           fi.cls = FaceInfo::mixed;
         }
+        debug("spaces: storey {}: face {:.2f} m^2: rooms cover {:.2f}, room "
+              "{} {:.2f}, next {:.2f} -> {}",
+              g.storey_idx, fi.area, share, top_label, top_share, second_share,
+              fi.cls == FaceInfo::pure    ? "pure"
+              : fi.cls == FaceInfo::empty ? "empty"
+                                          : "mixed");
       }
       // A sliver takes the class of the neighbour it shares the longest
       // edge with (a gap between two almost collinear faces, a wall end
@@ -699,12 +808,8 @@ auto polygonise_spaces(const std::vector<RoomGrid> &grids,
     double total_area = 0.0;
     double arrangement_area = 0.0;
     for (const int32_t L : labels) {
-      std::vector<double> loop_areas;
-      PolygonSet region = raster_region(g, L, &loop_areas);
-      int furniture_holes = 0;
-      for (double a : loop_areas)
-        if (a <= -o.open_plan_min_hole_area)
-          ++furniture_holes;
+      PolygonSet region = raster_region(g, filled, L, nullptr);
+      const int furniture_holes = furniture[L];
       PolygonSet from_faces;
       if (!faces.empty()) {
         region.difference(decided);

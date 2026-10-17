@@ -65,6 +65,12 @@ struct SubcommandSegRoomsOptions {
   bool band_cut_at_doors = reusex::geometry::BandRoomsOptions{}.cut_at_doors;
   double band_wall_min_seen_share =
       reusex::geometry::BandRoomsOptions{}.wall_graph_min_seen_share;
+  /// Debug (W4.2, reusex-z1v.6.2): also write the band rooms as space
+  /// polygons (segmentation/spaces.hpp) to this solid-model JSON/YAML file,
+  /// for `rux analyze solid --model`. Empty: off. Not a stored result.
+  std::string spaces_json;
+  /// ...as their raster outlines instead of against the wall graph.
+  bool spaces_raster = false;
 };
 
 /**
