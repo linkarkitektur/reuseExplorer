@@ -15,6 +15,8 @@
 // reusex_pipeline itself, or from ruxd_api_lib, would be a link error.
 
 #include <reusex/core/ProjectDB.hpp>
+#include <reusex/core/logging.hpp>
+#include <reusex/core/validate.hpp>
 #include <reusex/pipeline/stages.hpp>
 #include <reusex/slam/PlaneGraphOptimizer.hpp>
 #include <reusex/slam/discover_parameters.hpp>
@@ -22,14 +24,51 @@
 #include <reusex/slam/optimize_parameters.hpp>
 
 #include <fmt/format.h>
+#include <fmt/ranges.h>
 
 #include <cstdint>
 #include <exception>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace reusex::pipeline {
+
+/// Run the stage's documented input contract (core/stage_contract.hpp) and
+/// refuse before doing any work when a prerequisite is missing — the same
+/// check run_stage() performs via its (file-local) check_inputs() helper in
+/// pipeline/stages.cpp, duplicated here because that helper is not part of
+/// stages.hpp's public interface and optimize/graph_discover run OUTSIDE
+/// run_stage()'s dispatch() (#464).
+///
+/// reusex-xlg.15: before this, stage_executor_with_optimize() ran
+/// run_optimize_stage()/run_graph_discover_stage() straight away, so a
+/// project missing prerequisites (e.g. no sensor_frames, or too few with
+/// depth) either failed deep inside GTSAM/ORB with an unrelated error, or —
+/// for `optimize` — silently "succeeded" with poses left unchanged instead of
+/// refusing with the real reason.
+inline std::optional<std::string>
+check_optimize_stage_inputs(const ProjectDB &db, core::PipelineStage stage) {
+  std::vector<core::ValidationIssue> issues;
+  core::check_stage_inputs(db, stage, issues);
+
+  std::vector<std::string> errors;
+  for (const auto &issue : issues) {
+    if (issue.severity != core::ValidationSeverity::error) {
+      warn("stage input warning [{}]: {}", issue.check, issue.message);
+      continue;
+    }
+    errors.push_back(fmt::format("{}: {}", issue.check, issue.message));
+    if (!issue.hint.empty())
+      info("stage input resolution: {}", issue.hint);
+  }
+  if (errors.empty())
+    return std::nullopt;
+  return fmt::format("stage inputs not satisfied — {}",
+                     fmt::join(errors, "; "));
+}
 
 /// Run `optimize` on an open project: the library defaults (which the
 /// `rux optimize` flags mirror) plus the job's parameters through
@@ -143,6 +182,12 @@ inline StageExecutor stage_executor_with_optimize() {
         return run_logged_stage(
             db, ctx, to_string(ctx.stage), pipeline_log_name(ctx.stage),
             [&db, &ctx]() -> StageResult {
+              const core::PipelineStage contract =
+                  ctx.stage == JobStage::optimize
+                      ? core::PipelineStage::optimize
+                      : core::PipelineStage::graph_discover;
+              if (auto problem = check_optimize_stage_inputs(db, contract))
+                return StageResult::invalid(*problem);
               return ctx.stage == JobStage::optimize
                          ? run_optimize_stage(db, ctx)
                          : run_graph_discover_stage(db, ctx);
