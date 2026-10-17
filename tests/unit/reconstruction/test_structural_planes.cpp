@@ -18,10 +18,13 @@
 #include <reusex/reconstruction/structural_planes.hpp>
 #include <reusex/types.hpp>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <Eigen/Core>
 
+#include <cmath>
+#include <numbers>
 #include <stdexcept>
 #include <vector>
 
@@ -245,7 +248,7 @@ TEST_CASE("plane roles: furniture and clutter planes are dropped",
   s.slab(2.7, -1, 0.0, 10.0, 0.0, 8.0);  // 1 ceiling
   s.slab(0.75, +1, 2.0, 4.0, 2.0, 3.0);  // 2 desk top
   s.x_wall(0.0, +1, 0.0, 8.0, 0.0, 2.7); // 3 wall
-  s.y_wall(4.0, +1, 2.0, 4.0, 0.0, 1.6); // 4 desk screen
+  s.slab(1.9, +1, 6.0, 6.5, 1.0, 2.0);   // 4 shelf
   s.x_wall(9.0, -1, 0.0, 1.0, 0.0, 2.0); // 5 unknown
   const std::vector<PlaneRole> roles{PlaneRole::floor,     PlaneRole::ceiling,
                                      PlaneRole::furniture, PlaneRole::wall,
@@ -256,6 +259,7 @@ TEST_CASE("plane roles: furniture and clutter planes are dropped",
   const auto r = drop_planes_by_role(s.planes, s.inliers, s.centroids, roles);
   CHECK(r.furniture == 1);
   CHECK(r.clutter == 1);
+  CHECK(r.vertical_clutter_kept == 0);
   CHECK(r.planes_out == 4);
   REQUIRE(s.planes.size() == 4);
   REQUIRE(s.inliers.size() == 4);
@@ -266,7 +270,57 @@ TEST_CASE("plane roles: furniture and clutter planes are dropped",
   CHECK(has_height(s.planes, 0.0));
   CHECK(has_height(s.planes, 2.7));
   CHECK_FALSE(has_height(s.planes, 0.75));
+  CHECK_FALSE(has_height(s.planes, 1.9));
   CHECK(count_kind(s.planes, true) == 2); // the wall and the unknown plane
+}
+
+TEST_CASE("plane roles: vertical clutter is left to the structural filter",
+          "[reconstruction][structural_planes][plane_roles]") {
+  // reusex-rtx: "clutter" on a vertical plane is the height rule's verdict
+  // (it does not reach floor to ceiling): a hallway wall seen to door
+  // height, a wall stub behind furniture, but also a desk screen. Only the
+  // structural filter can tell those apart (wall-line area with the wall's
+  // far face), so the plane goes on to it: the hallway stub seen from both
+  // sides is a wall line, the lone desk screen is not.
+  using core::PlaneRole;
+  Scene s;
+  s.slab(0.0, +1, 0.0, 10.0, 0.0, 8.0);   // 0 floor
+  s.slab(2.7, -1, 0.0, 10.0, 0.0, 8.0);   // 1 ceiling
+  s.x_wall(0.0, +1, 0.0, 8.0, 0.0, 2.7);  // 2 wall
+  s.x_wall(5.0, +1, 0.0, 0.6, 0.0, 1.7);  // 3 hallway stub, room side
+  s.x_wall(5.12, -1, 0.0, 0.6, 0.0, 1.7); // 4 hallway stub, far side
+  s.y_wall(4.0, +1, 2.0, 2.8, 0.75, 1.2); // 5 desk screen
+  const std::vector<PlaneRole> roles{PlaneRole::floor,   PlaneRole::ceiling,
+                                     PlaneRole::wall,    PlaneRole::clutter,
+                                     PlaneRole::clutter, PlaneRole::clutter};
+
+  const auto r = drop_planes_by_role(s.planes, s.inliers, s.centroids, roles);
+  CHECK(r.clutter == 0);
+  CHECK(r.vertical_clutter_kept == 3);
+  CHECK(r.planes_out == 6);
+
+  select_structural_planes(s.planes, s.inliers, s.centroids, s.cloud);
+  CHECK(count_kind(s.planes, true) == 3); // the wall and both stub faces
+}
+
+TEST_CASE("plane roles: only horizontal clutter is dropped",
+          "[reconstruction][structural_planes][plane_roles]") {
+  // The classification calls a plane vertical up to 10 deg off; before
+  // regularisation a wall piece can lean that much. It is not horizontal,
+  // so it is not dropped either (house2: one such plane cost 2.6 cm of fit).
+  using core::PlaneRole;
+  Scene s;
+  s.x_wall(7.0, +1, 0.0, 2.0, 0.0, 1.5); // 0 leaning wall piece
+  const double c = std::cos(7.0 * std::numbers::pi / 180.0);
+  const double z = std::sin(7.0 * std::numbers::pi / 180.0);
+  s.planes.back() = Eigen::Vector4d(c, 0, z, -c * 7.0 - z * 0.75);
+  s.slab(1.9, +1, 6.0, 6.5, 1.0, 2.0); // 1 shelf
+  const auto r = drop_planes_by_role(s.planes, s.inliers, s.centroids,
+                                     {PlaneRole::clutter, PlaneRole::clutter});
+  CHECK(r.clutter == 1);
+  CHECK(r.vertical_clutter_kept == 1);
+  REQUIRE(s.planes.size() == 1);
+  CHECK(std::abs(s.planes[0][2]) == Catch::Approx(z));
 }
 
 TEST_CASE("plane roles: no roles leaves the planes alone",

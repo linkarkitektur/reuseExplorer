@@ -144,10 +144,12 @@ NOTES:
       ->default_val(opt->structural.min_footprint_overlap)
       ->check(CLI::Range(0.0, 1.0));
 
-  sub->add_flag("--plane-classes", opt->use_plane_classes,
-                "Leave the planes `rux create classify` called furniture or "
-                "clutter out of the cell complex (reusex-z1v.4.3). Off by "
-                "default; no effect before `rux create classify` has run.");
+  sub->add_flag("--plane-classes,!--no-plane-classes", opt->use_plane_classes,
+                "Leave the planes `rux create classify` called furniture, and "
+                "the horizontal ones it called clutter, out of the cell "
+                "complex (reusex-z1v.4.3); vertical clutter goes on to the "
+                "structural filter (reusex-rtx). On by default; no effect "
+                "before `rux create classify` has run.");
 
   sub->add_flag("--storey-sections,!--no-storey-sections",
                 opt->use_storey_sections,
