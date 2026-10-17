@@ -27,6 +27,9 @@ namespace reusex::geometry {
 auto dist_plane_point(const Eigen::Vector4d &plane,
                       const Eigen::Vector3d &point) -> double;
 
+/// make_pairs' default max_crossed_gap [m]: walls' max_crossed_gap_m.
+inline constexpr double kMaxCrossedGapDefault = 0.15;
+
 /**
  * @brief Create pairs of opposite parallel planes.
  *
@@ -42,7 +45,13 @@ auto dist_plane_point(const Eigen::Vector4d &plane,
  * (each lies in front of the other: the two rooms' scans drifted apart by
  * more than the wall is thick) at most this far apart [m] are one wall: they
  * swap positions, so the pair bounds a slab again (reusex-wm0). Farther
- * apart they stay where measured. Default 0.15, walls' max_crossed_gap_m.
+ * apart they are no pair at all: they would bound no slab, so neither could
+ * be a wall anywhere (reusex-ro1); each pairs with another face or gets an
+ * invented back face. Default 0.15, walls' max_crossed_gap_m.
+ * @param cloud The cloud the inliers index into. When given, two faces pair
+ * only if their measured heights (2nd to 98th percentile of their inliers'
+ * z) overlap: faces of two storeys' walls are no wall (reusex-ro1). A face
+ * without inliers is not tested.
  * @return Vector of plane index pairs.
  */
 auto make_pairs(EigenVectorContainer<double, 4> &planes,
@@ -50,7 +59,8 @@ auto make_pairs(EigenVectorContainer<double, 4> &planes,
                 EigenVectorContainer<double, 3> &centroids,
                 const double threshold = 0.6,
                 const double new_plane_offset = 0.5,
-                const double max_crossed_gap = 0.15)
+                const double max_crossed_gap = kMaxCrossedGapDefault,
+                CloudConstPtr cloud = nullptr)
     -> std::vector<std::pair<size_t, size_t>>;
 
 /**
