@@ -17,7 +17,23 @@ two_rooms_synth    synthetic  tests/fixtures/solid_model/two_rooms.plan.json tes
 office_corridor    fixture    tests/fixtures/solid_model/two_rooms.plan.json -                                               tests/fixtures/scans/office_corridor.rux clouds,planes,rooms
 # Local-only rows (never committed data), skipped unless the variable is set:
 # NewOffice: the authored reference is committed (DRAFT, reusex-z1v.2.6); the
-# scan is not. Point $REUSEX_NEWOFFICE_RUX at a NewOffice project.rux.
+# scan is not. Point $REUSEX_NEWOFFICE_RUX at a copy of NewOffice's
+# project.rux regenerated with today's defaults on the poses the reference
+# was authored on (reusex-s4t):
+#   cp ~/repos/NewOffice/project.rux newoffice-regen.rux
+#   sqlite3 newoffice-regen.rux \
+#     'UPDATE sensor_frames SET transform = initial_transform;'
+#   rux -p newoffice-regen.rux create clouds   # defaults (sampling factor 4)
+#   rux -p newoffice-regen.rux create planes   # defaults (adaptive)
+# The reference was drawn on the April cloud, built from the frames'
+# initial_transform; their stored transform has since moved (median 4 cm,
+# up to 16 cm, non-rigid), so a cloud rebuilt from it disagrees with the
+# reference by up to ~0.3 m in the WC row. A fresh `import rtabmap` of
+# database.db gives the same trajectory but rotated 2.08 deg about the
+# vertical, so it cannot be scored against this reference at all.
+# (2026-10-17, main 840cf8dc, chain storeys..spaces: room IoU 0.874 / +2,
+# wall rms 0.054 m, openings 0.62 / 0.70 -- vs the legacy unregenerated
+# copy 0.893 / +1, 0.141 m, 0.24 / 0.30.)
 newoffice         local      tests/fixtures/solid_model/newoffice.plan.yaml -                                               $REUSEX_NEWOFFICE_RUX storeys,classify,walls,openings
 # s3dis_area1      local      $REUSEX_S3DIS_DIR/area1.plan.json             -                                               $REUSEX_S3DIS_DIR/area1.rux storeys,walls,spaces,openings
 # house1 / house2 (scan archive, see reusex-yf4.3): authored references
