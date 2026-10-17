@@ -1512,17 +1512,23 @@ PlaneGraphResult PlaneGraphOptimizer::optimize_graph(
           result.edit_residuals.push_back(r);
         }
         auto &r = result.edit_residuals[it->second];
-        r.trans_m = std::max(
-            r.trans_m,
-            constrained_norm(e.tail<3>(),
-                             rec.information.bottomRightCorner<3, 3>()));
-        r.rot_deg = std::max(
-            r.rot_deg, constrained_norm(e.head<3>(),
-                                        rec.information.topLeftCorner<3, 3>()) *
-                           180.0 / M_PI);
+        const double t = constrained_norm(
+            e.tail<3>(), rec.information.bottomRightCorner<3, 3>());
+        const double a =
+            constrained_norm(e.head<3>(),
+                             rec.information.topLeftCorner<3, 3>()) *
+            180.0 / M_PI;
+        r.trans_m = std::max(r.trans_m, t);
+        r.rot_deg = std::max(r.rot_deg, a);
+        r.rms_trans_m += t * t; // sums of squares until the loop ends
+        r.rms_rot_deg += a * a;
         r.chi2 += 2.0 * err;
         r.gnc_inlier = r.gnc_inlier && inlier;
         ++r.factors;
+      }
+      for (auto &r : result.edit_residuals) {
+        r.rms_trans_m = std::sqrt(r.rms_trans_m / r.factors);
+        r.rms_rot_deg = std::sqrt(r.rms_rot_deg / r.factors);
       }
     }
 
