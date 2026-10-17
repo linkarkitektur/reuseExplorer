@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Povl Filip Sonne-Frederiksen
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# house2 pose reference: the edits -- DRAFT v2, maintainer review pending (reusex-rcv.1.8).
+# house2 pose reference: the edits -- DRAFT v3, maintainer review pending (reusex-rcv.1.8).
 #
 # The provenance half of the house2 pose reference (docs/guides/pose-reference-authoring.md);
 # house2.trajectory.tum next to it is the frozen result. Written with the drift-correction
@@ -10,6 +10,10 @@
 # v2 (after the PR #84 review): the house must also fit a Manhattan grid -- every wall at 90
 # deg to the others, open doors excepted -- so the reference is now solved with the
 # Manhattan prior and four blocks are turned onto its grid.
+# v3 (review of v2's long section): the stair descent (370-379) drew the stair-hall north wall
+# (i0-stair-n) on top of its kitchen face -- a wall with no thickness. m-370-379 shifts it 0.19 m
+# south; the wall measures 162-175 mm (stair side vs kitchen side; interior walls in the walls
+# table 0.14-0.20 m, the plan's bathroom wall 0.18 m), was -30 mm (faces crossed) in v2.
 #
 # Source scan: scan archive house-2_c582d1f758/reusex/project.rux (384 frames, two storeys),
 # the copy the solid-model plan house2.plan.yaml was drawn on (clouds/planes regenerated,
@@ -51,34 +55,37 @@
 # house2.plan.yaml (drawn on the stored poses) no longer overlays it; see reusex-ghy.
 #
 # Result (rux analyze drift, defaults, --plan house2.plan.yaml; 12 segments for the pairs):
-#                                 stored        plain optimize   DRAFT v1        this (v2)
-#   noise floor                   7.2 mm        7.3 mm           7.2 mm          7.3 mm
-#   pass-to-pass median (p90)     15.9 (56.1)   13.8 (43.8)      11.0 (36.2)     10.4 (34.5) mm = 1.4x floor
-#   segment-pair median           53.1 mm       28.4 mm          23.7 mm         25.6 mm
-#   worst segment pair            130.3 mm      105.2 mm         116.0 mm        90.8 mm (*)
-#   doubled-wall patches s0 / s1  0.27 / 0.22   0.26 / 0.22      0.27 / 0.22     0.28 / 0.21
-#   through-wall steps, plan      8 of 13       7 of 12          6 of 11         11 of 20 (**)
-#   through-wall steps, own walls 3             4                3               1 (**)
+#                                 stored       plain optimize  DRAFT v1      DRAFT v2      this (v3)
+#   noise floor                   7.2 mm       7.3 mm          7.2 mm        7.3 mm        7.3 mm
+#   pass-to-pass median (p90)     15.9 (56.1)  13.8 (43.8)     11.0 (36.2)   10.4 (34.5)   10.3 (34.8) mm = 1.4x floor
+#   segment-pair median           53.1 mm      28.4 mm         23.7 mm       25.6 mm       25.0 mm
+#   worst segment pair            130.3 mm     105.2 mm        116.0 mm      90.8 mm       90.8 mm (*)
+#   doubled-wall patches s0 / s1  0.27 / 0.22  0.26 / 0.22     0.27 / 0.22   0.28 / 0.21   0.27 / 0.20
+#   through-wall steps, plan      8 of 13      7 of 12         6 of 11       11 of 20      11 of 20 (**)
+#   through-wall steps, own walls 3            4               3             1             1 (**)
+#   stair-hall north wall, faces  -            -               -             -30 mm        162-175 mm
 # Manhattan fit (acceptance added in the review; target: every full-height wall within
 # +-1 deg of its storey grid, storey grids within 0.5 deg of each other, every segment's
 # heading within 1 deg). Grid = the Manhattan prior's estimator (weighted 4*phi circular mean,
 # re-centred 3x over the walls within 15 deg) on the scan's own wall points:
-#                                 plain optimize   DRAFT v1         this (v2)
-#   storey-1 grid vs storey-0     -4.39 deg        -5.54 deg        -0.03 deg       (met)
-#   segment heading |median|/max  3.87 / 8.38 deg  2.80 / 9.35 deg  0.25 / 1.19 deg (seg 3 1.19)
+#                                 plain optimize   DRAFT v1         DRAFT v2         this (v3)
+#   storey-1 grid vs storey-0     -4.39 deg        -5.54 deg        -0.03 deg        -0.05 deg (met)
+#   segment heading |median|/max  3.87 / 8.38 deg  2.80 / 9.35 deg  0.25 / 1.19 deg  0.26 / 1.19 (seg 3)
 #   wall planes (rux planes, role wall; |dev| median, area within 1 / 2 deg):
-#     storey 0                    2.10, 41 / 51%   2.15, 28 / 58%   0.65, 50 / 92%
-#     storey 1                    2.28, 23 / 49%   2.26, 23 / 49%   1.47, 43 / 77%
+#     storey 0                    2.10, 41 / 51%   2.15, 28 / 58%   0.65, 50 / 92%   0.77, 52 / 90%
+#     storey 1                    2.28, 23 / 49%   2.26, 23 / 49%   1.47, 43 / 77%   1.36, 50 / 74%
 #   wall patches (0.5 m, points-weighted |dev| median / p90, within 1 deg):
-#     storey 0                    2.18 / 9.4, 25%  1.82 / 8.6, 36%  0.91 / 6.6, 55%
-#     storey 1                    3.48 / 7.7, 16%  3.44 / 7.8, 16%  1.62 / 5.1, 24%
-#   The per-wall target is NOT met: storey 0 is within 2 deg on 92% of wall area, storey 1 on
-#   77%. Door leaves excluded: a plane shorter than 1.2 m along the wall whose top stays more
+#     storey 0                    2.18 / 9.4, 25%  1.82 / 8.6, 36%  0.91 / 6.6, 55%  0.89 / 6.4, 56%
+#     storey 1                    3.48 / 7.7, 16%  3.44 / 7.8, 16%  1.62 / 5.1, 24%  1.61 / 8.4, 23%
+#   (v3's storey-1 patch p90 rises with two stairwell patches the shifted descent now draws
+#   apart from the rest: the stair's south edge at (0.8, -3.7), 39 deg, and the north wall's
+#   upper part, 8-9 deg.) The per-wall target is NOT met: storey 0 is within 2 deg on 90% of
+#   wall area, storey 1 on 74%. Door leaves excluded: a plane shorter than 1.2 m along the wall whose top stays more
 #   than 0.25 m below the ceiling (13 planes); a patch run shorter than 1.2 m whose top stays
 #   below floor + 2.3 m. Off-grid planes left: storey 1 plane at 34.6 deg in bedroom N = the
 #   free-standing wardrobe set at an angle (image 356), not a wall; storey 0 plane at 10.2 deg
 #   at the hall/bathroom door (merges the open door leaf with the wall).
-# (*) seg 8 into seg 10 and seg 3 into seg 7, 900 / 7000 points: the landing seen from the
+# (*) v2 / v3: seg 8 into seg 10 and seg 3 into seg 7, 900 / 7000 points: the landing seen from the
 #     bedroom-E door, and living room S's east wall seen twice (m-230-245 turned seg 7 there).
 # (**) Against house2.plan.yaml the count rose to 11 of 20 because the plan was drawn on the
 #     stored poses, whose storey 1 north is turned ~8 deg; the straightened camera paths no
@@ -145,16 +152,31 @@ edits:
       Manhattan solve (north half of storey 1 drawn blue in devmap s1). Rotated +3.3 deg about
       its camera centroid, translation refitted against all other passes. Heading after: -0.2
       deg.
-  - id: m-358-379
+  - id: m-358-369
     kind: move
-    nodes: [358, 379]
-    delta: {matrix: [0.965667, -0.259566, -0.010606, 0.821092, 0.259594, 0.965717, 0.001420, -1.372972, 0.009873, -0.004125, 0.999943, 0.233397, 0.000000, 0.000000, 0.000000, 1.000000]}
+    nodes: [358, 369]
+    delta: {matrix: [0.965649, -0.259635, -0.010538, 0.821620, 0.259664, 0.965698, 0.001444, -1.373444, 0.009802, -0.004130, 0.999943, 0.234015, 0.000000, 0.000000, 0.000000, 1.000000]}
     sigma: {trans_m: 0.005, rot_deg: 0.1}
     note: >-
       bedroom N and the corridor walk to the stair (images 352-373; 356 shows the free-standing
-      wardrobe). Walls -4.3 deg off the storey-0 grid in the Manhattan solve. Rotated +4.3 deg
+      wardrobe). Walls -4.3 deg off the storey-0 grid in the Manhattan solve. (split from m-358-379 in v3; 370-379 is m-370-379) Rotated +4.3 deg
       about its camera centroid, translation refitted against all other passes. Heading after:
       -0.2 deg.
+  - id: m-370-379
+    kind: move
+    nodes: [370, 379]
+    delta: {matrix: [0.965679, -0.259521, -0.010592, 0.835264, 0.259549, 0.965729, 0.001371, -1.565991, 0.009873, -0.004073, 0.999943, 0.233264, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.005, rot_deg: 0.1}
+    note: >-
+      stair descent, upper part (images 376-379: looking down the enclosed stair, handrail on
+      the north wall). The review of v2's long section: the stair-hall north wall (i0-stair-n,
+      stair hall | kitchen) had no thickness -- the descent frames drew its stair-side face at
+      y -2.511, 30 mm north of the kitchen face (-2.541, passes 134-165 / 198-229), where the
+      ascent (230-261) puts it at -2.714 (173 mm, the house's interior walls measure 0.14-0.20
+      m in the walls table, the plan's bathroom wall 0.18). Rotated with m-358-379's heading
+      move as before, then shifted by an xy-only point-to-plane fit against the ascent 230-261:
+      (+0.01, -0.19) m, median 18.6 -> 17.8 mm. The descent face then sits at -2.703: wall 162
+      mm thick (sections x 0.5 / 0.9 / 1.3, pr84v4_*).
   - id: m-230-245
     kind: move
     nodes: [230, 245]
@@ -186,7 +208,7 @@ edits:
   - id: m-380-383
     kind: move
     nodes: [380, 383]
-    delta: {matrix: [0.960996, -0.276429, 0.008576, 0.869452, 0.276320, 0.960990, 0.012046, -1.486928, -0.011572, -0.009207, 0.999891, 0.406132, 0.000000, 0.000000, 0.000000, 1.000000]}
+    delta: {matrix: [0.960996, -0.276431, 0.008566, 0.848396, 0.276322, 0.960990, 0.012039, -1.621478, -0.011559, -0.009202, 0.999891, 0.406038, 0.000000, 0.000000, 0.000000, 1.000000]}
     sigma: {trans_m: 0.005, rot_deg: 0.1}
     note: >-
       stair bottom: the review's 'noisy right side of the ground floor'. Images 382-383: the
@@ -194,6 +216,9 @@ edits:
       drew the stair-hall east jamb 0.35 m west of where 378-379 and passes 102-245 put it
       (per-node cut). 2D fit against 1-379 + 384-389: +0.35 m, yaw +3.3 deg, within 3 cm 0.52
       -> 0.99; then 6-DoF point-to-plane, median 16.9 -> 10.8 mm.
+      v3: refitted after m-370-379 (the v2 fit had matched these frames partly against the old
+      370-379): xy-only against 1-369 + 384-389, a further (-0.02, -0.14) m, median 19.7 ->
+      16.1 mm.
   - id: g-42
     kind: anchor
     node: 42

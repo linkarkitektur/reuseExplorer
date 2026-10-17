@@ -331,6 +331,23 @@ cannot reach (`reusex-wg8`: a "this block is Manhattan" edit). Two lessons:
   (a step whose line passes within 3 cm of them), until the plan is re-fit
   (`reusex-ghy`).
 
+**v3: a wall needs two faces.** The review of v2's long section: the
+stair-hall north wall had no thickness. Measure it per source, not as one
+cloud: the kitchen face from passes whose cameras stand north of it
+(134-165, 198-229), the stair-hall face from the ascent (230-261, above the
+handrail) and from the descent (370-383). The descent drew its face 30 mm
+*beyond* the kitchen face (-30 mm); the ascent put it 173 mm inside, in
+line with the house's other interior walls (0.14-0.20 m in the walls table,
+0.18 m in the plan). An xy-only fit of the descent (370-379) against the
+ascent moved it 0.19 m south (`m-370-379`, split out of the heading move
+`m-358-379`), and the stair-bottom move was refitted after it. The wall now
+measures 162-175 mm, and the descent and ascent also agree on the
+stairwell's south face, which they did not before (sections across the
+stair at x 0.5 / 0.9). Pass-to-pass 10.4 -> 10.3 mm, segment-pair median
+25.6 -> 25.0 mm, Manhattan numbers within noise. A section across the scan,
+coloured by who saw what, finds this; a pass-to-pass residual does not:
+both faces were drawn on top of each other, which is a perfect fit.
+
 ## Pose references: scoring a trajectory against a frozen ground truth
 
 This half covers the artefact the loop above produces once a cycle's result
