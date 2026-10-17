@@ -787,6 +787,23 @@ core::SolidModel load_solid_model(const ProjectDB &db) {
                "create openings`",
                orphans);
   m.provided.openings = !m.openings.empty();
+  // The spaces stage writes spaces and their boundaries (WP4). A boundary
+  // names its wall by guid, like an opening; one whose wall is gone is left
+  // out, the space itself stays.
+  m.spaces = db.spaces();
+  std::size_t orphan_bounds = 0;
+  for (auto &b : db.space_boundaries()) {
+    if (hosts.count(b.wall))
+      m.space_boundaries.push_back(std::move(b));
+    else
+      ++orphan_bounds;
+  }
+  if (orphan_bounds > 0)
+    core::warn("load_solid_model: {} space boundar(y/ies) name a wall the "
+               "walls table no longer holds (walls ran again); left out -- "
+               "re-run `rux create spaces`",
+               orphan_bounds);
+  m.provided.spaces = !m.spaces.empty();
   return m;
 }
 

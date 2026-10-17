@@ -262,6 +262,8 @@ struct ProjectState {
   int walls = 0;
   int wall_joins = 0;
   int openings = 0;
+  int spaces = 0;
+  int space_boundaries = 0;
 };
 
 ProjectState read_state(const ProjectDB &db) {
@@ -280,6 +282,8 @@ ProjectState read_state(const ProjectDB &db) {
   state.walls = static_cast<int>(db.walls().size());
   state.wall_joins = static_cast<int>(db.wall_joins().size());
   state.openings = static_cast<int>(db.openings().size());
+  state.spaces = static_cast<int>(db.spaces().size());
+  state.space_boundaries = static_cast<int>(db.space_boundaries().size());
   return state;
 }
 
@@ -311,6 +315,10 @@ int table_rows(const ProjectState &state, std::string_view name) {
     return state.wall_joins;
   if (name == "openings")
     return state.openings;
+  if (name == "spaces")
+    return state.spaces;
+  if (name == "space_boundaries")
+    return state.space_boundaries;
   return 0;
 }
 

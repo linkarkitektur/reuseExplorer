@@ -38,6 +38,7 @@
 #include <limits>
 #include <map>
 #include <numeric>
+#include <regex>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -216,6 +217,75 @@ std::string edit_yaml(const reusex::core::PoseEdit &e) {
 } // namespace
 
 // ── Free helpers (tested directly) ──────────────────────────────────────────
+
+EditVerdict judge_edit(const reusex::geometry::EditResidual &residual,
+                       const reusex::core::PoseEdit *edit) {
+  using reusex::core::PoseEditKind;
+  if (!residual.gnc_inlier)
+    return {false, "GNC dropped it: it contradicts the graph or another edit"};
+  if (edit == nullptr ||
+      (edit->kind != PoseEditKind::anchor && edit->kind != PoseEditKind::move &&
+       edit->kind != PoseEditKind::relative))
+    return {};
+  const double t_max = kHonouredSigmas * edit->sigma_trans_m;
+  const double r_max = kHonouredSigmas * edit->sigma_rot_deg;
+  std::vector<std::string> off;
+  if (residual.rms_trans_m > t_max)
+    off.push_back(fmt::format("{:.4f} m > {} sigma = {:.4f} m",
+                              residual.rms_trans_m, kHonouredSigmas, t_max));
+  if (residual.rms_rot_deg > r_max)
+    off.push_back(fmt::format("{:.3f} deg > {} sigma = {:.3f} deg",
+                              residual.rms_rot_deg, kHonouredSigmas, r_max));
+  if (off.empty())
+    return {};
+  return {false, fmt::format("{} off its target by {}",
+                             edit->kind == PoseEditKind::move ? "the block is"
+                                                              : "it is",
+                             fmt::join(off, " and "))};
+}
+
+std::optional<MovePrediction>
+move_prediction(const reusex::core::PoseEdit &edit) {
+  if (edit.kind != reusex::core::PoseEditKind::move)
+    return std::nullopt;
+  // The note the suggestion loop writes (see the suggestions below).
+  static const std::regex re(
+      R"(seg (\d+) \(\d+-\d+\) into the rest ([0-9.]+) -> ([0-9.]+) mm)");
+  std::smatch m;
+  if (!std::regex_search(edit.note, m, re))
+    return std::nullopt;
+  MovePrediction p;
+  p.segment = std::stoi(m[1].str());
+  p.before_m = std::stod(m[2].str()) / 1000.0;
+  p.after_m = std::stod(m[3].str()) / 1000.0;
+  return p;
+}
+
+std::optional<bool> move_realised(const reusex::core::PoseEdit &e,
+                                  const std::map<int, double> &segment_now) {
+  const auto p = move_prediction(e);
+  if (!p)
+    return std::nullopt;
+  const auto now = segment_now.find(p->segment);
+  if (now == segment_now.end())
+    return std::nullopt;
+  return now->second <=
+         p->before_m - kRealisedShare * (p->before_m - p->after_m);
+}
+
+std::optional<std::string>
+blocked_replacement(const reusex::core::PoseEdit &replaced,
+                    const std::map<int, double> &segment_now) {
+  const auto realised = move_realised(replaced, segment_now);
+  if (!realised || *realised)
+    return std::nullopt;
+  const auto p = *move_prediction(replaced);
+  return fmt::format(
+      "it would replace {}, whose predicted seg {} {:.1f} -> {:.1f} mm was "
+      "not realised (now {:.1f} mm); drop {} rather than replace it",
+      replaced.id, p.segment, p.before_m * 1000.0, p.after_m * 1000.0,
+      segment_now.at(p.segment) * 1000.0, replaced.id);
+}
 
 PoseChange pose_change(const std::vector<std::int64_t> &ids,
                        const std::vector<Eigen::Matrix4d> &a,
@@ -847,16 +917,29 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
   j["edits_file"] = s.opt.edits;
   j["edits"] = json::array();
   for (const auto &e : res.edit_residuals) {
-    out += fmt::format("  edit {:<24} {:>8.4f} m {:>7.3f} deg  chi2 {:>9.2f} "
-                       " {} factor(s)  {}\n",
-                       e.tag, e.trans_m, e.rot_deg, e.chi2, e.factors,
-                       e.gnc_inlier ? "honoured" : "NOT HONOURED");
+    // reusex-rcv.1.28: judged by the edit's own residual against its sigma,
+    // not by the per-factor GNC threshold alone.
+    const core::PoseEdit *named = nullptr;
+    for (const auto &x : edits.edits)
+      if (x.id == e.tag)
+        named = &x;
+    const EditVerdict v = judge_edit(e, named);
+    out += fmt::format("  edit {:<24} {:>8.4f} m {:>7.3f} deg (rms {:.4f} m "
+                       "{:.3f} deg)  chi2 {:>9.2f}  {} factor(s)  {}\n",
+                       e.tag, e.trans_m, e.rot_deg, e.rms_trans_m,
+                       e.rms_rot_deg, e.chi2, e.factors,
+                       v.honoured ? std::string("honoured")
+                                  : "NOT HONOURED: " + v.why);
     j["edits"].push_back({{"id", e.tag},
                           {"trans_m", e.trans_m},
                           {"rot_deg", e.rot_deg},
+                          {"rms_trans_m", e.rms_trans_m},
+                          {"rms_rot_deg", e.rms_rot_deg},
                           {"chi2", e.chi2},
                           {"factors", e.factors},
-                          {"inlier", e.gnc_inlier}});
+                          {"inlier", e.gnc_inlier},
+                          {"honoured", v.honoured},
+                          {"why", v.why}});
   }
 
   // --- pose change and shear ------------------------------------------------
@@ -1081,6 +1164,13 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
     j["suggestions"] = json::array();
     int emitted = 0;
     std::string gauge_comment;
+    // reusex-rcv.1.28: each segment's residual now, to judge whether the
+    // move a suggestion would replace delivered the gain it predicted.
+    std::map<int, double> segment_now;
+    for (const auto &g : d.suggestions)
+      segment_now[g.segment] = g.before_m;
+    std::string held_back_comment;
+    j["held_back"] = json::array();
     for (const auto &g : sug) {
       if (emitted >= s.opt.suggestions || g.after_m >= g.before_m)
         break;
@@ -1144,6 +1234,38 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
         if (e.kind == core::PoseEditKind::move && !e.nodes.is_list() &&
             e.nodes.first <= best->last && e.nodes.last >= best->first)
           overlaps.push_back(e.id);
+      // reusex-rcv.1.28: no REPLACES ping-pong. A suggested move is not
+      // replaced until its predicted gain came true; a realised one is, and
+      // the comment says so.
+      std::optional<std::string> held;
+      std::vector<std::string> realised;
+      for (const auto &e : edits.edits) {
+        if (std::find(overlaps.begin(), overlaps.end(), e.id) == overlaps.end())
+          continue;
+        if (auto why = blocked_replacement(e, segment_now)) {
+          held = std::move(why);
+          break;
+        }
+        if (move_realised(e, segment_now).value_or(false))
+          realised.push_back(e.id);
+      }
+      if (held) {
+        held_back_comment += fmt::format(
+            "  # seg {} ({}-{}: {:.1f} -> {:.1f} mm): held back -- {}\n",
+            g.segment, best->first, best->last, g.before_m * 1000.0,
+            g.after_m * 1000.0, *held);
+        j["held_back"].push_back({{"segment", g.segment},
+                                  {"first_node", best->first},
+                                  {"last_node", best->last},
+                                  {"before_m", g.before_m},
+                                  {"after_m", g.after_m},
+                                  {"why", *held}});
+        continue;
+      }
+      const std::string realised_note =
+          realised.empty() ? std::string()
+                           : fmt::format(" (its predicted gain realised: {})",
+                                         fmt::join(realised, ", "));
 
       core::PoseEdit m;
       m.id = unique_id(fmt::format("m-{}-{}", best->first, best->last));
@@ -1172,17 +1294,19 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
                             left_out),
           overlaps.empty()
               ? std::string()
-              : fmt::format("; replaces {}",
-                            fmt::format("{}", fmt::join(overlaps, ", "))));
-      const std::string comment = fmt::format(
-          "  # seg {}: {:.1f} -> {:.1f} mm, move {:.3f} m "
-          "(centroid {:.3f} m), {:.2f} deg{}{}\n",
-          g.segment, g.before_m * 1000.0, g.after_m * 1000.0, g.shift_m,
-          g.centroid_shift_m, g.rotation_deg,
-          left_out.empty() ? "" : "; SPLIT at a storey change",
-          overlaps.empty()
-              ? std::string()
-              : fmt::format("; REPLACES {}", fmt::join(overlaps, ", ")));
+              : fmt::format("; replaces {}{}",
+                            fmt::format("{}", fmt::join(overlaps, ", ")),
+                            realised_note));
+      const std::string comment =
+          fmt::format("  # seg {}: {:.1f} -> {:.1f} mm, move {:.3f} m "
+                      "(centroid {:.3f} m), {:.2f} deg{}{}\n",
+                      g.segment, g.before_m * 1000.0, g.after_m * 1000.0,
+                      g.shift_m, g.centroid_shift_m, g.rotation_deg,
+                      left_out.empty() ? "" : "; SPLIT at a storey change",
+                      overlaps.empty() ? std::string()
+                                       : fmt::format("; REPLACES {}{}",
+                                                     fmt::join(overlaps, ", "),
+                                                     realised_note));
       const std::string item = comment + edit_yaml(m);
       r.suggestion_items.push_back(item);
       yaml += item;
@@ -1252,6 +1376,7 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
            "the first is the best -- each is measured against the others as "
            "they are -- plus the shear guards when offered)\n";
     out += gauge_comment;
+    out += held_back_comment;
     out +=
         yaml.empty() ? "  # none: no segment move lowers its residual\n" : yaml;
     j["suggestions_yaml"] = yaml;

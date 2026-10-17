@@ -1028,6 +1028,7 @@ auto polygonise_spaces(const std::vector<RoomGrid> &grids,
       const double face_area = faces.empty() ? 0.0 : area_of(from_faces);
       const double share =
           area > 0.0 ? std::clamp(face_area / area, 0.0, 1.0) : 0.0;
+      s.confidence = share;
       s.metadata = fmt::format(
           R"({{"arrangement_share":{:.4f},"aspect":{:.3f},"furniture_holes":{}}})",
           share, aspect, furniture_holes);

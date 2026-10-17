@@ -6,6 +6,7 @@
 #include "reusex/core/label_encoding.hpp"
 #include "reusex/pipeline/mesh_parameters.hpp"
 #include "reusex/pipeline/opening_parameters.hpp"
+#include "reusex/pipeline/space_parameters.hpp"
 #include "reusex/pipeline/stage_parameters.hpp"
 #include "reusex/pipeline/tile_index.hpp"
 #include "reusex/pipeline/wall_parameters.hpp"
@@ -19,6 +20,7 @@
 #include "reusex/core/logging.hpp"
 #include "reusex/core/normal_orientation.hpp"
 #include "reusex/core/opening_identity.hpp"
+#include "reusex/core/space_identity.hpp"
 #include "reusex/core/storey_identity.hpp"
 #include "reusex/core/validate.hpp"
 #include "reusex/core/wall_identity.hpp"
@@ -75,7 +77,7 @@ struct StageName {
 // used in `ruxd`'s HTTP contract (docs/gui/openapi.yaml, in its own repo) and
 // `contract` selects the input check run before the stage executes
 // (docs/CONTRACTS.md).
-constexpr std::array<StageName, 12> kStages{{
+constexpr std::array<StageName, 13> kStages{{
     {JobStage::clouds, "clouds", "cloud_reconstruction",
      core::PipelineStage::clouds, false},
     {JobStage::planes, "planes", "segment_planes", core::PipelineStage::planes,
@@ -125,6 +127,10 @@ constexpr std::array<StageName, 12> kStages{{
     // seconds on NewOffice (88 walls, 1.5 M points).
     {JobStage::openings, "openings", "openings", core::PipelineStage::openings,
      false},
+    // Not cancellable between storeys only: the band grid is rebuilt
+    // (cancellable inside segment_band_rooms) and one CGAL arrangement per
+    // storey is labelled; a few seconds on NewOffice.
+    {JobStage::spaces, "spaces", "spaces", core::PipelineStage::spaces, true},
 }};
 
 const StageName &descriptor(JobStage stage) {
@@ -350,8 +356,7 @@ StageResult run_planes(ProjectDB &db, const StageContext &ctx,
 /// (segmentation/band_rooms.hpp, reusex-rqn.2). Needs the storeys table for
 /// the level frame and the floor / ceiling heights, and the per-point
 /// "normals" cloud.
-StageResult run_band_rooms(ProjectDB &db, const StageContext &ctx,
-                           const json &params) {
+geometry::BandRoomsOptions band_rooms_options(const json &params) {
   geometry::BandRoomsOptions o;
   o.cell_size = param_or(params, "band_cell_size", o.cell_size);
   o.band_bottom = param_or(params, "band_bottom", o.band_bottom);
@@ -366,6 +371,41 @@ StageResult run_band_rooms(ProjectDB &db, const StageContext &ctx,
   o.cut_at_doors = param_or(params, "band_cut_at_doors", o.cut_at_doors);
   o.wall_graph_min_seen_share =
       param_or(params, "band_wall_min_seen_share", o.wall_graph_min_seen_share);
+  return o;
+}
+
+/// The walls / openings tables the band rooms are cut by (W4.1, W5.4), as
+/// @p o asks for them.
+geometry::BandRoomsPlan band_rooms_plan(const ProjectDB &db,
+                                        const geometry::BandRoomsOptions &o) {
+  geometry::BandRoomsPlan plan;
+  if (o.use_wall_graph || o.cut_at_doors) {
+    plan.walls = db.walls();
+    if (o.cut_at_doors)
+      plan.openings = db.openings();
+  }
+  return plan;
+}
+
+/// Polygonise band rooms (W4.2) and give the spaces their stable GUIDs
+/// against the stored spaces (W4.3): the spaces stage and the rooms
+/// --spaces-json debug path share this.
+geometry::SpacesResult polygonise_with_guids(
+    const ProjectDB &db, const std::vector<geometry::RoomGrid> &grids,
+    const std::vector<core::StoreyRecord> &storeys,
+    const std::vector<core::WallRecord> &walls, const SpaceStageOptions &so,
+    core::SpaceIdentityResult *ids = nullptr) {
+  auto sp = geometry::polygonise_spaces(grids, storeys, walls, so.spaces);
+  const auto r = core::assign_space_guids(sp.spaces, sp.boundaries, db.spaces(),
+                                          db.project_guid(), so.identity);
+  if (ids)
+    *ids = r;
+  return sp;
+}
+
+StageResult run_band_rooms(ProjectDB &db, const StageContext &ctx,
+                           const json &params) {
+  geometry::BandRoomsOptions o = band_rooms_options(params);
   o.cancel_token = ctx.cancel_token;
   if (!(o.band_top > o.band_bottom))
     return StageResult::invalid(
@@ -397,12 +437,7 @@ StageResult run_band_rooms(ProjectDB &db, const StageContext &ctx,
   // run (recommended order walls -> openings -> rooms): the wall graph
   // blocks the grid and the doors cut the rooms (W4.1, W5.4). Optional: the
   // constriction watershed alone cuts the rooms without them.
-  geometry::BandRoomsPlan plan;
-  if (o.use_wall_graph || o.cut_at_doors) {
-    plan.walls = db.walls();
-    if (o.cut_at_doors)
-      plan.openings = db.openings();
-  }
+  const geometry::BandRoomsPlan plan = band_rooms_plan(db, o);
   if (plan.walls.empty())
     info("rooms: no walls table (run `rux create walls` and `rux create "
          "openings` before rooms to cut rooms at walls and doors); band "
@@ -421,25 +456,26 @@ StageResult run_band_rooms(ProjectDB &db, const StageContext &ctx,
 
   db.save_point_cloud("rooms", *r.labels, "segment_rooms", ctx.parameters);
 
-  // Debug path (W4.2, reusex-z1v.6.2) until the spaces stage (W4.3) stores
-  // them: the rooms as space polygons against the wall graph, written as a
-  // solid-model document for `rux analyze solid --model`.
+  // Debug path (W4.2, reusex-z1v.6.2): the rooms as space polygons against
+  // the wall graph, written as a solid-model document for `rux analyze
+  // solid --model` without storing them. The spaces stage (W4.3) stores
+  // the same spaces, through the same code and with the same GUIDs.
   const auto spaces_json =
       param_or<std::string>(params, "spaces_json", std::string());
   if (!spaces_json.empty()) {
-    geometry::SpacesOptions so;
-    so.use_walls = !param_or(params, "spaces_raster", false);
-    so.wall_min_seen_share = o.wall_graph_min_seen_share;
+    SpaceStageOptions so;
+    so.spaces.use_walls = !param_or(params, "spaces_raster", false);
+    so.spaces.wall_min_seen_share = o.wall_graph_min_seen_share;
     core::SolidModel model;
     model.name = "band rooms as spaces (debug)";
-    model.description = so.use_walls
+    model.description = so.spaces.use_walls
                             ? "rux create rooms --spaces-json: band rooms "
                               "polygonised against the wall graph (W4.2)"
                             : "rux create rooms --spaces-json "
                               "--spaces-raster: band rooms' raster outlines";
     model.storeys = storeys;
     model.walls = plan.walls.empty() ? db.walls() : plan.walls;
-    auto sp = geometry::polygonise_spaces(r.grids, storeys, model.walls, so);
+    auto sp = polygonise_with_guids(db, r.grids, storeys, model.walls, so);
     model.spaces = std::move(sp.spaces);
     model.space_boundaries = std::move(sp.boundaries);
     model.provided.spaces = true;
@@ -1415,6 +1451,129 @@ StageResult run_openings(ProjectDB &db, const json &params, int log_id) {
       {{"table", "openings", static_cast<int64_t>(rows.size())}});
 }
 
+/// `spaces` (W4.3, reusex-z1v.6.3): the band rooms of the `rooms` cloud as
+/// space polygons against the wall graph, stored with stable GUIDs. The
+/// band grid is rebuilt with the parameters `rooms` was saved with and must
+/// reproduce its labels, so a space's room_label is the cloud's.
+StageResult run_spaces(ProjectDB &db, const StageContext &ctx,
+                       const json &params, int log_id) {
+  SpaceStageOptions so;
+  try {
+    so = space_options_from_parameters(params.dump());
+  } catch (const std::invalid_argument &e) {
+    return StageResult::invalid(e.what());
+  }
+  const auto storeys = db.storeys();
+  if (storeys.empty())
+    return StageResult::invalid(
+        "spaces: the project has no storeys; run `rux create storeys`");
+
+  // The rooms cloud's own parameters: method and band options.
+  json rooms_params = json::object();
+  try {
+    const auto [rooms_stage, rooms_json] = db.point_cloud_provenance("rooms");
+    (void)rooms_stage;
+    if (!rooms_json.empty())
+      rooms_params = parse_parameters(rooms_json);
+  } catch (const std::exception &e) {
+    return StageResult::invalid(fmt::format(
+        "spaces: cannot read the parameters of the 'rooms' cloud ({}); "
+        "re-run `rux create rooms`",
+        e.what()));
+  }
+  const auto method = param_or<std::string>(
+      rooms_params, "method", std::string(geometry::kDefaultRoomsMethod));
+  if (method != geometry::kRoomsMethodBand)
+    return StageResult::invalid(fmt::format(
+        "spaces: the 'rooms' cloud was made with --method {}; spaces are "
+        "polygonised from band rooms -- run `rux create rooms --method band`",
+        method));
+
+  geometry::BandRoomsOptions o = band_rooms_options(rooms_params);
+  o.cancel_token = ctx.cancel_token;
+  auto cloud = db.point_cloud_xyzrgb("cloud");
+  auto normals = db.point_cloud_normal("normals");
+  auto stored = db.point_cloud_label("rooms");
+  if (normals->size() != cloud->size() || stored->size() != cloud->size())
+    return StageResult::invalid(fmt::format(
+        "spaces: point cloud size mismatch: cloud={}, normals={}, rooms={}; "
+        "re-run `rux create rooms`",
+        cloud->size(), normals->size(), stored->size()));
+  IndicesConstPtr filter;
+  if (auto problem = resolve_filter(rooms_params, db, cloud->size(), filter))
+    return StageResult::invalid("spaces: the rooms cloud's " + *problem);
+
+  const geometry::BandRoomsPlan plan = band_rooms_plan(db, o);
+  auto r = geometry::segment_band_rooms(*cloud, *normals, storeys, o,
+                                        filter ? filter.get() : nullptr,
+                                        plan.walls.empty() ? nullptr : &plan);
+  if (ctx.is_cancelled())
+    return StageResult::cancel("spaces cancelled");
+
+  // The rebuilt grid must be the one the rooms cloud came from.
+  size_t differ = 0;
+  for (size_t i = 0; i < cloud->size(); ++i)
+    if ((*r.labels)[i].label != (*stored)[i].label)
+      ++differ;
+  if (differ > 0)
+    return StageResult::invalid(fmt::format(
+        "spaces: the 'rooms' cloud no longer matches its band grid: {} of {} "
+        "points ({:.2f} %) get another room when the grid is rebuilt from "
+        "today's storeys / walls / openings ({} wall(s), {} opening(s)); "
+        "re-run `rux create rooms`",
+        differ, cloud->size(),
+        100.0 * static_cast<double>(differ) /
+            static_cast<double>(std::max<size_t>(cloud->size(), 1)),
+        plan.walls.size(), plan.openings.size()));
+
+  const auto walls = db.walls();
+  if (so.spaces.use_walls && walls.empty())
+    warn("spaces: no walls table (run `rux create walls` first); every space "
+         "is the raster outline of its room");
+  core::SpaceIdentityResult ids;
+  geometry::SpacesResult sp;
+  try {
+    sp = polygonise_with_guids(db, r.grids, storeys, walls, so, &ids);
+  } catch (const std::invalid_argument &e) {
+    return StageResult::failure(e.what());
+  }
+  info("spaces: {} matched a stored space ({} locked, kept as stored), {} "
+       "new GUID(s)",
+       ids.matched, ids.locked_matched, ids.minted);
+  int lost = 0;
+  double arrangement = 0.0, total = 0.0;
+  for (const auto &st : sp.stats)
+    lost += st.lost_rooms;
+  for (const auto &s : sp.spaces) {
+    total += s.area;
+    arrangement += std::max(s.confidence, 0.0) * s.area;
+  }
+  if (sp.spaces.empty())
+    warn("spaces: no space from {} room(s) on {} storey(s) ({} wall(s), {} "
+         "lost to other rooms); is the rooms cloud empty?",
+         r.rooms, r.grids.size(), walls.size(), lost);
+
+  const size_t written = db.save_spaces(sp.spaces, sp.boundaries, log_id);
+  const auto rows = db.spaces();
+  const auto locked_kept = static_cast<size_t>(std::count_if(
+      rows.begin(), rows.end(), [](const auto &row) { return row.locked; }));
+  std::map<std::string, int> kinds;
+  for (const auto &s : sp.spaces)
+    ++kinds[s.kind];
+  return StageResult::success(
+      fmt::format("{} space(s) from {} room(s) on {} storey(s): {} room(s), "
+                  "{} corridor(s), {} open plan; {:.1f} m2, {:.0f} % on wall "
+                  "faces; {} boundar(y/ies); {} room(s) lost; {} row(s) "
+                  "written, {} locked row(s) kept",
+                  sp.spaces.size(), r.rooms, r.grids.size(), kinds["room"],
+                  kinds["corridor"], kinds["open_plan"], total,
+                  total > 0.0 ? 100.0 * arrangement / total : 0.0,
+                  sp.boundaries.size(), lost, written, locked_kept),
+      {{"table", "spaces", static_cast<int64_t>(rows.size())},
+       {"table", "space_boundaries",
+        static_cast<int64_t>(db.space_boundaries().size())}});
+}
+
 StageResult dispatch(ProjectDB &db, const StageContext &ctx, const json &params,
                      int log_id) {
   switch (ctx.stage) {
@@ -1458,6 +1617,8 @@ StageResult dispatch(ProjectDB &db, const StageContext &ctx, const json &params,
     return run_walls(db, params, log_id);
   case JobStage::openings:
     return run_openings(db, params, log_id);
+  case JobStage::spaces:
+    return run_spaces(db, ctx, params, log_id);
   }
   return StageResult::failure("unknown stage");
 }

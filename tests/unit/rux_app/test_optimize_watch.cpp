@@ -291,7 +291,13 @@ TEST_CASE("OptimizeWatchSession: suggestion pastes, re-solves, keeps the last "
   INFO(p1.report);
   REQUIRE(p1.solved);
   CHECK(p1.edits_ok);
-  CHECK_THAT(p1.report, ContainsSubstring("honoured"));
+  // The edit's line carries its verdict, judged by the block's RMS residual
+  // against its sigma (reusex-rcv.1.28). Against the one link at the break
+  // the block ends ~1.3 cm (2.7 sigma) short of its target here, so the
+  // verdict itself is not asserted; the held-move test below pins it.
+  CHECK_THAT(p1.report, ContainsSubstring("edit m-"));
+  CHECK_THAT(p1.report, ContainsSubstring("(rms "));
+  CHECK_THAT(p1.json, ContainsSubstring("\"honoured\""));
   REQUIRE(p1.cross_segment_median_m);
   CHECK(*p1.cross_segment_median_m < 0.5 * *p0.cross_segment_median_m);
   double moved = 0.0;
@@ -658,4 +664,155 @@ TEST_CASE("rux optimize --watch --watch-cycles 0 solves once and returns",
   std::vector<std::string> bad2{"--dry-run",    "--apply", "--watch",
                                 edits.string(), "--edits", "optimize"};
   CHECK_THROWS_AS(app3.parse(bad2), CLI::ParseError);
+}
+
+// ── reusex-rcv.1.28 ─────────────────────────────────────────────────────────
+
+namespace {
+
+reusex::core::PoseEdit move_edit(const std::string &id, std::int64_t first,
+                                 std::int64_t last, double x) {
+  reusex::core::PoseEdit e;
+  e.id = id;
+  e.kind = reusex::core::PoseEditKind::move;
+  e.nodes.first = first;
+  e.nodes.last = last;
+  e.delta.xyz = {x, 0.0, 0.0};
+  e.delta.yaw_deg = 1.5;
+  e.delta.pivot = std::array<double, 3>{1.0, 2.0, 1.4};
+  e.sigma_trans_m = 0.005;
+  e.sigma_rot_deg = 0.1;
+  return e;
+}
+
+reusex::geometry::EditResidual residual(const std::string &tag, double rms_t,
+                                        double rms_r, bool inlier = true) {
+  reusex::geometry::EditResidual r;
+  r.tag = tag;
+  r.rms_trans_m = rms_t;
+  r.rms_rot_deg = rms_r;
+  r.trans_m = 1.5 * rms_t;
+  r.rot_deg = 1.5 * rms_r;
+  r.gnc_inlier = inlier;
+  r.factors = 320;
+  return r;
+}
+
+} // namespace
+
+TEST_CASE("judge_edit: a move is honoured by its block's residual, not by "
+          "GNC alone",
+          "[rux_app][optimize][watch]") {
+  const auto m = move_edit("m-2565-2884", 2565, 2884, 0.02);
+  // The calibration case (41069051-full-d0.25): every factor a GNC inlier,
+  // the block 12 cm / 6.6 deg off its target at sigma 5 mm / 0.1 deg.
+  const auto bad = rux::judge_edit(residual(m.id, 0.12, 6.632), &m);
+  CHECK_FALSE(bad.honoured);
+  CHECK_THAT(bad.why, ContainsSubstring("2 sigma"));
+  // Within 2 sigma in both: honoured.
+  CHECK(rux::judge_edit(residual(m.id, 0.009, 0.19), &m).honoured);
+  // Off in rotation only, or in translation only: not honoured.
+  CHECK_FALSE(rux::judge_edit(residual(m.id, 0.002, 0.25), &m).honoured);
+  CHECK_FALSE(rux::judge_edit(residual(m.id, 0.011, 0.01), &m).honoured);
+  // GNC dropped it: not honoured whatever the residual.
+  const auto dropped = rux::judge_edit(residual(m.id, 0.0, 0.0, false), &m);
+  CHECK_FALSE(dropped.honoured);
+  CHECK_THAT(dropped.why, ContainsSubstring("GNC"));
+  // An anchor is judged against its own sigma the same way.
+  reusex::core::PoseEdit a;
+  a.id = "a-2885";
+  a.kind = reusex::core::PoseEditKind::anchor;
+  a.sigma_trans_m = 0.01;
+  a.sigma_rot_deg = 0.2;
+  CHECK_FALSE(rux::judge_edit(residual(a.id, 0.0473, 1.928), &a).honoured);
+  CHECK(rux::judge_edit(residual(a.id, 0.0059, 0.071), &a).honoured);
+  // same_surface: its residual is not in its sigma's units, GNC only.
+  reusex::core::PoseEdit ss;
+  ss.id = "s-wall";
+  ss.kind = reusex::core::PoseEditKind::same_surface;
+  CHECK(rux::judge_edit(residual(ss.id, 0.5, 5.0), &ss).honoured);
+  // No edit to read a sigma from: GNC only.
+  CHECK(rux::judge_edit(residual("x", 0.5, 5.0), nullptr).honoured);
+}
+
+TEST_CASE("blocked_replacement: no REPLACES ping-pong on an unrealised move",
+          "[rux_app][optimize][watch]") {
+  // m-2565-2884-2 as the loop printed it on 41069051-full-d0.25: segment 8,
+  // predicted 8.2 -> 4.8 mm. The next cycle measured 8.9 mm.
+  auto pasted = move_edit("m-2565-2884-2", 2565, 2884, 0.020);
+  pasted.note = "cycle 0: seg 8 (2565-2884) into the rest 8.2 -> 4.8 mm "
+                "(segment ICP on the candidate solve); replaces m-2565-2884";
+  const auto p = rux::move_prediction(pasted);
+  REQUIRE(p);
+  CHECK(p->segment == 8);
+  CHECK(std::abs(p->before_m - 0.0082) < 1e-12);
+  CHECK(std::abs(p->after_m - 0.0048) < 1e-12);
+
+  const auto why = rux::blocked_replacement(pasted, {{8, 0.0089}});
+  REQUIRE(why);
+  CHECK_THAT(*why, ContainsSubstring("m-2565-2884-2"));
+  CHECK_THAT(*why, ContainsSubstring("8.2 -> 4.8 mm"));
+  CHECK_THAT(*why, ContainsSubstring("8.9 mm"));
+  CHECK_THAT(*why, ContainsSubstring("not realised"));
+  CHECK(rux::move_realised(pasted, {{8, 0.0089}}) == false);
+
+  // Realised (8.2 -> 5.5 mm is more than half of the predicted 3.4 mm): a
+  // further move of the segment may replace it.
+  CHECK(rux::move_realised(pasted, {{8, 0.0055}}) == true);
+  CHECK_FALSE(rux::blocked_replacement(pasted, {{8, 0.0055}}));
+  // Less than half of the gain: not realised.
+  CHECK_FALSE(rux::move_realised(pasted, {{8, 0.0070}}).value());
+  // No residual for its segment this cycle: nothing to judge by.
+  CHECK_FALSE(rux::blocked_replacement(pasted, {{7, 0.0089}}));
+  // A hand-written move (no prediction in its note) is never held to one.
+  auto hand = pasted;
+  hand.note = "the north wall, by eye";
+  CHECK_FALSE(rux::move_prediction(hand));
+  CHECK_FALSE(rux::blocked_replacement(hand, {{8, 0.0089}}));
+  // Only moves carry a prediction.
+  reusex::core::PoseEdit a;
+  a.kind = reusex::core::PoseEditKind::anchor;
+  a.note = pasted.note;
+  CHECK_FALSE(rux::move_prediction(a));
+}
+
+TEST_CASE("OptimizeWatchSession: a held move is NOT HONOURED and its "
+          "replacement is held back",
+          "[rux_app][optimize][watch]") {
+  TempDir dir("optimize_watch_pingpong");
+  const fs::path project = dir.path / "p.rux";
+  const fs::path edits = dir.path / "e.yaml";
+  make_project(project);
+  write(edits, kHeader + "edits: []\n");
+  RuxOptions global;
+  global.project_db = project;
+  rux::OptimizeWatchSession session(watch_options(edits), global);
+
+  const auto p0 = session.pass(true);
+  INFO(p0.report);
+  REQUIRE(p0.solved);
+  REQUIRE_FALSE(p0.suggestion_items.empty());
+  const std::string best = p0.suggestion_items.front();
+  REQUIRE_THAT(best, ContainsSubstring("kind: move"));
+
+  // The suggested move, pasted with an anchor that holds the broken pass
+  // where it is: the block cannot reach its target, its predicted gain does
+  // not materialise.
+  write(edits, kHeader + "edits:\n" + best +
+                   "  - id: a-hold\n    kind: anchor\n    node: 36\n"
+                   "    pose: current\n"
+                   "    sigma: {trans_m: 0.001, rot_deg: 0.02}\n");
+  // A new session, as the calibration harness runs one process per cycle:
+  // the prediction travels in the move's note, not in session memory.
+  rux::OptimizeWatchSession next(watch_options(edits), global);
+  const auto p1 = next.pass(true);
+  INFO(p1.report);
+  REQUIRE(p1.solved);
+  CHECK_THAT(p1.report, ContainsSubstring("NOT HONOURED"));
+  // The same segment's next move would REPLACE the pasted one: held back,
+  // and the block says why.
+  CHECK_THAT(p1.suggestions_yaml,
+             !ContainsSubstring("REPLACES") && !ContainsSubstring("replaces"));
+  CHECK_THAT(p1.report, ContainsSubstring("not realised"));
+  CHECK_THAT(p1.json, ContainsSubstring("held_back"));
 }

@@ -19,6 +19,7 @@
 #include "create/project.hpp"
 #include "create/rooms.hpp"
 #include "create/segment_frame.hpp"
+#include "create/spaces.hpp"
 #include "create/storeys.hpp"
 #include "create/survey.hpp"
 #include "create/texture.hpp"
@@ -46,6 +47,7 @@ SUBCOMMANDS:
   classify     Classify planes: wall, floor, ceiling, furniture, ...
   walls        Walls with a measured thickness and their joins
   openings     Doors, windows and openings in the walls
+  spaces       Spaces: band rooms as polygons against the walls
   materials    Create a material passport per instance
   survey       Fill the Ressourcekortlægning from instances
   mesh         Generate watertight mesh from planes
@@ -83,6 +85,7 @@ NOTES:
   setup_subcommand_create_classify(*sub, global_opt);
   setup_subcommand_create_walls(*sub, global_opt);
   setup_subcommand_create_openings(*sub, global_opt);
+  setup_subcommand_create_spaces(*sub, global_opt);
   setup_subcommand_create_materials(*sub, global_opt);
   setup_subcommand_create_survey(*sub, global_opt);
   setup_subcommand_create_mesh(*sub, global_opt);

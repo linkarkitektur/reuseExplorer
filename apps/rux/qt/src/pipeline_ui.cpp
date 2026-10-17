@@ -40,6 +40,8 @@ QString stage_name_da(pl::JobStage stage) {
     return "Vægge";
   case pl::JobStage::openings:
     return "Åbninger";
+  case pl::JobStage::spaces:
+    return "Rum som polygoner";
   }
   return {};
 }
@@ -73,6 +75,9 @@ QString stage_blurb_da(pl::JobStage stage) {
   case pl::JobStage::openings:
     return "Find døre, vinduer og åbninger i væggene: hvor væggen mangler og "
            "intet står foran den.";
+  case pl::JobStage::spaces:
+    return "Tegn båndrummene som polygoner langs væggene: areal, volumen, "
+           "type og de vægge, der afgrænser dem.";
   }
   return {};
 }
@@ -291,6 +296,28 @@ QString parameter_label_da(pl::JobStage stage,
           {{"openings", "leaf_min_radius_share"}, "Dørblad: indre radius"},
           {{"openings", "guid_match_m"}, "Samme åbning inden for [m]"},
           {{"openings", "guid_min_overlap"}, "Samme åbning overlap"},
+          {{"spaces", "use_walls"}, "Brug vægtabellen"},
+          {{"spaces", "axes_only"}, "Kun vægakser"},
+          {{"spaces", "wall_min_seen_share"}, "Mindst sete vægandel"},
+          {{"spaces", "join_extension_m"}, "Vægforlængelse [m]"},
+          {{"spaces", "close_at_interior"}, "Luk ved indvendigt omrids"},
+          {{"spaces", "interior_simplify_m"}, "Forenkling af omrids [m]"},
+          {{"spaces", "pure_min_share"}, "Ren flade-andel"},
+          {{"spaces", "guest_min_share"}, "Gæsterum-andel"},
+          {{"spaces", "guest_grow_m"}, "Gæsterum vokser [m]"},
+          {{"spaces", "empty_max_share"}, "Tom flade-andel"},
+          {{"spaces", "small_face_area"}, "Lille flade [m²]"},
+          {{"spaces", "min_piece_area"}, "Advar om tabt stykke [m²]"},
+          {{"spaces", "min_hole_area"}, "Mindste hul [m²]"},
+          {{"spaces", "boundary_tolerance_m"}, "Afgrænsning: tolerance [m]"},
+          {{"spaces", "boundary_max_angle_deg"}, "Afgrænsning: vinkel [°]"},
+          {{"spaces", "boundary_min_length_m"}, "Afgrænsning: overlap [m]"},
+          {{"spaces", "corridor_min_aspect"}, "Gang: længde/bredde"},
+          {{"spaces", "open_plan_min_area"}, "Storrum: mindste areal [m²]"},
+          {{"spaces", "open_plan_min_holes"}, "Storrum: møbelhuller"},
+          {{"spaces", "open_plan_min_hole_area"}, "Møbelhul [m²]"},
+          {{"spaces", "guid_match_m"}, "Samme rum inden for [m]"},
+          {{"spaces", "guid_min_area_ratio"}, "Samme rum arealforhold"},
   };
   if (auto it = labels.find({std::string(pl::to_string(stage)), d.key});
       it != labels.end())
@@ -334,6 +361,8 @@ reusex::core::PipelineStage contract_stage(pl::JobStage stage) {
     return P::walls;
   case pl::JobStage::openings:
     return P::openings;
+  case pl::JobStage::spaces:
+    return P::spaces;
   }
   return P::clouds;
 }

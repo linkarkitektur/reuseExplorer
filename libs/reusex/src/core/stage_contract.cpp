@@ -54,6 +54,13 @@ const std::vector<Artifact> &artifacts() {
       {"openings", ArtifactKind::table, Alignment::none,
        "openings: doors, windows and openings in the walls' faces, with "
        "their evidence (schema v34)"},
+      {"spaces", ArtifactKind::table, Alignment::none,
+       "spaces: room / corridor / open-plan polygons with holes in their "
+       "storey's level frame, area, volume, kind and room label "
+       "(schema v35)"},
+      {"space_boundaries", ArtifactKind::table, Alignment::none,
+       "space_boundaries: the stretch (side, s range) of each wall that "
+       "bounds a space (schema v35)"},
       {"mesh", ArtifactKind::mesh, Alignment::none,
        "the reconstructed watertight mesh"},
       {"textured_mesh", ArtifactKind::mesh, Alignment::none,
@@ -228,6 +235,26 @@ const std::vector<StageContract> &contracts() {
         {{"walls"}, 1, 0, /*optional=*/true},
         {{"openings"}, 1, 0, /*optional=*/true}},
        {"rooms"}},
+
+      {PipelineStage::spaces,
+       "spaces",
+       {},
+       "rux create spaces",
+       "the band rooms as space polygons against the wall graph",
+       // The stage rebuilds the band-rooms grid of the `rooms` cloud (from
+       // `cloud`, `normals`, `storeys` and the walls / openings that cut it,
+       // with the parameters `rooms` was made with), checks that its room
+       // ids are the cloud's labels, and polygonises it against `walls`.
+       // walls and openings are optional (raster outlines without walls),
+       // but sit earlier in this table: run walls -> openings -> rooms ->
+       // spaces.
+       {{{"cloud"}},
+        {{"normals"}},
+        {{"storeys"}},
+        {{"rooms"}},
+        {{"walls"}, 1, 0, /*optional=*/true},
+        {{"openings"}, 1, 0, /*optional=*/true}},
+       {"spaces", "space_boundaries"}},
 
       {PipelineStage::mesh,
        "mesh",

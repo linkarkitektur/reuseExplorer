@@ -333,7 +333,15 @@ TEST_CASE("PoseEditsSolver_TwoPassBreak_MovePlusNodePriorRecoversIt",
     CHECK(r.gnc_inlier);
     CHECK(r.trans_m < 0.03);
     CHECK(r.chi2 >= 0.0);
+    // reusex-rcv.1.28: the RMS over the edit's factors, never above the max.
+    CHECK(r.rms_trans_m <= r.trans_m + 1e-12);
+    CHECK(r.rms_rot_deg <= r.rot_deg + 1e-12);
   }
+  // A move's RMS is the block's own residual: positive, below its largest
+  // node residual; an anchor's (one factor) is that factor's.
+  CHECK(rb.edit_residuals[0].rms_trans_m > 0.0);
+  CHECK(rb.edit_residuals[1].rms_trans_m == rb.edit_residuals[1].trans_m);
+  CHECK(rb.edit_residuals[1].rms_rot_deg == rb.edit_residuals[1].rot_deg);
 }
 
 TEST_CASE("PoseEditsSolver_AnchorDofMask_LeavesMaskedAxesAlone",
@@ -451,7 +459,8 @@ TEST_CASE("PoseEditsSolver_ContradictoryAnchors_AreReportedNotObeyed",
     INFO(e.tag << ": " << e.trans_m << " m, chi2 " << e.chi2 << ", inlier "
                << e.gnc_inlier);
     any_outlier = any_outlier || !e.gnc_inlier;
-    CHECK(e.trans_m > 0.2); // neither is met: they cannot both be
+    CHECK(e.trans_m > 0.2);            // neither is met: they cannot both be
+    CHECK(e.rms_trans_m == e.trans_m); // one factor each
   }
   CHECK(any_outlier);
   CHECK(log.saw("is NOT honoured"));
