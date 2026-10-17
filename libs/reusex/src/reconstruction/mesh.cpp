@@ -287,8 +287,9 @@ pcl::PolygonMeshPtr mesh(CloudConstPtr cloud, CloudNConstPtr normals,
   select_structural_planes(planes, inliers, centroids, cloud, structural,
                            evidence);
 
+  // With the cloud, faces of two storeys' walls do not pair (reusex-ro1).
   auto pairs = make_pairs(planes, inliers, centroids, opt.search_threshold,
-                          opt.new_plane_offset);
+                          opt.new_plane_offset, kMaxCrossedGapDefault, cloud);
   reusex::debug("Number of plane pairs: {}", pairs.size());
 
   auto [vertical, horizontal] = separate_planes(planes);

@@ -7,6 +7,7 @@
 #include "utils/tolerances.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <numbers>
@@ -58,7 +59,7 @@ auto make_pairs(EigenVectorContainer<double, 4> &planes,
                 std::vector<IndicesPtr> &inliers,
                 EigenVectorContainer<double, 3> &centroids,
                 const double threshold, const double new_plane_offset,
-                const double max_crossed_gap)
+                const double max_crossed_gap, CloudConstPtr cloud)
     -> std::vector<std::pair<size_t, size_t>> {
 
   using Vector3 = Eigen::Vector3d;
@@ -66,6 +67,34 @@ auto make_pairs(EigenVectorContainer<double, 4> &planes,
 
   std::vector<std::pair<size_t, size_t>> pairs;
   std::vector<bool> paired(planes.size(), false);
+
+  // Each face's measured height (2nd to 98th percentile of its inliers'
+  // z), when the cloud is given; NaN without inliers.
+  constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+  std::vector<std::array<double, 2>> z_range(planes.size(), {nan, nan});
+  if (cloud)
+    for (size_t i = 0; i < planes.size(); ++i) {
+      if (!inliers[i] || inliers[i]->empty())
+        continue;
+      std::vector<float> z;
+      z.reserve(inliers[i]->size());
+      for (int idx : *inliers[i])
+        z.push_back(cloud->points[static_cast<size_t>(idx)].z);
+      std::sort(z.begin(), z.end());
+      const size_t k = z.size() / 50;
+      z_range[i] = {z[k], z[z.size() - 1 - k]};
+    }
+  // Two faces of one wall share some height. A face of one storey's wall
+  // paired with a face of another storey's wall on the same line (house2:
+  // the ground floor's 2.5 m partition and an upper-storey wall 4 degrees
+  // off, reusex-ro1) bounds a slab through both storeys, and the weaker
+  // face was turned to the other's angle.
+  auto share_height = [&](size_t a, size_t b) {
+    if (std::isnan(z_range[a][0]) || std::isnan(z_range[b][0]))
+      return true;
+    return std::min(z_range[a][1], z_range[b][1]) >
+           std::max(z_range[a][0], z_range[b][0]);
+  };
 
   for (size_t i = 0; i < planes.size(); ++i) {
     if (paired[i])
@@ -79,7 +108,7 @@ auto make_pairs(EigenVectorContainer<double, 4> &planes,
 
     // Inline loop instead of ranges pipeline
     for (size_t j = i + 1; j < planes.size(); ++j) {
-      if (paired[j])
+      if (paired[j] || !share_height(i, j))
         continue;
 
       auto &plane_j = planes[j];
@@ -96,6 +125,32 @@ auto make_pairs(EigenVectorContainer<double, 4> &planes,
       const double dist_i = dist_plane_point(plane_i, centroid_j.head<3>());
       const double dist_j = dist_plane_point(plane_j, centroid_i.head<3>());
       const double diff = (std::abs(dist_i) + std::abs(dist_j)) * 0.5;
+
+      // A pair is a wall only where a cell lies behind both of its faces.
+      // Two faces whose fronts look at each other further apart than one
+      // drifted wall (max_crossed_gap, below) stay where measured, and then
+      // nothing lies behind both: the pair is a wall nowhere and its faces
+      // can never separate two rooms. house2's west-room partition (seen
+      // from the west room only) was paired with a north room's wall that
+      // faces it 0.23 m away, so the partition had no wall cell along its
+      // whole length and the MIP merged the room with the corridor
+      // (reusex-ro1). Such a face is no candidate; the face keeps looking
+      // for one behind it, or gets an invented back face. The test is the
+      // one below, on the face with more inliers, after the other is turned
+      // antiparallel to it.
+      {
+        const bool i_keeps = inliers[i]->size() >= inliers[j]->size();
+        const Vector4 &pk = i_keeps ? plane_i : plane_j;
+        const Vector3 ct = (i_keeps ? centroid_j : centroid_i).head<3>();
+        const double facing = pk.head<3>().dot(ct) + pk[3];
+        if (facing > max_crossed_gap) {
+          if (diff < threshold)
+            reusex::debug("make_pairs: faces {} and {} look at each other "
+                          "{:.3f} m apart (over {:.2f} m): no wall pair",
+                          i, j, facing, max_crossed_gap);
+          continue;
+        }
+      }
 
       if (diff < best_diff) {
         best_diff = diff;
@@ -128,12 +183,12 @@ auto make_pairs(EigenVectorContainer<double, 4> &planes,
       // whose normals point at each other cannot bound a gap a sensor
       // looked into: they are one wall, so swap their positions -- the slab
       // then spans the stretch where the two scans overlap, on the wall's
-      // axis, and each face keeps its normal towards its own room. Farther
-      // apart they stay where they were measured.
+      // axis, and each face keeps its normal towards its own room. Faces
+      // farther apart were no candidates (above).
       const double crossed_by =
           planes[keep].head<3>().dot(centroids[turn].head<3>()) +
           planes[keep][3];
-      if (crossed_by > 0.0 && crossed_by <= max_crossed_gap) {
+      if (crossed_by > 0.0) {
         const Vector3 n_keep = planes[keep].head<3>();
         const Vector3 c_keep = centroids[keep].head<3>();
         planes[keep][3] = -n_keep.dot(centroids[turn].head<3>());
@@ -141,10 +196,6 @@ auto make_pairs(EigenVectorContainer<double, 4> &planes,
         reusex::debug("make_pairs: faces {} and {} cross by {:.3f} m (one "
                       "wall seen from two drifted scans): slab between them",
                       i, best_j, crossed_by);
-      } else if (crossed_by > 0.0) {
-        reusex::debug("make_pairs: faces {} and {} look at each other "
-                      "{:.3f} m apart (over {:.2f} m): left where measured",
-                      i, best_j, crossed_by, max_crossed_gap);
       }
 
       pairs.emplace_back(i, best_j);

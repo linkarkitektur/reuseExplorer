@@ -24,6 +24,7 @@
 #include <Eigen/Core>
 
 #include <cmath>
+#include <memory>
 #include <numbers>
 
 using namespace reusex;
@@ -398,6 +399,98 @@ TEST_CASE("MakePairs_FacesLookingAtEachOtherAcrossAGap_StayWhereMeasured",
 
   CHECK(planes[0].isApprox(Eigen::Vector4d(1.0, 0.0, 0.0, -1.0)));
   CHECK(planes[1].isApprox(Eigen::Vector4d(-1.0, 0.0, 0.0, 1.3)));
+}
+
+TEST_CASE("MakePairs_FacesLookingAtEachOtherAcrossAGap_AreNoWall",
+          "[geometry][make_pairs]") {
+  // A pair is a wall: the slab behind both faces. Two faces whose fronts
+  // look at each other across more than max_crossed_gap stay where measured,
+  // so nothing lies behind both and the pair would be a wall nowhere
+  // (house2's west-room partition and a north room's wall 0.23 m apart,
+  // reusex-ro1). Each must get a pair that bounds a slab: here, with no
+  // other candidate, an invented back face behind it.
+  EigenVectorContainer<double, 4> planes;
+  EigenVectorContainer<double, 3> centroids;
+  std::vector<IndicesPtr> inliers;
+  planes.emplace_back(-1.0, 0.0, 0.0, 3.0); // x = 3.0, normal -x
+  centroids.emplace_back(3.0, 1.5, 1.25);
+  inliers.push_back(IndicesPtr(new Indices(500, 0)));
+  planes.emplace_back(1.0, 0.0, 0.0, -2.77); // x = 2.77, normal +x
+  centroids.emplace_back(2.77, 4.5, 1.25);
+  inliers.push_back(IndicesPtr(new Indices(800, 0)));
+
+  auto pairs = make_pairs(planes, inliers, centroids, /*threshold=*/0.60,
+                          /*new_plane_offset=*/0.25);
+
+  REQUIRE(pairs.size() == 2);
+  REQUIRE(planes.size() == 4);
+  for (const auto &[a, b] : pairs) {
+    // Some point lies behind both faces of every pair.
+    const Eigen::Vector3d mid = 0.5 * (centroids[a] + centroids[b]);
+    const Eigen::Vector3d probe(mid.x(), 0.0, 0.0);
+    INFO("pair " << a << "," << b);
+    CHECK(dist_plane_point(planes[a], probe) < 0.0);
+    CHECK(dist_plane_point(planes[b], probe) < 0.0);
+  }
+  // Neither measured face moved.
+  CHECK(planes[0].isApprox(Eigen::Vector4d(-1.0, 0.0, 0.0, 3.0)));
+  CHECK(planes[1].isApprox(Eigen::Vector4d(1.0, 0.0, 0.0, -2.77)));
+}
+
+TEST_CASE("MakePairs_FacesOfTwoStoreysWalls_AreNoWall",
+          "[geometry][make_pairs]") {
+  // house2 (reusex-ro1): the ground floor's partition (normal -x, z 0..2.4)
+  // and an upper-storey wall's face (normal +x, z 2.7..5.0, 4 degrees off)
+  // lie back to back 0.2 m apart on one line. Without the cloud they pair,
+  // and the weaker face is turned onto the other's angle; with it, their
+  // heights do not overlap, so they are no wall and keep their angles.
+  auto cloud = std::make_shared<Cloud>();
+  auto face = [&](double x, double y0, double y1, double z0, double z1) {
+    IndicesPtr idx(new Indices);
+    for (double y = y0; y <= y1 + 1e-9; y += 0.1)
+      for (double z = z0; z <= z1 + 1e-9; z += 0.1) {
+        PointT p;
+        p.x = static_cast<float>(x);
+        p.y = static_cast<float>(y);
+        p.z = static_cast<float>(z);
+        idx->push_back(static_cast<int>(cloud->size()));
+        cloud->push_back(p);
+      }
+    return idx;
+  };
+  const double a = 4.0 * std::numbers::pi / 180.0;
+  auto setup = [&](EigenVectorContainer<double, 4> &planes,
+                   EigenVectorContainer<double, 3> &centroids,
+                   std::vector<IndicesPtr> &inliers) {
+    planes.emplace_back(-1.0, 0.0, 0.0, 3.0); // x = 3.0, normal -x
+    centroids.emplace_back(3.0, 2.5, 1.2);
+    inliers.push_back(face(3.0, 1.0, 4.0, 0.0, 2.4));
+    const Eigen::Vector3d n(std::cos(a), std::sin(a), 0.0);
+    const Eigen::Vector3d c(3.2, 7.0, 3.85);
+    planes.emplace_back(n.x(), n.y(), n.z(), -n.dot(c));
+    centroids.push_back(c);
+    inliers.push_back(face(3.2, 5.0, 9.0, 2.7, 5.0));
+  };
+
+  EigenVectorContainer<double, 4> planes;
+  EigenVectorContainer<double, 3> centroids;
+  std::vector<IndicesPtr> inliers;
+  setup(planes, centroids, inliers);
+  cloud->width = static_cast<uint32_t>(cloud->size());
+  cloud->height = 1;
+
+  SECTION("without the cloud they pair") {
+    auto pairs = make_pairs(planes, inliers, centroids, 0.60, 0.25, 0.15);
+    CHECK(pairs.size() == 1);
+  }
+  SECTION("with the cloud each gets its own back face") {
+    const Eigen::Vector4d p0 = planes[0];
+    auto pairs =
+        make_pairs(planes, inliers, centroids, 0.60, 0.25, 0.15, cloud);
+    CHECK(pairs.size() == 2);
+    CHECK(planes.size() == 4);
+    CHECK(planes[0].isApprox(p0)); // not turned onto the other's angle
+  }
 }
 
 namespace {
