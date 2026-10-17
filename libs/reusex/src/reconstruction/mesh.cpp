@@ -144,10 +144,24 @@ select_section_planes(const EigenVectorContainer<double, 4> &planes,
 std::vector<std::array<double, 2>>
 wall_z_ranges(const EigenVectorContainer<double, 4> &planes,
               const std::vector<IndicesPtr> &inliers, CloudConstPtr cloud,
-              const std::vector<std::pair<size_t, size_t>> &pairs) {
+              const std::vector<std::pair<size_t, size_t>> &pairs,
+              const std::vector<double> &storey_heights) {
   constexpr double nan = std::numeric_limits<double>::quiet_NaN();
-  constexpr double kVerticalEps = 0.1;  // |n_z| below this: a wall
-  constexpr double kTrim = 0.02;        // percentile cut at each end
+  constexpr double kVerticalEps = 0.1; // |n_z| below this: a wall
+  constexpr double kTrim = 0.02;       // percentile cut at each end
+  // Beyond the cut, the range follows the sorted inlier heights down (up)
+  // while consecutive ones are at most this far apart [m]...
+  constexpr double kContiguousGap = 0.15;
+  // ... but not further than this past the storey floor (ceiling) nearest to
+  // the cut [m].
+  constexpr double kStoreyMargin = 0.05;
+  auto nearest_storey_height = [&](double z) {
+    double best = std::numeric_limits<double>::quiet_NaN();
+    for (double h : storey_heights)
+      if (std::isnan(best) || std::abs(h - z) < std::abs(best - z))
+        best = h;
+    return best;
+  };
   constexpr double kHorizontalNz = 0.9; // |n_z| above this: a floor/ceiling
   std::vector<std::array<double, 2>> out(planes.size(), {nan, nan});
   if (planes.size() != inliers.size())
@@ -168,8 +182,25 @@ wall_z_ranges(const EigenVectorContainer<double, 4> &planes,
       z.push_back(cloud->points[static_cast<size_t>(idx)].z);
     std::sort(z.begin(), z.end());
     const auto last = static_cast<double>(z.size() - 1);
-    const auto lo = static_cast<size_t>(std::floor(kTrim * last));
-    const auto hi = static_cast<size_t>(std::ceil((1.0 - kTrim) * last));
+    auto lo = static_cast<size_t>(std::floor(kTrim * last));
+    auto hi = static_cast<size_t>(std::ceil((1.0 - kTrim) * last));
+    // The percentiles cut a wall's stretch that reaches further than the
+    // rest when it is a small share of the wall: the part of a long wall
+    // that runs down to a split level's lower floor (house1, reusex-7co),
+    // or the top of a wall up to a ceiling that is higher than most of the
+    // wall's points reach (reusex-2kd). Points that continue the wall
+    // without a gap belong to it; a stray point beyond a gap does not, and
+    // neither does one past the storey floor or ceiling the wall ends at
+    // (the nearest one to its cut): on a drifted scan (house2) a wall's
+    // points run on into the slab between two storeys.
+    const double floor_stop = nearest_storey_height(z[lo]) - kStoreyMargin;
+    const double ceiling_stop = nearest_storey_height(z[hi]) + kStoreyMargin;
+    while (lo > 0 && z[lo] - z[lo - 1] <= kContiguousGap &&
+           !(z[lo - 1] < floor_stop))
+      --lo;
+    while (hi + 1 < z.size() && z[hi + 1] - z[hi] <= kContiguousGap &&
+           !(z[hi + 1] > ceiling_stop))
+      ++hi;
     out[i] = {z[lo], z[hi]};
   }
   // The two faces of a wall (or of a roof) share one range.
@@ -232,8 +263,8 @@ pcl::PolygonMeshPtr mesh(CloudConstPtr cloud, CloudNConstPtr normals,
 
   planes = regularizePlanes<double, PointT>(planes, cloud, inliers, 10.0);
 
-  std::tie(planes, inliers, centroids) =
-      merge_planes(planes, inliers, centroids, cloud);
+  std::tie(planes, inliers, centroids) = merge_planes(
+      planes, inliers, centroids, cloud, 0.1, 0.5, opt.horizontal_merge_m);
   reusex::debug("Number of planes after merging: {}", planes.size());
 
   planes = force_orthogonal_planes(planes, centroids);
@@ -284,7 +315,8 @@ pcl::PolygonMeshPtr mesh(CloudConstPtr cloud, CloudNConstPtr normals,
   // building reaches (reusex-x8s).
   std::vector<std::array<double, 2>> z_ranges;
   if (opt.storey_local || !opt.section_heights.empty())
-    z_ranges = wall_z_ranges(planes, inliers, cloud, pairs);
+    z_ranges =
+        wall_z_ranges(planes, inliers, cloud, pairs, opt.section_heights);
 
   // Only the horizontals inside the building as section planes, when the
   // storeys table gave the storey heights (reusex-z1v.3.4, reusex-x8s).
