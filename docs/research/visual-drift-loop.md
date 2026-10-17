@@ -800,3 +800,39 @@ The first calibration (§9.3.4, the `m-2565-2884` ping-pong) under the same
 split: 87-91% / 90-93% realised, 13-22 mm / 0.6-0.9 deg left, 22-26 mm of
 bend. It reads honoured now, with the shortfall on its line; the ping-pong
 itself is what the held-back rule (`reusex-rcv.1.28`) stops.
+
+### 9.9 A move over a guarded node; a yaw search before the segment ICP (2026-10-17, `reusex-r5z`, `reusex-rcv.1.29`)
+
+**A move over a guarded node (`reusex-r5z`).** §9.8's one NOT HONOURED
+edit was a conflict the suggestion loop made itself: shear guard `a-1764`
+(pasted in round 3) pins node 1764 inside the later move `m-1604-1923`.
+The loop checked a suggestion's overlap with other moves only. Two fixes
+were tried on 41069051-full-d1.0, blind, same master, seed and policy
+(`step.py` drops what a comment says the move overrides):
+
+| variant | the move at round 4 | final full ATE (mm) | best fast |
+|---|---|---|---|
+| before (PR #76) | `m-1604-1923`, guard kept (80 mm off its target) | 518.7 | 535.1 |
+| split around the pinned node | `m-1604-1763`, guard kept | 533.8 | 535.1 |
+| **override: drop the guard** | `m-1604-1923`, `OVERRIDES a-1764` | **518.3** | 535.1 |
+
+The split moves half a segment whose ICP delta was measured on all of it,
+and the guard then holds the other half against it; the override lets the
+measured move through. So a suggestion whose block holds an anchored node
+says `OVERRIDES <id> (pins node N inside the block): drop <id> when you
+paste this`, its note records `overrides <id>`, and the JSON lists them.
+
+
+**A yaw search before the segment ICP (`reusex-rcv.1.29`, not shipped).**
+A coarse yaw start for the ICP -- the grid offset between a segment's
+wall normals and the rest's, with the Manhattan prior's azimuth estimator,
+the lower-residual start winning -- pulled a copy rotated 30 deg back in a
+synthetic box room where ICP alone stays 30 deg off. On the three cells,
+blind, same policy, with the guard override above: 41069051-yaw-d0.25 final
+34.2 mm = `optimize`, no edit kept (as before: best fast round 28.1 mm,
+rejected on its cross-segment median); full-d0.25 78.9 (=); full-d1.0
+518.6 (override alone 518.3). The search fired on 1-2 segments per round
+(-2.8 to -6.7 deg starts) and changed no decision for the better. The
+fanned copies of §9.3 were in the drifted odometry; since §9.7 the loop
+starts from plain optimize, whose cut of the yaw cell has single walls
+(cross-segment 6.8 mm), so no segment is several degrees off any more.

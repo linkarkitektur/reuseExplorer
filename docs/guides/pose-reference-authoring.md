@@ -111,7 +111,12 @@ rux analyze drift / the block  ->  write / edit e.yaml  ->  save
    `held back -- ...` with the numbers: drop the unrealised move rather than
    replace it. A REPLACES of a realised move says so (`reusex-rcv.1.28`:
    two moves of one segment used to alternate, each predicting a gain the
-   other undid). The segment that holds the
+   other undid). A suggestion whose block holds a node an anchor pins (a
+   shear guard pasted earlier) says `OVERRIDES <id>`: the two conflict by
+   construction -- the guard holds its node where plain optimize had it,
+   the move carries the block away -- so drop the guard with the move
+   (`reusex-r5z`; keeping the guard and moving only the free part of the
+   block ended 15 mm worse in the calibration). The segment that holds the
    gauge (frame 0's prior) is never suggested: its move outvotes the gauge
    and drags the whole trajectory along (`reusex-rcv.1.23`); the block says
    so in a comment. When an untouched segment sheared, a shear guard

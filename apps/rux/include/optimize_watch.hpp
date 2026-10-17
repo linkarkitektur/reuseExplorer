@@ -288,6 +288,14 @@ std::optional<std::string>
 blocked_replacement(const reusex::core::PoseEdit &replaced,
                     const std::map<int, double> &segment_now);
 
+/// reusex-r5z: the ids of the anchors in @p edits (the loop's shear guards
+/// are anchors) that pin a node in [@p first, @p last], in file order. A
+/// suggested move whose block holds one conflicts with it by construction:
+/// the guard holds its node where plain optimize had it, the move carries
+/// the whole block away from there.
+std::vector<std::string> pinning_anchors(const reusex::core::PoseEdits &edits,
+                                         std::int64_t first, std::int64_t last);
+
 /// reusex-rcv.1.18: the pose-graph edges of @p graph as the graph layer
 /// draws them, coloured by the candidate solve @p result (its per-edge
 /// residuals, PoseGraphEdgeRecord::tag = index in graph.edges) instead of
