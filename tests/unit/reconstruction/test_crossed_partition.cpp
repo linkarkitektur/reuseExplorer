@@ -75,19 +75,53 @@ struct Scene {
     inliers.push_back(idx);
   }
 
-  /// A box room [x0, x1] x [0, 3] x [0, 2.5], every face facing inwards.
-  void room(double x0, double x1, std::uint32_t label) {
-    const double w = x1 - x0, d = 3.0, h = 2.5;
+  /// A box room [x0, x1] x [y0, y1] x [0, 2.5], every face facing inwards;
+  /// `west_face` false leaves its x = x0 face unscanned.
+  void room(double x0, double x1, std::uint32_t label, double y0 = 0.0,
+            double y1 = 3.0, bool west_face = true) {
+    const double w = x1 - x0, d = y1 - y0, h = 2.5;
     const Eigen::Vector3d ex(w, 0, 0), ey(0, d, 0), ez(0, 0, h);
-    const Eigen::Vector3d o(x0, 0, 0);
+    const Eigen::Vector3d o(x0, y0, 0);
     patch(o, ex, ey, {0, 0, 1}, label);       // floor
     patch(o + ez, ex, ey, {0, 0, -1}, label); // ceiling
-    patch(o, ey, ez, {1, 0, 0}, label);       // x = x0
+    if (west_face)
+      patch(o, ey, ez, {1, 0, 0}, label);     // x = x0
     patch(o + ex, ey, ez, {-1, 0, 0}, label); // x = x1
-    patch(o, ex, ez, {0, 1, 0}, label);       // y = 0
-    patch(o + ey, ex, ez, {0, -1, 0}, label); // y = d
+    patch(o, ex, ez, {0, 1, 0}, label);       // y = y0
+    patch(o + ey, ex, ez, {0, -1, 0}, label); // y = y1
+  }
+
+  void finish() {
+    cloud->width = static_cast<std::uint32_t>(cloud->size());
+    cloud->height = 1;
+    normals->width = cloud->width;
+    normals->height = 1;
+    rooms->width = cloud->width;
+    rooms->height = 1;
   }
 };
+
+/// Mesh area in the planes x = const within `tol` of `x`, over faces whose
+/// centre lies in y0 < y < y1.
+double area_in_x_plane(const pcl::PolygonMesh &mesh, float x, float tol,
+                       float y0, float y1) {
+  CloudLoc v;
+  pcl::fromPCLPointCloud2(mesh.cloud, v);
+  double area = 0.0;
+  for (const auto &poly : mesh.polygons) {
+    if (poly.vertices.size() != 3)
+      continue;
+    const Eigen::Vector3f a = v.points[poly.vertices[0]].getVector3fMap();
+    const Eigen::Vector3f b = v.points[poly.vertices[1]].getVector3fMap();
+    const Eigen::Vector3f c = v.points[poly.vertices[2]].getVector3fMap();
+    const bool in_x_plane =
+        std::abs(a.x() - b.x()) < 1e-4F && std::abs(a.x() - c.x()) < 1e-4F;
+    const float yc = (a.y() + b.y() + c.y()) / 3.0F;
+    if (in_x_plane && std::abs(a.x() - x) < tol && yc > y0 && yc < y1)
+      area += 0.5 * (b - a).cross(c - a).norm();
+  }
+  return area;
+}
 
 } // namespace
 
@@ -133,4 +167,35 @@ TEST_CASE("Mesh_TwoRoomsSplitByACrossedPartition_KeepTheWall",
                 << " faces, " << partition_area << " m^2 on the partition");
   // Both faces of a 3 x 2.5 m partition.
   CHECK(partition_area > 14.0);
+}
+
+TEST_CASE("Mesh_OneSidedPartitionFacedByAnotherRoomsWall_KeepsTheWall",
+          "[reconstruction][mesh][make_pairs]") {
+  // house2's ground floor (reusex-ro1): the west room's east wall (normal
+  // -x, here x = 3) was scanned from the west room only; the corridor east
+  // of it saw nothing of its own face. Further north along the same line,
+  // 0.23 m to the west, another room's west wall faces east (normal +x,
+  // here x = 2.77): it looks AT the partition, from the other side of the
+  // line. make_pairs paired the two (opposite normals, 0.23 m apart) and
+  // left them where measured, since they are too far apart to be one
+  // drifted wall -- but a pair whose faces look at each other bounds no
+  // slab, so the partition had no wall cell anywhere along it and the MIP
+  // merged the west room and the corridor.
+  Scene s;
+  s.room(0.0, 3.0, 1);                  // west room
+  s.room(3.2, 6.0, 2, 0.0, 3.0, false); // corridor, its west face unseen
+  s.room(2.77, 6.0, 3, 3.2, 6.0);       // north room, west face x = 2.77
+  s.finish();
+
+  MeshOptions opt;
+  opt.solver = SolverChoice::highs;
+  auto mesh = geometry::mesh(s.cloud, s.normals, s.planes, s.centroids,
+                             s.inliers, s.rooms, opt);
+  REQUIRE(mesh);
+  REQUIRE_FALSE(mesh->polygons.empty());
+
+  // The west room's face of the 3 x 2.5 m partition, at x = 3.
+  const double partition = area_in_x_plane(*mesh, 3.0F, 0.02F, 0.0F, 3.0F);
+  INFO(partition << " m^2 on the partition's west face");
+  CHECK(partition > 7.0);
 }
