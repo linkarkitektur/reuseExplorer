@@ -984,3 +984,71 @@ TEST_CASE("OptimizeWatchSession: a held move is NOT HONOURED and its "
   CHECK_THAT(p1.report, ContainsSubstring("not realised"));
   CHECK_THAT(p1.json, ContainsSubstring("held_back"));
 }
+
+TEST_CASE("pinning_anchors: the anchors a move's block would override",
+          "[rux_app][optimize][watch]") {
+  reusex::core::PoseEdits edits;
+  edits.edits.push_back(move_edit("m-1283-1603", 1283, 1603, 0.02));
+  auto guard = [](const std::string &id, std::int64_t node) {
+    reusex::core::PoseEdit a;
+    a.id = id;
+    a.kind = reusex::core::PoseEditKind::anchor;
+    a.nodes.first = a.nodes.last = node;
+    return a;
+  };
+  edits.edits.push_back(guard("a-1764", 1764));
+  edits.edits.push_back(guard("a-2083", 2083));
+  // 41069051-full-d1.0 (reusex-r5z): m-1604-1923 covers guard a-1764.
+  CHECK(rux::pinning_anchors(edits, 1604, 1923) ==
+        std::vector<std::string>{"a-1764"});
+  CHECK(rux::pinning_anchors(edits, 1604, 2083) ==
+        (std::vector<std::string>{"a-1764", "a-2083"}));
+  // The ends count; a move is never an anchor.
+  CHECK(rux::pinning_anchors(edits, 1764, 1764) ==
+        std::vector<std::string>{"a-1764"});
+  CHECK(rux::pinning_anchors(edits, 1283, 1603).empty());
+  CHECK(rux::pinning_anchors(edits, 1765, 2082).empty());
+}
+
+TEST_CASE("OptimizeWatchSession: a suggested move over a pinned node says it "
+          "overrides the anchor",
+          "[rux_app][optimize][watch]") {
+  TempDir dir("optimize_watch_pinned");
+  const fs::path project = dir.path / "p.rux";
+  const fs::path edits = dir.path / "e.yaml";
+  make_project(project);
+  // A shear guard as the loop writes one, pinning node 36 of the broken
+  // pass (25..48) where it is.
+  write(edits, kHeader + "edits:\n"
+                         "  - id: a-36\n    kind: anchor\n    node: 36\n"
+                         "    pose: current\n"
+                         "    sigma: {trans_m: 0.01, rot_deg: 0.2}\n");
+  RuxOptions global;
+  global.project_db = project;
+  rux::OptimizeWatchSession session(watch_options(edits), global);
+  const auto p0 = session.pass(true);
+  INFO(p0.report);
+  REQUIRE(p0.solved);
+  REQUIRE_FALSE(p0.suggestion_items.empty());
+  const std::string move = p0.suggestion_items.front();
+  REQUIRE_THAT(move, ContainsSubstring("kind: move"));
+  // reusex-r5z: the block covers node 36. The move and the guard conflict
+  // by construction, so the comment says the move overrides the guard and
+  // to drop it, the note records it, and the JSON lists it.
+  CHECK_THAT(move, ContainsSubstring("OVERRIDES a-36"));
+  CHECK_THAT(move, ContainsSubstring("drop a-36"));
+  CHECK_THAT(move, ContainsSubstring("overrides a-36"));
+  CHECK_THAT(p0.json, ContainsSubstring("\"overrides\""));
+
+  // Pasted with the guard dropped, as the comment says: the move is
+  // realised and honoured.
+  write(edits, kHeader + "edits:\n" + move);
+  rux::OptimizeWatchSession next(watch_options(edits), global);
+  const auto p1 = next.pass(true);
+  INFO(p1.report);
+  REQUIRE(p1.solved);
+  CHECK_THAT(p1.report, !ContainsSubstring("NOT HONOURED"));
+  REQUIRE(p1.cross_segment_median_m);
+  REQUIRE(p0.cross_segment_median_m);
+  CHECK(*p1.cross_segment_median_m < 0.5 * *p0.cross_segment_median_m);
+}
