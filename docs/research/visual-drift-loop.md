@@ -755,3 +755,48 @@ is within 0.013 of `optimize` on every cell (0.262 vs 0.275 on 48 full d1.0,
 
 Per-round logs, edits, blocks and PNGs: the scratch run
 `drift-loop-fix/cells/<cell>/r<k>/` of this session (not committed).
+
+### 9.8 A move's verdict: realised share, not block RMS (2026-10-17, `reusex-9ge`)
+
+After `reusex-rcv.1.28` a move was honoured only when its block's RMS
+residual was within 2 sigma of the suggestion's 5 mm / 0.1 deg, and the
+re-run of 41069051-full-d1.0 / -d0.25 printed 22 of 23 move verdicts NOT
+HONOURED (block RMS 5-39 mm / 0.17-1.5 deg). That RMS is taken against
+D * initial for every node, so it mixes two things. Splitting each block
+into its rigid fit (initial -> solved) and the rest, on the same rounds:
+
+| cell | move verdicts | realised share (trans / rot) | left from target | block bend (RMS) |
+|---|---|---|---|---|
+| 51 full d1.0 | 18 | 95-100% / 95-100% | 0.6-27.9 mm / 0.06-0.80 deg | 4.7-30.9 mm / 0.15-1.55 deg |
+| 51 full d0.25 | 5 | 99-100% / 97-100% | 0.3-1.6 mm / 0.04-0.27 deg | 5.4-12.0 mm / 0.22-0.36 deg |
+
+Every suggested move was realised; the RMS was the bend. Under `--fast`
+the graph measures plain optimize's relative poses (§9.7), so a moved
+block takes plain optimize's shape, not its initial one, and no rigid move
+of the initial poses can remove that difference (the same blocks' initial
+-> reference rigid-fit residual is 18-90 mm / 1.5-3.8 deg).
+
+The two ways out were (a) a suggestion sigma the block can be held to --
+the bend, 1-3 cm -- or (b) keeping the sigma and judging the rigid part.
+(a) weakens the move's pull by the square of the ratio (4-36x in
+information) to fix a verdict whose move was already 95-100% realised, and
+it would move the solve the calibration measures. (b) changes no factor.
+So the verdict now reports, per move, `realised T% / R% of <move>, <left>
+from target, block bent <rms> (not judged)`, and an all-DoF move is
+honoured when it realised at least 80% of its delta, or ended within 2
+sigma of it, in translation and in rotation. NOT HONOURED reads `the graph
+fought the move off`.
+
+Re-run blind with the same masters, seed and policy scripts: every pose
+file of every round is byte-identical to PR #74's (final ATE 518.7 mm on
+d1.0, 78.9 mm = `optimize` on d0.25), and so are the renders. Move
+verdicts NOT HONOURED: 0 of 23 (was 22). The one NOT HONOURED left is a
+real conflict: shear guard `a-1764` pins node 1764 inside the later move
+`m-1604-1923` and ends 33-80 mm / 0.6-1.7 deg off its own target. In the
+unit test that holds a move with a 1 mm anchor, the move reads `realised
+33% / 58%` and NOT HONOURED.
+
+The first calibration (§9.3.4, the `m-2565-2884` ping-pong) under the same
+split: 87-91% / 90-93% realised, 13-22 mm / 0.6-0.9 deg left, 22-26 mm of
+bend. It reads honoured now, with the shortfall on its line; the ping-pong
+itself is what the held-back rule (`reusex-rcv.1.28`) stops.

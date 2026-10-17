@@ -77,13 +77,23 @@ rux analyze drift / the block  ->  write / edit e.yaml  ->  save
      those are the nodes counted `in segments that now fit worse <- SHEAR`
      and the only ones a gain is discounted for (reusex-sb2,
      regression-221, `reusex-rcv.1.22`);
-   - each edit's residual and `honoured` / `NOT HONOURED`. An anchor,
-     move or relative edit is honoured only when GNC kept it AND its RMS
-     residual (for a move: the block's own) is within 2 sigma of the
-     edit's sigma in translation and rotation; the line says which bound it
-     broke. GNC alone judges each of a move's n priors (sigma * sqrt(n)),
-     so it called a block 12 cm / 6.6 deg off its target honoured
-     (`reusex-rcv.1.28`);
+   - each edit's residual and `honoured` / `NOT HONOURED`. GNC alone
+     judges each of a move's n priors (sigma * sqrt(n)), so it called a
+     block 12 cm / 6.6 deg off its target honoured (`reusex-rcv.1.28`); an
+     edit must also pass its own bound. An anchor or relative edit: its RMS
+     residual within 2 sigma of its sigma in translation and rotation. A
+     move (all DoF): the line under it says `realised T% / R% of <move>,
+     <how far> from target, block bent <rms>` -- the block's rigid fit
+     (initial -> solved) against the delta, and what is left over. It is
+     honoured when it realised at least 80% of its delta, or ended within
+     2 sigma of its target, in translation and in rotation. The bend is NOT
+     judged: a `--fast` graph measures plain optimize's shape, so a moved
+     block bends 0.5-3 cm away from its initial shape however well it is
+     moved, which made almost every suggestion read NOT HONOURED by its RMS
+     (`reusex-9ge`). `NOT HONOURED: the graph fought the move off` is
+     therefore a real conflict -- another edit or guard holds the block --
+     and the fix is to drop one of the two, not to tighten the sigma. A move
+     restricted with `dofs:` keeps the RMS rule;
    - `sampling`: the residuals depend on the frame step and depth stride
      (reusex-74q), so compare cycles only at the same `--drift-frame-step` /
      `--drift-depth-stride` / `--segments`.
