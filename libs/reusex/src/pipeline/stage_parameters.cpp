@@ -368,8 +368,9 @@ const std::vector<ParameterDescriptor> &mesh_parameters() {
             static_cast<float>(d.structural.min_footprint_overlap), 0.0, 1.0),
         boolean("plane_classes", "Use plane classification",
                 "When `create classify` has run, leave out the planes it "
-                "called furniture or clutter (reusex-z1v.4.3). Off (the "
-                "default) uses every plane.",
+                "called furniture, and the horizontal ones it called clutter "
+                "(reusex-z1v.4.3, reusex-rtx). On by default; off uses "
+                "every plane.",
                 pipeline::MeshStageOptions{}.use_plane_classes),
         boolean("storey_sections", "Sections inside the building",
                 "When `create storeys` has run, only the horizontal planes "

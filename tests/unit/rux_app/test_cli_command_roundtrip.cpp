@@ -342,16 +342,19 @@ TEST_CASE("CliCommandRoundTrip_MeshAndOptimize_ShareTheStageReader",
     CHECK(s.min_footprint_overlap == Catch::Approx(0.4));
   }
   {
-    // Plane classification (reusex-z1v.4.3): off by default, on by flag.
-    const auto off =
+    // Plane classification (reusex-z1v.4.3): on by default since
+    // reusex-rtx, off by flag.
+    const auto dflt =
         parse_through_cli(rux::qt::build_cli_command("mesh", "p.rux", {}).args);
+    CHECK(
+        pl::mesh_options_from_parameters(dflt.params.dump()).use_plane_classes);
+    const auto off = parse_through_cli(
+        rux::qt::build_cli_command(
+            "mesh", "p.rux",
+            {{"plane_classes", CliValueKind::boolean, "false"}})
+            .args);
     CHECK_FALSE(
         pl::mesh_options_from_parameters(off.params.dump()).use_plane_classes);
-    const auto on = parse_through_cli(
-        rux::qt::build_cli_command(
-            "mesh", "p.rux", {{"plane_classes", CliValueKind::boolean, "true"}})
-            .args);
-    CHECK(pl::mesh_options_from_parameters(on.params.dump()).use_plane_classes);
   }
   {
     // Storey sections (reusex-z1v.3.4, on by default since reusex-x8s) and

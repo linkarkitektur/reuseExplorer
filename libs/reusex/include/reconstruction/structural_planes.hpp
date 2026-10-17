@@ -114,8 +114,11 @@ auto select_structural_planes(EigenVectorContainer<double, 4> &planes,
 
 /// What drop_planes_by_role() did, for logging and tests.
 struct PlaneRoleReport {
-  std::size_t furniture = 0;  ///< planes dropped as furniture
-  std::size_t clutter = 0;    ///< planes dropped as clutter
+  std::size_t furniture = 0; ///< planes dropped as furniture
+  std::size_t clutter = 0;   ///< planes dropped as clutter
+  /// Clutter planes that are not horizontal (|n_z| <= 0.9), passed on to
+  /// the structural filter.
+  std::size_t vertical_clutter_kept = 0;
   std::size_t planes_out = 0; ///< planes left
 };
 
@@ -132,6 +135,14 @@ struct PlaneRoleReport {
  * towards it either. Every other role (wall, floor, ceiling, slab, unknown)
  * passes through to select_structural_planes(), whose geometric rules still
  * apply.
+ *
+ * So does a clutter plane that is not horizontal (reusex-rtx). On a vertical
+ * plane, clutter is the classification's height rule: it does not reach from
+ * floor to ceiling. That is also true of a hallway wall seen to door height
+ * or a wall stub behind furniture, and dropping those cost house1 4.7 cm
+ * and house2 63 cm of mean fit. The structural filter tells such a wall
+ * from a desk screen with better evidence (the wall line's area, counting
+ * the wall's far face), so the plane goes on to it.
  *
  * @param roles One role per plane, index-aligned with @p planes; empty =
  *              no classification, nothing is dropped.
