@@ -24,7 +24,8 @@
 ///     other_max_share; *empty* when rooms cover at most empty_max_share
 ///     (a wall body, the courtyard); *mixed* otherwise (the wall graph does
 ///     not separate two rooms there, or a room only partly fills it). A
-///     sliver thinner than one cell takes its longest neighbour's class.
+///     face too small to judge by its cells (below small_face_area, or
+///     thinner than one cell) takes its longest neighbour's class.
 ///  3. Polygons: room L = (its pure faces) U (its raster cells outside every
 ///     pure or empty face), so where the wall graph closes a room the
 ///     polygon is the walls' faces, and where it does not (a missing wall,
@@ -73,6 +74,10 @@ struct SpacesOptions {
   double other_max_share = 0.25;
   /// A face that rooms cover at most this share of is empty (no space).
   double empty_max_share = 0.1;
+  /// A face smaller than this [m^2] (a wall end poking past a corner) or
+  /// thinner than one cell is too small to judge by its cells: it takes the
+  /// class of the neighbour it shares the longest edge with.
+  double small_face_area = 0.05;
   /// Pieces of a space other than its largest one are dropped; a warning
   /// names those above this area [m^2].
   double min_piece_area = 0.5;

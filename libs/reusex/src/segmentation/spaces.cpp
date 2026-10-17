@@ -321,7 +321,7 @@ PolygonWithHoles clean_piece(const PolygonWithHoles &piece,
   // Largest first, so a hole that touches a bigger one is the one dropped.
   std::stable_sort(holes.begin(), holes.end(),
                    [](const auto &a, const auto &b) {
-                     return std::abs(a.area()) > std::abs(b.area());
+                     return CGAL::abs(a.area()) > CGAL::abs(b.area());
                    });
   GpsTraits traits;
   for (auto &h : holes) {
@@ -561,7 +561,8 @@ auto polygonise_spaces(const std::vector<RoomGrid> &grids,
         }
         fi.area = a;
         fi.perimeter = len;
-        fi.sliver = a < 2.0 * cell_area || 2.0 * a / len < cell;
+        fi.sliver = a < std::max(o.small_face_area, 2.0 * cell_area) ||
+                    2.0 * a / len < cell;
         face_index.emplace(&*f, faces.size());
         faces.push_back(std::move(fi));
       }
@@ -632,7 +633,8 @@ auto polygonise_spaces(const std::vector<RoomGrid> &grids,
         }
       }
       // A sliver takes the class of the neighbour it shares the longest
-      // edge with (a gap between two almost collinear faces, a corner).
+      // edge with (a gap between two almost collinear faces, a wall end
+      // past a corner); one between two rooms is empty.
       for (auto &fi : faces) {
         if (!fi.sliver)
           continue;
@@ -657,12 +659,22 @@ auto polygonise_spaces(const std::vector<RoomGrid> &grids,
           visit(*h);
         fi.cls = FaceInfo::mixed;
         double best = 0.0;
-        for (const auto &[k, len] : shared)
+        std::set<int32_t> rooms_around;
+        for (const auto &[k, len] : shared) {
+          if (faces[k].cls == FaceInfo::pure)
+            rooms_around.insert(faces[k].label);
           if (len > best) {
             best = len;
             fi.cls = faces[k].cls;
             fi.label = faces[k].label;
           }
+        }
+        // Between two rooms (the rest of a wall gap that the extension
+        // closed): part of neither.
+        if (rooms_around.size() > 1) {
+          fi.cls = FaceInfo::empty;
+          fi.label = 0;
+        }
       }
       for (const auto &fi : faces) {
         if (fi.sliver)

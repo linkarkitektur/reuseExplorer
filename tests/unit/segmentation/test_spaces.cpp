@@ -125,6 +125,8 @@ TEST_CASE("Spaces_LShapedRoom_IsOneSixVertexPolygonOnTheWallFaces",
   const auto &s = r.spaces[0];
   CHECK(s.storey == 0);
   CHECK(s.room_label == 1);
+  for (const auto &p : s.polygon.outer)
+    UNSCOPED_INFO(p[0] << ", " << p[1]);
   CHECK(s.polygon.outer.size() == 6);      // an L, not its bounding rectangle
   CHECK(s.polygon.holes.empty());          // furniture pockets are not holes
   CHECK(ring_area(s.polygon.outer) > 0.0); // counter-clockwise
@@ -215,7 +217,7 @@ TEST_CASE("Spaces_TwoRoomsAndAPartition_ShareTheWallFromBothSides",
   CHECK(a.room_label == 1);
   CHECK(b.room_label == 2);
   CHECK(a.area == Approx(3.95 * 3.0).epsilon(0.001));
-  CHECK(b.area == Approx(4.05 * 3.0).epsilon(0.001));
+  CHECK(b.area == Approx(3.95 * 3.0).epsilon(0.001));
   CHECK(a.polygon.outer.size() == 4);
   CHECK(b.polygon.outer.size() == 4);
   // "mid" runs +y: room 1 (west) is left of it, room 2 right.
