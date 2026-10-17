@@ -20,6 +20,7 @@
 #include <Eigen/Dense>
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
@@ -356,4 +357,93 @@ TEST_CASE("RoomProbabilities_EscapeShare_IsPartOfOutside",
   auto c_esc =
       cc->property_map<CellComplex::Vertex, double>("c:escape_probability");
   CHECK(c_esc[*cc->cells_begin()] == Catch::Approx(0.0));
+}
+
+TEST_CASE("SpacePrior_PocketBeyondAWallsEnd_FillsWhenOnlyTheRunIsTheWall",
+          "[geometry][space_prior][wall_runs]") {
+  // House2's stair pocket (reusex-9a8): the occluded pocket of room 1 is
+  // crossed by the line of a wall that stands further east (x 6..9, a pair
+  // of faces at y = 1.4 / 1.6). Along the whole line its strip through the
+  // pocket counted as the wall and kept its rays (outside); off the wall's
+  // measured run the strip is open floor, takes the space prior like the
+  // rest of the pocket, and the Solidifier keeps the whole pocket. The
+  // strip stays in the MIP's slab (wall_ids) either way.
+  const Scan scan = occluded_pocket();
+  PlaneVec planes;
+  planes.emplace_back(1, 0, 0, 0);    // 0: x = 0
+  planes.emplace_back(1, 0, 0, -4);   // 1: x = 4
+  planes.emplace_back(0, 1, 0, 0);    // 2: y = 0
+  planes.emplace_back(0, 1, 0, -3);   // 3: y = 3
+  planes.emplace_back(0, -1, 0, 1.4); // 4: y = 1.4, facing -y
+  planes.emplace_back(0, 1, 0, -1.6); // 5: y = 1.6, facing +y
+  planes.emplace_back(0, 0, 1, 0);    // 6: z = 0
+  planes.emplace_back(0, 0, 1, -2.5); // 7: z = 2.5
+  std::vector<size_t> verticals{0, 1, 2, 3, 4, 5};
+  std::vector<size_t> horizontals{6, 7};
+  std::vector<std::pair<size_t, size_t>> pairs{{4, 5}};
+
+  auto build = [&](bool limit) {
+    auto local = planes; // the constructor recentres its planes in place
+    auto vert = verticals;
+    auto cc = std::make_shared<CellComplex>(
+        local, vert, horizontals, pairs, std::array<double, 2>{-1.0, -1.0},
+        std::array<double, 2>{10.0, 4.0}, std::nullopt, 500);
+    if (limit) {
+      WallRun run;
+      run.axis = {1.0, 0.0};
+      run.spans = {{6.0, 9.0}};
+      cc->mark_wall_runs({run}, 0.5);
+    }
+    cc->compute_room_probabilities<pcl::PointXYZRGB, pcl::Normal, pcl::Label>(
+        scan.cloud, scan.normals, scan.labels);
+    apply_space_prior(*cc, {rectangle_space(1, 0, 0, 4, 3)}, 0.45);
+    auto f_sp = cc->add_property_map<CellComplex::Vertex, double>(
+                      "f:support_probability")
+                    .first;
+    for (auto f = cc->faces_begin(); f != cc->faces_end(); ++f)
+      f_sp[*f] = 1.0;
+    return cc;
+  };
+  auto pocket_cells = [](const CellComplex &cc) {
+    std::vector<CellComplex::Vertex> out;
+    for (auto c = cc.cells_begin(); c != cc.cells_end(); ++c) {
+      const auto &p = cc[*c].pos;
+      if (p.x() > 0.0 && p.x() < 4.0 && p.y() > 0.0 && p.y() < 3.0)
+        out.push_back(*c);
+    }
+    return out;
+  };
+  auto strip_of = [](const CellComplex &cc,
+                     const std::vector<CellComplex::Vertex> &cells) {
+    for (auto c : cells)
+      if (std::abs(cc[c].pos.y() - 1.5) < 0.05)
+        return c;
+    FAIL("no strip cell");
+    return cells.front();
+  };
+
+  // Along the whole line: the strip is the wall and stays outside.
+  {
+    auto cc = build(false);
+    const auto cells = pocket_cells(*cc);
+    REQUIRE(cells.size() == 3);
+    const auto strip = strip_of(*cc, cells);
+    REQUIRE_FALSE(std::get<CellData>((*cc)[strip].data).wall_ids.empty());
+    auto c_rp = cc->property_map<CellComplex::Vertex, std::vector<double>>(
+        "c:room_probabilities");
+    CHECK(c_rp[strip][0] > c_rp[strip][index_of(*cc, 1)]);
+  }
+  // Only the wall's measured run is the wall: the whole pocket is room 1.
+  auto cc = build(true);
+  const auto cells = pocket_cells(*cc);
+  REQUIRE(cells.size() == 3);
+  const auto strip = strip_of(*cc, cells);
+  CHECK(std::get<CellData>((*cc)[strip].data).run_wall_ids.empty());
+  CHECK_FALSE(std::get<CellData>((*cc)[strip].data).wall_ids.empty());
+  const int r1 = static_cast<int>(index_of(*cc, 1));
+  Solidifier solidifier(cc);
+  const auto result = solidifier.solve();
+  REQUIRE(result.has_value());
+  for (auto c : cells)
+    CHECK(result->first.at(c) == r1);
 }

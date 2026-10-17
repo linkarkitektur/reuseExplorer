@@ -18,6 +18,7 @@
 #include <range/v3/range/concepts.hpp>
 #include <range/v3/view/zip.hpp>
 
+#include <array>
 #include <set>
 #include <string>
 #include <vector>
@@ -32,7 +33,33 @@ struct FaceData {
   int plane_id;
 };
 struct CellData {
+  /// The wall pairs whose slab the cell lies in: between the pair's two
+  /// faces, along the pair's whole line through the section. The MIP's
+  /// wall labels (Solidifier c3..c6) live on these cells.
   std::set<int> wall_ids{};
+  /// The subset of wall_ids whose measured run the cell lies on
+  /// (CellComplex::mark_wall_runs(), reusex-9a8): the cell is part of a
+  /// wall the scan saw, not a strip of open floor on the wall's line.
+  /// Until mark_wall_runs() runs it equals wall_ids.
+  std::set<int> run_wall_ids{};
+};
+
+/// Where a wall pair was measured along its axis (reusex-9a8), for
+/// CellComplex::mark_wall_runs(). From wall_runs() (mesh.hpp).
+struct WallRun {
+  /// Unit plan direction of the wall's axis (x, y). Zero: not a wall (a
+  /// floor/ceiling pair) or nothing measured; its slab is not limited.
+  Eigen::Vector2d axis = Eigen::Vector2d::Zero();
+  /// Stretches [s0, s1] of s = axis . (x, y) in world coordinates where the
+  /// pair's points lie, sorted and disjoint. Empty: not limited.
+  std::vector<std::array<double, 2>> spans{};
+};
+
+/// What CellComplex::mark_wall_runs() did.
+struct WallRunStats {
+  size_t pairs_measured = 0; ///< pairs with a measured run
+  size_t cells_off_run = 0;  ///< slab cells beyond every run of a pair
+  double volume_off_run = 0; ///< their volume [m^3]
 };
 
 // Generic vertex bundle. `id` is shared across all node types; it is treated
@@ -182,6 +209,35 @@ class CellComplex
       const std::vector<std::array<double, 2>> &plane_z_ranges = {},
       double min_section_overlap_m = default_min_section_overlap_m,
       const std::vector<size_t> &obliques = {});
+
+  /**
+   * @brief Mark which slab cells lie on their wall's measured run
+   * (reusex-9a8): CellData::run_wall_ids.
+   *
+   * The constructor marks a cell as a pair's slab (CellData::wall_ids)
+   * wherever its centre lies between the pair's two faces, along the pair's
+   * whole line through the section, so a strip of open floor beyond the
+   * wall's end is a slab cell too. The MIP needs that: a room can only end
+   * where a cell enters a slab (Solidifier c4), and a room often ends on a
+   * wall line beyond where the scan saw the wall (occlusion, drift).
+   * Cutting wall_ids to the runs dropped whole rooms on house2 (fit 0.20 ->
+   * 0.41 m), so wall_ids stay as they are. The space prior, which must not
+   * pull a wall into a room, asks run_wall_ids instead: pair i stays in a
+   * cell's run_wall_ids only where the cell's plan extent along
+   * runs[i].axis reaches one of runs[i].spans grown by @p end_margin_m at
+   * either end. The margin covers the junction past a run's end (the
+   * crossing wall a wall ends in, a corner its points stop short of); gaps
+   * inside a run (doorways) are bridged by wall_runs(), so a doorway stays
+   * part of its wall.
+   *
+   * A pair without a run (zero axis or no spans, or @p runs shorter than
+   * the pairs) keeps its whole line.
+   *
+   * @throws std::invalid_argument when @p runs has more entries than the
+   *         complex has wall pairs.
+   */
+  auto mark_wall_runs(const std::vector<WallRun> &runs, double end_margin_m)
+      -> WallRunStats;
 
   // Per-face coverage values are written to the "f:support_probability"
   // vertex property map and queried from there by downstream code.

@@ -114,14 +114,17 @@ auto apply_space_prior(CellComplex &cc,
     return stats;
 
   for (auto cit = cc.cells_begin(); cit != cc.cells_end(); ++cit) {
-    // A cell inside a wall's slab (between a pair's two faces) is never
-    // pulled into a room: a space drawn across a wall (raster fill where
-    // the wall graph is open, a drifted wall) would otherwise merge two
-    // rooms through it and drop the wall from the envelope.
-    // (Measured, reusex-6t4: letting them take the prior fills house2's
-    // stair pocket, whose cells a wall line's strip crosses, but merges rooms
-    // elsewhere -- house1 +7 % unsupported mesh, NewOffice fit +6 %.)
-    if (!std::get<CellData>(cc[*cit].data).wall_ids.empty())
+    // A cell inside a wall's slab (between a pair's two faces, on the
+    // wall's measured run) is never pulled into a room: a space drawn
+    // across a wall (raster fill where the wall graph is open, a drifted
+    // wall) would otherwise merge two rooms through it and drop the wall
+    // from the envelope. (Measured, reusex-6t4: letting every slab cell
+    // take the prior merges rooms -- house1 +7 % unsupported mesh,
+    // NewOffice fit +6 %.) A strip of the wall's line through open floor
+    // beyond its run is no wall (reusex-9a8, CellComplex::mark_wall_runs()):
+    // it takes the prior, so house2's stair pocket, which such strips
+    // cross, fills.
+    if (!std::get<CellData>(cc[*cit].data).run_wall_ids.empty())
       continue;
     auto &p = c_rp[*cit];
     const auto samples = cell_samples(cc, *cit);

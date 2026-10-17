@@ -577,7 +577,11 @@ those labels for a room-partitioned output is tracked under WP9
 The stored `spaces` (when present) are a room prior (key `space_prior`, on;
 weight `space_prior_weight`, 0.3; reusex-6t4, `reconstruction/space_prior.hpp`):
 a cell inside a space's footprint and storey height leans towards that space's
-room where the rays that hit something are unsure. A space whose `room_label`
+room where the rays that hit something are unsure. A cell in a wall's slab is
+left alone only on the wall's measured run (the stretches along its axis where
+the pair's inliers lie, gaps up to 1.5 m bridged, ±0.5 m at the ends;
+reusex-9a8, `wall_runs()` / `CellComplex::mark_wall_runs()`): a strip of the
+wall's line through open floor takes the prior. A space whose `room_label`
 the `rooms` cloud lacks is skipped with a warning; without spaces the rays
 alone decide.
 

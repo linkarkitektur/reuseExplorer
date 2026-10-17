@@ -760,7 +760,9 @@ CellComplex::CellComplex(
       if (dist2 > 0)
         continue;
 
-      std::get<CellData>((*this)[*cit].data).wall_ids.insert(i);
+      auto &cell = std::get<CellData>((*this)[*cit].data);
+      cell.wall_ids.insert(i);
+      cell.run_wall_ids.insert(i);
     }
   }
 

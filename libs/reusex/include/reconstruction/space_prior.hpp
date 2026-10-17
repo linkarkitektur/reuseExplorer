@@ -25,7 +25,8 @@
 /// face may be an occluder (the stair above a pocket), a ray into the open
 /// says outside whatever the space says. Below w = 0.5 a cell the rays call
 /// outside with certainty (p_out = 1) stays outside; the prior decides only
-/// where the rays are unsure. Cells in a wall's slab are left alone.
+/// where the rays are unsure. Cells in a wall's slab, on the wall's
+/// measured run, are left alone.
 ///
 /// Measured (scripts/bench-solid.sh rows storeys..spaces,mesh, prior off ->
 /// w = 0.3, 2026-10-17): house2 fit_mean 0.2116 -> 0.2039 m, within 5 cm
@@ -37,8 +38,9 @@
 /// 1.7 points of unsupported mesh (rooms merged through their walls), and
 /// re-weighing the escaped rays too cost house1 0.7 and house2 0.2 points
 /// (cells outside the building under a leaky polygon). House2's stair
-/// pocket (reusex-6t4) is still outside: wall-line strips cross it (see
-/// apply_space_prior()).
+/// pocket (reusex-6t4) stayed outside while every strip of a wall's line
+/// counted as its slab; with the slab limited to the wall's measured run
+/// for the prior (reusex-9a8) it fills, house1 and NewOffice unchanged.
 
 #include "reusex/reconstruction/CellComplex.hpp"
 
@@ -84,10 +86,12 @@ struct SpacePriorStats {
 /// footprint whose room_label is not one of those (the spaces are older
 /// than the rooms cloud) is skipped and counted. A cell inside several
 /// footprints takes the one holding most of its samples. A cell inside a
-/// wall's slab (CellData::wall_ids not empty: between the two faces of a
-/// pair, along the pair's whole line) keeps its rays: a space drawn across a
-/// wall must not merge the rooms either side. @p weight <= 0 or
-/// no footprints leave the probabilities as they are.
+/// wall's slab on the wall's measured run (CellData::run_wall_ids not
+/// empty: between the two faces of a pair, where the scan saw the wall,
+/// CellComplex::mark_wall_runs()) keeps its rays: a space drawn across a
+/// wall must not merge the rooms either side. A strip of the pair's line
+/// through open floor beyond the run takes the prior (reusex-9a8). @p weight <=
+/// 0 or no footprints leave the probabilities as they are.
 /// @throws std::invalid_argument for a weight above 1.
 auto apply_space_prior(CellComplex &cc,
                        const std::vector<SpaceFootprint> &spaces, double weight)
