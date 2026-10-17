@@ -1449,6 +1449,27 @@ WallGraph join_walls(std::vector<WallSegment> walls,
         index, families.size()));
   };
 
+  // The share of a wall's 25 cm (s, z) face cells over its current extent
+  // and the storey height with wall evidence within its body.
+  auto seen_share_of = [&](const WallSegment &w) {
+    const size_t fam = family_pos(w.family);
+    const auto [lo, hi] = body(w);
+    const double pad = opt.face_window_m;
+    const int is0 = cell_index(w.s0, opt.cell_m),
+              is1 = cell_index(w.s1, opt.cell_m);
+    const int iz0 = cell_index(wp.z_floor, opt.cell_m);
+    const int iz1 = cell_index(wp.z_ceiling - kEpsilonLengthM, opt.cell_m);
+    std::set<FaceCell> seen;
+    const auto [qlo, qhi] = offset_range(ev.wall[fam], lo - pad, hi + pad);
+    for (auto q = qlo; q != qhi; ++q)
+      if (q->s >= w.s0 && q->s <= w.s1 && q->z >= wp.z_floor &&
+          q->z <= wp.z_ceiling)
+        seen.insert(
+            {cell_index(q->s, opt.cell_m), cell_index(q->z, opt.cell_m)});
+    const double total = static_cast<double>(is1 - is0 + 1) * (iz1 - iz0 + 1);
+    return total > 0.0 ? static_cast<double>(seen.size()) / total : 0.0;
+  };
+
   // 1. Squaring happened on the evidence (wall_faces turns every wall plane
   //    within square_deg onto its family axis), so each wall is already
   //    parallel to its family. 2. Snap the seen faces to the raw points.
@@ -1592,24 +1613,54 @@ WallGraph join_walls(std::vector<WallSegment> walls,
     return s >= walls[w].s0 - opt.tee_on_wall_m &&
            s <= walls[w].s1 + opt.tee_on_wall_m;
   };
+  const auto end_name = [](int e) {
+    return e == 0 ? WallEnd::start : WallEnd::end;
+  };
+  auto try_corner = [&](const Meet &mt) {
+    const WallSegment keep_a = walls[mt.a];
+    if (!move_end(mt.a, mt.end_a, mt.sa))
+      return;
+    if (move_end(mt.b, mt.end_b, mt.sb))
+      g.joins.push_back({static_cast<int>(mt.a), static_cast<int>(mt.b),
+                         WallJoinKind::corner, end_name(mt.end_a),
+                         end_name(mt.end_b)});
+    else { // undo: a corner moves both ends or none
+      walls[mt.a] = keep_a;
+      end_used[mt.a][static_cast<size_t>(mt.end_a)] = false;
+    }
+  };
+  // A barely seen wall (seen share before the joins below min_seen_share)
+  // does not take an end that could tee onto a seen wall within corner_m
+  // instead (reusex-47m: house2's hall wall cornered with the stair's side,
+  // seen 0.27, 0.4 m short of the hall's north wall). Such a corner is
+  // deferred until every other meet has been tried.
+  std::vector<double> seen_before(walls.size());
+  for (size_t w = 0; w < walls.size(); ++w)
+    seen_before[w] = seen_share_of(walls[w]);
+  const auto weak = [&](size_t w) {
+    return seen_before[w] < opt.min_seen_share;
+  };
+  const auto seen_tee = [&](size_t w, int end, size_t skip) {
+    for (const auto &m : meets) {
+      if (m.a == w && m.end_a == end && m.b != skip && !weak(m.b) &&
+          m.da <= opt.corner_m && m.db > opt.corner_m && on_wall(m.b, m.sb))
+        return true;
+      if (m.b == w && m.end_b == end && m.a != skip && !weak(m.a) &&
+          m.db <= opt.corner_m && m.da > opt.corner_m && on_wall(m.a, m.sa))
+        return true;
+    }
+    return false;
+  };
+  std::vector<Meet> deferred;
   for (const auto &mt : meets) {
     const bool free_a = !end_used[mt.a][static_cast<size_t>(mt.end_a)];
     const bool free_b = !end_used[mt.b][static_cast<size_t>(mt.end_b)];
-    const auto end_name = [](int e) {
-      return e == 0 ? WallEnd::start : WallEnd::end;
-    };
     if (free_a && free_b && mt.da <= opt.corner_m && mt.db <= opt.corner_m) {
-      const WallSegment keep_a = walls[mt.a];
-      if (move_end(mt.a, mt.end_a, mt.sa)) {
-        if (move_end(mt.b, mt.end_b, mt.sb))
-          g.joins.push_back({static_cast<int>(mt.a), static_cast<int>(mt.b),
-                             WallJoinKind::corner, end_name(mt.end_a),
-                             end_name(mt.end_b)});
-        else { // undo: a corner moves both ends or none
-          walls[mt.a] = keep_a;
-          end_used[mt.a][static_cast<size_t>(mt.end_a)] = false;
-        }
-      }
+      if ((weak(mt.b) && seen_tee(mt.a, mt.end_a, mt.b)) ||
+          (weak(mt.a) && seen_tee(mt.b, mt.end_b, mt.a)))
+        deferred.push_back(mt);
+      else
+        try_corner(mt);
       continue;
     }
     // Tee: one wall ends near the crossing, which lies on the other one
@@ -1625,25 +1676,24 @@ WallGraph join_walls(std::vector<WallSegment> walls,
       g.joins.push_back({static_cast<int>(mt.b), static_cast<int>(mt.a),
                          WallJoinKind::tee, end_name(mt.end_b), WallEnd::path});
   }
+  // The deferred corners: still a corner when both ends are free; when one
+  // end teed on past the crossing, the other wall ends on it there.
+  for (const auto &mt : deferred) {
+    const bool free_a = !end_used[mt.a][static_cast<size_t>(mt.end_a)];
+    const bool free_b = !end_used[mt.b][static_cast<size_t>(mt.end_b)];
+    if (free_a && free_b)
+      try_corner(mt);
+    else if (free_b && on_wall(mt.a, mt.sa) && move_end(mt.b, mt.end_b, mt.sb))
+      g.joins.push_back({static_cast<int>(mt.b), static_cast<int>(mt.a),
+                         WallJoinKind::tee, end_name(mt.end_b), WallEnd::path});
+    else if (free_a && on_wall(mt.b, mt.sb) && move_end(mt.a, mt.end_a, mt.sa))
+      g.joins.push_back({static_cast<int>(mt.a), static_cast<int>(mt.b),
+                         WallJoinKind::tee, end_name(mt.end_a), WallEnd::path});
+  }
 
   // 5. Seen share: (s, z) cells of the wall's face area with evidence.
   for (auto &w : walls) {
-    const size_t fam = family_pos(w.family);
-    const auto [lo, hi] = body(w);
-    const double pad = opt.face_window_m;
-    const int is0 = cell_index(w.s0, opt.cell_m),
-              is1 = cell_index(w.s1, opt.cell_m);
-    const int iz0 = cell_index(wp.z_floor, opt.cell_m);
-    const int iz1 = cell_index(wp.z_ceiling - kEpsilonLengthM, opt.cell_m);
-    std::set<FaceCell> seen;
-    const auto [qlo, qhi] = offset_range(ev.wall[fam], lo - pad, hi + pad);
-    for (auto q = qlo; q != qhi; ++q)
-      if (q->s >= w.s0 && q->s <= w.s1 && q->z >= wp.z_floor &&
-          q->z <= wp.z_ceiling)
-        seen.insert(
-            {cell_index(q->s, opt.cell_m), cell_index(q->z, opt.cell_m)});
-    const double total = static_cast<double>(is1 - is0 + 1) * (iz1 - iz0 + 1);
-    w.seen_share = total > 0.0 ? static_cast<double>(seen.size()) / total : 0.0;
+    w.seen_share = seen_share_of(w);
     w.low_seen = w.seen_share < opt.min_seen_share;
     if (w.low_seen)
       ++g.low_seen;
