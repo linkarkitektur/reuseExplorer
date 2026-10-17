@@ -149,11 +149,63 @@ TEST_CASE("GraphDiscoverStage_NoGraph_ReportsTheOdometryItInitialised",
   CHECK(params.at("loop_closure") == false);
 }
 
+TEST_CASE("OptimizeStage_MissingSensorFrames_RefusedAsInvalid",
+          "[pipeline][optimize_stage]") {
+  // reusex-xlg.15: stage_executor_with_optimize() used to run
+  // run_optimize_stage() without the stage's documented input contract
+  // (core::PipelineStage::optimize needs >= 2 sensor_frames with depth),
+  // unlike run_stage()'s dispatch path. An empty project used to come back
+  // as a misleading "success: poses left unchanged" instead of a clear
+  // refusal.
+  TempPath project("test_optimize_stage_missing_inputs");
+  {
+    reusex::ProjectDB db(project.path);
+  }
+
+  StageContext ctx;
+  ctx.project = project.path;
+  ctx.stage = JobStage::optimize;
+
+  const StageResult r = stage_executor_with_optimize()(ctx);
+  INFO(r.message);
+  CHECK_FALSE(r.ok);
+  CHECK(r.invalid_input);
+  CHECK(r.message.find("stage inputs not satisfied") != std::string::npos);
+}
+
+TEST_CASE("GraphDiscoverStage_MissingSensorFrames_RefusedAsInvalid",
+          "[pipeline][optimize_stage]") {
+  // reusex-xlg.15, graph_discover side: the contract needs >= 2
+  // sensor_frames; an empty project must be refused up front rather than
+  // reaching slam::discover_loop_edges() with nothing to match.
+  TempPath project("test_discover_stage_missing_inputs");
+  {
+    reusex::ProjectDB db(project.path);
+  }
+
+  StageContext ctx;
+  ctx.project = project.path;
+  ctx.stage = JobStage::graph_discover;
+
+  const StageResult r = stage_executor_with_optimize()(ctx);
+  INFO(r.message);
+  CHECK_FALSE(r.ok);
+  CHECK(r.invalid_input);
+  CHECK(r.message.find("stage inputs not satisfied") != std::string::npos);
+}
+
 TEST_CASE("OptimizeStage_InvalidInput_RecordsPipelineLogEntry",
           "[pipeline][optimize_stage]") {
   TempPath project("test_optimize_stage_log_invalid");
   {
+    // Enough sensor_frames (with depth) to satisfy the stage's input
+    // contract, so this test exercises the bad-PARAMETER path specifically,
+    // distinct from OptimizeStage_MissingSensorFrames_RefusedAsInvalid above.
     reusex::ProjectDB db(project.path);
+    for (int k = 1; k <= 2; ++k)
+      db.save_sensor_frame(k, make_color(8, 8), make_depth(8, 8, 1.0),
+                           cv::Mat(), translation_pose(0.5 * k, 0, 0),
+                           make_intrinsics(8, 8, 4, 4, 8, 8), k);
   }
 
   StageContext ctx;
