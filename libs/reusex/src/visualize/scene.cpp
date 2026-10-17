@@ -29,6 +29,7 @@
 #include <vtkCleanPolyData.h>
 #include <vtkCutter.h>
 #include <vtkFeatureEdges.h>
+#include <vtkIdList.h>
 #include <vtkLogger.h>
 #include <vtkMapper.h>
 #include <vtkNew.h>
@@ -37,6 +38,7 @@
 #include <vtkPoints.h>
 #include <vtkPolyData.h>
 #include <vtkPolyDataMapper.h>
+#include <vtkPolygon.h>
 #include <vtkProperty.h>
 #include <vtkRenderer.h>
 #include <vtkUnsignedCharArray.h>
@@ -793,10 +795,11 @@ vtkActor *add_plan_actor(vtkRenderer *renderer, PlanGeometry &g,
 /// screen-space text actor: it needs no text renderer or render window to
 /// build (vtkBillboardTextActor3D crashes in vtkRenderer::GetActors() without
 /// one), scales with the plan, and reads correctly from above.
-vtkActor *add_plan_label(vtkRenderer *renderer, const std::string &text,
-                         const Eigen::Vector3d &at,
-                         const std::array<std::uint8_t, 3> &rgb,
-                         double height) {
+vtkActor *
+add_plan_label(vtkRenderer *renderer, const std::string &text,
+               const Eigen::Vector3d &at,
+               const std::array<std::uint8_t, 3> &rgb, double height,
+               const Eigen::Vector2d &dir = Eigen::Vector2d::UnitX()) {
   vtkNew<vtkVectorText> source;
   source->SetText(text.c_str());
   source->Update();
@@ -806,13 +809,18 @@ vtkActor *add_plan_label(vtkRenderer *renderer, const std::string &text,
   // vtkVectorText's capitals are about one unit tall.
   const double scale = height;
   const double cx = 0.5 * (b[0] + b[1]), cy = 0.5 * (b[2] + b[3]);
+  // The text's baseline runs along @p dir (world x by default).
+  const Eigen::Vector2d u =
+      dir.norm() > 0.0 ? dir.normalized() : Eigen::Vector2d::UnitX();
+  const Eigen::Vector2d v(-u.y(), u.x());
   vtkNew<vtkPoints> points;
   points->SetDataType(VTK_DOUBLE);
   for (vtkIdType i = 0; i < glyphs->GetNumberOfPoints(); ++i) {
     double p[3];
     glyphs->GetPoint(i, p);
-    points->InsertNextPoint(at.x() + scale * (p[0] - cx),
-                            at.y() + scale * (p[1] - cy), at.z());
+    const Eigen::Vector2d q =
+        u * (scale * (p[0] - cx)) + v * (scale * (p[1] - cy));
+    points->InsertNextPoint(at.x() + q.x(), at.y() + q.y(), at.z());
   }
   vtkNew<vtkPolyData> poly;
   poly->SetPoints(points);
@@ -1129,8 +1137,10 @@ add_spaces_layer(vtkRenderer *renderer, const ProjectDB &db,
     std::string text;
     Eigen::Vector3d at;
     std::array<std::uint8_t, 3> rgb;
+    Eigen::Vector2d dir;
   };
   std::vector<Label> labels;
+  std::size_t untriangulated = 0;
   for (std::size_t i = 0; i < spaces.size(); ++i) {
     const auto &s = spaces[i];
     const std::uint32_t key = s.room_label > 0
@@ -1144,14 +1154,53 @@ add_spaces_layer(vtkRenderer *renderer, const ProjectDB &db,
         out.push_back(b.world(s.storey, p[0], p[1], s.z_floor));
       return out;
     };
-    b.ring(geo[1], &geo[0], to_world(s.polygon.outer));
+    const auto outer = to_world(s.polygon.outer);
+    b.ring(geo[1], nullptr, outer);
     for (const auto &hole : s.polygon.holes)
       b.ring(geo[1], nullptr, to_world(hole));
+    // The fill: the outer ring ear-cut into triangles (a space is rarely
+    // convex, and a polygon cell is drawn as a fan). Holes are outlined,
+    // not cut out of the fill, as in the plan overlay.
+    {
+      vtkNew<vtkPolygon> polygon;
+      polygon->GetPointIds()->SetNumberOfIds(
+          static_cast<vtkIdType>(outer.size()));
+      polygon->GetPoints()->SetNumberOfPoints(
+          static_cast<vtkIdType>(outer.size()));
+      for (std::size_t k = 0; k < outer.size(); ++k) {
+        polygon->GetPointIds()->SetId(static_cast<vtkIdType>(k),
+                                      static_cast<vtkIdType>(k));
+        polygon->GetPoints()->SetPoint(static_cast<vtkIdType>(k),
+                                       outer[k].data());
+      }
+      vtkNew<vtkIdList> tris;
+      std::vector<vtkIdType> ids;
+      for (const auto &p : outer)
+        ids.push_back(b.add(geo[0], p));
+      if (polygon->TriangulateLocalIds(0, tris) &&
+          tris->GetNumberOfIds() >= 3) {
+        for (vtkIdType t = 0; t + 2 < tris->GetNumberOfIds(); t += 3) {
+          const vtkIdType tri[3] = {
+              ids[static_cast<std::size_t>(tris->GetId(t))],
+              ids[static_cast<std::size_t>(tris->GetId(t + 1))],
+              ids[static_cast<std::size_t>(tris->GetId(t + 2))]};
+          geo[0].polys->InsertNextCell(3, tri);
+        }
+      } else {
+        ++untriangulated; // drawn as one polygon cell
+        geo[0].polys->InsertNextCell(static_cast<vtkIdType>(ids.size()),
+                                     ids.data());
+      }
+    }
     const auto c = core::space_polygon_centroid(s.polygon);
+    // Upright in a view turned by SceneOptions::frame_yaw_deg (the
+    // project's view yaw), as the drift layers' labels.
+    const double yaw = -opts.frame_yaw_deg * std::numbers::pi / 180.0;
     labels.push_back(
         {fmt::format("{} ({:.1f} m2)",
                      s.name.empty() ? s.guid.substr(0, 8) : s.name, s.area),
-         b.world(s.storey, c[0], c[1], s.z_floor), rgb});
+         b.world(s.storey, c[0], c[1], s.z_floor), rgb,
+         Eigen::Vector2d(std::cos(yaw), std::sin(yaw))});
     ++drawn.items;
   }
 
@@ -1171,13 +1220,17 @@ add_spaces_layer(vtkRenderer *renderer, const ProjectDB &db,
     add(geo[1], rgb, 2.0, 1.0);
   if (opts.plan_labels)
     for (const auto &l : labels) {
-      vtkActor *a =
-          add_plan_label(renderer, l.text, l.at, l.rgb, kSpaceLabelM * 0.8);
+      vtkActor *a = add_plan_label(renderer, l.text, l.at, l.rgb,
+                                   kSpaceLabelM * 0.8, l.dir);
       if (!sheet)
         a->SetObjectName(kSpacesActorName);
       actors.push_back(a);
     }
   b.extend(bounds);
+  if (untriangulated > 0)
+    core::warn("render: spaces: {} of {} polygon(s) could not be ear-cut and "
+               "are filled as one polygon (may draw wrongly if concave)",
+               untriangulated, spaces.size());
   core::info("render: spaces: {} drawn", drawn.items);
   return actors;
 }
