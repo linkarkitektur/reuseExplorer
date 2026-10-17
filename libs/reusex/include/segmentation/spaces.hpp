@@ -12,11 +12,18 @@
 /// room components; this file turns them into polygons that follow the
 /// walls instead of the 5 cm raster:
 ///
+///  0. Exterior (reusex-e0k): room cells straight beyond the outer face of a
+///     wall flagged is_external (within exterior_depth_m, over the wall's
+///     own run) leave their room -- a footprint leak through a window is
+///     outside the building, whether the band grid made it a room of its
+///     own or gave it to the room inside.
 ///  1. Arrangement: a CGAL Arrangement_2 per storey of every wall's two faces
 ///     (axis +- thickness / 2; a one-sided wall, thickness -1, has its axis
 ///     on its seen face, so the axis itself), each run join_extension_m past
 ///     both ends so corners and tees close, plus an end cap across each
-///     thick wall's ends, plus the simplified outline of the storey's
+///     thick wall's ends, plus a bridge across two parallel runs of one
+///     wall line that are offset (a doubled sheet, drift) and so never meet
+///     (reusex-ajf), plus the simplified outline of the storey's
 ///     interior (RoomGrid::interior), which closes what the wall graph
 ///     leaves open. Dangling stubs (an extension that hits nothing) are
 ///     removed.
@@ -53,7 +60,13 @@
 /// Measured (reusex-z1v.6.2, room IoU / count error against the reference
 /// plans; band rooms after walls -> openings, defaults): raster outline of
 /// the same rooms NewOffice 0.764 / +1, house1 0.716 / 0, house2 0.580 / 0
-/// -> polygonised 0.891 / +1, 0.801 / 0, 0.601 / 0.
+/// -> polygonised 0.891 / +1, 0.801 / 0, 0.601 / 0. Bridges and the
+/// exterior cut (reusex-ajf / reusex-e0k, 2026-10-17, same order, on main
+/// after #72 house1 / house2 measure 0.790 / 0 and 0.584 / -1 before):
+/// NewOffice 0.8914 -> 0.8933, house1 0.7904 -> 0.7901, house2 0.5841 ->
+/// 0.5847, counts unchanged; NewOffice's open-office edge no longer leaks
+/// past the offset east wall runs. The leaks they target are small next to
+/// the rooms, hence the small IoU change.
 ///
 /// Coordinates are in each storey's level frame, as the grid and the walls.
 /// The room id of the grid is the space's room_label (the "rooms" cloud's
@@ -83,6 +96,30 @@ struct SpacesOptions {
   /// house2): 0.5 m 0.799 / 0.752 / 0.579, 2 m 0.844 / 0.796 / 0.606, 3 m
   /// 0.849 / 0.809 / 0.590, whole lines (100 m) 0.851 / 0.779 / 0.591.
   double join_extension_m = 2.0;
+  /// Bridges between offset runs (reusex-ajf): two parallel walls (within
+  /// bridge_max_angle_deg) whose lines are at most bridge_max_offset_m
+  /// apart and whose facing ends are at most bridge_max_gap_m apart along
+  /// them (or overlap by at most that) get a segment across both, half way
+  /// between those ends. A wall that comes as two runs offset by a doubled
+  /// sheet or by drift is then closed: the runs' extensions run side by
+  /// side and never meet, so without it the strip between them joins the
+  /// room to whatever lies beyond the other run (a footprint leak through a
+  /// window). 0 disables.
+  double bridge_max_offset_m = 0.6;
+  double bridge_max_gap_m = 2.0;
+  double bridge_max_angle_deg = 5.0;
+  /// Exterior beyond external walls (reusex-e0k): room cells beyond the
+  /// outer face of a wall flagged is_external, over the wall's own run and
+  /// up to exterior_depth_m out, are outside the building (a footprint leak
+  /// through a window): they leave their room, and a room left with none is
+  /// no space. The inside is the side with more room cells within
+  /// exterior_depth_m of the wall; a wall whose inside does not hold at
+  /// least exterior_min_ratio times the room cells of its other side is
+  /// left alone (a wall flagged external by mistake, rooms either side).
+  /// Only cells straight behind a wall are cut, nothing is flooded, so a gap
+  /// in the ring of external walls lets no exterior in. 0 disables.
+  double exterior_depth_m = 3.0;
+  double exterior_min_ratio = 2.0;
   /// Also insert the outline of the storey's interior (RoomGrid::interior,
   /// simplified to interior_simplify_m), so that rooms the wall graph does
   /// not close are faces bounded by it rather than the unbounded face.
@@ -127,15 +164,19 @@ struct SpacesOptions {
 /// What polygonise_spaces() did on one storey.
 struct SpacesStoreyStats {
   int storey_idx = 0;
-  int walls = 0;        ///< walls inserted
-  int faces = 0;        ///< bounded faces of the arrangement
-  int pure_faces = 0;   ///< faces given to one room
-  int empty_faces = 0;  ///< faces with no room (wall bodies, outside)
-  int mixed_faces = 0;  ///< faces the raster decides
-  int sliver_faces = 0; ///< thinner than a cell, classed by a neighbour
-  int rooms = 0;        ///< room components in the grid
-  int spaces = 0;       ///< spaces produced
-  int lost_rooms = 0;   ///< rooms with no polygon left (covered by others)
+  int walls = 0;              ///< walls inserted
+  int bridges = 0;            ///< bridges across offset runs (reusex-ajf)
+  int exterior_walls = 0;     ///< external walls that cut cells (reusex-e0k)
+  int exterior_rooms = 0;     ///< rooms wholly beyond external walls
+  double exterior_area = 0.0; ///< room cells cut as exterior [m^2]
+  int faces = 0;              ///< bounded faces of the arrangement
+  int pure_faces = 0;         ///< faces given to one room
+  int empty_faces = 0;        ///< faces with no room (wall bodies, outside)
+  int mixed_faces = 0;        ///< faces the raster decides
+  int sliver_faces = 0;       ///< thinner than a cell, classed by a neighbour
+  int rooms = 0;              ///< room components in the grid
+  int spaces = 0;             ///< spaces produced
+  int lost_rooms = 0; ///< rooms with no polygon left (covered by others)
   /// Share of the spaces' total area that comes from pure faces (the rest
   /// is raster) [0, 1].
   double arrangement_share = 0.0;

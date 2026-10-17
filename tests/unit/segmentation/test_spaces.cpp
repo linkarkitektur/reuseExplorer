@@ -409,3 +409,119 @@ TEST_CASE("Spaces_MissingExteriorWall_ClosedByTheInterior",
   REQUIRE(raster.spaces.size() == 1);
   CHECK(raster.stats[0].arrangement_share < 0.5);
 }
+
+namespace {
+
+/// Interior mask of @p G: the cells whose centre @p in holds.
+template <typename In> void set_interior(Grid &G, const In &in) {
+  for (int r = 0; r < G.g.height; ++r)
+    for (int c = 0; c < G.g.width; ++c) {
+      const double x = (G.g.col0 + c + 0.5) * G.cell;
+      const double y = (G.g.row0 + r + 0.5) * G.cell;
+      G.g.interior[G.g.index(c, r)] = in(x, y) ? 1 : 0;
+    }
+}
+
+} // namespace
+
+TEST_CASE("Spaces_OffsetExteriorRuns_AreBridgedSoTheLeakStaysOut",
+          "[segmentation][spaces]") {
+  // reusex-ajf: the east wall comes as two parallel runs 0.4 m apart (a
+  // doubled sheet / drift) that meet end to end at y = 4. Their extensions
+  // run side by side and never cross, so the strip between them joins the
+  // room to the footprint leak beyond the window in the northern run, and
+  // only the interior outline closes the face. A bridge across the two
+  // runs' ends keeps the leak out of the room.
+  Grid G(-1.0, 10.0, -1.0, 11.0);
+  G.fill(0.05, 6.35, 0.05, 4.0, 1);
+  G.fill(0.05, 5.95, 4.0, 9.95, 1);
+  set_interior(G, [](double x, double y) {
+    return (x > -0.1 && x < 6.45 && y > -0.1 && y < 4.05) ||
+           (x > -0.1 && x < 6.05 && y > 4.0 && y < 10.1) ||
+           (x > 6.0 && x < 8.0 && y > 5.0 && y < 8.0); // the leak
+  });
+  const std::vector<core::WallRecord> walls = {
+      wall("s", 0.0, 0.0, 6.4, 0.0, -1.0),
+      wall("e1", 6.4, 0.0, 6.4, 4.0, -1.0),
+      wall("e2", 6.0, 4.05, 6.0, 10.0, -1.0),
+      wall("n", 6.0, 10.0, 0.0, 10.0, -1.0),
+      wall("w", 0.0, 10.0, 0.0, 0.0, -1.0),
+  };
+  const auto r = polygonise_spaces({G.g}, {storey0()}, walls);
+  REQUIRE(r.spaces.size() == 1);
+  // 6.4 x 4.025 + 6.0 x 5.975 with the bridge half way between the ends.
+  CHECK(r.spaces[0].area == Approx(61.61).epsilon(0.005));
+  CHECK(r.stats[0].arrangement_share == Approx(1.0).margin(1e-6));
+
+  // The bridges depend on the geometry, not on the GUIDs (new on every
+  // fresh walls run): renamed so the walls sort the other way round.
+  auto renamed = walls;
+  for (size_t i = 0; i < renamed.size(); ++i)
+    renamed[i].guid = std::string(1, static_cast<char>('z' - i));
+  const auto again = polygonise_spaces({G.g}, {storey0()}, renamed);
+  REQUIRE(again.spaces.size() == 1);
+  CHECK(again.stats[0].bridges == r.stats[0].bridges);
+  CHECK(again.spaces[0].polygon.outer == r.spaces[0].polygon.outer);
+
+  SpacesOptions unbridged;
+  unbridged.bridge_max_offset_m = 0.0;
+  const auto leak = polygonise_spaces({G.g}, {storey0()}, walls, unbridged);
+  REQUIRE(leak.spaces.size() == 1);
+  CHECK(leak.spaces[0].area > 65.0); // the leak is in
+}
+
+TEST_CASE("Spaces_LeaksBeyondAnExternalWall_AreExterior",
+          "[segmentation][spaces]") {
+  // reusex-e0k: the footprint leaks through two windows in the external
+  // east wall. One leak was absorbed into the room (its cells carry the
+  // room's label), the other is a room of its own. Both lie beyond the
+  // external wall's outer face, so neither is part of a space.
+  Grid G(-1.0, 10.0, -1.0, 6.0);
+  G.fill(0.05, 5.95, 0.05, 3.95, 1);
+  G.fill(6.05, 7.5, 0.5, 1.5, 1); // absorbed leak
+  G.fill(6.05, 8.0, 2.2, 3.6, 2); // a leak of its own
+  set_interior(G, [](double x, double y) {
+    return (x > -0.1 && x < 6.1 && y > -0.1 && y < 4.1) ||
+           (x >= 6.0 && x < 7.55 && y > 0.45 && y < 1.55) ||
+           (x >= 6.0 && x < 8.05 && y > 2.15 && y < 3.65);
+  });
+  std::vector<core::WallRecord> walls = {
+      wall("s", 0.0, 0.0, 6.0, 0.0, -1.0),
+      wall("e", 6.0, 0.0, 6.0, 4.0, -1.0),
+      wall("n", 6.0, 4.0, 0.0, 4.0, -1.0),
+      wall("w", 0.0, 4.0, 0.0, 0.0, -1.0),
+  };
+  for (auto &w : walls)
+    w.is_external = true;
+  const auto r = polygonise_spaces({G.g}, {storey0()}, walls);
+  REQUIRE(r.spaces.size() == 1);
+  CHECK(r.spaces[0].room_label == 1);
+  CHECK(r.spaces[0].area == Approx(24.0).epsilon(0.005));
+  CHECK(r.stats[0].exterior_rooms == 1);
+
+  // Without the external flag the leaks stay (the regression this guards).
+  for (auto &w : walls)
+    w.is_external = false;
+  const auto leak = polygonise_spaces({G.g}, {storey0()}, walls);
+  CHECK(leak.spaces.size() == 2);
+}
+
+TEST_CASE("Spaces_ExternalWallWithRoomsOnBothSides_IsLeftAlone",
+          "[segmentation][spaces]") {
+  // A wall flagged external by mistake with rooms of the same size either
+  // side: which side is outside is not clear, so nothing is cut.
+  Grid G(-1.0, 13.0, -1.0, 5.0);
+  G.fill(0.05, 5.95, 0.05, 3.95, 1);
+  G.fill(6.05, 11.95, 0.05, 3.95, 2);
+  std::vector<core::WallRecord> walls = {
+      wall("s", 0.0, 0.0, 12.0, 0.0, -1.0),
+      wall("mid", 6.0, 0.0, 6.0, 4.0, -1.0),
+      wall("n", 12.0, 4.0, 0.0, 4.0, -1.0),
+      wall("w", 0.0, 4.0, 0.0, 0.0, -1.0),
+      wall("e", 12.0, 0.0, 12.0, 4.0, -1.0),
+  };
+  walls[1].is_external = true;
+  const auto r = polygonise_spaces({G.g}, {storey0()}, walls);
+  REQUIRE(r.spaces.size() == 2);
+  CHECK(r.stats[0].exterior_rooms == 0);
+}

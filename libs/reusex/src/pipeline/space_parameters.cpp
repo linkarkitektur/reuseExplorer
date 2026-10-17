@@ -47,6 +47,26 @@ const std::vector<SpaceParameter> &space_parameter_table() {
        "Wall faces run this far past the wall's ends, so corners and tees "
        "with a gap still close.",
        SPACE(join_extension_m), 0.0, 100.0},
+      {"bridge_max_offset_m", "--bridge-max-offset", "Bridge offset [m]",
+       "Two parallel wall runs at most this far apart whose ends meet get a "
+       "bridge across them, so an offset wall still closes; 0 disables ...",
+       SPACE(bridge_max_offset_m), 0.0, 5.0},
+      {"bridge_max_gap_m", "--bridge-max-gap", "Bridge gap [m]",
+       "... when their facing ends are at most this far apart (or overlap "
+       "by at most this) ...",
+       SPACE(bridge_max_gap_m), 0.0, 100.0},
+      {"bridge_max_angle_deg", "--bridge-max-angle", "Bridge angle [deg]",
+       "... and they are at most this far from parallel.",
+       SPACE(bridge_max_angle_deg), 0.0, 90.0},
+      {"exterior_depth_m", "--exterior-depth", "Exterior depth [m]",
+       "Room cells up to this far beyond an external wall's outer face are "
+       "outside the building (a footprint leak through a window); 0 "
+       "disables ...",
+       SPACE(exterior_depth_m), 0.0, 100.0},
+      {"exterior_min_ratio", "--exterior-min-ratio", "Exterior side ratio",
+       "... when the wall's inside holds at least this many times the room "
+       "cells of its outside.",
+       SPACE(exterior_min_ratio), 1.0, 1000.0},
       {"close_at_interior", "--no-interior-outline",
        "Close at the interior outline",
        "Insert the storey's interior outline, so rooms the walls leave open "
