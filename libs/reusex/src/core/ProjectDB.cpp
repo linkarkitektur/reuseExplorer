@@ -15,6 +15,7 @@
 #include "core/resource_keys.hpp"
 #include "core/resource_templates.hpp"
 #include "reusex/core/pose_graph.hpp"
+#include "reusex/core/space_polygon.hpp"
 
 #include <Eigen/Geometry>
 #include <opencv2/core/mat.hpp>
@@ -44,6 +45,7 @@
 #include <span>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <unistd.h>
@@ -430,9 +432,11 @@ class ProjectDB::Impl {
   bool hasWallsTable = false;
   /// openings exists (v34).
   bool hasOpeningsTable = false;
+  /// spaces and space_boundaries exist (v35).
+  bool hasSpacesTable = false;
 
   // cppcheck-suppress unusedStructMember
-  static constexpr int LATEST_SCHEMA_VERSION = 34;
+  static constexpr int LATEST_SCHEMA_VERSION = 35;
 
   // How long one statement waits for a lock another connection holds before
   // failing with SQLITE_BUSY. sqlite's default is not to wait at all.
@@ -560,6 +564,7 @@ class ProjectDB::Impl {
     hasSamplePartLinks = tableExists("sample_part_links");
     hasWallsTable = tableExists("walls") && tableExists("wall_joins");
     hasOpeningsTable = tableExists("openings");
+    hasSpacesTable = tableExists("spaces") && tableExists("space_boundaries");
   }
 
   /// True the first time this process opens dbPath read-only at schema
@@ -879,6 +884,10 @@ class ProjectDB::Impl {
 
     if (current < 34) {
       migrateToV34();
+    }
+
+    if (current < 35) {
+      migrateToV35();
     }
 
     reusex::trace("Schema version: {}", getCurrentSchemaVersion());
@@ -4220,6 +4229,308 @@ class ProjectDB::Impl {
     checkWritable();
     if (hasOpeningsTable)
       execOrThrow("DELETE FROM openings;");
+  }
+
+  void migrateToV35() {
+    reusex::info("Migrating database to schema version 35");
+    // Solid-model WP4 (reusex-z1v.6.3): spaces (rooms, corridors, open plan)
+    // as polygons in their storey's level frame, and the stretches of wall
+    // that bound them (IfcRelSpaceBoundary). `storey` is the storey's idx
+    // (the walls rule). A boundary goes with its space (ON DELETE CASCADE)
+    // but names its wall by guid, not by a foreign key to walls(id): a walls
+    // re-run deletes and re-inserts its unlocked rows, and a cascading key
+    // would take the boundaries of a locked space with them, while the
+    // wall's GUID survives the re-run (the openings rule, v34).
+    Savepoint sp(db, "migrate_v35");
+    execOrThrow(R"(
+      CREATE TABLE IF NOT EXISTS spaces (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        guid        TEXT    NOT NULL UNIQUE,
+        storey      INTEGER NOT NULL,
+        name        TEXT    NOT NULL DEFAULT '',
+        kind        TEXT    NOT NULL DEFAULT 'unknown'
+          CHECK (kind IN ('room', 'corridor', 'open_plan', 'unknown')),
+        polygon     BLOB    NOT NULL,
+        z_floor     REAL    NOT NULL DEFAULT 0,
+        z_ceiling   REAL    NOT NULL DEFAULT 0,
+        area        REAL    NOT NULL DEFAULT -1,
+        perimeter   REAL    NOT NULL DEFAULT -1,
+        volume      REAL    NOT NULL DEFAULT -1,
+        compactness REAL    NOT NULL DEFAULT -1,
+        room_label  INTEGER,
+        source      TEXT    NOT NULL DEFAULT 'detected'
+          CHECK (source IN ('detected', 'manual', 'imported')),
+        locked      INTEGER NOT NULL DEFAULT 0 CHECK (locked IN (0, 1)),
+        confidence  REAL    NOT NULL DEFAULT -1,
+        metadata    TEXT    NOT NULL DEFAULT '',
+        run_id      INTEGER,
+        created_at  TEXT    NOT NULL
+          DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_spaces_storey ON spaces(storey);
+      CREATE TABLE IF NOT EXISTS space_boundaries (
+        space_id  INTEGER NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+        wall_guid TEXT    NOT NULL,
+        side      TEXT    NOT NULL CHECK (side IN ('a', 'b')),
+        s_start   REAL    NOT NULL,
+        s_end     REAL    NOT NULL,
+        PRIMARY KEY (space_id, wall_guid, side)
+      );
+      CREATE INDEX IF NOT EXISTS idx_space_boundaries_wall
+        ON space_boundaries(wall_guid);
+    )");
+    insertSchemaVersion(35, "Solid model: spaces and space_boundaries tables");
+    sp.release();
+    reusex::info("Migration to schema version 35 complete");
+  }
+
+  // ── Spaces (v35) ─────────────────────────────────────────────────────────
+
+  static constexpr const char *kSpaceColumns =
+      "id, guid, storey, name, kind, polygon, z_floor, z_ceiling, area, "
+      "perimeter, volume, compactness, room_label, source, locked, "
+      "confidence, metadata";
+
+  static core::SpaceRecord readSpace(sqlite3_stmt *s) {
+    core::SpaceRecord r;
+    r.id = sqlite3_column_int64(s, 0);
+    r.guid = column_text(s, 1);
+    r.storey = sqlite3_column_int(s, 2);
+    r.name = column_text(s, 3);
+    r.kind = column_text(s, 4);
+    {
+      const auto *data =
+          static_cast<const uint8_t *>(sqlite3_column_blob(s, 5));
+      const int bytes = sqlite3_column_bytes(s, 5);
+      std::vector<uint8_t> blob;
+      if (data && bytes > 0)
+        blob.assign(data, data + bytes);
+      try {
+        r.polygon = core::decode_space_polygon(blob);
+      } catch (const std::exception &e) {
+        throw std::runtime_error("space " + r.guid + ": " + e.what());
+      }
+    }
+    r.z_floor = sqlite3_column_double(s, 6);
+    r.z_ceiling = sqlite3_column_double(s, 7);
+    r.area = sqlite3_column_double(s, 8);
+    r.perimeter = sqlite3_column_double(s, 9);
+    r.volume = sqlite3_column_double(s, 10);
+    r.compactness = sqlite3_column_double(s, 11);
+    r.room_label = sqlite3_column_type(s, 12) == SQLITE_NULL
+                       ? -1
+                       : sqlite3_column_int(s, 12);
+    r.source = column_text(s, 13);
+    r.locked = sqlite3_column_int(s, 14) != 0;
+    r.confidence = sqlite3_column_double(s, 15);
+    r.metadata = column_text(s, 16);
+    return r;
+  }
+
+  std::vector<core::SpaceRecord> listSpaces() const {
+    std::vector<core::SpaceRecord> out;
+    if (!hasSpacesTable)
+      return out;
+    const std::string sql = std::string("SELECT ") + kSpaceColumns +
+                            " FROM spaces ORDER BY storey, id;";
+    sqlite3_stmt *s = prepare_or_throw(db, sql.c_str(), "spaces");
+    StmtGuard guard(s);
+    int rc;
+    while ((rc = sqlite3_step(s)) == SQLITE_ROW)
+      out.push_back(readSpace(s));
+    if (rc != SQLITE_DONE)
+      throw std::runtime_error("spaces: " + std::string(sqlite3_errmsg(db)));
+    return out;
+  }
+
+  std::optional<core::SpaceRecord> spaceByGuid(std::string_view guid) const {
+    if (!hasSpacesTable)
+      return std::nullopt;
+    const std::string sql =
+        std::string("SELECT ") + kSpaceColumns + " FROM spaces WHERE guid = ?;";
+    sqlite3_stmt *s = prepare_or_throw(db, sql.c_str(), "space_by_guid");
+    StmtGuard guard(s);
+    bind_text(s, 1, guid);
+    if (sqlite3_step(s) != SQLITE_ROW)
+      return std::nullopt;
+    return readSpace(s);
+  }
+
+  std::vector<core::SpaceBoundaryRecord> listSpaceBoundaries() const {
+    std::vector<core::SpaceBoundaryRecord> out;
+    if (!hasSpacesTable)
+      return out;
+    sqlite3_stmt *s = prepare_or_throw(
+        db,
+        "SELECT sp.guid, b.wall_guid, b.side, b.s_start, b.s_end "
+        "FROM space_boundaries b JOIN spaces sp ON sp.id = b.space_id "
+        "ORDER BY sp.storey, sp.id, b.wall_guid, b.side;",
+        "space_boundaries");
+    StmtGuard guard(s);
+    int rc;
+    while ((rc = sqlite3_step(s)) == SQLITE_ROW)
+      out.push_back({column_text(s, 0), column_text(s, 1), column_text(s, 2),
+                     sqlite3_column_double(s, 3), sqlite3_column_double(s, 4)});
+    if (rc != SQLITE_DONE)
+      throw std::runtime_error("space_boundaries: " +
+                               std::string(sqlite3_errmsg(db)));
+    return out;
+  }
+
+  size_t saveSpaces(const std::vector<core::SpaceRecord> &spaces,
+                    const std::vector<core::SpaceBoundaryRecord> &boundaries,
+                    int runId) {
+    checkWritable();
+    if (!hasSpacesTable)
+      throw std::runtime_error("save_spaces: project schema predates v35");
+    static const std::set<std::string, std::less<>> kKinds = {
+        "room", "corridor", "open_plan", "unknown"};
+    std::set<std::string, std::less<>> guids;
+    std::vector<std::vector<uint8_t>> blobs;
+    blobs.reserve(spaces.size());
+    for (const auto &r : spaces) {
+      if (r.guid.empty())
+        throw std::invalid_argument("save_spaces: a space of storey " +
+                                    std::to_string(r.storey) + " has no guid");
+      const auto where = "save_spaces: space " + r.guid;
+      if (!kKinds.count(r.kind))
+        throw std::invalid_argument(where + " has invalid kind '" + r.kind +
+                                    "'");
+      if (r.source != "detected" && r.source != "manual" &&
+          r.source != "imported")
+        throw std::invalid_argument(where + " has invalid source '" + r.source +
+                                    "'");
+      try {
+        blobs.push_back(core::encode_space_polygon(r.polygon));
+      } catch (const std::invalid_argument &e) {
+        throw std::invalid_argument(where + ": " + e.what());
+      }
+      if (!guids.insert(r.guid).second)
+        throw std::invalid_argument("save_spaces: duplicate guid " + r.guid);
+    }
+    std::set<std::tuple<std::string, std::string, std::string>> boundaryKeys;
+    for (const auto &b : boundaries) {
+      const auto where = "save_spaces: boundary of space " + b.space +
+                         " on wall " + b.wall + " side " + b.side;
+      if (!guids.count(b.space))
+        throw std::invalid_argument(where + ": the space is not saved here");
+      if (b.wall.empty())
+        throw std::invalid_argument(where + " names no wall");
+      if (b.side != "a" && b.side != "b")
+        throw std::invalid_argument(where + ": side must be a or b");
+      if (!(b.s_end >= b.s_start) || !std::isfinite(b.s_start) ||
+          !std::isfinite(b.s_end))
+        throw std::invalid_argument(where + " has an invalid range (" +
+                                    std::to_string(b.s_start) + ".." +
+                                    std::to_string(b.s_end) + ")");
+      if (!boundaryKeys.emplace(b.space, b.wall, b.side).second)
+        throw std::invalid_argument(where + " is given twice");
+    }
+
+    Savepoint sp(db, "save_spaces");
+    std::set<std::string, std::less<>> lockedGuids;
+    {
+      sqlite3_stmt *s = prepare_or_throw(
+          db, "SELECT guid FROM spaces WHERE locked = 1;", "save_spaces");
+      StmtGuard guard(s);
+      int rc;
+      while ((rc = sqlite3_step(s)) == SQLITE_ROW)
+        lockedGuids.insert(column_text(s, 0));
+      if (rc != SQLITE_DONE)
+        throw std::runtime_error("save_spaces: reading locked rows: " +
+                                 std::string(sqlite3_errmsg(db)));
+    }
+    // Boundaries of unlocked spaces go with them (ON DELETE CASCADE).
+    execOrThrow("DELETE FROM spaces WHERE locked = 0;");
+
+    sqlite3_stmt *ins = prepare_or_throw(
+        db,
+        "INSERT INTO spaces (guid, storey, name, kind, polygon, z_floor, "
+        "z_ceiling, area, perimeter, volume, compactness, room_label, source, "
+        "locked, confidence, metadata, run_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+        "save_spaces");
+    StmtGuard guard(ins);
+    size_t written = 0, skipped = 0;
+    for (size_t i = 0; i < spaces.size(); ++i) {
+      const auto &r = spaces[i];
+      if (lockedGuids.count(r.guid)) {
+        ++skipped;
+        continue;
+      }
+      sqlite3_reset(ins);
+      sqlite3_clear_bindings(ins);
+      bind_text(ins, 1, r.guid);
+      sqlite3_bind_int(ins, 2, r.storey);
+      bind_text(ins, 3, r.name);
+      bind_text(ins, 4, r.kind);
+      sqlite3_bind_blob(ins, 5, blobs[i].data(),
+                        static_cast<int>(blobs[i].size()), SQLITE_TRANSIENT);
+      sqlite3_bind_double(ins, 6, r.z_floor);
+      sqlite3_bind_double(ins, 7, r.z_ceiling);
+      sqlite3_bind_double(ins, 8, r.area);
+      sqlite3_bind_double(ins, 9, r.perimeter);
+      sqlite3_bind_double(ins, 10, r.volume);
+      sqlite3_bind_double(ins, 11, r.compactness);
+      if (r.room_label >= 0)
+        sqlite3_bind_int(ins, 12, r.room_label);
+      else
+        sqlite3_bind_null(ins, 12);
+      bind_text(ins, 13, r.source);
+      sqlite3_bind_int(ins, 14, r.locked ? 1 : 0);
+      sqlite3_bind_double(ins, 15, r.confidence);
+      bind_text(ins, 16, r.metadata);
+      if (runId >= 0)
+        sqlite3_bind_int(ins, 17, runId);
+      else
+        sqlite3_bind_null(ins, 17);
+      if (sqlite3_step(ins) != SQLITE_DONE)
+        throw std::runtime_error("save_spaces: insert of space " + r.guid +
+                                 " failed: " + sqlite3_errmsg(db));
+      ++written;
+    }
+
+    sqlite3_stmt *bnd = prepare_or_throw(
+        db,
+        "INSERT INTO space_boundaries (space_id, wall_guid, side, s_start, "
+        "s_end) SELECT id, ?, ?, ?, ? FROM spaces WHERE guid = ?;",
+        "save_spaces");
+    StmtGuard bndGuard(bnd);
+    for (const auto &b : boundaries) {
+      if (lockedGuids.count(b.space))
+        continue; // the locked space keeps its stored boundaries
+      sqlite3_reset(bnd);
+      sqlite3_clear_bindings(bnd);
+      bind_text(bnd, 1, b.wall);
+      bind_text(bnd, 2, b.side);
+      sqlite3_bind_double(bnd, 3, b.s_start);
+      sqlite3_bind_double(bnd, 4, b.s_end);
+      bind_text(bnd, 5, b.space);
+      if (sqlite3_step(bnd) != SQLITE_DONE)
+        throw std::runtime_error("save_spaces: insert of boundary " + b.space +
+                                 " / " + b.wall +
+                                 " failed: " + sqlite3_errmsg(db));
+    }
+    sp.release();
+    if (skipped > 0)
+      reusex::info("save_spaces: {} space(s) are locked; kept the stored rows",
+                   skipped);
+    return written;
+  }
+
+  bool hasSpaces() const {
+    if (!hasSpacesTable)
+      return false;
+    sqlite3_stmt *s = prepare_or_throw(
+        db, "SELECT EXISTS (SELECT 1 FROM spaces);", "has_spaces");
+    StmtGuard guard(s);
+    return sqlite3_step(s) == SQLITE_ROW && sqlite3_column_int(s, 0) != 0;
+  }
+
+  void deleteSpaces() {
+    checkWritable();
+    if (hasSpacesTable)
+      execOrThrow("DELETE FROM space_boundaries; DELETE FROM spaces;");
   }
 
   // ── Scan helpers (#129) ──────────────────────────────────────────────────
@@ -8893,6 +9204,30 @@ ProjectDB::opening_by_guid(std::string_view guid) const {
 bool ProjectDB::has_openings() const { return impl_->hasOpenings(); }
 
 void ProjectDB::delete_openings() { impl_->deleteOpenings(); }
+
+size_t
+ProjectDB::save_spaces(const std::vector<core::SpaceRecord> &spaces,
+                       const std::vector<core::SpaceBoundaryRecord> &boundaries,
+                       int run_id) {
+  return impl_->saveSpaces(spaces, boundaries, run_id);
+}
+
+std::vector<core::SpaceRecord> ProjectDB::spaces() const {
+  return impl_->listSpaces();
+}
+
+std::optional<core::SpaceRecord>
+ProjectDB::space_by_guid(std::string_view guid) const {
+  return impl_->spaceByGuid(guid);
+}
+
+bool ProjectDB::has_spaces() const { return impl_->hasSpaces(); }
+
+std::vector<core::SpaceBoundaryRecord> ProjectDB::space_boundaries() const {
+  return impl_->listSpaceBoundaries();
+}
+
+void ProjectDB::delete_spaces() { impl_->deleteSpaces(); }
 
 core::SensorIntrinsics ProjectDB::sensor_frame_intrinsics(int nodeId) const {
   return impl_->getSensorFrameIntrinsics(nodeId);

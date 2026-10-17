@@ -863,6 +863,44 @@ class ProjectDB {
   /// Delete every opening, locked ones included (an explicit user action).
   void delete_openings();
 
+  // --- Spaces (schema v35, solid-model WP4) ---
+
+  /// Store the spaces of one detection run and their space boundaries
+  /// (IfcRelSpaceBoundary). Replaces every space whose `locked` is 0 by
+  /// @p spaces; their boundaries go with them (ON DELETE CASCADE). A locked
+  /// space is never touched: a record whose guid a locked row holds is
+  /// skipped (the locked row wins) and so are its boundaries in
+  /// @p boundaries (the stored ones stay). A boundary names its space by
+  /// guid (one of @p spaces) and its wall by guid (column wall_guid, not a
+  /// foreign key: a walls re-run replaces those rows but keeps their GUIDs,
+  /// the openings rule). `storey` is the storey's idx. The polygon is stored
+  /// as a blob (core/space_polygon.hpp). One SAVEPOINT, so a refused call
+  /// leaves both tables as they were. @p run_id is the pipeline_log row that
+  /// produced them (-1 = none).
+  /// @returns the number of spaces written.
+  /// @throws std::invalid_argument for an empty guid, a kind other than room
+  ///         | corridor | open_plan | unknown, a source other than detected
+  ///         | manual | imported, a polygon ring with fewer than 3 points or
+  ///         a coordinate that is not finite, two spaces sharing a guid, a
+  ///         boundary whose space is not in @p spaces, whose wall is empty,
+  ///         whose side is not a | b or whose s_end < s_start, or two
+  ///         boundaries with the same (space, wall, side);
+  ///         std::runtime_error on a read-only or pre-v35 project.
+  size_t save_spaces(const std::vector<core::SpaceRecord> &spaces,
+                     const std::vector<core::SpaceBoundaryRecord> &boundaries,
+                     int run_id = -1);
+  /// Every stored space, storey ascending, then row id. Empty for a pre-v35
+  /// project.
+  std::vector<core::SpaceRecord> spaces() const;
+  std::optional<core::SpaceRecord> space_by_guid(std::string_view guid) const;
+  bool has_spaces() const;
+  /// Every stored space boundary, in its space's row order, then wall guid
+  /// and side.
+  std::vector<core::SpaceBoundaryRecord> space_boundaries() const;
+  /// Delete every space and boundary, locked ones included (an explicit user
+  /// action).
+  void delete_spaces();
+
   // --- Scans (multi-session import, #129) ---
 
   /// One row of the `scans` table.  Each `rux import` creates one record;

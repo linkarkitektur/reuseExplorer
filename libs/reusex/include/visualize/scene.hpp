@@ -260,6 +260,10 @@ inline constexpr const char *kWallsActorName = "reusex.walls";
 /// in plan the layer is a sheet like the walls layer's.
 inline constexpr const char *kOpeningsActorName = "reusex.openings";
 
+/// vtkObject name of a `spaces` layer actor in 3D (PlanPlacement::level); in
+/// plan the layer is a sheet like the walls layer's.
+inline constexpr const char *kSpacesActorName = "reusex.spaces";
+
 /// vtkObject name of a mesh section line (add_mesh_section_line()); exempt
 /// from the cut and the section slab like the plan overlay.
 inline constexpr const char *kSectionLineActorName = "reusex.section_line";

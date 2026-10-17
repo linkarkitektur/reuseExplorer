@@ -12,6 +12,7 @@
 #include "geometry/component_persistence.hpp"
 #include "geometry/point_mesh_distance.hpp"
 #include "geometry/transform_utils.hpp"
+#include "reusex/core/space_polygon.hpp"
 #include "reusex/visualize/highlight.hpp"
 #include "types/point_types.hpp"
 #include "visualize/drift_layers.hpp"
@@ -148,6 +149,8 @@ std::string producing_command(Layer layer) {
     return "rux create walls";
   case Layer::openings:
     return "rux create openings";
+  case Layer::spaces:
+    return "rux create spaces";
   }
   return "the corresponding rux create subcommand";
 }
@@ -1097,6 +1100,88 @@ std::vector<vtkActor *> add_walls_layer(vtkRenderer *renderer,
   return actors;
 }
 
+// ── Spaces layer (reusex-z1v.6.3) ────────────────────────────────────────────
+//
+// The `spaces` table: each space's polygon at its floor height (z_floor of
+// its storey's level frame, PlanPlacement::level) or on a sheet over the cut
+// (PlanPlacement::above_scene), as a translucent fill in its room's label
+// colour (the `rooms` layer's colour for room_label, so the two read
+// together) with an outline, holes outlined, and its name and area at the
+// centroid.
+
+constexpr double kSpacesFillOpacity = 0.25;
+
+std::vector<vtkActor *>
+add_spaces_layer(vtkRenderer *renderer, const ProjectDB &db,
+                 const SceneOptions &opts, const LabelPalette &palette,
+                 SceneBounds &bounds, SceneLayer &drawn) {
+  const auto spaces = db.spaces();
+  if (spaces.empty())
+    throw std::runtime_error("render: project has no spaces — run `" +
+                             producing_command(Layer::spaces) + "` first");
+  core::SolidModel frames;
+  frames.storeys = db.storeys();
+  const bool sheet = opts.plan_placement == PlanPlacement::above_scene;
+  PlanBuilder b(frames, opts.plan_placement, bounds, opts.plan_sheet_z);
+  // One fill and one outline geometry per colour.
+  std::map<std::array<std::uint8_t, 3>, std::array<PlanGeometry, 2>> g;
+  struct Label {
+    std::string text;
+    Eigen::Vector3d at;
+    std::array<std::uint8_t, 3> rgb;
+  };
+  std::vector<Label> labels;
+  for (std::size_t i = 0; i < spaces.size(); ++i) {
+    const auto &s = spaces[i];
+    const std::uint32_t key = s.room_label > 0
+                                  ? static_cast<std::uint32_t>(s.room_label)
+                                  : static_cast<std::uint32_t>(i + 1);
+    const auto rgb = label_palette_color(palette, key);
+    auto &geo = g[rgb];
+    const auto to_world = [&](const std::vector<core::PlanPoint> &ring) {
+      std::vector<Eigen::Vector3d> out;
+      for (const auto &p : ring)
+        out.push_back(b.world(s.storey, p[0], p[1], s.z_floor));
+      return out;
+    };
+    b.ring(geo[1], &geo[0], to_world(s.polygon.outer));
+    for (const auto &hole : s.polygon.holes)
+      b.ring(geo[1], nullptr, to_world(hole));
+    const auto c = core::space_polygon_centroid(s.polygon);
+    labels.push_back(
+        {fmt::format("{} ({:.1f} m2)",
+                     s.name.empty() ? s.guid.substr(0, 8) : s.name, s.area),
+         b.world(s.storey, c[0], c[1], s.z_floor), rgb});
+    ++drawn.items;
+  }
+
+  std::vector<vtkActor *> actors;
+  const auto add = [&](PlanGeometry &geo, const std::array<std::uint8_t, 3> &c,
+                       double width, double opacity) {
+    if (geo.empty())
+      return;
+    vtkActor *a = add_plan_actor(renderer, geo, c, width, opacity);
+    if (!sheet)
+      a->SetObjectName(kSpacesActorName); // cut with the scene in 3D
+    actors.push_back(a);
+  };
+  for (auto &[rgb, geo] : g) // translucent fills first
+    add(geo[0], rgb, 1.0, kSpacesFillOpacity);
+  for (auto &[rgb, geo] : g)
+    add(geo[1], rgb, 2.0, 1.0);
+  if (opts.plan_labels)
+    for (const auto &l : labels) {
+      vtkActor *a =
+          add_plan_label(renderer, l.text, l.at, l.rgb, kSpaceLabelM * 0.8);
+      if (!sheet)
+        a->SetObjectName(kSpacesActorName);
+      actors.push_back(a);
+    }
+  b.extend(bounds);
+  core::info("render: spaces: {} drawn", drawn.items);
+  return actors;
+}
+
 // ── Openings layer (reusex-z1v.7.3) ──────────────────────────────────────────
 //
 // The `openings` table drawn in its host walls' faces, through the host
@@ -1778,7 +1863,7 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
         "render: no layers selected — pass at least one of "
         "cloud, labels, planes, rooms, instances, mesh, "
         "components, frustums, panoramas, deviation, passes, graph, drift, "
-        "walls, openings");
+        "walls, openings, spaces");
   if (!(opts.deviation.within_m > 0.0) ||
       !(opts.deviation.uncovered_m > opts.deviation.within_m))
     throw std::runtime_error(
@@ -1874,12 +1959,12 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
           return l != Layer::mesh && l != Layer::components &&
                  l != Layer::frustums && l != Layer::panoramas &&
                  l != Layer::graph && l != Layer::drift && l != Layer::walls &&
-                 l != Layer::openings;
+                 l != Layer::openings && l != Layer::spaces;
         });
     info.mesh_style = with_points ? MeshStyle::overlay : MeshStyle::solid;
   }
 
-  std::optional<std::size_t> walls_layer, openings_layer;
+  std::optional<std::size_t> walls_layer, openings_layer, spaces_layer;
   for (const Layer layer : opts.layers) {
     SceneLayer drawn;
     drawn.layer = layer;
@@ -2092,12 +2177,21 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
       // After the walls, so in plan its sheet sits over theirs.
       openings_layer = info.layers.size();
       break;
+
+    case Layer::spaces:
+      // Before the walls, so in plan the walls draw over the fills.
+      spaces_layer = info.layers.size();
+      break;
     }
     info.drawn_points += drawn.points;
     info.drawn_faces += drawn.faces;
     info.layers.push_back(std::move(drawn));
   }
 
+  if (spaces_layer) {
+    SceneLayer &drawn = info.layers[*spaces_layer];
+    drawn.actors = add_spaces_layer(renderer, db, opts, palette, bounds, drawn);
+  }
   if (walls_layer) {
     SceneLayer &drawn = info.layers[*walls_layer];
     drawn.actors = add_walls_layer(renderer, db, opts, bounds, drawn);

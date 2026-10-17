@@ -53,6 +53,7 @@ enum class JobStage {
   classify,       ///< classify each plane -> "plane_classes" table
   walls,          ///< walls + their joins -> "walls" / "wall_joins" tables
   openings,       ///< doors, windows, openings in the walls -> "openings"
+  spaces,         ///< band rooms as polygons -> "spaces" / "space_boundaries"
 };
 
 /// Canonical lower-case stage name (the token used on the wire and the CLI).
