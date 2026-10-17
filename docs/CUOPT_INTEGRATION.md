@@ -119,7 +119,11 @@ The cuOpt solver is configured with:
 - Time limit: 300 seconds (5 minutes)
 - Console logging: disabled
 - Presolve: enabled
-- For MIP: relative gap 1%, absolute gap 1e-6
+- For MIP: relative gap 1% when the caller sets none, absolute gap 1e-6.
+  The Solidifier always sets one: `SolidifierOptions::mip_gap` (1e-6, for
+  cuOpt and HiGHS alike). At 1% cuOpt returned a labelling without house2's
+  stair hall, which is worth about 0.03 in a section objective of -372
+  (reusex-uur).
 
 ## Enabling cuOpt (When Available)
 
