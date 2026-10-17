@@ -1,0 +1,329 @@
+# SPDX-FileCopyrightText: 2026 Povl Filip Sonne-Frederiksen
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# house2 pose reference: the edits -- DRAFT v3, maintainer review pending (reusex-rcv.1.8).
+#
+# The provenance half of the house2 pose reference (docs/guides/pose-reference-authoring.md);
+# house2.trajectory.tum next to it is the frozen result. Written with the drift-correction
+# loop (rux optimize --edits --watch, rux analyze drift) plus hand fits checked against plan
+# cuts, sections and the colour images. Not ground truth: an agent's best reading of the scan.
+# v2 (after the PR #84 review): the house must also fit a Manhattan grid -- every wall at 90
+# deg to the others, open doors excepted -- so the reference is now solved with the
+# Manhattan prior and four blocks are turned onto its grid.
+# v3 (review of v2's long section): the stair descent (370-379) drew the stair-hall north wall
+# (i0-stair-n) on top of its kitchen face -- a wall with no thickness. m-370-379 shifts it 0.19 m
+# south; the wall measures 162-175 mm (stair side vs kitchen side; interior walls in the walls
+# table 0.14-0.20 m, the plan's bathroom wall 0.18 m), was -30 mm (faces crossed) in v2.
+#
+# Source scan: scan archive house-2_c582d1f758/reusex/project.rux (384 frames, two storeys),
+# the copy the solid-model plan house2.plan.yaml was drawn on (clouds/planes regenerated,
+# `rux create storeys`; sha256 118645e0bbe2...e461 at schema v32). Nothing derived from the
+# scan except these two files is committed; point $REUSEX_HOUSE2_RUX at such a copy.
+#
+# Starting poses (reusex-m53): sensor_frames.transform as the RTABMap import wrote it
+# (c582d1f758-reimported.db, pipeline_log 2026-06-01); the log has no optimize, register or
+# pose-edit entry. initial_transform is NULL on all 384 frames, so every solve seeds from
+# transform. Moves are deltas on these poses.
+#
+# Replay (on a COPY; deterministic, reproduces house2.trajectory.tum to the last digit):
+#   rux -p copy.rux optimize --edits house2.edits.yaml --manhattan \
+#       --odometry-robust --prior-sigma-trans 1 --prior-sigma-rot 1
+#   rux -p copy.rux export trajectory -o house2.trajectory.tum
+# The four solver flags are part of the reference:
+#  - --manhattan (reusex-rqn.1): ties the wall landmarks to one grid. Alone it takes the
+#    storey-1 vs storey-0 heading from -4.4 to -0.1 deg and segment headings from median 3.9
+#    / max 8.4 deg to 1.1 / 3.9, at pass-to-pass 12.6 mm (plain optimize 13.8). It cannot
+#    straighten a block whose frames see a room only from inside (plane factors are loose,
+#    sigma_normal 14 deg), so the four heading moves below finish the job. Tried with the v1
+#    edits as they were: no effect, because the v1 guards pinned every segment at plain
+#    optimize's (rotated) poses; the guards are now taken from the Manhattan solve.
+#  - --odometry-robust: the tail (384-389) was captured walking fast down the stair and the
+#    hall (motion blur), and its odometry links are wrong by 10-13 deg. With odometry as
+#    known inliers a move there either drags the whole graph (up to 1.7 m) or is fought off
+#    (41-62% realised); robust odometry lets GNC drop the broken links (reusex-39h).
+#  - --prior-sigma-trans 1 --prior-sigma-rot 1: move m-1-33 holds node 1, the gauge; the
+#    default 1 mm / 0.06 deg gauge prior would fight it. The guards fix the gauge instead.
+# The g-* anchors are guards: all-DoF anchors at the Manhattan solve's poses (no edits,
+# --manhattan --odometry-robust) on 3 nodes of every segment no move names, so each move is measured against
+# the rest as that solve has it and cannot drag the trajectory. All edits read honoured in
+# --watch; plain optimize --edits reads m-246-293 NOT HONOURED by the older block-RMS rule
+# (bent 22 mm across 48 frames, realised 99% / 99%; reusex-wwr).
+#
+# Frame: world. Coordinates in the notes are in storey 0's level frame (the frame of the plan
+# cuts and of house2.plan.yaml): level = world + (-5.92, -4.63, +1.59) m, rotated < 0.2 deg.
+# The Manhattan solve turns the whole house ~5 deg about node 1 against plain optimize, so
+# house2.plan.yaml (drawn on the stored poses) no longer overlays it; see reusex-ghy.
+#
+# Result (rux analyze drift, defaults, --plan house2.plan.yaml; 12 segments for the pairs):
+#                                 stored       plain optimize  DRAFT v1      DRAFT v2      this (v3)
+#   noise floor                   7.2 mm       7.3 mm          7.2 mm        7.3 mm        7.3 mm
+#   pass-to-pass median (p90)     15.9 (56.1)  13.8 (43.8)     11.0 (36.2)   10.4 (34.5)   10.3 (34.8) mm = 1.4x floor
+#   segment-pair median           53.1 mm      28.4 mm         23.7 mm       25.6 mm       25.0 mm
+#   worst segment pair            130.3 mm     105.2 mm        116.0 mm      90.8 mm       90.8 mm (*)
+#   doubled-wall patches s0 / s1  0.27 / 0.22  0.26 / 0.22     0.27 / 0.22   0.28 / 0.21   0.27 / 0.20
+#   through-wall steps, plan      8 of 13      7 of 12         6 of 11       11 of 20      11 of 20 (**)
+#   through-wall steps, own walls 3            4               3             1             1 (**)
+#   stair-hall north wall, faces  -            -               -             -30 mm        162-175 mm
+# Manhattan fit (acceptance added in the review; target: every full-height wall within
+# +-1 deg of its storey grid, storey grids within 0.5 deg of each other, every segment's
+# heading within 1 deg). Grid = the Manhattan prior's estimator (weighted 4*phi circular mean,
+# re-centred 3x over the walls within 15 deg) on the scan's own wall points:
+#                                 plain optimize   DRAFT v1         DRAFT v2         this (v3)
+#   storey-1 grid vs storey-0     -4.39 deg        -5.54 deg        -0.03 deg        -0.05 deg (met)
+#   segment heading |median|/max  3.87 / 8.38 deg  2.80 / 9.35 deg  0.25 / 1.19 deg  0.26 / 1.19 (seg 3)
+#   wall planes (rux planes, role wall; |dev| median, area within 1 / 2 deg):
+#     storey 0                    2.10, 41 / 51%   2.15, 28 / 58%   0.65, 50 / 92%   0.77, 52 / 90%
+#     storey 1                    2.28, 23 / 49%   2.26, 23 / 49%   1.47, 43 / 77%   1.36, 50 / 74%
+#   wall patches (0.5 m, points-weighted |dev| median / p90, within 1 deg):
+#     storey 0                    2.18 / 9.4, 25%  1.82 / 8.6, 36%  0.91 / 6.6, 55%  0.89 / 6.4, 56%
+#     storey 1                    3.48 / 7.7, 16%  3.44 / 7.8, 16%  1.62 / 5.1, 24%  1.61 / 8.4, 23%
+#   (v3's storey-1 patch p90 rises with two stairwell patches the shifted descent now draws
+#   apart from the rest: the stair's south edge at (0.8, -3.7), 39 deg, and the north wall's
+#   upper part, 8-9 deg.) The per-wall target is NOT met: storey 0 is within 2 deg on 90% of
+#   wall area, storey 1 on 74%. Door leaves excluded: a plane shorter than 1.2 m along the wall whose top stays more
+#   than 0.25 m below the ceiling (13 planes); a patch run shorter than 1.2 m whose top stays
+#   below floor + 2.3 m. Off-grid planes left: storey 1 plane at 34.6 deg in bedroom N = the
+#   free-standing wardrobe set at an angle (image 356), not a wall; storey 0 plane at 10.2 deg
+#   at the hall/bathroom door (merges the open door leaf with the wall).
+# (*) v2 / v3: seg 8 into seg 10 and seg 3 into seg 7, 900 / 7000 points: the landing seen from the
+#     bedroom-E door, and living room S's east wall seen twice (m-230-245 turned seg 7 there).
+# (**) Against house2.plan.yaml the count rose to 11 of 20 because the plan was drawn on the
+#     stored poses, whose storey 1 north is turned ~8 deg; the straightened camera paths no
+#     longer fit its walls (plan re-fit: reusex-ghy). Plan-free check instead: steps of <= 1.5 m
+#     whose straight line passes within 3 cm of the scan's own wall points (1.0-1.8 m above
+#     the floor, same poses). One left: 331 -> 332 in bedroom E, images 331-333 show the
+#     camera walking past the open door leaf -- explained.
+#
+# Unresolved (DRAFT):
+#  - the per-wall Manhattan target (above): storey 1's remaining spread is within rooms seen
+#    in one pass (bedroom N's north wall -3 deg, the bedroom-E/corridor wall +4 deg). A whole-
+#    segment heading move cannot reach it; a 'this block is Manhattan' edit could (reusex-wg8).
+#  - seg 3 (102-133) heading 1.2 deg: its segment-ICP suggestion made pass-to-pass and the
+#    segment-pair median worse in the Manhattan solve (11.2 mm, 29.3 mm) and was dropped.
+#  - the doubled-wall share does not move: most two-layered patches are the stair treads and
+#    furniture, common to every solve (see the guide's worked example).
+schema: reusex.pose_edits.v1
+project_guid: "aea63482-121e-41e0-95db-555f427bfc48"
+frame: world
+edits:
+  - id: m-384-385
+    kind: move
+    nodes: [384, 385]
+    delta: {matrix: [0.966461, -0.256506, -0.012545, 0.732798, 0.256572, 0.966517, 0.003909, -1.505832, 0.011122, -0.006997, 0.999914, 0.241334, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.005, rot_deg: 0.1}
+    note: >-
+      living room S (images 384: south from the stair-hall doorway at the open conservatory
+      door; 385: the room's north-west corner and the door to the tiled hall). Plain optimize
+      drew them ~10 deg rotated and 0.9 m west (the diagonal ghost wall in the storey-0 cut).
+      Fitted on the Manhattan solve: the v1 hand fit (2D ICP from a yaw x shift grid, within 3
+      cm 0.16 -> 0.99) carried over relative to passes 1-245, then 6-DoF point-to-plane against
+      1-383 (median 40.9 -> 8.9 mm).
+  - id: m-386-389
+    kind: move
+    nodes: [386, 389]
+    delta: {matrix: [0.967125, -0.254264, -0.004298, 0.641509, 0.254187, 0.967061, -0.013508, -1.501603, 0.007591, 0.011971, 0.999900, 0.273179, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.005, rot_deg: 0.1}
+    note: >-
+      tiled hall (images 386-389: down the hall to the back door). Plain optimize put these
+      cameras north of hall wall i0-hall-n (the stored 388 -> 389 through-wall step) and drew
+      the hall 1 m north, rotated and 15 cm low. Fitted on the Manhattan solve: the v1 hand fit
+      (within 3 cm 0.27 -> 0.89; hall section: floor and ceiling onto passes 1-69) carried over
+      relative to passes 1-245, then 6-DoF point-to-plane against 1-383 (median 24.7 -> 14.3
+      mm).
+  - id: m-246-293
+    kind: move
+    nodes: [246, 293]
+    delta: {matrix: [0.990745, -0.135301, -0.010896, 0.100364, 0.135289, 0.990805, -0.001761, -0.525384, 0.011034, 0.000270, 0.999939, 0.098143, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.005, rot_deg: 0.1}
+    note: >-
+      stair climb + gable room + landing (the review's 'seg 5'; images 258-280: exposed collar
+      beams, brick-arched gable window). Its walls ran +2.1 deg off the storey-0 Manhattan grid
+      in the Manhattan solve (wall-band point normals, the prior's 4-phi estimator; devmap s1:
+      the gable walls at y -4 and -8 red). Rotated about its camera centroid by -2.1 deg, then
+      its translation refitted against all other passes (two joint rounds with m-326-357,
+      m-358-379, m-230-245). Heading after: -0.3 deg.
+  - id: m-326-357
+    kind: move
+    nodes: [326, 357]
+    delta: {matrix: [0.970386, -0.241423, -0.008098, 0.616620, 0.241410, 0.970420, -0.002583, -1.297107, 0.008482, 0.000552, 0.999964, 0.187136, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.005, rot_deg: 0.1}
+    note: >-
+      bedroom E / bedroom NE (images 334-348). Walls -3.3 deg off the storey-0 grid in the
+      Manhattan solve (north half of storey 1 drawn blue in devmap s1). Rotated +3.3 deg about
+      its camera centroid, translation refitted against all other passes. Heading after: -0.2
+      deg.
+  - id: m-358-369
+    kind: move
+    nodes: [358, 369]
+    delta: {matrix: [0.965649, -0.259635, -0.010538, 0.821620, 0.259664, 0.965698, 0.001444, -1.373444, 0.009802, -0.004130, 0.999943, 0.234015, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.005, rot_deg: 0.1}
+    note: >-
+      bedroom N and the corridor walk to the stair (images 352-373; 356 shows the free-standing
+      wardrobe). Walls -4.3 deg off the storey-0 grid in the Manhattan solve. (split from m-358-379 in v3; 370-379 is m-370-379) Rotated +4.3 deg
+      about its camera centroid, translation refitted against all other passes. Heading after:
+      -0.2 deg.
+  - id: m-370-379
+    kind: move
+    nodes: [370, 379]
+    delta: {matrix: [0.965679, -0.259521, -0.010592, 0.835264, 0.259549, 0.965729, 0.001371, -1.565991, 0.009873, -0.004073, 0.999943, 0.233264, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.005, rot_deg: 0.1}
+    note: >-
+      stair descent, upper part (images 376-379: looking down the enclosed stair, handrail on
+      the north wall). The review of v2's long section: the stair-hall north wall (i0-stair-n,
+      stair hall | kitchen) had no thickness -- the descent frames drew its stair-side face at
+      y -2.511, 30 mm north of the kitchen face (-2.541, passes 134-165 / 198-229), where the
+      ascent (230-261) puts it at -2.714 (173 mm, the house's interior walls measure 0.14-0.20
+      m in the walls table, the plan's bathroom wall 0.18). Rotated with m-358-379's heading
+      move as before, then shifted by an xy-only point-to-plane fit against the ascent 230-261:
+      (+0.01, -0.19) m, median 18.6 -> 17.8 mm. The descent face then sits at -2.703: wall 162
+      mm thick (sections x 0.5 / 0.9 / 1.3, pr84v4_*).
+  - id: m-230-245
+    kind: move
+    nodes: [230, 245]
+    delta: {matrix: [0.985370, -0.170310, -0.006338, 0.147626, 0.170289, 0.985387, -0.003759, -0.827601, 0.006885, 0.002625, 0.999973, 0.111241, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.005, rot_deg: 0.1}
+    note: >-
+      living room S / stair hall, second visit (images 235-245). Walls -2.7 deg off the
+      storey-0 grid in the Manhattan solve. Rotated +2.7 deg about its camera centroid,
+      translation refitted against all other passes. Heading after: -0.2 deg.
+  - id: m-1-33
+    kind: move
+    nodes: [1, 33]
+    delta: {matrix: [0.999912, -0.002094, -0.013106, 0.025232, 0.002000, 0.999972, -0.007198, -0.011396, 0.013120, 0.007171, 0.999888, -0.028103, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.005, rot_deg: 0.1}
+    note: >-
+      seg 0 (1-33: utility room + hall, the first pass; images 2-5 down the hall, coat hook and
+      cupboard on the utility west wall). analyze drift segment ICP against all other passes on
+      the M2 solve: 22.6 -> 15.1 mm (0.04 m, 0.5 deg). Holds the gauge (node 1): replay with
+      the weak gauge prior (header).
+  - id: m-134-165
+    kind: move
+    nodes: [134, 165]
+    delta: {matrix: [0.996655, -0.081728, -0.000478, -0.013062, 0.081727, 0.996653, -0.001624, -0.409948, 0.000610, 0.001580, 0.999999, 0.100173, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.005, rot_deg: 0.1}
+    note: >-
+      seg 4 (134-165: conservatory -> living room S -> stair hall -> room NE). analyze drift
+      segment ICP against all other passes on the M3 solve: 18.8 -> 13.1 mm (0.14 m, 0.8 deg);
+      pairs seg 7 <-> seg 4 45 / 34 -> 20 / 20 mm.
+  - id: m-380-383
+    kind: move
+    nodes: [380, 383]
+    delta: {matrix: [0.960996, -0.276431, 0.008566, 0.848396, 0.276322, 0.960990, 0.012039, -1.621478, -0.011559, -0.009202, 0.999891, 0.406038, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.005, rot_deg: 0.1}
+    note: >-
+      stair bottom: the review's 'noisy right side of the ground floor'. Images 382-383: the
+      glazed door at the foot of the stair, the step down into the stair hall. Frames 380-383
+      drew the stair-hall east jamb 0.35 m west of where 378-379 and passes 102-245 put it
+      (per-node cut). 2D fit against 1-379 + 384-389: +0.35 m, yaw +3.3 deg, within 3 cm 0.52
+      -> 0.99; then 6-DoF point-to-plane, median 16.9 -> 10.8 mm.
+      v3: refitted after m-370-379 (the v2 fit had matched these frames partly against the old
+      370-379): xy-only against 1-369 + 384-389, a further (-0.02, -0.14) m, median 19.7 ->
+      16.1 mm.
+  - id: g-42
+    kind: anchor
+    node: 42
+    pose: {matrix: [0.877856, 0.304173, -0.369928, 3.063589, -0.405820, 0.062268, -0.911829, 0.346052, -0.254319, 0.950579, 0.178102, 0.153294, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "guard: node 42 held at its pose in the Manhattan reference solve (no edits), all DoF"
+  - id: g-54
+    kind: anchor
+    node: 54
+    pose: {matrix: [-0.615299, -0.785253, -0.069173, 2.801726, -0.038943, -0.057364, 0.997594, 0.456058, -0.787332, 0.616512, 0.004716, -0.099436, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "guard: node 54 held at its pose in the Manhattan reference solve (no edits), all DoF"
+  - id: g-64
+    kind: anchor
+    node: 64
+    pose: {matrix: [0.625142, 0.020572, -0.780240, 4.036857, -0.780319, -0.005700, -0.625356, -0.163468, -0.017312, 0.999772, 0.012490, 0.226402, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "guard: node 64 held at its pose in the Manhattan reference solve (no edits), all DoF"
+  - id: g-75
+    kind: anchor
+    node: 75
+    pose: {matrix: [-0.545264, 0.031287, -0.837680, 3.888698, -0.834237, 0.077589, 0.545920, -1.565602, 0.082075, 0.996494, -0.016206, 0.280441, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "guard: node 75 held at its pose in the Manhattan reference solve (no edits), all DoF"
+  - id: g-86
+    kind: anchor
+    node: 86
+    pose: {matrix: [0.270594, 0.293640, 0.916818, 4.505121, 0.696630, 0.597577, -0.397000, -0.124248, -0.664444, 0.746108, -0.042858, -0.051315, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "guard: node 86 held at its pose in the Manhattan reference solve (no edits), all DoF"
+  - id: g-96
+    kind: anchor
+    node: 96
+    pose: {matrix: [0.449522, 0.175290, -0.875901, 5.747341, -0.789194, -0.381408, -0.481353, -0.055282, -0.418452, 0.907635, -0.033114, 0.294019, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "guard: node 96 held at its pose in the Manhattan reference solve (no edits), all DoF"
+  - id: g-107
+    kind: anchor
+    node: 107
+    pose: {matrix: [-0.632929, -0.712652, -0.302535, 7.592480, -0.263118, -0.169507, 0.949756, -2.339567, -0.728127, 0.680731, -0.080226, 0.043775, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "guard: node 107 held at its pose in the Manhattan reference solve (no edits), all DoF"
+  - id: g-118
+    kind: anchor
+    node: 118
+    pose: {matrix: [0.691283, -0.155351, 0.705687, 6.665350, 0.697385, -0.112224, -0.707856, -5.634060, 0.189161, 0.981464, 0.030761, 0.301088, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "guard: node 118 held at its pose in the Manhattan reference solve (no edits), all DoF"
+  - id: g-128
+    kind: anchor
+    node: 128
+    pose: {matrix: [-0.390864, -0.466742, -0.793333, 8.232639, -0.453324, -0.652505, 0.607235, -5.410852, -0.801076, 0.596983, 0.043455, -0.040148, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "guard: node 128 held at its pose in the Manhattan reference solve (no edits), all DoF"
+  - id: g-171
+    kind: anchor
+    node: 171
+    pose: {matrix: [0.373572, 0.926534, 0.044487, 9.086272, -0.180361, 0.119596, -0.976303, 4.900430, -0.909898, 0.356696, 0.211788, -0.107730, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "guard: node 171 held at its pose in the Manhattan reference solve (no edits), all DoF"
+  - id: g-182
+    kind: anchor
+    node: 182
+    pose: {matrix: [-0.844348, -0.022973, 0.535303, 7.351447, 0.534299, 0.038533, 0.844417, 6.951564, -0.040026, 0.998993, -0.020261, 0.257766, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "guard: node 182 held at its pose in the Manhattan reference solve (no edits), all DoF"
+  - id: g-192
+    kind: anchor
+    node: 192
+    pose: {matrix: [-0.481517, 0.003917, -0.876428, 3.410704, -0.876415, -0.009295, 0.481467, 9.366752, -0.006260, 0.999949, 0.007909, 0.180963, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "guard: node 192 held at its pose in the Manhattan reference solve (no edits), all DoF"
+  - id: g-203
+    kind: anchor
+    node: 203
+    pose: {matrix: [0.994663, -0.098505, 0.030687, 3.860011, 0.033083, 0.022790, -0.999193, 5.306240, 0.097726, 0.994876, 0.025927, 0.212289, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "guard: node 203 held at its pose in the Manhattan reference solve (no edits), all DoF"
+  - id: g-214
+    kind: anchor
+    node: 214
+    pose: {matrix: [-0.365446, 0.264583, -0.892438, 4.733737, -0.715082, 0.533984, 0.451131, 3.208456, 0.595909, 0.803030, -0.005944, 0.132623, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "guard: node 214 held at its pose in the Manhattan reference solve (no edits), all DoF"
+  - id: g-224
+    kind: anchor
+    node: 224
+    pose: {matrix: [-0.601930, -0.659694, -0.449982, 2.987111, -0.272756, -0.359761, 0.892287, 3.900694, -0.750523, 0.659830, 0.036615, -0.026223, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "guard: node 224 held at its pose in the Manhattan reference solve (no edits), all DoF"
+  - id: g-299
+    kind: anchor
+    node: 299
+    pose: {matrix: [0.029708, -0.047602, 0.998425, 2.897152, 0.997130, 0.071004, -0.026284, 3.229334, -0.069641, 0.996340, 0.049574, 2.970111, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "guard: node 299 held at its pose in the Manhattan reference solve (no edits), all DoF"
+  - id: g-310
+    kind: anchor
+    node: 310
+    pose: {matrix: [0.086342, 0.045534, -0.995224, 2.969030, -0.992583, -0.081879, -0.089859, 7.900635, -0.085580, 0.995602, 0.038126, 2.944115, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "guard: node 310 held at its pose in the Manhattan reference solve (no edits), all DoF"
+  - id: g-320
+    kind: anchor
+    node: 320
+    pose: {matrix: [0.301546, -0.020251, 0.953237, 5.113320, 0.951303, 0.073468, -0.299374, 3.625674, -0.063970, 0.997092, 0.041419, 2.988873, 0.000000, 0.000000, 0.000000, 1.000000]}
+    sigma: {trans_m: 0.01, rot_deg: 0.2}
+    note: "guard: node 320 held at its pose in the Manhattan reference solve (no edits), all DoF"
