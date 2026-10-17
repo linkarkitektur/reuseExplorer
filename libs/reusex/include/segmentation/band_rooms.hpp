@@ -147,6 +147,17 @@ struct BandRoomsOptions {
   /// cut, a footprint leak beyond a window that the wall graph cut off
   /// from its room is mostly open.
   double coreless_max_open_share = 0.25;
+  /// Pockets (reusex-3r1): a region of at most pocket_max_area [m^2] that
+  /// meets one neighbouring region through free space along at least
+  /// pocket_min_contact_share of its boundary joins that neighbour (the
+  /// larger one). Furniture or a column narrows the free space to less than
+  /// 2 x core_radius, so the watershed seeds a second core in a corner of a
+  /// room; a room behind a door meets its neighbour through the door only
+  /// (a 0.8 m door of a 1.7 x 1.8 m WC is ~12 % of its boundary). Measured
+  /// on NewOffice: a 1.38 m^2 corner of a meeting room, 44 %; the doors
+  /// between rooms there and on house1, 3-12 %. 0 disables.
+  double pocket_max_area = 4.0;
+  double pocket_min_contact_share = 0.2;
 
   /// Optional cancellation flag, checked between storeys. Caller keeps it
   /// alive for the call.
@@ -186,6 +197,7 @@ struct RoomGrid {
   int coreless = 0;           ///< rooms from components no core reached
   int graph_walls = 0;        ///< walls rasterised (rasterise_wall_graph())
   int door_cuts = 0;          ///< doorways closed (rasterise_wall_graph())
+  int merged_pockets = 0;     ///< regions merged as pockets (reusex-3r1)
   int rooms = 0;              ///< rooms kept
   int dropped_regions = 0;    ///< regions below min_room_area
   double interior_area = 0.0; ///< [m^2]
