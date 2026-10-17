@@ -808,3 +808,109 @@ TEST_CASE("PopulateScene_Openings_AboveScene_AreBarsOverTheCut",
   for (vtkActor *a : l.actors)
     CHECK(a->GetMapper()->GetNumberOfClippingPlanes() == 0);
 }
+
+// ── Spaces layer (reusex-z1v.6.3) ────────────────────────────────────────────
+
+namespace {
+
+/// Two spaces on storey 0 (level origin at world (10, 20, -1.5), as
+/// seed_walls): a 4 x 3 room with a hole, room label 2, and an L-shaped
+/// corridor with no room label.
+void seed_spaces(ProjectDB &db) {
+  seed_walls(db);
+  core::SpaceRecord a;
+  a.guid = "space-a";
+  a.name = "Kitchen";
+  a.kind = "room";
+  a.polygon.outer = {{0, 0}, {4, 0}, {4, 3}, {0, 3}};
+  a.polygon.holes = {{{1, 1}, {1.5, 1}, {1.5, 1.5}, {1, 1.5}}};
+  a.z_ceiling = 2.5;
+  a.area = 11.75;
+  a.room_label = 2;
+  core::SpaceRecord b = a;
+  b.guid = "space-b";
+  b.name = "Corridor";
+  b.kind = "corridor";
+  b.polygon.outer = {{4, 0}, {6, 0}, {6, 4}, {5, 4}, {5, 1}, {4, 1}};
+  b.polygon.holes.clear();
+  b.area = 5.0;
+  b.room_label = -1;
+  db.save_spaces({a, b}, {});
+}
+
+} // namespace
+
+TEST_CASE("PopulateScene_Spaces_NoSpaces_NamesTheStageToRun",
+          "[visualize][scene][spaces]") {
+  TempPath tmp("test_scene_spaces_missing");
+  ProjectDB db(tmp.path);
+  seed_cloud(db, 10);
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.layers = {viz::Layer::cloud, viz::Layer::spaces};
+  CHECK_THROWS_WITH(viz::populate_scene(renderer, db, o),
+                    ContainsSubstring("rux create spaces"));
+  CHECK(viz::layer_from_string("spaces") == viz::Layer::spaces);
+  CHECK(viz::to_string(viz::Layer::spaces) == "spaces");
+}
+
+TEST_CASE("PopulateScene_Spaces_Level_FillsAtTheFloorWithNames",
+          "[visualize][scene][spaces]") {
+  TempPath tmp("test_scene_spaces_level");
+  ProjectDB db(tmp.path);
+  seed_spaces(db);
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.layers = {viz::Layer::spaces};
+  o.plan_placement = viz::PlanPlacement::level;
+  const auto info = viz::populate_scene(renderer, db, o);
+  REQUIRE(info.layers.size() == 1);
+  const auto &l = info.layers[0];
+  CHECK(l.layer == viz::Layer::spaces);
+  CHECK(l.items == 2);
+  REQUIRE_FALSE(l.actors.empty());
+  // Every vertex at the floor (world z = -1.5 + the overlay lift), x within
+  // the two polygons mapped to world (10 .. 16), y 20 .. 24; labels too.
+  for (const auto &p : layer_points(l)) {
+    CHECK(p[2] == Catch::Approx(-1.5).margin(0.05));
+    CHECK(p[0] >= 10.0 - 2.0); // label glyphs (name and area) reach past
+    CHECK(p[0] <= 16.0 + 2.0);
+  }
+  // Coloured as the rooms layer colours room label 2 (--label-1), with a
+  // translucent fill.
+  const auto &pal = viz::default_label_palette();
+  bool room_rgb = false, translucent = false;
+  for (vtkActor *a : l.actors) {
+    CHECK(std::string(a->GetObjectName()) == viz::kSpacesActorName);
+    double rgb[3];
+    a->GetProperty()->GetColor(rgb);
+    room_rgb |= std::abs(rgb[0] * 255.0 - pal.colors[1][0]) < 0.5 &&
+                std::abs(rgb[1] * 255.0 - pal.colors[1][1]) < 0.5 &&
+                std::abs(rgb[2] * 255.0 - pal.colors[1][2]) < 0.5;
+    translucent |= a->GetProperty()->GetOpacity() < 0.5;
+  }
+  CHECK(room_rgb);
+  CHECK(translucent);
+}
+
+TEST_CASE("PopulateScene_Spaces_AboveScene_IsASheetUnderTheWalls",
+          "[visualize][scene][spaces]") {
+  TempPath tmp("test_scene_spaces_plan");
+  ProjectDB db(tmp.path);
+  seed_cloud(db, 10);
+  seed_spaces(db);
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.layers = {viz::Layer::cloud, viz::Layer::spaces, viz::Layer::walls};
+  o.plan_placement = viz::PlanPlacement::above_scene;
+  const auto info = viz::populate_scene(renderer, db, o);
+  REQUIRE(info.layers.size() == 3);
+  const auto &l = info.layers[1];
+  CHECK(l.layer == viz::Layer::spaces);
+  CHECK(l.items == 2);
+  for (const auto &p : layer_points(l))
+    CHECK(p[2] >= 0.5);
+  viz::apply_cut_plane(renderer, 0.2);
+  for (vtkActor *a : l.actors)
+    CHECK(a->GetMapper()->GetNumberOfClippingPlanes() == 0);
+}

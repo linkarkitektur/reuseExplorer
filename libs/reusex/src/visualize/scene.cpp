@@ -12,6 +12,7 @@
 #include "geometry/component_persistence.hpp"
 #include "geometry/point_mesh_distance.hpp"
 #include "geometry/transform_utils.hpp"
+#include "reusex/core/space_polygon.hpp"
 #include "reusex/visualize/highlight.hpp"
 #include "types/point_types.hpp"
 #include "visualize/drift_layers.hpp"
@@ -28,6 +29,7 @@
 #include <vtkCleanPolyData.h>
 #include <vtkCutter.h>
 #include <vtkFeatureEdges.h>
+#include <vtkIdList.h>
 #include <vtkLogger.h>
 #include <vtkMapper.h>
 #include <vtkNew.h>
@@ -36,6 +38,7 @@
 #include <vtkPoints.h>
 #include <vtkPolyData.h>
 #include <vtkPolyDataMapper.h>
+#include <vtkPolygon.h>
 #include <vtkProperty.h>
 #include <vtkRenderer.h>
 #include <vtkUnsignedCharArray.h>
@@ -148,6 +151,8 @@ std::string producing_command(Layer layer) {
     return "rux create walls";
   case Layer::openings:
     return "rux create openings";
+  case Layer::spaces:
+    return "rux create spaces";
   }
   return "the corresponding rux create subcommand";
 }
@@ -790,10 +795,11 @@ vtkActor *add_plan_actor(vtkRenderer *renderer, PlanGeometry &g,
 /// screen-space text actor: it needs no text renderer or render window to
 /// build (vtkBillboardTextActor3D crashes in vtkRenderer::GetActors() without
 /// one), scales with the plan, and reads correctly from above.
-vtkActor *add_plan_label(vtkRenderer *renderer, const std::string &text,
-                         const Eigen::Vector3d &at,
-                         const std::array<std::uint8_t, 3> &rgb,
-                         double height) {
+vtkActor *
+add_plan_label(vtkRenderer *renderer, const std::string &text,
+               const Eigen::Vector3d &at,
+               const std::array<std::uint8_t, 3> &rgb, double height,
+               const Eigen::Vector2d &dir = Eigen::Vector2d::UnitX()) {
   vtkNew<vtkVectorText> source;
   source->SetText(text.c_str());
   source->Update();
@@ -803,13 +809,18 @@ vtkActor *add_plan_label(vtkRenderer *renderer, const std::string &text,
   // vtkVectorText's capitals are about one unit tall.
   const double scale = height;
   const double cx = 0.5 * (b[0] + b[1]), cy = 0.5 * (b[2] + b[3]);
+  // The text's baseline runs along @p dir (world x by default).
+  const Eigen::Vector2d u =
+      dir.norm() > 0.0 ? dir.normalized() : Eigen::Vector2d::UnitX();
+  const Eigen::Vector2d v(-u.y(), u.x());
   vtkNew<vtkPoints> points;
   points->SetDataType(VTK_DOUBLE);
   for (vtkIdType i = 0; i < glyphs->GetNumberOfPoints(); ++i) {
     double p[3];
     glyphs->GetPoint(i, p);
-    points->InsertNextPoint(at.x() + scale * (p[0] - cx),
-                            at.y() + scale * (p[1] - cy), at.z());
+    const Eigen::Vector2d q =
+        u * (scale * (p[0] - cx)) + v * (scale * (p[1] - cy));
+    points->InsertNextPoint(at.x() + q.x(), at.y() + q.y(), at.z());
   }
   vtkNew<vtkPolyData> poly;
   poly->SetPoints(points);
@@ -1094,6 +1105,133 @@ std::vector<vtkActor *> add_walls_layer(vtkRenderer *renderer,
   b.extend(bounds);
   core::info("render: walls: {} drawn, {} dimmer (assumed or seen under 50 %)",
              drawn.items, drawn.dim);
+  return actors;
+}
+
+// ── Spaces layer (reusex-z1v.6.3) ────────────────────────────────────────────
+//
+// The `spaces` table: each space's polygon at its floor height (z_floor of
+// its storey's level frame, PlanPlacement::level) or on a sheet over the cut
+// (PlanPlacement::above_scene), as a translucent fill in its room's label
+// colour (the `rooms` layer's colour for room_label, so the two read
+// together) with an outline, holes outlined, and its name and area at the
+// centroid.
+
+constexpr double kSpacesFillOpacity = 0.25;
+
+std::vector<vtkActor *>
+add_spaces_layer(vtkRenderer *renderer, const ProjectDB &db,
+                 const SceneOptions &opts, const LabelPalette &palette,
+                 SceneBounds &bounds, SceneLayer &drawn) {
+  const auto spaces = db.spaces();
+  if (spaces.empty())
+    throw std::runtime_error("render: project has no spaces — run `" +
+                             producing_command(Layer::spaces) + "` first");
+  core::SolidModel frames;
+  frames.storeys = db.storeys();
+  const bool sheet = opts.plan_placement == PlanPlacement::above_scene;
+  PlanBuilder b(frames, opts.plan_placement, bounds, opts.plan_sheet_z);
+  // One fill and one outline geometry per colour.
+  std::map<std::array<std::uint8_t, 3>, std::array<PlanGeometry, 2>> g;
+  struct Label {
+    std::string text;
+    Eigen::Vector3d at;
+    std::array<std::uint8_t, 3> rgb;
+    Eigen::Vector2d dir;
+  };
+  std::vector<Label> labels;
+  std::size_t untriangulated = 0;
+  for (std::size_t i = 0; i < spaces.size(); ++i) {
+    const auto &s = spaces[i];
+    const std::uint32_t key = s.room_label > 0
+                                  ? static_cast<std::uint32_t>(s.room_label)
+                                  : static_cast<std::uint32_t>(i + 1);
+    const auto rgb = label_palette_color(palette, key);
+    auto &geo = g[rgb];
+    const auto to_world = [&](const std::vector<core::PlanPoint> &ring) {
+      std::vector<Eigen::Vector3d> out;
+      for (const auto &p : ring)
+        out.push_back(b.world(s.storey, p[0], p[1], s.z_floor));
+      return out;
+    };
+    const auto outer = to_world(s.polygon.outer);
+    b.ring(geo[1], nullptr, outer);
+    for (const auto &hole : s.polygon.holes)
+      b.ring(geo[1], nullptr, to_world(hole));
+    // The fill: the outer ring ear-cut into triangles (a space is rarely
+    // convex, and a polygon cell is drawn as a fan). Holes are outlined,
+    // not cut out of the fill, as in the plan overlay.
+    {
+      vtkNew<vtkPolygon> polygon;
+      polygon->GetPointIds()->SetNumberOfIds(
+          static_cast<vtkIdType>(outer.size()));
+      polygon->GetPoints()->SetNumberOfPoints(
+          static_cast<vtkIdType>(outer.size()));
+      for (std::size_t k = 0; k < outer.size(); ++k) {
+        polygon->GetPointIds()->SetId(static_cast<vtkIdType>(k),
+                                      static_cast<vtkIdType>(k));
+        polygon->GetPoints()->SetPoint(static_cast<vtkIdType>(k),
+                                       outer[k].data());
+      }
+      vtkNew<vtkIdList> tris;
+      std::vector<vtkIdType> ids;
+      for (const auto &p : outer)
+        ids.push_back(b.add(geo[0], p));
+      if (polygon->TriangulateLocalIds(0, tris) &&
+          tris->GetNumberOfIds() >= 3) {
+        for (vtkIdType t = 0; t + 2 < tris->GetNumberOfIds(); t += 3) {
+          const vtkIdType tri[3] = {
+              ids[static_cast<std::size_t>(tris->GetId(t))],
+              ids[static_cast<std::size_t>(tris->GetId(t + 1))],
+              ids[static_cast<std::size_t>(tris->GetId(t + 2))]};
+          geo[0].polys->InsertNextCell(3, tri);
+        }
+      } else {
+        ++untriangulated; // drawn as one polygon cell
+        geo[0].polys->InsertNextCell(static_cast<vtkIdType>(ids.size()),
+                                     ids.data());
+      }
+    }
+    const auto c = core::space_polygon_centroid(s.polygon);
+    // Upright in a view turned by SceneOptions::frame_yaw_deg (the
+    // project's view yaw), as the drift layers' labels.
+    const double yaw = -opts.frame_yaw_deg * std::numbers::pi / 180.0;
+    labels.push_back(
+        {fmt::format("{} ({:.1f} m2)",
+                     s.name.empty() ? s.guid.substr(0, 8) : s.name, s.area),
+         b.world(s.storey, c[0], c[1], s.z_floor), rgb,
+         Eigen::Vector2d(std::cos(yaw), std::sin(yaw))});
+    ++drawn.items;
+  }
+
+  std::vector<vtkActor *> actors;
+  const auto add = [&](PlanGeometry &geo, const std::array<std::uint8_t, 3> &c,
+                       double width, double opacity) {
+    if (geo.empty())
+      return;
+    vtkActor *a = add_plan_actor(renderer, geo, c, width, opacity);
+    if (!sheet)
+      a->SetObjectName(kSpacesActorName); // cut with the scene in 3D
+    actors.push_back(a);
+  };
+  for (auto &[rgb, geo] : g) // translucent fills first
+    add(geo[0], rgb, 1.0, kSpacesFillOpacity);
+  for (auto &[rgb, geo] : g)
+    add(geo[1], rgb, 2.0, 1.0);
+  if (opts.plan_labels)
+    for (const auto &l : labels) {
+      vtkActor *a = add_plan_label(renderer, l.text, l.at, l.rgb,
+                                   kSpaceLabelM * 0.8, l.dir);
+      if (!sheet)
+        a->SetObjectName(kSpacesActorName);
+      actors.push_back(a);
+    }
+  b.extend(bounds);
+  if (untriangulated > 0)
+    core::warn("render: spaces: {} of {} polygon(s) could not be ear-cut and "
+               "are filled as one polygon (may draw wrongly if concave)",
+               untriangulated, spaces.size());
+  core::info("render: spaces: {} drawn", drawn.items);
   return actors;
 }
 
@@ -1778,7 +1916,7 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
         "render: no layers selected — pass at least one of "
         "cloud, labels, planes, rooms, instances, mesh, "
         "components, frustums, panoramas, deviation, passes, graph, drift, "
-        "walls, openings");
+        "walls, openings, spaces");
   if (!(opts.deviation.within_m > 0.0) ||
       !(opts.deviation.uncovered_m > opts.deviation.within_m))
     throw std::runtime_error(
@@ -1874,12 +2012,12 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
           return l != Layer::mesh && l != Layer::components &&
                  l != Layer::frustums && l != Layer::panoramas &&
                  l != Layer::graph && l != Layer::drift && l != Layer::walls &&
-                 l != Layer::openings;
+                 l != Layer::openings && l != Layer::spaces;
         });
     info.mesh_style = with_points ? MeshStyle::overlay : MeshStyle::solid;
   }
 
-  std::optional<std::size_t> walls_layer, openings_layer;
+  std::optional<std::size_t> walls_layer, openings_layer, spaces_layer;
   for (const Layer layer : opts.layers) {
     SceneLayer drawn;
     drawn.layer = layer;
@@ -2092,12 +2230,21 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
       // After the walls, so in plan its sheet sits over theirs.
       openings_layer = info.layers.size();
       break;
+
+    case Layer::spaces:
+      // Before the walls, so in plan the walls draw over the fills.
+      spaces_layer = info.layers.size();
+      break;
     }
     info.drawn_points += drawn.points;
     info.drawn_faces += drawn.faces;
     info.layers.push_back(std::move(drawn));
   }
 
+  if (spaces_layer) {
+    SceneLayer &drawn = info.layers[*spaces_layer];
+    drawn.actors = add_spaces_layer(renderer, db, opts, palette, bounds, drawn);
+  }
   if (walls_layer) {
     SceneLayer &drawn = info.layers[*walls_layer];
     drawn.actors = add_walls_layer(renderer, db, opts, bounds, drawn);

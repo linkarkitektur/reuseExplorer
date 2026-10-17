@@ -498,9 +498,12 @@ and deleted the shims. `include/geometry/` now holds only the real
 - `spaces.hpp`: `polygonise_spaces()` (W4.2) — band rooms as space
   polygons: CGAL arrangement of the wall faces (+ the interior outline)
   labelled by the band grid, raster fallback where the walls do not close
-  a room; metrics, kind, space boundaries. Not stored yet (W4.3); debug
-  path `rux create rooms --spaces-json out.json` for `rux analyze solid
-  --model`
+  a room; metrics, kind, space boundaries. Stored by the `spaces` stage
+  (W4.3, `rux create spaces`, after rooms), which rebuilds the band grid
+  with the `rooms` cloud's own parameters and refuses when it no longer
+  gives back that cloud's labels (re-run rooms); parameters in one table,
+  `pipeline/space_parameters.hpp`. `rux create rooms --spaces-json
+  out.json` still writes the same spaces to a file (debug)
 - `segment_rooms.hpp`: room partitioning via Leiden clustering (igraph);
   `rooms --method leiden`, selectable without storeys
 - `segment_instances.hpp` / `reconcile_instances.hpp`: semantic → spatial instances
@@ -685,7 +688,14 @@ tree — if a doc mentions `RTABMapDatabase`, that doc is stale.
   (`core::OpeningRecord`, `save_openings` / `openings()`; written by `rux
   create openings`, `JobStage::openings`; the host wall is named by GUID,
   not a foreign key, so openings survive a walls re-run;
-  `core/opening_identity.hpp`)
+  `core/opening_identity.hpp`). Schema v35 adds `spaces` and
+  `space_boundaries` (`core::SpaceRecord` / `SpaceBoundaryRecord`,
+  `save_spaces` / `spaces()` / `space_boundaries()`; written by `rux create
+  spaces`, `JobStage::spaces`; the polygon is a blob,
+  `core/space_polygon.hpp`; a boundary goes with its space but names its
+  wall by GUID; a re-detected space keeps the GUID of the stored one whose
+  centroid and area match, else uuid5 of storey + centroid at 5 cm,
+  `core/space_identity.hpp`)
 - Migrating schema; `LATEST_SCHEMA_VERSION` is defined in
   `src/core/ProjectDB.cpp` — read it there rather than trusting a doc (it moves
   most releases)
@@ -751,7 +761,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | Command | Sub-commands | Source |
 |---|---|---|
 | `import` | `rtabmap`, `mushroom`, `arkitscenes`, `e57`, `ply`, `gsplat`, `materialepas`, `csv`, `360`, `photos` | `src/import/` |
-| `create` | `clouds`, `dense`, `annotate`, `annotate-360`, `material`, `project`, `planes`, `rooms`, `instances`, `storeys`, `classify`, `walls`, `openings`, `materials`, `survey`, `mesh`, `texture`, `windows` (deprecated) | `src/create/` |
+| `create` | `clouds`, `dense`, `annotate`, `annotate-360`, `material`, `project`, `planes`, `rooms`, `instances`, `storeys`, `classify`, `walls`, `openings`, `spaces`, `materials`, `survey`, `mesh`, `texture`, `windows` (deprecated) | `src/create/` |
 | `export` | `ply`, `e57`, `materialepas`, `csv`, `rhino`, `semantic-images`, `speckle`, `colmap`, `pdf` | `src/export/` |
 | `align` | `360` (content-based panorama pose refinement) | `src/align/` |
 | `edit` | `downsample`, `perturb-poses` (drift synthesis, #338) | `src/edit/` |
@@ -764,7 +774,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | `info` | — (project summary) | `src/info.cpp` |
 | `log` | — (pipeline execution history) | `src/log.cpp` |
 | `view` | — (interactive viewer, needs a display; `--plan gt.yaml --watch` = hot-reloading ground-truth workbench over `populate_scene`, `view/plan_workbench.hpp`) | `src/view/` |
-| `render` | — (headless render to PNG: `--view top\|plan[:h]\|front\|back\|left\|right\|orbit:N\|frame:<id>`, `--section x=<m>\|y=<m>\|<x0>,<y0>:<x1>,<y1>`; layers incl. `frustums`, `panoramas`, `deviation` (cloud coloured by distance to the mesh), `walls` (the walls table: footprints on a sheet over the cut in plan/top, boxes in 3D; assumed or < 50 % seen dimmer — also a Qt 3D layer, "Vægge"), `openings` (the openings table: bars on the walls in plan/top, rectangles in both wall faces in 3D, coloured by kind — Qt 3D "Åbninger"); label layers on the `--label-*` token scale; `--qa` writes the mesh-QA contact sheet, `visualize/qa_sheet.hpp`; `--plan gt.yaml --watch` re-renders and prints plan scores on every save, `render_watch.hpp`) | `src/render.cpp` |
+| `render` | — (headless render to PNG: `--view top\|plan[:h]\|front\|back\|left\|right\|orbit:N\|frame:<id>`, `--section x=<m>\|y=<m>\|<x0>,<y0>:<x1>,<y1>`; layers incl. `frustums`, `panoramas`, `deviation` (cloud coloured by distance to the mesh), `walls` (the walls table: footprints on a sheet over the cut in plan/top, boxes in 3D; assumed or < 50 % seen dimmer — also a Qt 3D layer, "Vægge"), `openings` (the openings table: bars on the walls in plan/top, rectangles in both wall faces in 3D, coloured by kind — Qt 3D "Åbninger"), `spaces` (the spaces table: translucent polygons in their room's label colour with name and area, at floor height in 3D, a sheet under the walls in plan/top — Qt 3D "Rum (polygoner)"); label layers on the `--label-*` token scale; `--qa` writes the mesh-QA contact sheet, `visualize/qa_sheet.hpp`; `--plan gt.yaml --watch` re-renders and prints plan scores on every save, `render_watch.hpp`) | `src/render.cpp` |
 | `assemble` | — (multi-scan assembly) | `src/assemble.cpp` |
 
 With **no** subcommand, `rux` launches the Qt client (help without a display).
@@ -1037,6 +1047,7 @@ rux -p scan.rux create clouds -g 0.05
 rux -p scan.rux create planes
 rux -p scan.rux create storeys          # rooms defaults to --method band, which needs this
 rux -p scan.rux create rooms
+rux -p scan.rux create spaces           # after walls -> openings -> rooms
 rux -p scan.rux create mesh --solver auto
 
 # Check a stage's inputs before running it

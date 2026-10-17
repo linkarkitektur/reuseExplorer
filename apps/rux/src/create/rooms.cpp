@@ -194,7 +194,8 @@ NOTES:
                   "band, debug: also write the rooms as space polygons "
                   "against the wall graph (W4.2) to this solid-model "
                   "JSON/YAML file, for `rux analyze solid --model`. Nothing "
-                  "is stored in the project.");
+                  "is stored in the project; `rux create spaces` stores the "
+                  "same spaces (same GUIDs).");
   sub->add_flag("--spaces-raster", opt->spaces_raster,
                 "band, debug: --spaces-json writes the rooms' raster "
                 "outlines instead (no wall graph).");

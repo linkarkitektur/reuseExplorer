@@ -318,6 +318,8 @@ bool Viewer3DWorkspace::has_data(Layer l) const {
     return db->has_walls();
   case Layer::openings:
     return db->has_openings();
+  case Layer::spaces:
+    return db->has_spaces();
   case Layer::deviation:
   case Layer::drift:
     // TODO: Let the 3D workspace draw the drift heatmap
@@ -370,9 +372,9 @@ void Viewer3DWorkspace::activate() {
                            : Layer::cloud;
   if (visible_.value(static_cast<int>(Layer::cloud)) && has_data(colour))
     ensure_layer(colour);
-  for (Layer l :
-       {Layer::mesh, Layer::walls, Layer::openings, Layer::components,
-        Layer::frustums, Layer::panoramas, Layer::passes, Layer::graph})
+  for (Layer l : {Layer::mesh, Layer::spaces, Layer::walls, Layer::openings,
+                  Layer::components, Layer::frustums, Layer::panoramas,
+                  Layer::passes, Layer::graph})
     if (visible_.value(static_cast<int>(l)) && has_data(l))
       ensure_layer(l);
   view_->request_render();
@@ -410,10 +412,11 @@ void Viewer3DWorkspace::rebuild_panel() {
   for (const auto &c : s.clouds)
     if (c.name == "cloud")
       cloud_points = c.point_count;
-  std::size_t db_walls = 0, db_openings = 0;
+  std::size_t db_walls = 0, db_openings = 0, db_spaces = 0;
   if (open && session_.db()) {
     db_walls = session_.db()->walls().size();
     db_openings = session_.db()->openings().size();
+    db_spaces = session_.db()->spaces().size();
   }
 
   auto row = [&](Layer l, const QString &name, const QString &count) {
@@ -483,6 +486,8 @@ void Viewer3DWorkspace::rebuild_panel() {
   row(Layer::openings, "Åbninger",
       db_openings ? format_count(static_cast<qulonglong>(db_openings))
                   : QString());
+  row(Layer::spaces, "Rum (polygoner)",
+      db_spaces ? format_count(static_cast<qulonglong>(db_spaces)) : QString());
   row(Layer::components, "Bygningsdele",
       format_count(static_cast<qulonglong>(s.components.total_count)));
   row(Layer::frustums, "Kamerafrustummer",

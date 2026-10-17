@@ -499,6 +499,63 @@ asking for band by name is an instruction, not a preference.
 | Options  | `SegmentRoomsOptions` (`libs/reusex/include/segmentation/segment_rooms.hpp`); `band`: `BandRoomsOptions` (`segmentation/band_rooms.hpp`), parameter keys `band_*` (incl. `band_use_walls`, `band_cut_at_doors`) |
 | Checks   | `cloud`/`planes` present + aligned; `plane_centroids`/`plane_normals` present + aligned; `band`: `storeys` has rows (refused if explicit, else falls back to leiden with a warning) and `normals` is aligned with `cloud` (checked by the stage) |
 
+### `spaces` (`rux create spaces`)
+
+The band rooms of `rooms` as space polygons against the wall graph
+(`segmentation/spaces.hpp`, `polygonise_spaces`, W4.2): per storey a CGAL
+arrangement of every wall's two faces (run 2 m past their ends) and the
+storey's interior outline; each bounded face goes to the room covering most
+of it, faces of one room merge into one polygon with holes, and where the
+walls do not close a room its raster outline fills in. Per space: area,
+perimeter, volume (area x storey height), compactness, kind (room |
+corridor | open_plan) and its space boundaries — the stretch (side `a` / `b`
+of the axis, s range from the wall's (x0, y0)) of each wall a polygon edge
+lies on (IfcRelSpaceBoundary).
+
+The stage rebuilds the band-rooms grid of the `rooms` cloud: it reads the
+parameters `rooms` was saved with (`band_*`, `filter`), runs the band
+partition again over `cloud` / `normals` / `storeys` and the walls / openings
+tables, and checks that the room ids it gets are the `rooms` cloud's labels
+— the partition is deterministic, so they agree unless something it reads
+changed since `rooms` ran (walls, openings, storeys re-run). Then it is
+refused as invalid input with the share of points that disagree: re-run
+`rux create rooms` first. `rooms` made with `--method leiden` is refused
+the same way (no grid). So the recommended order is **walls -> openings ->
+rooms -> spaces**.
+
+| | |
+|---|---|
+| Consumes | `cloud`, `normals`, `storeys`, `rooms` (band) |
+| Optional | `walls` (without it every space is its raster outline), `openings` (the door cuts of the rebuilt grid) |
+| Produces | `spaces`, `space_boundaries` (tables, schema v35: one row per space with a stable GUID, one per bounding wall stretch) |
+| Options  | `SpacesOptions` (`libs/reusex/include/segmentation/spaces.hpp`), parameter keys are its field names; plus `guid_match_m`, `guid_min_area_ratio` (`core::SpaceIdentityOptions`, `core/space_identity.hpp`). One table, `pipeline::space_parameter_table()`, defines the keys, the CLI flags and their bounds |
+| Checks   | `cloud`, `normals`, `rooms` present + aligned; ≥1 storey; the rebuilt grid's room ids match `rooms` (checked by the stage) |
+
+Each row: `storey` (the storey's idx), `name` ("Space <room label>" until
+naming lands), `kind`, `polygon` (a blob: outer ring + holes, open rings,
+level frame, `core/space_polygon.hpp`), `z_floor` / `z_ceiling` (the
+storey's), `area`, `perimeter`, `volume`, `compactness`, `room_label` (the
+`rooms` label it was made from), `confidence` (the share of its area that
+comes from wall-bounded faces, the rest is raster) and `metadata` (that share
+and the furniture holes). A boundary names its space by row (it goes with
+it) and its wall by GUID (`wall_guid`), as an opening does, so the
+boundaries of a locked space survive a `walls` re-run; one whose wall is gone
+is left out of `io::load_solid_model`.
+
+Identity: a space's natural key is its storey and its polygon's centroid
+rounded to 5 cm. A re-detected space keeps the GUID of the stored space of
+the same storey whose centroid lies within `guid_match_m` (1 m) and whose
+area is within `guid_min_area_ratio` (half) of its own; only an unmatched one
+gets a fresh GUID, `uuid5(project_guid, "spaces/<storey>/<cx>,<cy>")`,
+suffixed until unique. Rows with `locked = 1` survive a re-run unchanged,
+with their boundaries. `rux get spaces` (or `rux get spaces.<id|guid>`,
+`spaces.<id>.boundaries`) prints the table; `rux del spaces` removes it, and
+needs `--force` when any space is locked. `io::load_solid_model` reads it,
+so `rux analyze solid --reference plan.yaml` scores a project's spaces
+directly. `rux create rooms --spaces-json out.yaml` is the earlier debug
+path: it writes the same spaces (same code, same GUIDs) to a file without
+storing them.
+
 ### `mesh` (`rux create mesh`)
 
 Solidify the cell complex into **one watertight envelope mesh** covering every
@@ -712,7 +769,7 @@ rasterizer.
 ## Typical pipeline order
 
 ```
-import → [graph_init] → [graph_discover] → (optimize|register) → clouds → planes → [storeys → classify → walls → openings] → rooms → mesh → texture
+import → [graph_init] → [graph_discover] → (optimize|register) → clouds → planes → [storeys → classify → walls → openings] → rooms → [spaces] → mesh → texture
                                                     ↘ annotate → project → instances → windows
                                                     ↘ gsplat (leaf: produces `splat`)
 ```
@@ -724,6 +781,8 @@ inputs). Without storeys the default falls back to `leiden` (with a warning)
 rather than failing, but `rooms --method band` explicitly still refuses;
 without walls / openings band cuts at constrictions only. The stage table
 lists `storeys`, `walls` and `openings` before `rooms` for that reason.
+`spaces` follows `rooms`: it polygonises the band rooms against the walls
+table, and the openings come first because they cut the rooms it reads.
 
 Stage order in the table is load-bearing and asserted by a test: an input may
 only be produced by a **strictly earlier** stage. That invariant is what lets a

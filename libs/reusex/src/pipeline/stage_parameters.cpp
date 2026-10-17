@@ -8,6 +8,7 @@
 #include <reusex/core/storey_identity.hpp>
 #include <reusex/pipeline/mesh_parameters.hpp>
 #include <reusex/pipeline/opening_parameters.hpp>
+#include <reusex/pipeline/space_parameters.hpp>
 #include <reusex/pipeline/wall_parameters.hpp>
 #include <reusex/reconstruction/mesh.hpp>
 #include <reusex/segmentation/band_rooms.hpp>
@@ -682,6 +683,8 @@ const std::vector<ParameterDescriptor> &stage_parameters(JobStage stage) {
     return wall_stage_parameters();
   case JobStage::openings:
     return opening_stage_parameters();
+  case JobStage::spaces:
+    return space_stage_parameters();
   }
   throw std::logic_error("unhandled JobStage in stage_parameters()");
 }
