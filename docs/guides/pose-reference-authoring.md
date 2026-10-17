@@ -253,7 +253,83 @@ What the numbers miss, read from the renders:
   note says the same).
 - No pass-to-pass number sees the storeys' headings: storey 1 sits ~4 deg
   off storey 0 over the gable room and ~8 deg in the north, and only the
-  stair links them. The DRAFT leaves this, and says so.
+  stair links them. DRAFT v1 left this; the review asked for it (below).
+
+### house2 v2: the Manhattan rule (2026-10-17, PR #84 review)
+
+The maintainer's review of v1 added an acceptance rule: once straightened,
+every wall is at 90 deg to the others, open doors excepted. Pass-to-pass
+residuals cannot see a heading error (each pass agrees with itself), so
+this needs its own number.
+
+**Measure the grid first.** Two measures, both against one grid per storey
+estimated the way the Manhattan prior does it (`PlaneGraphOptimizer.cpp`:
+weighted circular mean of 4*phi of the wall normals, re-centred three
+times over the walls within 15 deg):
+
+- **wall planes**: `rux create clouds / planes / storeys / classify` on the
+  candidate copy, every vertical plane with role `wall`, its normal refitted
+  by PCA in its storey's level frame, weighted by area;
+- **wall patches**: the depth back-projected with the trajectory, wall-band
+  points (|n_z| < 0.15) in 0.5 m cells, a PCA normal per planar patch at
+  least 0.3 m along the wall; and per **segment**, the grid of its own wall
+  points against the storey-0 grid: the segment's heading error.
+
+Door leaves are excluded: a plane shorter than 1.2 m along the wall whose
+top stays more than 0.25 m below the ceiling (patches: a run of patches
+shorter than 1.2 m whose top, read from the unbanded cloud, stays below
+floor + 2.3 m). A height-only rule is wrong on storey 1: its knee walls
+under the roof slope never reach the band's top.
+
+On plain optimize the segment headings ran +5.5 deg (seg 0) down to -8.4
+deg (the stair descent), and storey 1's grid sat -4.4 deg off storey 0's.
+
+**`--manhattan` first, then the guards from its solve.** The prior alone
+straightens most of it (storey grids 0.1 deg apart, segment headings median
+1.1 / max 3.9 deg, pass-to-pass 12.6 mm). Run with the v1 edits as they were
+it changed nothing: the v1 guards pinned every segment at plain optimize's
+rotated poses. So the guards now come from the Manhattan solve, and the v1
+moves were refitted on it (the tail fits carried over relative to passes
+1-245, then a 6-DoF point-to-plane refine).
+
+**Heading moves for what the prior cannot reach.** Frames tie to landmarks
+through plane factors with a 14 deg normal sigma, so a block that sees a
+room only from inside keeps its heading. Four blocks did: 246-293 (the
+gable room, the review's "seg 5", +2.1 deg), 326-357 (-3.3), 358-379 (-4.3)
+and 230-245 (-2.7). Each was turned about its camera centroid onto the
+grid, then its translation refitted against all other passes, all four
+together, twice; each became a `move`. The remaining v1 suggestions were
+re-tried on the new base: seg 0 and seg 4 kept, seg 3 dropped (pass-to-pass
+11.2 mm, segment-pair median 29.3 mm, both worse).
+
+**The noisy right side of the ground floor** (review point 1) was the stair
+bottom: a cut that colours single nodes showed frames 380-383 drawing the
+stair-hall east jamb 0.35 m west of where 378-379 and passes 102-245 draw
+it. A 2D fit (within 3 cm 0.52 -> 0.99) and a 6-DoF refine made the fifth
+new move.
+
+| | plain optimize | DRAFT v1 | DRAFT v2 |
+|---|---|---|---|
+| pass-to-pass median (p90) | 13.8 (43.8) mm | 11.0 (36.2) mm | **10.4 (34.5) mm** |
+| segment-pair median | 28.4 mm | 23.7 mm | 25.6 mm |
+| storey-1 grid vs storey 0 | -4.39 deg | -5.54 deg | **-0.03 deg** |
+| segment heading, median / max | 3.87 / 8.38 deg | 2.80 / 9.35 deg | **0.25 / 1.19 deg** |
+| wall planes s0: median, area within 1 / 2 deg | 2.10, 41 / 51% | 2.15, 28 / 58% | 0.65, 50 / 92% |
+| wall planes s1 | 2.28, 23 / 49% | 2.26, 23 / 49% | 1.47, 43 / 77% |
+| through-wall steps, scan's own walls | 4 | 3 | 1 (an open door leaf) |
+
+The per-wall target (every wall within +-1 deg) is not met: the spread left
+on storey 1 lies within rooms seen in one pass, which a whole-block move
+cannot reach (`reusex-wg8`: a "this block is Manhattan" edit). Two lessons:
+
+- Straightening costs a little segment-pair agreement (23.7 -> 25.6 mm):
+  the v1 trajectory had found self-consistent but rotated passes. Report
+  both numbers; neither alone decides.
+- Through-wall crossings against `house2.plan.yaml` rose from 6 / 11 to
+  11 / 20, because that plan was drawn on the stored, rotated poses. Count
+  crossings against the scan's own wall points under the same poses instead
+  (a step whose line passes within 3 cm of them), until the plan is re-fit
+  (`reusex-ghy`).
 
 ## Pose references: scoring a trajectory against a frozen ground truth
 
