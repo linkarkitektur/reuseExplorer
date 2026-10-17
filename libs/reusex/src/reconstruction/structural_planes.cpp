@@ -85,13 +85,24 @@ CellSet dilate(const CellSet &cells) {
   return out;
 }
 
+/// 2nd and 98th percentile of @p v (sorted in place).
+std::array<double, 2> trimmed_range(std::vector<double> &v) {
+  if (v.empty())
+    return {0.0, 0.0};
+  std::sort(v.begin(), v.end());
+  const auto last = static_cast<double>(v.size() - 1);
+  return {v[static_cast<std::size_t>(std::floor(0.02 * last))],
+          v[static_cast<std::size_t>(std::ceil(0.98 * last))]};
+}
+
 } // namespace
 
 auto select_structural_planes(EigenVectorContainer<double, 4> &planes,
                               std::vector<IndicesPtr> &inliers,
                               EigenVectorContainer<double, 3> &centroids,
                               CloudConstPtr cloud,
-                              const StructuralPlaneOptions &opt)
+                              const StructuralPlaneOptions &opt,
+                              const StructuralEvidence &evidence)
     -> StructuralPlaneReport {
   if (planes.size() != inliers.size() || planes.size() != centroids.size())
     throw std::runtime_error(fmt::format(
@@ -215,6 +226,106 @@ auto select_structural_planes(EigenVectorContainer<double, 4> &planes,
       keep[g] = false;
       ++report.vertical_small;
     }
+
+    // Short free-standing planes (reusex-72a). An open door leaf or a
+    // cupboard side has the area of a wall stub, and both its faces, but as
+    // an arrangement line it cuts the whole storey: on house2 the MIP drew a
+    // 3 m diagonal room boundary along a 0.8 m door leaf. A short line stays
+    // only when something else says it is a wall: it spans a storey from
+    // floor to ceiling, or the walls stage found a wall on it. Height alone
+    // is no reason to drop a line: walls seen only to door height are walls
+    // (reusex-rtx), and a long one stays whatever its height.
+    if (opt.min_free_line_m > 0.0 && !evidence.walls.empty() &&
+        !evidence.storeys.empty()) {
+      const double cos_wall =
+          std::cos(2.0 * opt.collinear_angle_deg * std::numbers::pi / 180.0);
+      // Extent along the wall (2nd-98th percentile) and in z of one plane.
+      struct Extent {
+        std::array<double, 2> along, z;
+      };
+      auto extent = [&](std::size_t i, const Eigen::Vector3d &u) {
+        std::vector<double> s, z;
+        s.reserve(inliers[i]->size());
+        z.reserve(inliers[i]->size());
+        for (int k : *inliers[i]) {
+          const Eigen::Vector3d p = cloud->points[static_cast<std::size_t>(k)]
+                                        .getVector3fMap()
+                                        .cast<double>();
+          s.push_back(p.dot(u));
+          z.push_back(p.z());
+        }
+        return Extent{trimmed_range(s), trimmed_range(z)};
+      };
+      std::vector<std::size_t> unsupported;
+      for (auto g : leaders) {
+        if (!keep[g])
+          continue;
+        const Eigen::Vector3d ng = planes[g].head<3>().normalized();
+        const double dg = planes[g][3] / planes[g].head<3>().norm();
+        const Eigen::Vector3d u = along_wall(ng);
+        Extent e = extent(g, u);
+        double length = e.along[1] - e.along[0];
+        // The wall's opposite face counts too.
+        for (auto h : leaders) {
+          if (h == g || -ng.dot(planes[h].head<3>().normalized()) < cos_tol)
+            continue;
+          if (std::abs(ng.dot(centroids[h]) + dg) >= opt.wall_pair_max_m)
+            continue;
+          const Extent f = extent(h, u);
+          if (f.along[1] - f.along[0] > length) {
+            length = f.along[1] - f.along[0];
+            e.along = f.along;
+          }
+          e.z = {std::min(e.z[0], f.z[0]), std::max(e.z[1], f.z[1])};
+        }
+        if (length >= opt.min_free_line_m)
+          continue;
+        bool full_height = false;
+        for (const auto &st : evidence.storeys)
+          full_height |= e.z[0] <= st[0] + opt.full_height_margin_m &&
+                         e.z[1] >= st[1] - opt.full_height_margin_m;
+        if (full_height)
+          continue;
+        bool on_wall = false;
+        for (const auto &w : evidence.walls) {
+          const Eigen::Vector2d d = w.b - w.a;
+          if (d.norm() < kEpsilonRelative)
+            continue;
+          if (std::abs(d.normalized().dot(u.head<2>())) < cos_wall)
+            continue; // not parallel
+          if (w.z_hi < e.z[0] || w.z_lo > e.z[1])
+            continue; // another storey
+          const double sa = w.a.dot(u.head<2>()), sb = w.b.dot(u.head<2>());
+          const double lo = std::max(std::min(sa, sb), e.along[0]);
+          const double hi = std::min(std::max(sa, sb), e.along[1]);
+          if (hi - lo < 0.5 * length)
+            continue; // covers too little of the line
+          // The wall's axis at the middle of the shared stretch.
+          const double t = (0.5 * (lo + hi) - sa) / (sb - sa);
+          const Eigen::Vector2d q = w.a + t * d;
+          const double off = std::abs(ng.head<2>().dot(q) + dg);
+          if (off <=
+              std::max(w.thickness, 0.0) / 2.0 + opt.wall_support_offset_m) {
+            on_wall = true;
+            break;
+          }
+        }
+        if (on_wall)
+          continue;
+        reusex::debug("structural planes: wall line {} at ({:.2f}, {:.2f}) is "
+                      "{:.2f} m long (< {:.2f} m), spans z {:.2f} .. {:.2f} m "
+                      "(no storey floor to ceiling) and no wall of the walls "
+                      "table lies on it: a free-standing object, not an "
+                      "arrangement line",
+                      g, centroids[g].x(), centroids[g].y(), length,
+                      opt.min_free_line_m, e.z[0], e.z[1]);
+        unsupported.push_back(g);
+      }
+      for (auto g : unsupported) {
+        keep[g] = false;
+        ++report.vertical_unsupported;
+      }
+    }
   }
 
   // ── Horizontal planes: storey floors and ceilings only ──────────────────
@@ -291,13 +402,16 @@ auto select_structural_planes(EigenVectorContainer<double, 4> &planes,
 
   reusex::info(
       "structural planes: {} vertical -> {} wall lines ({} merged onto a "
-      "collinear line, {} below {:.1f} m^2 dropped); {} horizontal -> {} "
+      "collinear line, {} below {:.1f} m^2 dropped, {} short line(s) with no "
+      "wall evidence dropped); {} horizontal -> {} "
       "section planes ({} furniture-level dropped, < {:.1f} m over a larger "
       "floor); {} oblique passed through; {:.5f} m^2 per point",
       report.vertical_in,
-      report.vertical_in - report.vertical_merged - report.vertical_small,
+      report.vertical_in - report.vertical_merged - report.vertical_small -
+          report.vertical_unsupported,
       report.vertical_merged, report.vertical_small, opt.min_wall_area_m2,
-      report.horizontal_in, report.horizontal_in - report.horizontal_furniture,
+      report.vertical_unsupported, report.horizontal_in,
+      report.horizontal_in - report.horizontal_furniture,
       report.horizontal_furniture, opt.min_storey_clearance_m, report.other,
       area_per_point);
   return report;

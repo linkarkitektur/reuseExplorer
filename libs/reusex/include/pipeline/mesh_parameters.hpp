@@ -85,8 +85,17 @@ mesh_plane_roles(const ProjectDB &db, const std::vector<IndicesPtr> &inliers);
 /// when the project has no storeys.
 std::vector<double> mesh_section_heights(const ProjectDB &db);
 
-/// The mesh stage's options for @p db: MeshOptions::plane_roles and
-/// MeshOptions::section_heights filled from the project as @p stage asks.
+/// The walls table in world coordinates, for MeshOptions::walls
+/// (reusex-72a): each wall's axis and base through its storey's level frame
+/// (LevelFrame::to_world), its top at base + height. A wall whose storey is
+/// not in the storeys table is left out (logged at warn). Empty when the
+/// project has no walls.
+std::vector<geometry::WallEvidence> mesh_wall_evidence(const ProjectDB &db);
+
+/// The mesh stage's options for @p db: MeshOptions::plane_roles,
+/// MeshOptions::section_heights and (with the section heights, which it is
+/// read against) MeshOptions::walls filled from the project as @p stage
+/// asks.
 /// `rux create mesh` and the pipeline's mesh stage both go through here.
 geometry::MeshOptions mesh_options_for(const ProjectDB &db,
                                        const MeshStageOptions &stage,

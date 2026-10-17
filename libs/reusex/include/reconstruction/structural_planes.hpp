@@ -9,6 +9,7 @@
 
 #include <Eigen/Core>
 
+#include <array>
 #include <cstddef>
 #include <vector>
 
@@ -69,6 +70,22 @@ struct StructuralPlaneOptions {
   /// the lower plane before the clearance rule applies.
   double min_footprint_overlap = 0.25;
 
+  /// A wall line shorter than this along the wall [m] (its own face or the
+  /// wall's opposite face, 2nd to 98th percentile of the inliers) is a
+  /// short free-standing plane: an open door leaf, a cupboard side, a
+  /// shelf end (reusex-72a). It stays an arrangement line only when it is
+  /// a wall by other evidence (see StructuralEvidence): it reaches from a
+  /// storey's floor to its ceiling, or the walls table has a wall on it.
+  /// Applies only when the evidence has both walls and storeys; 0 = off.
+  double min_free_line_m = 1.5;
+  /// A line reaches floor to ceiling when its inliers come within this
+  /// [m] of both a storey's floor and its ceiling.
+  double full_height_margin_m = 0.3;
+  /// A walls-table wall lies on a line when its axis is parallel to the line
+  /// within collinear_angle_deg x 2, at most half its thickness plus this
+  /// [m] from the line, and covers at least half the line's length.
+  double wall_support_offset_m = 0.2;
+
   /// Cell size [m] of the grid used to measure point density. A plane's area
   /// is its inlier count times cell^2 / (median points per occupied cell),
   /// so a sparse patch does not read as a large surface.
@@ -79,12 +96,30 @@ struct StructuralPlaneOptions {
   double footprint_cell_m = 0.25;
 };
 
+/// One wall of the walls table (`rux create walls`) in world coordinates:
+/// its axis at floor level and its height.
+struct WallEvidence {
+  Eigen::Vector2d a{0.0, 0.0}, b{0.0, 0.0}; ///< axis end points (x, y)
+  double z_lo = 0.0, z_hi = 0.0;            ///< base and top [m]
+  double thickness = -1.0;                  ///< [m]; -1 = unknown
+};
+
+/// What the project knows about its walls and storeys, besides the planes.
+/// select_structural_planes() judges a short wall line by it (reusex-72a).
+struct StructuralEvidence {
+  std::vector<WallEvidence> walls;
+  /// World z of each storey's floor and ceiling.
+  std::vector<std::array<double, 2>> storeys;
+};
+
 /// What select_structural_planes() did, for logging and tests.
 struct StructuralPlaneReport {
   std::size_t vertical_in = 0;     ///< vertical planes considered
   std::size_t vertical_merged = 0; ///< absorbed into a collinear wall line
   std::size_t vertical_small = 0;  ///< lines dropped below min_wall_area_m2
-  std::size_t horizontal_in = 0;   ///< horizontal planes considered
+  /// Short lines dropped for want of evidence (min_free_line_m).
+  std::size_t vertical_unsupported = 0;
+  std::size_t horizontal_in = 0;        ///< horizontal planes considered
   std::size_t horizontal_furniture = 0; ///< dropped by the clearance rule
   std::size_t other = 0; ///< neither vertical nor horizontal, passed through
   std::size_t planes_out = 0; ///< planes left after selection
@@ -103,13 +138,21 @@ struct StructuralPlaneReport {
  * neither vertical nor horizontal pass through unchanged. The output order
  * depends only on the input, so the result is deterministic.
  *
+ * A wall line shorter than `min_free_line_m` needs @p evidence to stay
+ * (reusex-72a): it reaches a storey's floor and ceiling, or a wall of the
+ * walls table lies on it. A wall seen only to door height is no reason to
+ * drop a line on its own (reusex-rtx): a long one stays, and so does a short
+ * one the walls stage found. Without walls or storeys in @p evidence the
+ * rule does not apply.
+ *
  * @throws std::runtime_error if the three containers differ in size.
  */
 auto select_structural_planes(EigenVectorContainer<double, 4> &planes,
                               std::vector<IndicesPtr> &inliers,
                               EigenVectorContainer<double, 3> &centroids,
                               CloudConstPtr cloud,
-                              const StructuralPlaneOptions &opt = {})
+                              const StructuralPlaneOptions &opt = {},
+                              const StructuralEvidence &evidence = {})
     -> StructuralPlaneReport;
 
 /// What drop_planes_by_role() did, for logging and tests.
