@@ -49,10 +49,12 @@
 # --watch; plain optimize --edits reads m-246-293 NOT HONOURED by the older block-RMS rule
 # (bent 22 mm across 48 frames, realised 99% / 99%; reusex-wwr).
 #
-# Frame: world. Coordinates in the notes are in storey 0's level frame (the frame of the plan
-# cuts and of house2.plan.yaml): level = world + (-5.92, -4.63, +1.59) m, rotated < 0.2 deg.
-# The Manhattan solve turns the whole house ~5 deg about node 1 against plain optimize, so
-# house2.plan.yaml (drawn on the stored poses) no longer overlays it; see reusex-ghy.
+# Frame: world. Coordinates in the notes are in the stored-pose copy's storey-0 level frame (the
+# frame of the plan cuts and of the first house2.plan.yaml): level = world + (-5.92, -4.63,
+# +1.59) m, rotated < 0.2 deg. The Manhattan solve turns the whole house ~5 deg about node 1
+# against plain optimize, so that plan no longer overlaid it; house2.plan.yaml has since been
+# re-fitted on this reference (reusex-ghy) in the corrected copy's own detected frame:
+# level = world + (-7.26, -0.40, +1.45) m.
 #
 # Result (rux analyze drift, defaults, --plan house2.plan.yaml; 12 segments for the pairs):
 #                                 stored       plain optimize  DRAFT v1      DRAFT v2      this (v3)
@@ -89,7 +91,7 @@
 #     bedroom-E door, and living room S's east wall seen twice (m-230-245 turned seg 7 there).
 # (**) Against house2.plan.yaml the count rose to 11 of 20 because the plan was drawn on the
 #     stored poses, whose storey 1 north is turned ~8 deg; the straightened camera paths no
-#     longer fit its walls (plan re-fit: reusex-ghy). Plan-free check instead: steps of <= 1.5 m
+#     longer fit its walls (the plan has since been re-fitted on this reference: reusex-ghy). Plan-free check instead: steps of <= 1.5 m
 #     whose straight line passes within 3 cm of the scan's own wall points (1.0-1.8 m above
 #     the floor, same poses). One left: 331 -> 332 in bedroom E, images 331-333 show the
 #     camera walking past the open door leaf -- explained.
