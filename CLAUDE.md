@@ -495,6 +495,12 @@ and deleted the shims. `include/geometry/` now holds only the real
   the `walls` / `openings` tables when present (wall graph blocks the grid,
   doors cut rooms; optional contract inputs, so run walls -> openings ->
   rooms)
+- `spaces.hpp`: `polygonise_spaces()` (W4.2) — band rooms as space
+  polygons: CGAL arrangement of the wall faces (+ the interior outline)
+  labelled by the band grid, raster fallback where the walls do not close
+  a room; metrics, kind, space boundaries. Not stored yet (W4.3); debug
+  path `rux create rooms --spaces-json out.json` for `rux analyze solid
+  --model`
 - `segment_rooms.hpp`: room partitioning via Leiden clustering (igraph);
   `rooms --method leiden`, selectable without storeys
 - `segment_instances.hpp` / `reconcile_instances.hpp`: semantic → spatial instances
