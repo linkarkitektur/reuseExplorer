@@ -335,6 +335,71 @@ TEST_CASE("MakePairs_SlightlySkewedFaces_PairBecomesParallelSlab",
         Catch::Approx(0.0).margin(1e-9));
 }
 
+TEST_CASE("MakePairs_CrossedFacesOfOneWall_SlabSpansTheirOverlap",
+          "[geometry][make_pairs]") {
+  // house1's partition i-n1 (reusex-wm0): the hall's face of the wall
+  // (normal +x) was measured 0.09 m WEST of the entrance's face (normal -x):
+  // the two rooms' scans drifted apart by more than the wall is thick, so the
+  // faces cross and each one's front looks at the other. The cell complex
+  // puts a wall cell where a cell is behind BOTH faces of a pair; for a
+  // crossed pair there is no such place, so the mesh had no wall to put
+  // between the two rooms and merged them. make_pairs must still pair the
+  // faces, and turn them into a slab between the two measured positions,
+  // each face keeping its normal (towards its own room).
+  EigenVectorContainer<double, 4> planes;
+  EigenVectorContainer<double, 3> centroids;
+  std::vector<IndicesPtr> inliers;
+
+  const Eigen::Vector3d c_east(1.85, -1.1, 0.0); // the hall's face, +x
+  planes.emplace_back(1.0, 0.0, 0.0, -c_east.x());
+  centroids.push_back(c_east);
+  inliers.push_back(IndicesPtr(new Indices(1700, 0)));
+
+  const Eigen::Vector3d c_west(1.94, -0.6, 0.0); // the entrance's face, -x
+  planes.emplace_back(-1.0, 0.0, 0.0, c_west.x());
+  centroids.push_back(c_west);
+  inliers.push_back(IndicesPtr(new Indices(3000, 0)));
+
+  auto pairs = make_pairs(planes, inliers, centroids, /*threshold=*/0.60,
+                          /*new_plane_offset=*/0.25);
+
+  REQUIRE(planes.size() == 2); // paired, no invented back face
+  REQUIRE(pairs.size() == 1);
+  // Normals unchanged: each face still faces its own room.
+  CHECK(planes[0].head<3>().isApprox(Eigen::Vector3d(1, 0, 0)));
+  CHECK(planes[1].head<3>().isApprox(Eigen::Vector3d(-1, 0, 0)));
+  // A slab: a point between the measured positions is behind both faces.
+  const Eigen::Vector3d mid(0.5 * (c_east.x() + c_west.x()), 0.0, 0.0);
+  CHECK(dist_plane_point(planes[0], mid) < 0.0);
+  CHECK(dist_plane_point(planes[1], mid) < 0.0);
+  // It spans the stretch the two scans overlap: x in [1.85, 1.94].
+  CHECK(-planes[0][3] == Catch::Approx(c_west.x()).margin(1e-9));
+  CHECK(planes[1][3] == Catch::Approx(c_east.x()).margin(1e-9));
+}
+
+TEST_CASE("MakePairs_FacesLookingAtEachOtherAcrossAGap_StayWhereMeasured",
+          "[geometry][make_pairs]") {
+  // Two faces 0.3 m apart whose normals point at each other bound a gap a
+  // sensor looked into (a shaft, a narrow passage), not one drifted wall
+  // (walls' max_crossed_gap_m, 0.15 m): make_pairs must not move them onto
+  // each other.
+  EigenVectorContainer<double, 4> planes;
+  EigenVectorContainer<double, 3> centroids;
+  std::vector<IndicesPtr> inliers;
+  planes.emplace_back(1.0, 0.0, 0.0, -1.0); // x = 1.0, normal +x
+  centroids.emplace_back(1.0, 0.0, 0.0);
+  inliers.push_back(IndicesPtr(new Indices(1000, 0)));
+  planes.emplace_back(-1.0, 0.0, 0.0, 1.3); // x = 1.3, normal -x
+  centroids.emplace_back(1.3, 0.0, 0.0);
+  inliers.push_back(IndicesPtr(new Indices(2000, 0)));
+
+  make_pairs(planes, inliers, centroids, /*threshold=*/0.60,
+             /*new_plane_offset=*/0.25);
+
+  CHECK(planes[0].isApprox(Eigen::Vector4d(1.0, 0.0, 0.0, -1.0)));
+  CHECK(planes[1].isApprox(Eigen::Vector4d(-1.0, 0.0, 0.0, 1.3)));
+}
+
 namespace {
 
 /// Append a ceiling patch over x in [x0, x1], y in [y0, y1] at height

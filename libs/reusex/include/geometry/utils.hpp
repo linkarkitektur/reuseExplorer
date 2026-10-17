@@ -38,13 +38,19 @@ auto dist_plane_point(const Eigen::Vector4d &plane,
  * @param centroids Plane centroids.
  * @param threshold Maximum distance threshold for pairing. Default 0.6.
  * @param new_plane_offset Offset for creating new planes. Default 0.5.
+ * @param max_crossed_gap Two paired faces whose fronts look at each other
+ * (each lies in front of the other: the two rooms' scans drifted apart by
+ * more than the wall is thick) at most this far apart [m] are one wall: they
+ * swap positions, so the pair bounds a slab again (reusex-wm0). Farther
+ * apart they stay where measured. Default 0.15, walls' max_crossed_gap_m.
  * @return Vector of plane index pairs.
  */
 auto make_pairs(EigenVectorContainer<double, 4> &planes,
                 std::vector<IndicesPtr> &inliers,
                 EigenVectorContainer<double, 3> &centroids,
                 const double threshold = 0.6,
-                const double new_plane_offset = 0.5)
+                const double new_plane_offset = 0.5,
+                const double max_crossed_gap = 0.15)
     -> std::vector<std::pair<size_t, size_t>>;
 
 /**
