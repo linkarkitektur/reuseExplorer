@@ -729,3 +729,151 @@ TEST_CASE("WallZRanges_FromInliers_InventedFaceTakesPartnerRange",
   CHECK(std::isnan(r[2][0])); // not a wall: spans every section
   CHECK(std::isnan(r[3][0])); // no evidence: spans every section
 }
+
+namespace {
+
+// A wall plane's inliers on a 0.1 m grid: every (s, z) with s along the wall
+// in [s0, s1) and z in [z0, z1). `at(s, z)` places the point in the world.
+template <typename At>
+void add_wall_grid(reusex::Cloud &cloud, reusex::Indices &idx, double s0,
+                   double s1, double z0, double z1, At at) {
+  for (double s = s0; s < s1 - 1e-9; s += 0.1)
+    for (double z = z0; z < z1 - 1e-9; z += 0.1) {
+      const Eigen::Vector3d p = at(s, z);
+      reusex::PointT q;
+      q.x = static_cast<float>(p.x());
+      q.y = static_cast<float>(p.y());
+      q.z = static_cast<float>(p.z());
+      cloud.push_back(q);
+      idx.push_back(static_cast<int>(cloud.size() - 1));
+    }
+}
+
+} // namespace
+
+TEST_CASE("WallZRanges_SplitLevelWall_ReachesTheLowerFloor",
+          "[geometry][mesh][storey_local]") {
+  // house1 (reusex-7co): the long west wall stands on the upper floor
+  // (z = 0.85) for most of its length and on the lower floor (z = 0) along
+  // the lower room only. The stretch below the upper floor is under 2 % of
+  // its points, so a 2nd-percentile range started the wall above the lower
+  // floor's slab section and the lower room had no cells there.
+  auto cloud = std::make_shared<reusex::Cloud>();
+  auto idx = std::make_shared<reusex::Indices>();
+  auto on_wall = [](double s, double z) { return Eigen::Vector3d(0, s, z); };
+  add_wall_grid(*cloud, *idx, 0.0, 0.5, 0.0, 3.0, on_wall);   // lower room
+  add_wall_grid(*cloud, *idx, 0.5, 20.0, 0.85, 3.0, on_wall); // upper floor
+  const double low_share = 5.0 * 9.0 / static_cast<double>(idx->size());
+  REQUIRE(low_share < 0.02);
+  // One stray point well below the wall must still be trimmed.
+  {
+    reusex::PointT q;
+    q.x = 0.0F, q.y = 10.0F, q.z = -1.0F;
+    cloud->push_back(q);
+    idx->push_back(static_cast<int>(cloud->size() - 1));
+  }
+  reusex::EigenVectorContainer<double, 4> planes;
+  planes.emplace_back(1, 0, 0, 0);
+  std::vector<reusex::IndicesPtr> inliers{idx};
+
+  const auto r = wall_z_ranges(planes, inliers, cloud, {});
+  REQUIRE(r.size() == 1);
+  CHECK(r[0][0] == Approx(0.0).margin(0.06));
+  CHECK(r[0][1] == Approx(2.9).margin(0.06));
+}
+
+TEST_CASE("StoreyArrangement_SplitLevel_LowerRoomHasCellsUnderTheStep",
+          "[geometry][cellcomplex][storey_local]") {
+  // A two-level box with a 0.85 m step: a lower room x in [0, 4] on z = 0,
+  // a long upper room x in [4, 100] on z = 0.85, ceiling z = 3. The upper
+  // floor's invented slab underside at 0.6 makes a slab section [0, 0.6]
+  // that the lower rooms fill. Its walls come from wall_z_ranges(): the
+  // long walls y = 0 / y = 6 reach down to z = 0 along the lower room only,
+  // a small share of their points. A second, separate lower room
+  // (x in [-10, -6], y in [-5, -1]) closes faces of its own in the slab
+  // section, as house1's other south rooms do, so the section does not
+  // borrow its neighbours' walls (CellComplex's fallback for a section
+  // without faces).
+  auto cloud = std::make_shared<reusex::Cloud>();
+  House h;
+  std::vector<reusex::IndicesPtr> inliers;
+  auto wall = [&](Eigen::Vector4d p) {
+    h.planes.push_back(p);
+    h.verticals.push_back(h.planes.size() - 1);
+    inliers.push_back(std::make_shared<reusex::Indices>());
+    return inliers.back();
+  };
+  auto along_x = [](double y) {
+    return [y](double s, double z) { return Eigen::Vector3d(s, y, z); };
+  };
+  auto along_y = [](double x) {
+    return [x](double s, double z) { return Eigen::Vector3d(x, s, z); };
+  };
+  for (double y : {0.0, 6.0}) { // the long walls
+    auto idx = wall({0, 1, 0, -y});
+    add_wall_grid(*cloud, *idx, 0.0, 4.0, 0.0, 3.0, along_x(y));
+    add_wall_grid(*cloud, *idx, 4.0, 100.0, 0.85, 3.0, along_x(y));
+  }
+  for (double y : {-5.0, -1.0}) // the separate lower room
+    add_wall_grid(*cloud, *wall({0, 1, 0, -y}), -10.0, -6.0, 0.0, 3.0,
+                  along_x(y));
+  for (double x : {-10.0, -6.0})
+    add_wall_grid(*cloud, *wall({1, 0, 0, -x}), -5.0, -1.0, 0.0, 3.0,
+                  along_y(x));
+  add_wall_grid(*cloud, *wall({1, 0, 0, 0}), 0.0, 6.0, 0.0, 3.0, along_y(0));
+  add_wall_grid(*cloud, *wall({1, 0, 0, -4}), 0.0, 6.0, 0.0, 3.0,
+                along_y(4)); // the split wall
+  add_wall_grid(*cloud, *wall({1, 0, 0, -100}), 0.0, 6.0, 0.85, 3.0,
+                along_y(100));
+  for (double z : {0.0, 0.6, 0.85, 3.0}) {
+    h.planes.emplace_back(0, 0, 1, -z);
+    h.horizontals.push_back(h.planes.size() - 1);
+    inliers.push_back(std::make_shared<reusex::Indices>());
+  }
+  h.z_ranges = wall_z_ranges(h.planes, inliers, cloud, {});
+
+  auto cc = std::make_shared<CellComplex>(
+      h.planes, h.verticals, h.horizontals, h.pairs,
+      std::array<double, 2>{-11.0, -6.0}, std::array<double, 2>{101.0, 7.0},
+      std::nullopt, 5000, h.z_ranges);
+  auto section = cc->property_map<CellComplex::Vertex, int>("c:section");
+  int lower_room_slab_cells = 0;
+  for (auto c = cc->cells_begin(); c != cc->cells_end(); ++c) {
+    const auto &p = (*cc)[*c].pos;
+    if (section[*c] == 0 && p.x() > 0 && p.x() < 4 && p.y() > 0 && p.y() < 6)
+      ++lower_room_slab_cells;
+  }
+  CHECK(lower_room_slab_cells == 1);
+}
+
+TEST_CASE("WallZRanges_StoreyHeights_StopTheRangeAtTheStoreyItEndsAt",
+          "[geometry][mesh][storey_local]") {
+  // A ground-storey wall on a drifted scan: dense from 0 to 2.5 m (its
+  // storey's ceiling), and a thin, gapless run of points on up to 2.75 m in
+  // the slab below the next storey's floor at 2.8 m. Without storey heights
+  // the gapless run would carry the range into the slab section; with them
+  // it ends at the ceiling (house2, reusex-2kd). A wall whose points mostly
+  // stop 0.2 m short of its storey's ceiling still reaches it (house1's
+  // north block under a 3.09 m ceiling).
+  auto cloud = std::make_shared<reusex::Cloud>();
+  auto on_wall = [](double s, double z) { return Eigen::Vector3d(0, s, z); };
+  auto drifted = std::make_shared<reusex::Indices>();
+  add_wall_grid(*cloud, *drifted, 0.0, 20.0, 0.0, 2.5, on_wall);
+  add_wall_grid(*cloud, *drifted, 0.0, 0.5, 2.5, 2.8, on_wall);
+  auto short_top = std::make_shared<reusex::Indices>();
+  add_wall_grid(*cloud, *short_top, 0.0, 20.0, 0.0, 2.9, on_wall);
+  add_wall_grid(*cloud, *short_top, 0.0, 0.5, 2.9, 3.1, on_wall);
+  reusex::EigenVectorContainer<double, 4> planes;
+  planes.emplace_back(1, 0, 0, 0);
+  planes.emplace_back(1, 0, 0, 0);
+  std::vector<reusex::IndicesPtr> inliers{drifted, short_top};
+
+  const auto free = wall_z_ranges(planes, inliers, cloud, {});
+  CHECK(free[0][1] == Approx(2.7).margin(0.06));
+  const auto two =
+      wall_z_ranges(planes, inliers, cloud, {}, {0.0, 2.5, 2.8, 5.3});
+  CHECK(two[0][1] <= 2.55);
+  CHECK(two[0][0] == Approx(0.0).margin(0.06));
+  const auto one = wall_z_ranges(planes, inliers, cloud, {}, {0.0, 3.09});
+  CHECK(one[1][1] == Approx(3.0).margin(0.06));
+}

@@ -108,13 +108,21 @@ auto compute_number_of_inliers(CloudConstPtr cloud,
  * @param cloud Point cloud.
  * @param angle_threshold Angular similarity threshold. Default 0.1.
  * @param distance_threshold Distance threshold for merging. Default 0.5.
+ * @param horizontal_distance_threshold A pair of floors / ceilings (both
+ *   |n_z| > 0.9) merges only when their centroids' heights differ by less
+ *   than this [m]; <= 0 (default): no such gate. A split level's floors, or
+ *   a ceiling beside a lower sloped one, are a few decimetres apart and must
+ *   not merge, although the plane distance (measured at the midpoint of the
+ *   centroids, where a slope nearly meets the flat ceiling it runs up to) is
+ *   small (reusex-2kd).
  * @return Tuple of (merged planes, merged inliers, merged centroids).
  */
 auto merge_planes(EigenVectorContainer<double, 4> const &planes_,
                   std::vector<IndicesPtr> const &inliers_,
                   EigenVectorContainer<double, 3> const &centroids_,
                   CloudConstPtr cloud, const double angle_threshold = 0.1,
-                  const double distance_threshold = 0.5)
+                  const double distance_threshold = 0.5,
+                  const double horizontal_distance_threshold = -1.0)
     -> std::tuple<EigenVectorContainer<double, 4>, std::vector<IndicesPtr>,
                   EigenVectorContainer<double, 3>>;
 

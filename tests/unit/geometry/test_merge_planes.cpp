@@ -334,3 +334,84 @@ TEST_CASE("MakePairs_SlightlySkewedFaces_PairBecomesParallelSlab",
   CHECK(planes[1].head<3>().dot(c_b) + planes[1][3] ==
         Catch::Approx(0.0).margin(1e-9));
 }
+
+namespace {
+
+/// Append a ceiling patch over x in [x0, x1], y in [y0, y1] at height
+/// z(x) = z0 + rise_per_m * (x - x0); returns the inliers and sets `plane`
+/// to the patch's plane with a downward normal.
+IndicesPtr add_ceiling_patch(CloudPtr &cloud, double x0, double x1, double y0,
+                             double y1, double z0, double rise_per_m,
+                             Eigen::Vector4d &plane, double step = 0.1) {
+  IndicesPtr idx(new Indices);
+  for (double x = x0; x <= x1 + 1e-9; x += step)
+    for (double y = y0; y <= y1 + 1e-9; y += step) {
+      PointT p;
+      p.x = static_cast<float>(x);
+      p.y = static_cast<float>(y);
+      p.z = static_cast<float>(z0 + rise_per_m * (x - x0));
+      idx->push_back(static_cast<int>(cloud->size()));
+      cloud->push_back(p);
+    }
+  Eigen::Vector3d n(rise_per_m, 0.0, -1.0);
+  n.normalize();
+  plane.head<3>() = n;
+  plane[3] = -n.dot(Eigen::Vector3d(x0, y0, z0));
+  return idx;
+}
+
+} // namespace
+
+TEST_CASE("MergePlanes_CeilingBesideLowerSlopedOne_StaysApart",
+          "[geometry][merge_planes]") {
+  // house1 (reusex-2kd): a mono-pitch ceiling rising from 2.38 m to ~3.0 m
+  // runs up to a flat ceiling at 3.09 m. Their plane distance, measured at
+  // the midpoint of the centroids where the slope nearly reaches the flat
+  // ceiling, is within the 0.5 m merge distance, so the two merged into one
+  // ceiling between them (0.26 m below the flat one). With a horizontal
+  // merge distance the patches' heights, 0.4 m apart, keep them apart.
+  auto cloud = std::make_shared<Cloud>();
+  Eigen::Vector4d slope_plane, flat_plane;
+  auto is =
+      add_ceiling_patch(cloud, 0.0, 5.0, 0.0, 4.0, 2.38,
+                        std::tan(7.0 * std::numbers::pi / 180.0), slope_plane);
+  auto iflat =
+      add_ceiling_patch(cloud, 5.1, 10.0, 0.0, 4.0, 3.09, 0.0, flat_plane);
+  cloud->width = static_cast<uint32_t>(cloud->size());
+  cloud->height = 1;
+  EigenVectorContainer<double, 4> planes{slope_plane, flat_plane};
+  std::vector<IndicesPtr> inliers{is, iflat};
+  EigenVectorContainer<double, 3> centroids{centroid_of(cloud, is),
+                                            centroid_of(cloud, iflat)};
+
+  SECTION("the default merge distance alone merges them") {
+    auto [Pm, Im, Cm] = merge_planes(planes, inliers, centroids, cloud);
+    CHECK(Pm.size() == 1);
+  }
+  SECTION("a horizontal merge distance keeps them apart") {
+    auto [Pm, Im, Cm] =
+        merge_planes(planes, inliers, centroids, cloud, 0.1, 0.5, 0.2);
+    REQUIRE(Pm.size() == 2);
+    CHECK(Im[1]->size() == iflat->size());
+    CHECK(-Pm[1][3] / Pm[1][2] == Catch::Approx(3.09).margin(0.01));
+  }
+}
+
+TEST_CASE("MergePlanes_CeilingPatchesAtOneHeight_StillMerge",
+          "[geometry][merge_planes]") {
+  // Two patches of one flat ceiling, 4 cm apart in height (drift between
+  // two rooms' scans), still merge under the horizontal merge distance.
+  auto cloud = std::make_shared<Cloud>();
+  Eigen::Vector4d pa, pb;
+  auto ia = add_ceiling_patch(cloud, 0.0, 4.0, 0.0, 4.0, 2.50, 0.0, pa);
+  auto ib = add_ceiling_patch(cloud, 4.2, 8.0, 0.0, 4.0, 2.54, 0.0, pb);
+  cloud->width = static_cast<uint32_t>(cloud->size());
+  cloud->height = 1;
+  EigenVectorContainer<double, 4> planes{pa, pb};
+  std::vector<IndicesPtr> inliers{ia, ib};
+  EigenVectorContainer<double, 3> centroids{centroid_of(cloud, ia),
+                                            centroid_of(cloud, ib)};
+  auto [Pm, Im, Cm] =
+      merge_planes(planes, inliers, centroids, cloud, 0.1, 0.5, 0.2);
+  CHECK(Pm.size() == 1);
+}
