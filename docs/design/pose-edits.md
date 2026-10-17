@@ -218,6 +218,18 @@ The stored edge (either direction) is left out of this solve, as if its
 status were `rejected`; the project's `pose_graph_edges` row is not changed
 (use `rux graph prune --pair` for that).
 
+This holds for odometry `optimize` derives in memory too (a project with no
+stored pose graph): the link named is dropped, not put back. `optimize`
+bridges parts of the graph nothing ties together (frames without surfels, a
+stored edge with status `rejected`, scan boundaries) with odometry from the
+initial poses, but never over a `reject_edge`: with derived odometry that
+bridge would be the rejected link itself. Pose edits count as ties, so the
+part a rejected odometry link cuts off must be held by another stored edge, a
+`relative` or `same_surface` edit into the rest of the graph, or a prior
+(`anchor`, `move`) of its own. If it is not, `optimize` stops
+with an error naming the edit, the pair and the node ids it cut off, rather
+than solving a part with nothing to place it (reusex-39h).
+
 ## Residuals and contradictions
 
 Every edit is reported after the solve: its translation and rotation error
