@@ -208,6 +208,70 @@ TEST_CASE("JoinWalls_SlightlyDriftedWallRun_StaysOneJoinedWall",
   CHECK(count(g, WallJoinKind::corner) == 4);
 }
 
+namespace {
+
+/// reusex-47m: a hall wall A (x = 2, y 0..3.4, seen from the east) ends
+/// where a stub B (y = 3.4, x 2..5, seen from the south up to
+/// @p stub_top) starts; a full-height wall N (y = 4, x 0..6, seen from the
+/// south) runs 0.6 m on. A's north end can corner with B or tee onto N.
+WallGraph tee_or_weak_corner(double stub_top) {
+  auto wp = storey_points();
+  add_face(wp, {2, 0}, {2, 3.4}, {1, 0}, 0.0, 2.5, 0.003, 100);
+  add_face(wp, {2, 3.4}, {5, 3.4}, {0, -1}, 0.0, stub_top, 0.003, 101);
+  add_face(wp, {0, 4}, {6, 4}, {0, -1}, 0.0, 2.5, 0.003, 102);
+  add_floor(wp, 2.0, 0.0, 6.0, 3.4);
+  return graph_of(wp);
+}
+
+const reusex::geometry::WallSegment *wall_at(const WallGraph &g, int family,
+                                             double offset) {
+  for (const auto &w : g.walls)
+    if (w.family == family && std::abs(w.axis_offset - offset) < 0.05)
+      return &w;
+  return nullptr;
+}
+
+} // namespace
+
+TEST_CASE("JoinWalls_WeakStubCorner_YieldsToTeeOntoSeenWall",
+          "[walls][join_walls]") {
+  // B is seen up to 0.7 m (3 of 10 cell rows, seen share 0.3): it must not
+  // take A's end. A tees onto N, and B ends on A.
+  const auto g = tee_or_weak_corner(0.7);
+  REQUIRE(g.walls.size() == 3);
+  const auto *a = wall_at(g, 0, 2.0);
+  const auto *b = wall_at(g, 1, 3.4);
+  const auto *n = wall_at(g, 1, 4.0);
+  REQUIRE(a != nullptr);
+  REQUIRE(b != nullptr);
+  REQUIRE(n != nullptr);
+  CHECK(b->low_seen);
+  CHECK_FALSE(n->low_seen);
+  const int ia = static_cast<int>(a - g.walls.data());
+  const int ib = static_cast<int>(b - g.walls.data());
+  const int in = static_cast<int>(n - g.walls.data());
+  CHECK(count(g, WallJoinKind::corner) == 0);
+  bool a_on_n = false, b_on_a = false;
+  for (const auto &j : g.joins) {
+    a_on_n |= j.kind == WallJoinKind::tee && j.a == ia && j.b == in;
+    b_on_a |= j.kind == WallJoinKind::tee && j.a == ib && j.b == ia;
+  }
+  CHECK(a_on_n);
+  CHECK(b_on_a);
+  // A runs on to N's axis (its seen face): no gap left in the walls.
+  CHECK_THAT(std::max(a->s0, a->s1), WithinAbs(4.0, 0.02));
+}
+
+TEST_CASE("JoinWalls_SeenStubCorner_KeepsTheCorner", "[walls][join_walls]") {
+  // The same layout with B seen over its full height: the corner stands.
+  const auto g = tee_or_weak_corner(2.5);
+  REQUIRE(g.walls.size() == 3);
+  const auto *a = wall_at(g, 0, 2.0);
+  REQUIRE(a != nullptr);
+  CHECK(count(g, WallJoinKind::corner) == 1);
+  CHECK_THAT(std::max(a->s0, a->s1), WithinAbs(3.4, 0.02));
+}
+
 TEST_CASE("WallRecords_Graph_StableKeysAndJoinGuids", "[walls][join_walls]") {
   auto wp = storey_points();
   add_room(wp, {{0, 0}, {4, 0}, {4, 3}, {0, 3}}, 40);

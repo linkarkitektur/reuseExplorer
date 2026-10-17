@@ -1664,6 +1664,12 @@ MeshStageOptions mesh_options_from_parameters(std::string_view parameters) {
       param_or(params, "plane_classes", out.use_plane_classes);
   out.use_storey_sections =
       param_or(params, "storey_sections", out.use_storey_sections);
+  out.use_space_prior = param_or(params, "space_prior", out.use_space_prior);
+  options.space_prior_weight =
+      param_or(params, "space_prior_weight", options.space_prior_weight);
+  if (!(options.space_prior_weight >= 0.0 && options.space_prior_weight < 1.0))
+    throw std::invalid_argument(fmt::format(
+        "space_prior_weight {} is outside [0, 1)", options.space_prior_weight));
   options.storey_local = param_or(params, "storey_local", options.storey_local);
   const auto solver_str = param_or<std::string>(params, "solver", "auto");
   try {
@@ -1752,6 +1758,49 @@ std::vector<geometry::WallEvidence> mesh_wall_evidence(const ProjectDB &db) {
   return out;
 }
 
+std::vector<geometry::SpaceFootprint>
+mesh_space_footprints(const ProjectDB &db) {
+  std::vector<geometry::SpaceFootprint> out;
+  if (!db.has_spaces())
+    return out;
+  const auto spaces = db.spaces();
+  std::map<int, core::StoreyRecord> storeys;
+  for (const auto &s : db.storeys())
+    storeys.emplace(s.idx, s);
+  size_t orphans = 0, unlabelled = 0;
+  for (const auto &sp : spaces) {
+    if (sp.room_label <= 0) {
+      ++unlabelled;
+      continue;
+    }
+    const auto it = storeys.find(sp.storey);
+    if (it == storeys.end()) {
+      ++orphans;
+      continue;
+    }
+    geometry::SpaceFootprint f;
+    f.room_label = static_cast<unsigned int>(sp.room_label);
+    for (const auto &p : sp.polygon.outer)
+      f.outer.emplace_back(p[0], p[1]);
+    for (const auto &h : sp.polygon.holes) {
+      auto &ring = f.holes.emplace_back();
+      for (const auto &p : h)
+        ring.emplace_back(p[0], p[1]);
+    }
+    f.world_to_level =
+        geometry::LevelFrame::from_record(it->second).world_to_level;
+    f.z_floor = it->second.z_floor;
+    f.z_ceiling = it->second.z_ceiling;
+    out.push_back(std::move(f));
+  }
+  if (orphans + unlabelled > 0)
+    warn("mesh: {} of {} space(s) left out of the space prior ({} on a "
+         "storey the storeys table does not have, {} without a room "
+         "label). Re-run `rux create spaces`",
+         orphans + unlabelled, spaces.size(), orphans, unlabelled);
+  return out;
+}
+
 geometry::MeshOptions mesh_options_for(const ProjectDB &db,
                                        const MeshStageOptions &stage,
                                        const std::vector<IndicesPtr> &inliers) {
@@ -1770,6 +1819,12 @@ geometry::MeshOptions mesh_options_for(const ProjectDB &db,
         info("mesh: {} wall(s) from the walls table back short wall lines",
              options.walls.size());
     }
+  }
+  if (stage.use_space_prior) {
+    options.spaces = mesh_space_footprints(db);
+    if (!options.spaces.empty())
+      info("mesh: {} space(s) from the spaces table as a room prior",
+           options.spaces.size());
   }
   return options;
 }

@@ -11,6 +11,7 @@
 
 #include <reusex/core/ProjectDB.hpp>
 #include <reusex/core/logging.hpp>
+#include <reusex/core/pose_edits.hpp>
 #include <reusex/core/pose_graph.hpp>
 #include <reusex/slam/PlaneGraphOptimizer.hpp>
 #include <reusex/slam/pose_graph.hpp>
@@ -18,7 +19,10 @@
 #include "../../support/pose_fixture.hpp"
 #include "../../support/temp_path.hpp"
 
+#include <Eigen/Geometry>
+
 #include <cmath>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -220,6 +224,99 @@ TEST_CASE("OptimizeStoredGraph_RejectedOdometry_IsBridgedAndWarned",
   CHECK(db.pose_graph_edge(2, 3, "odometry")->status == "rejected");
   for (int k = 0; k < kFrames; ++k)
     CHECK(dist(db.sensor_frame_pose(k), truth(k)) < 1e-6);
+}
+
+namespace {
+
+/// reusex-39h: a chain whose odometry link 2-3 is wrong. The current poses
+/// (from which 'optimize' derives odometry when there is no stored graph)
+/// have frames 3 and 4 turned 10 deg about z and shifted 0.05 m, so the
+/// derived 2-3 link carries the jump while 3-4 stays right.
+void make_broken_chain_project(ProjectDB &db) {
+  Eigen::Matrix4d B = Eigen::Matrix4d::Identity();
+  B.topLeftCorner<3, 3>() =
+      Eigen::AngleAxisd(10.0 * M_PI / 180.0, Eigen::Vector3d::UnitZ())
+          .toRotationMatrix();
+  B.topRightCorner<3, 1>() = Eigen::Vector3d(0.0, 0.05, 0.0);
+  for (int k = 0; k < kFrames; ++k) {
+    Eigen::Matrix4d p = pg::matrix_from_row_major(truth(k));
+    if (k >= 3)
+      p = B * p;
+    seed_wall_frame(db, k, pg::row_major_from_matrix(p));
+  }
+}
+
+reusex::core::PoseEdit reject_2_3() {
+  reusex::core::PoseEdit x;
+  x.id = "x-bad-odometry";
+  x.kind = reusex::core::PoseEditKind::reject_edge;
+  x.nodes.first = x.nodes.last = 2;
+  x.nodes_b.first = x.nodes_b.last = 3;
+  x.edge_type = std::string(pg::kTypeOdometry);
+  return x;
+}
+
+} // namespace
+
+TEST_CASE("OptimizeStoredGraph_RejectEdgeOnDerivedOdometry_IsNotRebridged",
+          "[slam][optimize][stored_graph][pose_edits]") {
+  // reusex-39h: no stored pose graph, so optimize derives the odometry from
+  // the current poses. The wrong link 2-3 is rejected by an edit, and a
+  // relative edit 1 -> 3 (the true 0.2 m along x) keeps the tail tied to the
+  // rest. The connectivity bridge must not put 2-3 back from the seeds:
+  // the tail then lands where the relative edit says.
+  TempPath tmp("test_optimize_reject_derived_odometry");
+  ProjectDB db(tmp.path);
+  make_broken_chain_project(db);
+  REQUIRE(db.list_pose_graph_edges().empty());
+
+  reusex::core::PoseEdits edits;
+  edits.edits.push_back(reject_2_3());
+  reusex::core::PoseEdit r;
+  r.id = "r-1-3";
+  r.kind = reusex::core::PoseEditKind::relative;
+  r.nodes.first = r.nodes.last = 1;
+  r.nodes_b.first = r.nodes_b.last = 3;
+  r.pose.source = reusex::core::PoseSpec::Source::given;
+  r.pose.value.matrix = translation_pose(0.2, 0.0, 0.0);
+  r.sigma_trans_m = 0.001;
+  r.sigma_rot_deg = 0.01;
+  edits.edits.push_back(r);
+
+  auto o = wall_options();
+  o.use_plane_factors = false;
+  const auto res = geo::optimize_sensor_poses(db, o, false, &edits);
+  REQUIRE(res.converged);
+  CHECK(res.edges_rejected_by_edits == 1);
+  CHECK(res.bridge_edges == 0);
+  for (int k = 0; k < kFrames; ++k) {
+    INFO("frame " << k);
+    CHECK(dist(db.sensor_frame_pose(k), truth(k)) < 1e-3);
+  }
+}
+
+TEST_CASE("OptimizeStoredGraph_RejectEdgeThatSplitsTheGraph_FailsLoudly",
+          "[slam][optimize][stored_graph][pose_edits]") {
+  // reusex-39h: with nothing else tying frames 3-4 to the rest, honouring
+  // the rejection leaves them floating. optimize refuses, naming the edit
+  // and the pair, rather than silently bridging the rejected pair again.
+  TempPath tmp("test_optimize_reject_splits");
+  ProjectDB db(tmp.path);
+  make_broken_chain_project(db);
+  reusex::core::PoseEdits edits;
+  edits.edits.push_back(reject_2_3());
+
+  auto o = wall_options();
+  o.use_plane_factors = false;
+  try {
+    geo::optimize_sensor_poses(db, o, /*dry_run=*/true, &edits);
+    FAIL("optimize_sensor_poses did not throw");
+  } catch (const std::runtime_error &e) {
+    const std::string what = e.what();
+    INFO(what);
+    CHECK(what.find("x-bad-odometry") != std::string::npos);
+    CHECK(what.find("2-3") != std::string::npos);
+  }
 }
 
 TEST_CASE("OptimizeStoredGraph_RegisterAfterInit_WarnsToReinit",

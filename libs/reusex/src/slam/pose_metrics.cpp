@@ -26,12 +26,30 @@ struct MatchedPair {
 double rad_to_deg(double rad) { return rad * 180.0 / std::numbers::pi; }
 
 /// Rotation angle between two rotation matrices, in degrees, in [0, 180].
+///
+/// Each matrix is first taken to a unit quaternion, the same projection
+/// io::write_tum applies, and the angle is read with atan2 (Eigen's
+/// angularDistance), not acos((trace - 1) / 2). A stored pose imported from
+/// a float source is orthonormal only to ~1e-7, and acos is ill-conditioned
+/// at 0: a 1e-8 trace error reads as ~1e-4 rad. That made a project scored
+/// against its own 'export trajectory' report 0.009 deg (reusex-dh8).
 double rotation_angle_deg(const Eigen::Matrix3d &a, const Eigen::Matrix3d &b) {
-  const Eigen::Matrix3d r = a.transpose() * b;
-  // Clamp for safety: a numerically imperfect rotation can push the trace a
-  // hair outside [-1, 3].
-  const double cos_angle = std::clamp((r.trace() - 1.0) / 2.0, -1.0, 1.0);
-  return rad_to_deg(std::acos(cos_angle));
+  const Eigen::Quaterniond qa = Eigen::Quaterniond(a).normalized();
+  const Eigen::Quaterniond qb = Eigen::Quaterniond(b).normalized();
+  return rad_to_deg(qa.angularDistance(qb));
+}
+
+/// @p pose with its rotation projected onto a unit quaternion and back, the
+/// projection io::write_tum applies. A stored pose is orthonormal only to the
+/// precision it was imported at; projecting both sides the same way makes a
+/// project and its own TUM export identical to the printed digits.
+Eigen::Matrix4d orthonormal(const Eigen::Matrix4d &pose) {
+  Eigen::Matrix4d out = pose;
+  out.topLeftCorner<3, 3>() =
+      Eigen::Quaterniond(Eigen::Matrix3d(pose.topLeftCorner<3, 3>()))
+          .normalized()
+          .toRotationMatrix();
+  return out;
 }
 
 double rmse(const std::vector<double> &v) {
@@ -77,7 +95,8 @@ match_by_timestamp(std::span<const core::StampedPose> est,
     auto it = ref_by_ts.find(est[i].timestamp);
     if (it == ref_by_ts.end())
       continue;
-    pairs.push_back({est[i].pose, ref[it->second].pose});
+    pairs.push_back(
+        {orthonormal(est[i].pose), orthonormal(ref[it->second].pose)});
   }
   return pairs;
 }

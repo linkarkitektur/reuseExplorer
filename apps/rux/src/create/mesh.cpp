@@ -167,6 +167,20 @@ NOTES:
                 "each section only the walls whose height reaches into it "
                 "(reusex-sba). Storey-local is on by default.");
 
+  sub->add_flag("--space-prior,!--no-space-prior", opt->use_space_prior,
+                "Use the stored spaces as a room prior: a cell inside a "
+                "space's footprint and storey height leans towards that "
+                "space's room where the rays cannot tell (an occluded pocket "
+                "under a stair, reusex-6t4). No effect before `rux create "
+                "spaces` has run.");
+
+  sub->add_option("--space-prior-weight", opt->space_prior_weight,
+                  "How much a space's room counts against the ray-cast room "
+                  "probabilities, in [0, 1). Below 0.5 a cell every ray calls "
+                  "outside stays outside.")
+      ->default_val(opt->space_prior_weight)
+      ->check(CLI::Range(0.0, 0.99));
+
   sub->add_option("--solver", opt->solver,
                   "MIP backend: 'auto' (primary backend with HiGHS CPU "
                   "fallback on GPU error/OOM), 'cuopt' (force GPU), or 'highs' "
@@ -227,6 +241,8 @@ std::string mesh_stage_parameters(SubcommandMeshOptions const &opt) {
       .set("plane_classes", opt.use_plane_classes)
       .set("storey_sections", opt.use_storey_sections)
       .set("storey_local", opt.storey_local)
+      .set("space_prior", opt.use_space_prior)
+      .set("space_prior_weight", opt.space_prior_weight)
       .set_if(!opt.filter_expr.empty(), "filter", opt.filter_expr)
       .dump();
 }

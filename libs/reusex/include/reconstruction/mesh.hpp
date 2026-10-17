@@ -5,6 +5,7 @@
 #pragma once
 #include "reusex/reconstruction/CellComplex.hpp"
 #include "reusex/reconstruction/Solidifier.hpp"
+#include "reusex/reconstruction/space_prior.hpp"
 #include "reusex/reconstruction/structural_planes.hpp"
 #include "reusex/types.hpp"
 
@@ -101,6 +102,33 @@ struct MeshOptions {
   /// (reusex-72a, StructuralPlaneOptions::min_free_line_m). Empty = no
   /// short line is dropped (the behaviour before 72a).
   std::vector<WallEvidence> walls{};
+
+  /// The stored spaces' footprints (pipeline::mesh_space_footprints()), a
+  /// room prior for the cells inside them (reusex-6t4, apply_space_prior()):
+  /// a cell the rays cannot see from inside (house2's stair hall under the
+  /// stair) reads as its space's room when the rays are unsure. Empty: the
+  /// rays alone (the behaviour before 6t4).
+  std::vector<SpaceFootprint> spaces{};
+  /// How much a space's room counts against the rays, in [0, 1). Below 0.5
+  /// a cell every ray calls outside stays outside. 0.3 is the largest
+  /// weight measured without a regression on house1 / house2 / NewOffice
+  /// (space_prior.hpp has the numbers).
+  double space_prior_weight = 0.3;
+
+  /// The space prior skips only the slab cells on their wall's measured
+  /// run (reusex-9a8, CellComplex::mark_wall_runs()): the stretches along
+  /// its axis where its faces' points lie (wall_runs()). A strip of the
+  /// wall's line through open floor takes the prior. The MIP's slab
+  /// (CellData::wall_ids) still runs along the whole line. Off: the prior
+  /// skips every slab cell (the behaviour before 9a8).
+  bool wall_runs = true;
+  /// Gaps in a wall's points up to this long are part of its run: a doorway
+  /// without a scanned lintel, an occluded stretch. The walls stage
+  /// bridges the same (WallOptions::bridge_gap_m) [m].
+  double wall_run_gap_m = 1.5;
+  /// A run reaches this far past its points at either end: into the
+  /// crossing wall it ends in, past a corner its points stop short of [m].
+  double wall_run_margin_m = 0.5;
 };
 
 /**
@@ -169,6 +197,27 @@ wall_z_ranges(const EigenVectorContainer<double, 4> &planes,
               const std::vector<IndicesPtr> &inliers, CloudConstPtr cloud,
               const std::vector<std::pair<size_t, size_t>> &pairs,
               const std::vector<double> &storey_heights = {});
+
+/**
+ * @brief Where each wall pair was measured along its axis (reusex-9a8).
+ *
+ * For CellComplex::mark_wall_runs(). A pair of vertical planes gets the
+ * axis of its first face (its normal turned +90 deg about z, unit) and the
+ * stretches of s = axis . (x, y) its two faces' inliers cover, split where
+ * consecutive points lie more than @p gap_m apart: a doorway or an occluded
+ * stretch up to @p gap_m is part of the run, open floor beyond it is not.
+ * Heights are not looked at: a door with its lintel scanned leaves no gap,
+ * and a pair already reaches only the sections its z-range does. Pairs of
+ * other planes (floors, ceilings, roof slopes), and wall pairs with no
+ * inliers on either face, get a zero axis and no spans: their slab is not
+ * limited.
+ *
+ * @return One run per pair, index-aligned with @p pairs.
+ */
+std::vector<WallRun>
+wall_runs(const EigenVectorContainer<double, 4> &planes,
+          const std::vector<IndicesPtr> &inliers, CloudConstPtr cloud,
+          const std::vector<std::pair<size_t, size_t>> &pairs, double gap_m);
 
 /**
  * @brief Generate a mesh from point cloud and geometric primitives.

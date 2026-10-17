@@ -894,3 +894,127 @@ TEST_CASE("BandRooms_Grid_BarelySeenWall_IsLeftOutWithItsDoors",
   CHECK(p.g.graph_walls == 1);
   CHECK(partition_room_grid(p.g, o) == 2);
 }
+
+// ===========================================================================
+// A stair hall the wall graph closes off (reusex-ccz, house2's ground floor)
+// ===========================================================================
+
+TEST_CASE("BandRooms_Grid_WallGraph_EndLeftByADroppedWall_MeetsItsNeighbour",
+          "[segmentation][band_rooms][walls]") {
+  // house2: the walls stage joined the stair hall's west wall to the stair's
+  // side (a barely seen "wall"), not to the hall's north wall 0.4 m on. The
+  // grid leaves the stair's side out (seen share), so the west wall must be
+  // drawn on to the north wall, or the hall leaks into the next room through
+  // a gap no door fits. A wall stopping 0.9 m short (a doorway) stays as is.
+  auto plan = [] {
+    Plan p(-1, 7, -1, 5);
+    p.floor(0, 6, 0, 4);
+    return p;
+  };
+  BandRoomsPlan t;
+  t.walls = {wall_rec("s", 0, 0, 6, 0),   wall_rec("n", 0, 4, 6, 4),
+             wall_rec("w", 0, 0, 0, 4),   wall_rec("e", 6, 0, 6, 4),
+             wall_rec("p", 3, 0, 3, 3.6), wall_rec("stair", 3, 3.6, 6, 3.6)};
+  t.walls.back().seen_share = 0.2; // left out of the graph
+  {
+    Plan p = plan();
+    BandRoomsOptions o;
+    rasterise_wall_graph(p.g, t, o);
+    CHECK(p.g.graph[p.g.index(p.col(3.0), p.row(3.8))] == 1);
+    CHECK(p.g.graph[p.g.index(p.col(4.5), p.row(3.6))] == 0);
+    CHECK(partition_room_grid(p.g, o) == 2);
+    CHECK(p.at(1.5, 2) != p.at(4.5, 2));
+    // Disabled: the gap stays open and the two halves are one room.
+    Plan q = plan();
+    o.wall_graph_join_gap = 0.0;
+    rasterise_wall_graph(q.g, t, o);
+    CHECK(q.g.graph[q.g.index(q.col(3.0), q.row(3.8))] == 0);
+  }
+  {
+    // 0.9 m short of the north wall: a doorway, not closed.
+    t.walls[4] = wall_rec("p", 3, 0, 3, 3.1);
+    t.walls[5] = wall_rec("stair", 3, 3.1, 6, 3.1);
+    t.walls[5].seen_share = 0.2;
+    Plan p = plan();
+    BandRoomsOptions o;
+    rasterise_wall_graph(p.g, t, o);
+    CHECK(p.g.graph[p.g.index(p.col(3.0), p.row(3.6))] == 0);
+  }
+}
+
+TEST_CASE("BandRooms_Grid_StairHallClosedByTheWallGraph_IsARoom",
+          "[segmentation][band_rooms][walls]") {
+  // A 3 x 1.4 m stair hall at the south-east of a 6 x 4 m storey, closed
+  // off by the walls table. The stair's risers cross the band every
+  // 0.25 m, so the hall's free space is 5 cm slivers: no core, and no
+  // sliver is a coreless room. The region the wall graph closes off is.
+  auto plan = [] {
+    Plan p(-1, 7, -1, 5);
+    p.floor(0, 6, 0, 4);
+    p.wall(0, 0, 0, 4);
+    p.wall(6, 6, 0, 4);
+    p.wall(0, 6, 0, 0);
+    p.wall(0, 6, 4, 4);
+    p.wall(3, 3, 0, 4);
+    p.wall(3, 6, 1.4, 1.4);
+    for (double x = 3.3; x < 5.9; x += 0.25)
+      p.wall(x, x, 0.15, 1.25); // risers
+    return p;
+  };
+  BandRoomsPlan t;
+  t.walls = {wall_rec("s", 0, 0, 6, 0),  wall_rec("n", 0, 4, 6, 4),
+             wall_rec("w", 0, 0, 0, 4),  wall_rec("e", 6, 0, 6, 4),
+             wall_rec("x3", 3, 0, 3, 4), wall_rec("hall", 3, 1.4, 6, 1.4)};
+  {
+    // Control: the band alone, and the old behaviour.
+    Plan p = plan();
+    BandRoomsOptions o;
+    o.graph_enclosed_rooms = false;
+    rasterise_wall_graph(p.g, t, o);
+    partition_room_grid(p.g, o);
+    CHECK(p.g.rooms == 2);
+    CHECK(p.at(4.5, 0.7) == 0);
+  }
+  Plan p = plan();
+  BandRoomsOptions o;
+  rasterise_wall_graph(p.g, t, o);
+  CHECK(partition_room_grid(p.g, o) == 3);
+  CHECK(p.g.enclosed == 1);
+  const int32_t hall = p.at(4.5 + 0.125, 0.7); // between two risers
+  const int32_t west = p.at(1.5, 2);
+  const int32_t north = p.at(4.5, 2.7);
+  CHECK(hall > 0);
+  CHECK(west > 0);
+  CHECK(north > 0);
+  CHECK(std::set<int32_t>{hall, west, north}.size() == 3);
+  // Rooms are numbered cores first, then coreless, then enclosed regions.
+  CHECK(hall == 3);
+
+  // Without the walls table nothing closes the hall: no room there.
+  Plan q = plan();
+  partition_room_grid(q.g, o);
+  CHECK(q.g.enclosed == 0);
+  CHECK(q.at(4.5 + 0.125, 0.7) == 0);
+}
+
+TEST_CASE("BandRooms_Grid_SliverBetweenTwoGraphWalls_IsNoRoom",
+          "[segmentation][band_rooms][walls]") {
+  // Two walls of the table 0.4 m apart (a duct, a wall seen twice) close
+  // off a 4 m long sliver: enclosed, 1.6 m^2, but narrower than
+  // 2 x coreless_min_clearance, so no room.
+  Plan p(-1, 7, -1, 5);
+  p.floor(0, 6, 0, 4);
+  p.wall(0, 0, 0, 4);
+  p.wall(6, 6, 0, 4);
+  p.wall(0, 6, 0, 0);
+  p.wall(0, 6, 4, 4);
+  BandRoomsPlan t;
+  t.walls = {wall_rec("s", 0, 0, 6, 0),     wall_rec("n", 0, 4, 6, 4),
+             wall_rec("w", 0, 0, 0, 4),     wall_rec("e", 6, 0, 6, 4),
+             wall_rec("a", 2.8, 0, 2.8, 4), wall_rec("b", 3.2, 0, 3.2, 4)};
+  BandRoomsOptions o;
+  rasterise_wall_graph(p.g, t, o);
+  CHECK(partition_room_grid(p.g, o) == 2);
+  CHECK(p.g.enclosed == 0);
+  CHECK(p.at(3.0, 2) == 0);
+}

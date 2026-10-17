@@ -464,7 +464,11 @@ struct WallGraph {
 ///  4. corners and tees: non-parallel pairs, nearest crossing first; a
 ///     corner moves both ends to the crossing of the axes, a tee moves one
 ///     end onto the other wall's axis; each end joins at most once and a
-///     move never leaves a wall shorter than min_run_m;
+///     move never leaves a wall shorter than min_run_m. A corner with a
+///     wall seen below min_seen_share (before the joins) is tried last when
+///     the other wall's end could tee onto a seen wall within corner_m
+///     instead; if that end tees, the barely seen wall ends on it
+///     (reusex-47m);
 ///  5. seen share: the share of the wall's 25 cm (s, z) cells over its
 ///     length and the storey height with wall evidence within its body;
 ///     below min_seen_share it is flagged.

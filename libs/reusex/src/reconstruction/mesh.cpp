@@ -222,6 +222,47 @@ wall_z_ranges(const EigenVectorContainer<double, 4> &planes,
   return out;
 }
 
+std::vector<WallRun>
+wall_runs(const EigenVectorContainer<double, 4> &planes,
+          const std::vector<IndicesPtr> &inliers, CloudConstPtr cloud,
+          const std::vector<std::pair<size_t, size_t>> &pairs, double gap_m) {
+  constexpr double kVerticalEps = 0.1; // |n_z| below this: a wall
+  std::vector<WallRun> out(pairs.size());
+  if (!cloud)
+    return out;
+  for (size_t p = 0; p < pairs.size(); ++p) {
+    const auto [a, b] = pairs[p];
+    if (a >= planes.size() || b >= planes.size() ||
+        std::abs(planes[a][2]) >= kVerticalEps ||
+        std::abs(planes[b][2]) >= kVerticalEps)
+      continue;
+    Eigen::Vector2d axis(-planes[a][1], planes[a][0]);
+    if (axis.norm() < 1e-9)
+      continue;
+    axis.normalize();
+    std::vector<double> s;
+    for (size_t id : {a, b})
+      if (id < inliers.size() && inliers[id])
+        for (int idx : *inliers[id]) {
+          const auto &q = cloud->points[static_cast<size_t>(idx)];
+          s.push_back(axis.x() * q.x + axis.y() * q.y);
+        }
+    if (s.empty())
+      continue;
+    std::sort(s.begin(), s.end());
+    auto &run = out[p];
+    run.axis = axis;
+    run.spans.push_back({s.front(), s.front()});
+    for (double v : s) {
+      if (v - run.spans.back()[1] > gap_m)
+        run.spans.push_back({v, v});
+      else
+        run.spans.back()[1] = v;
+    }
+  }
+  return out;
+}
+
 pcl::PolygonMeshPtr mesh(CloudConstPtr cloud, CloudNConstPtr normals,
                          EigenVectorContainer<double, 4> &planes,
                          EigenVectorContainer<double, 3> &centroids,
@@ -287,8 +328,9 @@ pcl::PolygonMeshPtr mesh(CloudConstPtr cloud, CloudNConstPtr normals,
   select_structural_planes(planes, inliers, centroids, cloud, structural,
                            evidence);
 
+  // With the cloud, faces of two storeys' walls do not pair (reusex-ro1).
   auto pairs = make_pairs(planes, inliers, centroids, opt.search_threshold,
-                          opt.new_plane_offset);
+                          opt.new_plane_offset, kMaxCrossedGapDefault, cloud);
   reusex::debug("Number of plane pairs: {}", pairs.size());
 
   auto [vertical, horizontal] = separate_planes(planes);
@@ -394,12 +436,35 @@ pcl::PolygonMeshPtr mesh(CloudConstPtr cloud, CloudNConstPtr normals,
 
   reusex::debug("Cell complex: {}", *cc);
 
+  // Which slab cells lie on their wall's measured run (reusex-9a8): a strip
+  // of a wall's line through open floor takes the space prior below.
+  if (opt.wall_runs) {
+    const auto runs =
+        wall_runs(planes, inliers, cloud, pairs, opt.wall_run_gap_m);
+    const auto ws = cc->mark_wall_runs(runs, opt.wall_run_margin_m);
+    reusex::info("mesh: {} of {} wall pair(s) measured along their axis "
+                 "(gaps up to {:.2f} m bridged, +-{:.2f} m at the ends); {} "
+                 "slab cell(s), {:.1f} m^3 lie beyond a run (open floor on "
+                 "a wall's line, free for the space prior)",
+                 ws.pairs_measured, pairs.size(), opt.wall_run_gap_m,
+                 opt.wall_run_margin_m, ws.cells_off_run, ws.volume_off_run);
+  }
+
   // INFO: Display cell complex
   // if (viewer)
   //  viewer->addCellComplex(cc, "cell_complex", vps->at(1));
 
   cc->compute_room_probabilities<PointT, NormalT, LabelT>(cloud, normals,
                                                           rooms);
+  // The stored spaces as evidence where the rays cannot see (reusex-6t4).
+  if (!opt.spaces.empty() && opt.space_prior_weight > 0.0) {
+    const auto sp = apply_space_prior(*cc, opt.spaces, opt.space_prior_weight);
+    reusex::info("mesh: space prior (weight {:.2f}) from {} space(s): {} "
+                 "cell(s), {:.1f} m^3 inside a space; {} cell(s), {:.1f} m^3 "
+                 "turned from outside to their space's room",
+                 opt.space_prior_weight, sp.spaces, sp.cells, sp.volume,
+                 sp.cells_flipped, sp.volume_flipped);
+  }
   // // INFO: Display face support probabilities
   // if (false && viewer)
   //   viewer->addSupportProbabilities(cc, "face_support_probablilites",

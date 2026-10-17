@@ -298,6 +298,15 @@ TEST_CASE("StageParameters_Mesh_MirrorMeshOptionsDefaults",
   REQUIRE(std::holds_alternative<bool>(storey_local.default_value));
   CHECK(std::get<bool>(storey_local.default_value) == d.storey_local);
 
+  // The spaces as a room prior (reusex-6t4).
+  const ParameterDescriptor &space_prior =
+      *parameter_of(JobStage::mesh, "space_prior");
+  REQUIRE(std::holds_alternative<bool>(space_prior.default_value));
+  CHECK(std::get<bool>(space_prior.default_value) ==
+        reusex::pipeline::MeshStageOptions{}.use_space_prior);
+  CHECK(number_default(JobStage::mesh, "space_prior_weight") ==
+        d.space_prior_weight);
+
   const ParameterDescriptor &solver = *parameter_of(JobStage::mesh, "solver");
   REQUIRE(std::holds_alternative<std::string>(solver.default_value));
   CHECK(std::get<std::string>(solver.default_value) == "auto");
