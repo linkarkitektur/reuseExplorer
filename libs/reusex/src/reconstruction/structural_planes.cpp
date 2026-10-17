@@ -332,8 +332,15 @@ auto drop_planes_by_role(EigenVectorContainer<double, 4> &planes,
       continue;
     }
     if (roles[i] == core::PlaneRole::clutter) {
-      ++report.clutter;
-      continue;
+      // Only horizontal clutter goes. A plane the classification's wider
+      // vertical band (80 deg) called a wall-like clutter may still lean a
+      // few degrees here, before regularisation straightens it.
+      const double up = std::abs(planes[i].head<3>().normalized().z());
+      if (up > 1.0 - kOrientationEps) {
+        ++report.clutter;
+        continue;
+      }
+      ++report.vertical_clutter_kept; // the structural filter decides
     }
     out_planes.push_back(planes[i]);
     out_inliers.push_back(inliers[i]);
@@ -344,8 +351,10 @@ auto drop_planes_by_role(EigenVectorContainer<double, 4> &planes,
   centroids = std::move(out_centroids);
   report.planes_out = planes.size();
   reusex::info("plane roles: {} furniture and {} clutter plane(s) left out "
-               "of the cell complex, {} plane(s) kept",
-               report.furniture, report.clutter, report.planes_out);
+               "of the cell complex, {} plane(s) kept ({} vertical clutter "
+               "plane(s) left to the structural filter)",
+               report.furniture, report.clutter, report.planes_out,
+               report.vertical_clutter_kept);
   return report;
 }
 
