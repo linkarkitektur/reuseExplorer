@@ -91,6 +91,8 @@ struct SubcommandOptimizeOptions {
       reusex::geometry::PlaneGraphOptions{}.manhattan_max_angle_deg;
   float manhattan_level_max_angle_deg =
       reusex::geometry::PlaneGraphOptions{}.manhattan_level_max_angle_deg;
+  float manhattan_frame_sigma_deg =
+      reusex::geometry::PlaneGraphOptions{}.manhattan_frame_sigma_deg;
   std::string manhattan_up = "z"; ///< auto | x | y | z
 
   // Pose edits (reusex-rcv.1.3): a reusex.pose_edits.v1 file

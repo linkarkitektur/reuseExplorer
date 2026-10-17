@@ -441,6 +441,10 @@ const std::vector<ParameterDescriptor> &optimize_parameters() {
           "Floors/ceilings within this of horizontal are levelled; keep it "
           "below real ceiling slopes.",
           4.0f, 0.1, 45.0),
+      num("manhattan_frame_sigma_deg", "Manhattan heading sigma [deg]",
+          "Std of the per-frame heading factor tying each frame's own wall "
+          "detections to the grid (reusex-0oi); 0 switches it off.",
+          4.0f, 0.0, 20.0),
       boolean("dry_run", "Dry run",
               "Compute and report statistics without writing optimised poses "
               "back to the project.",

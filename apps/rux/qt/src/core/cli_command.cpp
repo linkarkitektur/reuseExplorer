@@ -118,6 +118,7 @@ const std::vector<StageSpec> &stage_specs() {
          "--manhattan-level-max-angle",
          {},
          {}},
+        {"manhattan_frame_sigma_deg", "--manhattan-frame-sigma", {}, {}},
         {"dry_run", {}, "--dry-run", {}}}},
       {"graph_discover",
        {"graph", "discover"},
