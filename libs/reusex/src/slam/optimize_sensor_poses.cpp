@@ -30,6 +30,7 @@
 #include <map>
 #include <numeric>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -272,13 +273,39 @@ StoredGraphSolve solve_stored_pose_graph(const ProjectDB &db,
   const int graph_edges = static_cast<int>(edges.size());
 
   // --- 3. Connectivity bridge (spec review focus 3) ------------------------
-  Components comp(static_cast<int>(frames.size()));
+  // Parts of the graph that nothing ties together (frames without surfels,
+  // a stored edge with status 'rejected', scan boundaries) are bridged with
+  // odometry from the initial poses. Pose-edit factors tie too: a relative /
+  // same_surface edit joins its two frames, a prior anchors its part. An
+  // explicit reject_edge is never bridged over (reusex-39h): with odometry
+  // derived from the same poses the bridge is the rejected link itself. A
+  // part that only the rejected edge held is an error naming the edit
+  // (docs/design/pose-edits.md, ### reject_edge).
+  const int n_frames = static_cast<int>(frames.size());
+  Components comp(n_frames);
   for (const auto &e : edges)
     comp.unite(e.i, e.j);
+  for (const auto &c : lowered.surfaces)
+    comp.unite(c.i, c.j);
+  auto rejected_by = [&](int k) -> const slam::EdgeTombstone * {
+    const int a = std::min(frames[static_cast<size_t>(k)].node_id,
+                           frames[static_cast<size_t>(k + 1)].node_id);
+    const int b = std::max(frames[static_cast<size_t>(k)].node_id,
+                           frames[static_cast<size_t>(k + 1)].node_id);
+    for (const auto &t : lowered.tombstones)
+      if (t.from == a && t.to == b && t.edge_type == pg::kTypeOdometry)
+        return &t;
+    return nullptr;
+  };
   int bridged = 0;
-  for (int k = 0; k + 1 < static_cast<int>(frames.size()); ++k) {
+  std::vector<std::pair<int, const slam::EdgeTombstone *>> cuts;
+  for (int k = 0; k + 1 < n_frames; ++k) {
     if (comp.find(k) == comp.find(k + 1))
       continue;
+    if (const auto *t = rejected_by(k)) {
+      cuts.emplace_back(k, t);
+      continue;
+    }
     GraphEdge e;
     e.i = k;
     e.j = k + 1;
@@ -294,6 +321,48 @@ StoredGraphSolve solve_stored_pose_graph(const ProjectDB &db,
                "rejected odometry, or scan boundaries); bridged them with {} "
                "odometry edges from the initial poses (not stored)",
                bridged + 1, bridged);
+  if (!cuts.empty()) {
+    // Frame 0 carries the solver's gauge; a prior anchors its own part.
+    std::vector<char> anchored(static_cast<size_t>(n_frames), 0);
+    anchored[static_cast<size_t>(comp.find(0))] = 1;
+    for (const auto &p : lowered.priors)
+      anchored[static_cast<size_t>(comp.find(p.i))] = 1;
+    std::string loose;
+    int loose_parts = 0;
+    for (const auto &[k, t] : cuts) {
+      // The part on the far side of the cut, unless it is anchored or is
+      // already reported (a part cut on both sides is named once).
+      for (const int side : {k, k + 1}) {
+        const int root = comp.find(side);
+        if (anchored[static_cast<size_t>(root)])
+          continue;
+        anchored[static_cast<size_t>(root)] = 1;
+        int lo = -1, hi = -1, count = 0;
+        for (int f = 0; f < n_frames; ++f)
+          if (comp.find(f) == root) {
+            const int id = frames[static_cast<size_t>(f)].node_id;
+            lo = lo < 0 ? id : std::min(lo, id);
+            hi = std::max(hi, id);
+            ++count;
+          }
+        loose += fmt::format("{}reject_edge '{}' ({}-{} odometry) cuts off "
+                             "{} frames (node ids {}..{})",
+                             loose.empty() ? "" : "; ", t->tag, t->from, t->to,
+                             count, lo, hi);
+        ++loose_parts;
+      }
+    }
+    if (loose_parts > 0)
+      throw std::runtime_error(fmt::format(
+          "PlaneGraph: {}, and no other edge, relative / same_surface edit or "
+          "prior ties them to the rest of the graph. optimize does not bridge "
+          "over an explicit rejection: add a relative edit or an anchor on "
+          "that part, or drop the reject_edge",
+          loose));
+    core::info("PlaneGraph: {} reject_edge cuts in the odometry chain left "
+               "unbridged; pose edits tie the parts together",
+               cuts.size());
+  }
 
   // --- 4. Solve -------------------------------------------------------------
   PlaneGraphOptimizer optimizer(options);

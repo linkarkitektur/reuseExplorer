@@ -12,6 +12,7 @@
 #include <reusex/core/pose_graph.hpp>
 #include <reusex/core/trajectory.hpp>
 #include <reusex/io/trajectory.hpp>
+#include <reusex/slam/pose_metrics.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -202,4 +203,43 @@ TEST_CASE("trajectory_from_project_ThrowsWithNoSensorFrames",
   reusex::test_support::TempPath tmp("test_trajectory_empty");
   reusex::ProjectDB db(tmp.path);
   REQUIRE_THROWS_AS(trajectory_from_project(db, false), std::runtime_error);
+}
+
+// reusex-dh8: a project scored against its own `export trajectory` must read
+// 0. Stored poses imported from float sources (RTABMap) carry a rotation
+// that is orthonormal only to float precision; write_tum projects it onto a
+// unit quaternion, so the two sides differ by ~1e-8 in the rotation matrix.
+// acos((trace - 1) / 2) turns that into ~1e-4 rad (0.009 deg on house2).
+TEST_CASE("trajectory_from_project_ScoredAgainstItsOwnExport_ReadsZero",
+          "[io][trajectory]") {
+  reusex::test_support::TempPath tmp("test_trajectory_self_score");
+  reusex::test_support::TempPath tum("test_trajectory_self_score", ".tum");
+  reusex::ProjectDB db(tmp.path);
+  auto intr = reusex::test_support::make_intrinsics(8, 8, 4, 4, 8, 8);
+  const auto color = reusex::test_support::make_color(8, 8);
+  for (int k = 1; k <= 6; ++k) {
+    Eigen::Matrix4d p = Eigen::Matrix4d::Identity();
+    p.topLeftCorner<3, 3>() =
+        (Eigen::AngleAxisd(0.37 * k, Eigen::Vector3d::UnitZ()) *
+         Eigen::AngleAxisd(0.11 * k, Eigen::Vector3d::UnitX()))
+            .toRotationMatrix();
+    p.topRightCorner<3, 1>() = Eigen::Vector3d(0.8 * k, 0.1 * k, 1.3);
+    // Round through float, as a pose imported from RTABMap is.
+    const Eigen::Matrix4d stored = p.cast<float>().cast<double>();
+    db.save_sensor_frame(
+        k, color, cv::Mat(), cv::Mat(),
+        reusex::core::pose_graph::row_major_from_matrix(stored), intr,
+        /*timestamp=*/100.0 + k);
+  }
+
+  const auto project = trajectory_from_project(db, /*use_initial=*/false);
+  write_tum(project, tum.path);
+  const auto exported = read_tum(tum.path);
+
+  const auto m = reusex::slam::compare_trajectories(project, exported, {});
+  REQUIRE(m.matched == 6);
+  CHECK_THAT(m.ate_rmse_m, WithinAbs(0.0, 1e-9));
+  CHECK_THAT(m.rot_rmse_deg, WithinAbs(0.0, 1e-6));
+  CHECK_THAT(m.rpe_rot_frames_deg, WithinAbs(0.0, 1e-6));
+  CHECK_THAT(m.rpe_rot_deg, WithinAbs(0.0, 1e-6));
 }
