@@ -39,7 +39,15 @@
 ///    table closes its doorway (BandRoomsOptions::cut_at_doors), so rooms
 ///    are cut at doors however wide; a free-space component that no core
 ///    reaches but that is closed off this way (a WC stall) is a room of its
-///    own.
+///    own;
+///  - closed-off regions (reusex-ccz): a wall end the walls stage joined to
+///    a wall the grid leaves out runs on to the wall it points at
+///    (BandRoomsOptions::wall_graph_join_gap), and a region the wall graph
+///    closes off that no room reached is a room of its own
+///    (BandRoomsOptions::graph_enclosed_rooms): a stair hall whose risers
+///    cut its band into slivers. house2: the stair hall is a room, room
+///    count -2 -> -1, room IoU 0.595 -> 0.638; house1 and NewOffice
+///    unchanged.
 /// Without them the constriction watershed alone cuts the rooms, as before.
 /// Measured with them (reusex-z1v.7.4, room IoU / count error against the
 /// reference plans, walls -> openings -> rooms): NewOffice 0.544 / 0 ->
@@ -137,6 +145,23 @@ struct BandRoomsOptions {
   /// their doorways: a wall the scan barely shows is as likely a cabinet
   /// front or a drift artefact as a partition.
   double wall_graph_min_seen_share = 0.3;
+  /// A wall of the graph whose end touches no other wall the grid keeps is
+  /// drawn on, up to this far, to the first kept wall its axis meets at
+  /// least 30 deg off parallel [m]. The walls stage may have joined that
+  /// end to a wall the grid leaves out (wall_graph_min_seen_share: house2's
+  /// stair side took the stair hall's west wall in a corner 0.4 m short of
+  /// the hall's north wall, reusex-ccz), leaving a gap narrower than any
+  /// door between two rooms. 0 disables.
+  double wall_graph_join_gap = 0.6;
+  /// A region the wall graph and door cuts close off (interior cells not in
+  /// `graph`, 4-connected) that no core or coreless component reached is a
+  /// room of its own, its free cells one id, when it holds min_room_area, is
+  /// at least 2 x coreless_min_clearance wide between graph cells and opens
+  /// onto the exterior on at most coreless_max_open_share of its boundary.
+  /// A stair's risers cut its hall's band into slivers too narrow for a
+  /// core and too small for a coreless room (house2, reusex-ccz); the walls
+  /// stage still closes the hall off. false disables.
+  bool graph_enclosed_rooms = true;
   /// A free-space component no core reaches (narrower than 2 x
   /// core_radius, closed off by walls and door cuts: a WC stall) is a room
   /// of its own when it is at least 2 x this wide somewhere and holds
@@ -193,10 +218,13 @@ struct RoomGrid {
   /// Room id per cell, 0 = none (wall, exterior, dropped region).
   std::vector<int32_t> labels;
 
-  int cores = 0;              ///< cores seeded (after the min_core_area filter)
-  int coreless = 0;           ///< rooms from components no core reached
-  int graph_walls = 0;        ///< walls rasterised (rasterise_wall_graph())
-  int door_cuts = 0;          ///< doorways closed (rasterise_wall_graph())
+  int cores = 0;       ///< cores seeded (after the min_core_area filter)
+  int coreless = 0;    ///< rooms from components no core reached
+  int enclosed = 0;    ///< rooms from regions the wall graph closes off
+  int graph_walls = 0; ///< walls rasterised (rasterise_wall_graph())
+  int door_cuts = 0;   ///< doorways closed (rasterise_wall_graph())
+  int joined_ends =
+      0; ///< wall ends drawn on to a wall (rasterise_wall_graph())
   int merged_pockets = 0;     ///< regions merged as pockets (reusex-3r1)
   int rooms = 0;              ///< rooms kept
   int dropped_regions = 0;    ///< regions below min_room_area
@@ -229,8 +257,11 @@ struct BandRoomsPlan {
 /// to the grid, OR-ed): with use_wall_graph every wall over its axis
 /// except its doorways, with cut_at_doors every doorway (door or opening,
 /// by OpeningRecord::wall = WallRecord::guid) over its span plus
-/// door_cut_overlap. Sets `graph_walls` and `door_cuts`; returns the number
-/// of cells set. Deterministic: depends on the records, not their order.
+/// door_cut_overlap. With use_wall_graph, a wall end that touches no other
+/// kept wall runs on up to wall_graph_join_gap to the first kept wall it
+/// meets. Sets `graph_walls`, `door_cuts` and `joined_ends`; returns the
+/// number of cells set. Deterministic: depends on the records, not their
+/// order.
 size_t rasterise_wall_graph(RoomGrid &grid, const BandRoomsPlan &plan,
                             const BandRoomsOptions &options);
 
