@@ -88,11 +88,24 @@ struct FrameFeatures {
 /// when the frame has no colour/depth or degenerate intrinsics. @p region
 /// restricts detection to that colour-image rectangle (clamped; nullopt =
 /// the whole image) — Rediger's match editor (frame_pair_matches.cpp).
+///
+/// @p require_pose (default true) gates extraction on
+/// `db.has_sensor_frame_pose(node_id)`: PanoramaAlignment / PanoramaLoopEdges
+/// compose `local` into WORLD coordinates via `T_world_cam` (see world()
+/// above), so for them a frame with no usable stored pose must contribute
+/// nothing rather than anchor its points at the identity-fallback origin
+/// (#336). LoopClosure (reusex-467) only needs the frame's OPTICAL-frame
+/// `local` points — it takes `seed_poses` as an explicit argument and never
+/// reads `T_world_cam` — so it passes false to keep extracting features for a
+/// frame whose `sensor_frames.transform` is missing or was cleared;
+/// `T_world_cam` is then left at Identity and a caller that passes false MUST
+/// NOT call `world()` on the result.
 FrameFeatures
 extract_frame_features(const ProjectDB &db, int node_id,
                        const cv::Ptr<cv::ORB> &orb, float min_depth,
                        float max_depth,
-                       const std::optional<cv::Rect> &region = std::nullopt);
+                       const std::optional<cv::Rect> &region = std::nullopt,
+                       bool require_pose = true);
 
 /// Pinhole intrinsics scaled to a depth grid of @p depth_cols x
 /// @p depth_rows (the colour calibration is intr.width x intr.height).

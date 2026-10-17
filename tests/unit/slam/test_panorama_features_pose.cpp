@@ -37,6 +37,7 @@
 #include <opencv2/features2d.hpp>
 
 #include <array>
+#include <optional>
 
 using namespace reusex;
 using namespace reusex::test_support;
@@ -106,6 +107,36 @@ TEST_CASE("ExtractFrameFeatures_FrameWithUnusablePose_ContributesNoDescriptors",
   // The old code returned a full descriptor set anchored at the world origin.
   CHECK(features.descriptors.empty());
   CHECK(features.keypoints.empty());
+}
+
+TEST_CASE(
+    "ExtractFrameFeatures_RequirePoseFalse_PoselessFrameStillYieldsFeatures",
+    "[slam][panorama][pose]") {
+  // reusex-467: LoopClosure's detect_loop_edges() takes seed_poses as an
+  // explicit argument and never reads T_world_cam, so it only needs
+  // colour+depth+intrinsics, not a *stored* pose. require_pose=false must
+  // keep extracting features for a frame whose stored transform is missing,
+  // instead of the gated empty result the other two (world-pose) callers get.
+  TempPath tmp("test_pano_features_poseless_looseok");
+
+  {
+    ProjectDB db(tmp.path);
+    seed_frame(db, 1, translation_pose(kFarX, 0.0, 0.0));
+  }
+  clear_sensor_frame_pose(tmp.path, 1);
+
+  ProjectDB db(tmp.path);
+  REQUIRE_FALSE(db.has_sensor_frame_pose(1));
+
+  const auto features = geometry::pano_detail::extract_frame_features(
+      db, 1, orb(), kMinDepth, kMaxDepth, /*region=*/std::nullopt,
+      /*require_pose=*/false);
+
+  CHECK_FALSE(features.descriptors.empty());
+  CHECK_FALSE(features.keypoints.empty());
+  // T_world_cam is left at Identity: a require_pose=false caller must not
+  // read it (LoopClosure never does).
+  CHECK(features.T_world_cam.isApprox(Eigen::Matrix4d::Identity(), 1e-12));
 }
 
 TEST_CASE("ExtractFrameFeatures_FrameWithStoredIdentityPose_ReturnsDescriptors",
