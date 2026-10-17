@@ -100,6 +100,11 @@ const std::vector<StageSpec> &stage_specs() {
         {"plane_classes", {}, {}, "--no-plane-classes"},
         {"storey_sections", {}, {}, "--no-storey-sections"},
         {"storey_local", {}, {}, "--no-storey-local"},
+        {"space_prior", {}, {}, "--no-space-prior"},
+        // A CLI flag, not a --space- design token (token-lint).
+        // clang-format off
+        {"space_prior_weight", "--space-prior-weight", {}, {}}, // token-lint: allow
+        // clang-format on
         {"filter", "--filter", {}, {}}}},
       {"optimize",
        {"optimize", {}},

@@ -574,6 +574,13 @@ those labels for a room-partitioned output is tracked under WP9
 | Options  | `MeshOptions` → `mesh()` (`libs/reusex/include/reconstruction/mesh.hpp`); builds a `SolidifierOptions` subset for `Solidifier` internally |
 | Checks   | `cloud`/`normals`/`rooms`/`planes` present + aligned; `plane_centroids`/`plane_normals` present + aligned |
 
+The stored `spaces` (when present) are a room prior (key `space_prior`, on;
+weight `space_prior_weight`, 0.3; reusex-6t4, `reconstruction/space_prior.hpp`):
+a cell inside a space's footprint and storey height leans towards that space's
+room where the rays that hit something are unsure. A space whose `room_label`
+the `rooms` cloud lacks is skipped with a warning; without spaces the rays
+alone decide.
+
 ### `texture` (`rux create texture`)
 
 Texture-map the reconstructed mesh from the cloud's colors.

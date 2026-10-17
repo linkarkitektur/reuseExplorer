@@ -401,6 +401,15 @@ pcl::PolygonMeshPtr mesh(CloudConstPtr cloud, CloudNConstPtr normals,
 
   cc->compute_room_probabilities<PointT, NormalT, LabelT>(cloud, normals,
                                                           rooms);
+  // The stored spaces as evidence where the rays cannot see (reusex-6t4).
+  if (!opt.spaces.empty() && opt.space_prior_weight > 0.0) {
+    const auto sp = apply_space_prior(*cc, opt.spaces, opt.space_prior_weight);
+    reusex::info("mesh: space prior (weight {:.2f}) from {} space(s): {} "
+                 "cell(s), {:.1f} m^3 inside a space; {} cell(s), {:.1f} m^3 "
+                 "turned from outside to their space's room",
+                 opt.space_prior_weight, sp.spaces, sp.cells, sp.volume,
+                 sp.cells_flipped, sp.volume_flipped);
+  }
   // // INFO: Display face support probabilities
   // if (false && viewer)
   //   viewer->addSupportProbabilities(cc, "face_support_probablilites",

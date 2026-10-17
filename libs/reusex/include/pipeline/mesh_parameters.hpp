@@ -60,6 +60,16 @@ struct MeshStageOptions {
   /// first rule (only planes near a storey height, reusex-sba) dropped
   /// house1's split level and house2's attic and stayed off.
   bool use_storey_sections = true;
+  /// The stored spaces as a room prior for the cells inside their
+  /// footprints (key "space_prior"; reusex-6t4): MeshOptions::spaces from
+  /// mesh_space_footprints(), see geometry::apply_space_prior(). No effect
+  /// without a spaces table.
+  ///
+  /// On by default since reusex-6t4 (2026-10-17, scripts/bench-solid.sh,
+  /// off -> on at weight 0.3): house2 fit 21.2 -> 20.4 cm, unsupported mesh
+  /// 21.8% -> 21.4%; house1 identical; NewOffice fit 19.2 -> 19.2 cm,
+  /// unsupported 11.0% -> 10.9%.
+  bool use_space_prior = true;
 };
 
 /// Read the mesh stage's JSON parameters ("" = defaults). Unknown keys are
@@ -91,6 +101,14 @@ std::vector<double> mesh_section_heights(const ProjectDB &db);
 /// not in the storeys table is left out (logged at warn). Empty when the
 /// project has no walls.
 std::vector<geometry::WallEvidence> mesh_wall_evidence(const ProjectDB &db);
+
+/// The spaces table as footprints in their storeys' level frames, for
+/// MeshOptions::spaces (reusex-6t4): each space's polygon, its room_label
+/// and its storey's frame, floor and ceiling. A space without a room label
+/// or whose storey is not in the storeys table is left out (logged at
+/// warn). Empty when the project has no spaces.
+std::vector<geometry::SpaceFootprint>
+mesh_space_footprints(const ProjectDB &db);
 
 /// The mesh stage's options for @p db: MeshOptions::plane_roles,
 /// MeshOptions::section_heights and (with the section heights, which it is
