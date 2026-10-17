@@ -151,9 +151,11 @@ struct SpacesResult {
 /// the output of partition_room_grid()) and the walls standing on it
 /// (WallRecord::storey == RoomGrid::storey_idx). @p storeys give z_floor /
 /// z_ceiling for the volume (a grid without a matching storey gets volume
-/// -1). Space guids are "space-<storey>-<room id>" until the spaces stage
-/// (W4.3) gives them their stable keys; boundaries refer to those guids and
-/// to WallRecord::guid.
+/// -1). Space guids are placeholders, "space-<storey>-<room id>";
+/// core::assign_space_guids() (the spaces stage, W4.3) turns them into
+/// stable GUIDs and rewrites the boundaries. Boundaries refer to those guids
+/// and to WallRecord::guid. A space's confidence is the share of its area
+/// that comes from pure faces (the rest is raster).
 auto polygonise_spaces(const std::vector<RoomGrid> &grids,
                        const std::vector<core::StoreyRecord> &storeys,
                        const std::vector<core::WallRecord> &walls,

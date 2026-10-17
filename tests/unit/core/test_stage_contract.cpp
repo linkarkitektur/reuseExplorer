@@ -51,10 +51,10 @@ const std::vector<PipelineStage> &all_stages() {
       PipelineStage::storeys,        PipelineStage::instances,
       PipelineStage::classify,       PipelineStage::walls,
       PipelineStage::openings,       PipelineStage::rooms,
-      PipelineStage::mesh,           PipelineStage::texture,
-      PipelineStage::windows,        PipelineStage::materials,
-      PipelineStage::survey,         PipelineStage::attributes,
-      PipelineStage::gsplat,
+      PipelineStage::spaces,         PipelineStage::mesh,
+      PipelineStage::texture,        PipelineStage::windows,
+      PipelineStage::materials,      PipelineStage::survey,
+      PipelineStage::attributes,     PipelineStage::gsplat,
   };
   return stages;
 }
@@ -403,4 +403,30 @@ TEST_CASE("StageContract_Rooms_TakesWallsAndOpeningsAsOptionalInputs",
   CHECK(stage_index(PipelineStage::openings) <
         stage_index(PipelineStage::rooms));
   CHECK(stage_index(PipelineStage::rooms) < stage_index(PipelineStage::mesh));
+}
+
+TEST_CASE("StageContract_Spaces_AfterRooms_WallsAndOpeningsOptional",
+          "[core][contract]") {
+  // W4.3 (reusex-z1v.6.3): spaces polygonises the band rooms of `rooms`
+  // against the walls table; the openings precede it in the DAG because
+  // they cut the rooms it reads.
+  const auto &spaces = stage_contract(PipelineStage::spaces);
+  CHECK(spaces.command == "rux create spaces");
+  std::set<std::string> optional;
+  std::set<std::string> required;
+  for (const auto &input : spaces.inputs)
+    for (const auto &name : input.any_of)
+      (input.optional ? optional : required).insert(std::string(name));
+  CHECK(optional == std::set<std::string>{"walls", "openings"});
+  CHECK(required ==
+        std::set<std::string>{"cloud", "normals", "storeys", "rooms"});
+  CHECK(std::vector<std::string_view>(spaces.outputs.begin(),
+                                      spaces.outputs.end()) ==
+        std::vector<std::string_view>{"spaces", "space_boundaries"});
+  CHECK(producing_stage("spaces") == PipelineStage::spaces);
+  CHECK(producing_stage("space_boundaries") == PipelineStage::spaces);
+  CHECK(stage_index(PipelineStage::openings) <
+        stage_index(PipelineStage::spaces));
+  CHECK(stage_index(PipelineStage::rooms) < stage_index(PipelineStage::spaces));
+  CHECK(parse_pipeline_stage("spaces") == PipelineStage::spaces);
 }

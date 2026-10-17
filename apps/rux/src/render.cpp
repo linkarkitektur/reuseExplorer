@@ -232,6 +232,9 @@ EXAMPLES:
   rux -p scan.rux render -o op.png --view plan --layers cloud,walls,openings
   rux -p scan.rux render -o el.png --section 0,0:5,0 --section-thickness 0.6 --layers cloud,openings
 
+  # Detected spaces (rux create spaces) under the walls
+  rux -p scan.rux render -o sp.png --view plan:1.2 --layers cloud,spaces,walls
+
   # Mesh over the cloud, seen from the west
   rux -p scan.rux render -o west.png --view left --layers cloud,mesh
 
@@ -283,6 +286,12 @@ MESH QA (reusex-8vx):
     cover). A legend with mean, P95 and the two shares is drawn in.
   - --qa writes a contact sheet: plan cut, four elevations, three sections
     (or the given --section ones) and a deviation plan.
+
+SPACES (reusex-z1v.6.3):
+  - The `spaces` layer draws the spaces table as translucent polygons in
+    their room's label colour (the `rooms` layer's), holes outlined, each
+    named with its area. In plan and top views on a sheet under the walls
+    and openings; in every other view at the storey's floor height.
 
 OPENINGS (reusex-z1v.7.3):
   - The `openings` layer draws the openings table in its walls' faces:

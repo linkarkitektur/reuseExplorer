@@ -21,6 +21,8 @@ namespace rux::database {
  *                           metadata
  * - storeys.<idx>.walls   → the walls standing on that storey (walls table,
  *                           `rux create walls`)
+ * - storeys.<idx>.spaces  → the spaces of that storey (spaces table,
+ *                           `rux create spaces`)
  *
  * `rux del storeys` deletes every storey; when some are locked (hand-made
  * or hand-fixed) it needs --force. The rows are written by

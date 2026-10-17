@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "database/storey_router.hpp"
+#include "database/space_router.hpp"
 #include "database/wall_router.hpp"
 
 #include <algorithm>
@@ -93,12 +94,14 @@ DataPayload StoreyRouter::get(const std::vector<PathComponent> &components) {
   const auto &prop = components[1].value;
   if (prop == "walls") // the walls standing on this storey (schema v33)
     return walls_json(*db_, match->idx);
+  if (prop == "spaces") // the spaces of this storey (schema v35)
+    return spaces_json(*db_, match->idx);
   if (j.contains(prop))
     return j.at(prop);
   std::string available;
   for (const auto &[k, _] : j.items())
     available += (available.empty() ? "" : ", ") + k;
-  available += ", walls";
+  available += ", walls, spaces";
   throw std::runtime_error("Unknown property: " + prop +
                            "\nAvailable properties: " + available);
 }
