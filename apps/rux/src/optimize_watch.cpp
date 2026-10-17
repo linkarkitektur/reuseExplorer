@@ -238,10 +238,10 @@ EditVerdict judge_edit(const reusex::geometry::EditResidual &residual,
                               residual.rms_rot_deg, kHonouredSigmas, r_max));
   if (off.empty())
     return {};
-  return {false,
-          fmt::format("{} off its target by {}",
-                      edit->kind == PoseEditKind::move ? "the block" : "it",
-                      fmt::join(off, " and "))};
+  return {false, fmt::format("{} off its target by {}",
+                             edit->kind == PoseEditKind::move ? "the block is"
+                                                              : "it is",
+                             fmt::join(off, " and "))};
 }
 
 std::optional<MovePrediction>
