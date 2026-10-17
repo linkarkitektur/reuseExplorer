@@ -190,6 +190,15 @@ NOTES:
       ->default_val(opt->band_wall_min_seen_share)
       ->check(CLI::Range(0.0, 1.0));
 
+  sub->add_option("--spaces-json", opt->spaces_json,
+                  "band, debug: also write the rooms as space polygons "
+                  "against the wall graph (W4.2) to this solid-model "
+                  "JSON/YAML file, for `rux analyze solid --model`. Nothing "
+                  "is stored in the project.");
+  sub->add_flag("--spaces-raster", opt->spaces_raster,
+                "band, debug: --spaces-json writes the rooms' raster "
+                "outlines instead (no wall graph).");
+
   sub->add_option(
          "-f, --filter", opt->filter_expr,
          "Filter expression to limit processing to specific labeled points.\n"
@@ -245,6 +254,9 @@ std::string rooms_stage_parameters(SubcommandSegRoomsOptions const &opt) {
       .set("band_use_walls", opt.band_use_walls)
       .set("band_cut_at_doors", opt.band_cut_at_doors)
       .set("band_wall_min_seen_share", opt.band_wall_min_seen_share)
+      .set_if(!opt.spaces_json.empty(), "spaces_json", opt.spaces_json)
+      .set_if(!opt.spaces_json.empty() && opt.spaces_raster, "spaces_raster",
+              opt.spaces_raster)
       .dump();
 }
 

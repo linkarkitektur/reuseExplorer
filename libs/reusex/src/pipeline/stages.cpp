@@ -25,6 +25,7 @@
 #include "reusex/geometry/level_frame.hpp"
 #include "reusex/geometry/transform_utils.hpp"
 #include "reusex/io/reusex.hpp"
+#include "reusex/io/solid_model_json.hpp"
 #include "reusex/reconstruction/mesh.hpp"
 #include "reusex/reconstruction/openings.hpp"
 #include "reusex/reconstruction/walls.hpp"
@@ -36,6 +37,7 @@
 #include "reusex/segmentation/segment_instances.hpp"
 #include "reusex/segmentation/segment_planes.hpp"
 #include "reusex/segmentation/segment_rooms.hpp"
+#include "reusex/segmentation/spaces.hpp"
 #include "reusex/types/point_types.hpp"
 
 #include <fmt/format.h>
@@ -418,6 +420,34 @@ StageResult run_band_rooms(ProjectDB &db, const StageContext &ctx,
     return StageResult::cancel("room segmentation cancelled");
 
   db.save_point_cloud("rooms", *r.labels, "segment_rooms", ctx.parameters);
+
+  // Debug path (W4.2, reusex-z1v.6.2) until the spaces stage (W4.3) stores
+  // them: the rooms as space polygons against the wall graph, written as a
+  // solid-model document for `rux analyze solid --model`.
+  const auto spaces_json =
+      param_or<std::string>(params, "spaces_json", std::string());
+  if (!spaces_json.empty()) {
+    geometry::SpacesOptions so;
+    so.use_walls = !param_or(params, "spaces_raster", false);
+    so.wall_min_seen_share = o.wall_graph_min_seen_share;
+    core::SolidModel model;
+    model.name = "band rooms as spaces (debug)";
+    model.description = so.use_walls
+                            ? "rux create rooms --spaces-json: band rooms "
+                              "polygonised against the wall graph (W4.2)"
+                            : "rux create rooms --spaces-json "
+                              "--spaces-raster: band rooms' raster outlines";
+    model.storeys = storeys;
+    model.walls = plan.walls.empty() ? db.walls() : plan.walls;
+    auto sp = geometry::polygonise_spaces(r.grids, storeys, model.walls, so);
+    model.spaces = std::move(sp.spaces);
+    model.space_boundaries = std::move(sp.boundaries);
+    model.provided.spaces = true;
+    io::solid_model_to_file(model, spaces_json);
+    info("rooms: wrote {} space(s) and {} space boundar(y/ies) to {}",
+         model.spaces.size(), model.space_boundaries.size(), spaces_json);
+  }
+
   int graph_walls = 0;
   int door_cuts = 0;
   for (const auto &g : r.grids) {
