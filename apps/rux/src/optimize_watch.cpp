@@ -374,6 +374,17 @@ blocked_replacement(const reusex::core::PoseEdit &replaced,
       segment_now.at(p.segment) * 1000.0, replaced.id);
 }
 
+std::vector<std::string> pinning_anchors(const reusex::core::PoseEdits &edits,
+                                         std::int64_t first,
+                                         std::int64_t last) {
+  std::vector<std::string> out;
+  for (const auto &e : edits.edits)
+    if (e.kind == reusex::core::PoseEditKind::anchor &&
+        e.nodes.first >= first && e.nodes.first <= last)
+      out.push_back(e.id);
+  return out;
+}
+
 PoseChange pose_change(const std::vector<std::int64_t> &ids,
                        const std::vector<Eigen::Matrix4d> &a,
                        const std::vector<Eigen::Matrix4d> &b,
@@ -1325,6 +1336,8 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
       const auto best = std::max_element(
           runs.begin(), runs.end(),
           [](const auto &a, const auto &b) { return a.frames < b.frames; });
+      // reusex-r5z: anchors (shear guards) pinning a node of the block.
+      const auto pinned = pinning_anchors(edits, best->first, best->last);
       std::vector<Eigen::Matrix4d> from, to;
       for (std::size_t i = 0; i < nodes.size(); ++i)
         if (nodes[i] >= best->first && nodes[i] <= best->last) {
@@ -1403,9 +1416,15 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
           left_out +=
               fmt::format("{}{}-{} (storey {})", left_out.empty() ? "" : ", ",
                           run.first, run.last, run.storey);
+      // reusex-r5z: the move overrides the anchors that pin a node of its
+      // block; the comment says to drop them with it.
+      std::vector<std::string> pinned_nodes;
+      for (const auto &e : edits.edits)
+        if (std::find(pinned.begin(), pinned.end(), e.id) != pinned.end())
+          pinned_nodes.push_back(fmt::format("{}", e.nodes.first));
       m.note = fmt::format(
           "cycle {}: seg {} ({}-{}) into the rest {:.1f} -> {:.1f} mm "
-          "(segment ICP on the candidate solve){}{}",
+          "(segment ICP on the candidate solve){}{}{}",
           r.index, g.segment, g.first_node, g.last_node, g.before_m * 1000.0,
           g.after_m * 1000.0,
           left_out.empty()
@@ -1416,17 +1435,28 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
               ? std::string()
               : fmt::format("; replaces {}{}",
                             fmt::format("{}", fmt::join(overlaps, ", ")),
-                            realised_note));
-      const std::string comment =
-          fmt::format("  # seg {}: {:.1f} -> {:.1f} mm, move {:.3f} m "
-                      "(centroid {:.3f} m), {:.2f} deg{}{}\n",
-                      g.segment, g.before_m * 1000.0, g.after_m * 1000.0,
-                      g.shift_m, g.centroid_shift_m, g.rotation_deg,
-                      left_out.empty() ? "" : "; SPLIT at a storey change",
-                      overlaps.empty() ? std::string()
-                                       : fmt::format("; REPLACES {}{}",
-                                                     fmt::join(overlaps, ", "),
-                                                     realised_note));
+                            realised_note),
+          pinned.empty()
+              ? std::string()
+              : fmt::format("; overrides {}", fmt::join(pinned, ", ")));
+      const std::string comment = fmt::format(
+          "  # seg {}: {:.1f} -> {:.1f} mm, move {:.3f} m "
+          "(centroid {:.3f} m), {:.2f} deg{}{}{}\n",
+          g.segment, g.before_m * 1000.0, g.after_m * 1000.0, g.shift_m,
+          g.centroid_shift_m, g.rotation_deg,
+          left_out.empty() ? "" : "; SPLIT at a storey change",
+          overlaps.empty()
+              ? std::string()
+              : fmt::format("; REPLACES {}{}", fmt::join(overlaps, ", "),
+                            realised_note),
+          pinned.empty()
+              ? std::string()
+              : fmt::format(
+                    "; OVERRIDES {} (pin{} node{} {} inside the "
+                    "block): drop {} when you paste this",
+                    fmt::join(pinned, ", "), pinned.size() == 1 ? "s" : "",
+                    pinned.size() == 1 ? "" : "s",
+                    fmt::join(pinned_nodes, ", "), fmt::join(pinned, ", ")));
       const std::string item = comment + edit_yaml(m);
       r.suggestion_items.push_back(item);
       yaml += item;
@@ -1436,7 +1466,8 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
                                   {"last_node", m.nodes.last},
                                   {"before_m", g.before_m},
                                   {"after_m", g.after_m},
-                                  {"split", !left_out.empty()}});
+                                  {"split", !left_out.empty()},
+                                  {"overrides", pinned}});
       ++emitted;
     }
     // Shear guards: pin each SHEARED untouched segment (moved, and fits
