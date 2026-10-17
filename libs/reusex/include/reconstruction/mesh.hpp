@@ -82,7 +82,8 @@ struct MeshOptions {
   /// (by half the section for a thinner one, i.e. a slab).
   double section_overlap_m = CellComplex::default_min_section_overlap_m;
 
-  /// World z of every storey floor and ceiling (reusex-z1v.3.4), from the
+  /// World z of every storey floor and ceiling (reusex-z1v.3.4), floor then
+  /// ceiling for each storey in turn, from the
   /// storeys table through LevelFrame::world_z_at (pipeline::
   /// mesh_section_heights()). When non-empty, only the horizontal planes
   /// inside the building become section planes of the cell complex
@@ -93,6 +94,13 @@ struct MeshOptions {
   /// a section (legacy).
   std::vector<double> section_heights{};
   double section_tolerance_m = 0.15;
+
+  /// The walls table in world coordinates (pipeline::mesh_wall_evidence()).
+  /// With section_heights, read as (floor, ceiling) pairs, one per storey,
+  /// it is the evidence a short wall line needs to stay an arrangement line
+  /// (reusex-72a, StructuralPlaneOptions::min_free_line_m). Empty = no
+  /// short line is dropped (the behaviour before 72a).
+  std::vector<WallEvidence> walls{};
 };
 
 /**

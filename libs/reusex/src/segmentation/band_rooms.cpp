@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <deque>
 #include <limits>
+#include <map>
 #include <queue>
 #include <stdexcept>
 #include <tuple>
@@ -177,6 +178,81 @@ std::vector<int32_t> grow_labels(const std::vector<int32_t> &labels,
   return out;
 }
 
+/// Merge pockets into their neighbours, in place on @p labels (ids
+/// 1..@p n): a region of at most @p max_cells cells whose 4-connected
+/// boundary edges touch one other region on at least @p min_share of them
+/// takes that region's id, if that region is larger (equal: the lower id).
+/// Smallest regions first, one at a time, so a merged pocket's neighbour is
+/// judged with it; deterministic (ties by id). Returns the regions merged.
+int merge_pockets(std::vector<int32_t> &labels, int w, int h, int32_t n,
+                  double max_cells, double min_share) {
+  const auto N = static_cast<size_t>(n) + 1;
+  int merged = 0;
+  std::vector<uint8_t> done(N, 0);
+  for (;;) {
+    std::vector<size_t> area(N, 0);
+    std::vector<size_t> edges(N, 0);
+    std::map<std::pair<int32_t, int32_t>, size_t> contact;
+    for (int r = 0; r < h; ++r)
+      for (int c = 0; c < w; ++c) {
+        const int32_t l = labels[static_cast<size_t>(r) * w + c];
+        if (l <= 0)
+          continue;
+        ++area[static_cast<size_t>(l)];
+        auto edge = [&](int cc, int rr) {
+          const int32_t m = (cc < 0 || rr < 0 || cc >= w || rr >= h)
+                                ? 0
+                                : labels[static_cast<size_t>(rr) * w + cc];
+          if (m == l)
+            return;
+          ++edges[static_cast<size_t>(l)];
+          if (m > 0)
+            ++contact[{l, m}];
+        };
+        edge(c - 1, r);
+        edge(c + 1, r);
+        edge(c, r - 1);
+        edge(c, r + 1);
+      }
+    // The smallest unjudged region that is small enough.
+    int32_t pocket = 0;
+    for (int32_t l = 1; l <= n; ++l) {
+      const auto k = static_cast<size_t>(l);
+      if (done[k] || area[k] == 0 || static_cast<double>(area[k]) > max_cells)
+        continue;
+      if (pocket == 0 || area[k] < area[static_cast<size_t>(pocket)])
+        pocket = l;
+    }
+    if (pocket == 0)
+      break;
+    done[static_cast<size_t>(pocket)] = 1;
+    // Its neighbour with the most contact (ties: the lower id).
+    int32_t into = 0;
+    size_t best = 0;
+    for (auto it = contact.lower_bound({pocket, 0});
+         it != contact.end() && it->first.first == pocket; ++it)
+      if (it->second > best) {
+        best = it->second;
+        into = it->first.second;
+      }
+    const auto pk = static_cast<size_t>(pocket);
+    if (into == 0 || edges[pk] == 0 ||
+        static_cast<double>(best) < min_share * static_cast<double>(edges[pk]))
+      continue;
+    const auto ik = static_cast<size_t>(into);
+    if (area[ik] < area[pk] || (area[ik] == area[pk] && into > pocket))
+      continue;
+    debug("band rooms: region {} ({} cells) meets region {} on {} of its {} "
+          "boundary edges: a pocket, merged",
+          pocket, area[pk], into, best, edges[pk]);
+    for (auto &l : labels)
+      if (l == pocket)
+        l = into;
+    ++merged;
+  }
+  return merged;
+}
+
 } // namespace
 
 int partition_room_grid(RoomGrid &g, const BandRoomsOptions &o,
@@ -190,7 +266,7 @@ int partition_room_grid(RoomGrid &g, const BandRoomsOptions &o,
   g.interior.assign(n, 0);
   g.clearance.assign(n, 0.0F);
   g.labels.assign(n, 0);
-  g.cores = g.rooms = g.dropped_regions = g.coreless = 0;
+  g.cores = g.rooms = g.dropped_regions = g.coreless = g.merged_pockets = 0;
   g.interior_area = 0.0;
   if (n == 0)
     return 0;
@@ -350,6 +426,15 @@ int partition_room_grid(RoomGrid &g, const BandRoomsOptions &o,
     }
   }
 
+  // Pockets (reusex-3r1): a small region that meets a neighbour through
+  // free space along much of its boundary is part of that neighbour -- a
+  // second core the watershed seeded behind furniture or a column, not a
+  // room behind a door.
+  if (o.pocket_min_contact_share > 0.0 && next > 1)
+    g.merged_pockets =
+        merge_pockets(g.labels, w, h, next, o.pocket_max_area / cell_area,
+                      o.pocket_min_contact_share);
+
   // Regions below min_room_area are dropped; the rest renumbered in order.
   std::vector<size_t> area(static_cast<size_t>(next) + 1, 0);
   for (int32_t l : g.labels)
@@ -358,6 +443,8 @@ int partition_room_grid(RoomGrid &g, const BandRoomsOptions &o,
   std::vector<int32_t> final_id(static_cast<size_t>(next) + 1, 0);
   int32_t id = first_label;
   for (int32_t l = 1; l <= next; ++l) {
+    if (area[static_cast<size_t>(l)] == 0)
+      continue; // merged into another region as a pocket
     if (static_cast<double>(area[static_cast<size_t>(l)]) * cell_area >=
         o.min_room_area)
       final_id[static_cast<size_t>(l)] = id++;
@@ -661,12 +748,14 @@ auto segment_band_rooms(const Cloud &cloud, const CloudN &normals,
     info("band rooms: storey {}: {} x {} cells of {} m, band {:.2f}-{:.2f} "
          "m; {} wall cells ({} points), footprint {} cells ({} points), "
          "interior {:.1f} m^2; wall graph {} wall(s), {} door cut(s), {} "
-         "cells; {} core(s), {} room(s) ({} without a core), {} region(s) "
-         "below {} m^2 dropped; {} of {} storey points labelled",
+         "cells; {} core(s), {} room(s) ({} without a core), {} pocket(s) "
+         "merged, {} region(s) below {} m^2 dropped; {} of {} storey points "
+         "labelled",
          st.idx, g.width, g.height, cell, band_lo - zf, band_hi - zf,
          wall_cells, n_wall_pts, fp_cells, n_fp_pts, g.interior_area,
          g.graph_walls, g.door_cuts, graph_cells, g.cores, rooms, g.coreless,
-         g.dropped_regions, o.min_room_area, labelled, members.size());
+         g.merged_pockets, g.dropped_regions, o.min_room_area, labelled,
+         members.size());
     if (rooms == 0)
       warn("band rooms: storey {} produced no room: {} wall cells, footprint "
            "{} cells, interior {:.1f} m^2, {} core(s) farther than {} m from "
