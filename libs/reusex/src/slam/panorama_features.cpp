@@ -69,7 +69,8 @@ double bearing_angle(const Eigen::Matrix3d &Q, const Eigen::Vector3d &t,
 FrameFeatures extract_frame_features(const ProjectDB &db, int node_id,
                                      const cv::Ptr<cv::ORB> &orb,
                                      float min_depth, float max_depth,
-                                     const std::optional<cv::Rect> &region) {
+                                     const std::optional<cv::Rect> &region,
+                                     bool require_pose) {
   FrameFeatures out;
   out.node_id = node_id;
 
@@ -101,13 +102,19 @@ FrameFeatures extract_frame_features(const ProjectDB &db, int node_id,
   // geometrically wrong but perfectly well-formed (#336). An empty
   // `descriptors` is the established "this frame contributes nothing" signal
   // every caller already checks.
-  if (!db.has_sensor_frame_pose(node_id)) {
+  //
+  // require_pose == false (reusex-467, LoopClosure): the caller only wants
+  // the frame-local 3D points and supplies its own seed poses, so a missing
+  // stored pose is not a reason to drop the frame — T_world_cam is simply
+  // left at Identity, which such a caller must never read.
+  if (db.has_sensor_frame_pose(node_id)) {
+    out.T_world_cam = to_matrix4(db.sensor_frame_pose(node_id));
+  } else if (require_pose) {
     core::debug("panorama_features: node {} has no usable stored pose, "
                 "contributing no correspondences",
                 node_id);
     return out;
   }
-  out.T_world_cam = to_matrix4(db.sensor_frame_pose(node_id));
 
   cv::Mat mask; // empty = the whole image
   if (region) {
