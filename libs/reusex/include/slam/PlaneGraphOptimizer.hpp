@@ -538,7 +538,12 @@ struct EditResidual {
   /// the directions the edit constrains (the range of its information).
   double trans_m = 0.0;
   double rot_deg = 0.0; ///< same, rotation (deg)
-  double chi2 = 0.0;    ///< sum of whitened squared residuals
+  /// Root mean square of the same over the edit's factors (reusex-rcv.1.28):
+  /// for a move, the block's own residual -- what its sigma speaks for, as
+  /// its n priors at sigma * sqrt(n) together carry one sigma.
+  double rms_trans_m = 0.0;
+  double rms_rot_deg = 0.0;
+  double chi2 = 0.0; ///< sum of whitened squared residuals
   /// GNC kept every factor of the edit (weight >= 0.5); without GNC, every
   /// factor's error is within `edit_inlier_cost`.
   bool gnc_inlier = true;

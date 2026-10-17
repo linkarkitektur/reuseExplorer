@@ -660,11 +660,24 @@ int run_subcommand_optimize(SubcommandOptimizeOptions const &opt,
                        ? std::string()
                        : fmt::format(", not lowered: {}",
                                      fmt::join(result.edits_skipped, ", ")));
-      for (const auto &r : result.edit_residuals)
-        spdlog::info("  edit {:<24} {:>8.4f} m {:>7.3f} deg  chi2 {:>9.2f}  "
-                     "{} factor(s)  {}",
-                     r.tag, r.trans_m, r.rot_deg, r.chi2, r.factors,
-                     r.gnc_inlier ? "honoured" : "NOT HONOURED");
+      for (const auto &r : result.edit_residuals) {
+        // reusex-rcv.1.28: by the edit's own residual vs its sigma.
+        const reusex::core::PoseEdit *named = nullptr;
+        for (const auto &x : edits->edits)
+          if (x.id == r.tag)
+            named = &x;
+        const auto v = rux::judge_edit(r, named);
+        const auto line = fmt::format(
+            "  edit {:<24} {:>8.4f} m {:>7.3f} deg (rms {:.4f} m {:.3f} deg)  "
+            "chi2 {:>9.2f}  {} factor(s)  {}",
+            r.tag, r.trans_m, r.rot_deg, r.rms_trans_m, r.rms_rot_deg, r.chi2,
+            r.factors,
+            v.honoured ? std::string("honoured") : "NOT HONOURED: " + v.why);
+        if (v.honoured)
+          spdlog::info("{}", line);
+        else
+          spdlog::warn("{}", line);
+      }
     }
 
     // Mirrors the library guard (PlaneGraphOptimizer::optimize): the poses are

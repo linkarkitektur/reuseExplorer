@@ -189,6 +189,56 @@ std::vector<std::int64_t> edited_nodes(const reusex::core::PoseEdits &edits,
 Eigen::Matrix4d fit_rigid_delta(const std::vector<Eigen::Matrix4d> &from,
                                 const std::vector<Eigen::Matrix4d> &to);
 
+/// reusex-rcv.1.28: whether a solve honoured one pose edit.
+///
+/// GNC's verdict alone is not enough: its threshold is per factor, and a
+/// move of n nodes lowers to n priors at sigma * sqrt(n) each, so a block
+/// can end 12 cm / 6.6 deg off its target with every factor still a GNC
+/// inlier. An anchor, move or relative edit is honoured only when GNC kept
+/// it AND its RMS residual over its factors (for a move: the block's own
+/// residual) is within kHonouredSigmas of the edit's own sigma, in
+/// translation and in rotation. same_surface / on_plan_wall: GNC only.
+inline constexpr double kHonouredSigmas = 2.0;
+struct EditVerdict {
+  bool honoured = true;
+  std::string why; ///< empty when honoured
+};
+/// @p edit: the edit the residual's tag names (nullptr: GNC only).
+EditVerdict judge_edit(const reusex::geometry::EditResidual &residual,
+                       const reusex::core::PoseEdit *edit);
+
+/// reusex-rcv.1.28: a move the loop suggested, as it printed it, with the
+/// gain it predicted for its segment (segment ICP into the rest).
+struct SuggestedMove {
+  reusex::core::PoseEdit edit; ///< id, nodes and delta as printed
+  int segment = -1;
+  double before_m = 0.0, after_m = 0.0;
+  int cycle = -1; ///< the cycle that printed it
+};
+
+/// The same move: kind, id, nodes and delta (to the printed precision).
+bool same_move(const reusex::core::PoseEdit &a,
+               const reusex::core::PoseEdit &b);
+
+/// A move counts as realised once its segment's residual fell by at least
+/// this share of the predicted gain.
+inline constexpr double kRealisedShare = 0.5;
+
+/// reusex-rcv.1.28: why a suggestion that would replace the move
+/// @p replaced must not be offered, or nullopt when it may be. It is held
+/// back when @p replaced was made in the previous cycle (not in
+/// @p previous, the edits of the solve before this one), the loop
+/// suggested it (@p history) and its predicted gain did not materialise:
+/// the segment's residual now (@p segment_now, by segment index) has not
+/// fallen by kRealisedShare of the predicted before -> after. Without that
+/// guard the loop alternates two moves of one segment, each predicting a
+/// gain that the other undoes (the REPLACES ping-pong).
+std::optional<std::string>
+blocked_replacement(const reusex::core::PoseEdit &replaced,
+                    const std::optional<reusex::core::PoseEdits> &previous,
+                    const std::vector<SuggestedMove> &history,
+                    const std::map<int, double> &segment_now);
+
 /// reusex-rcv.1.18: the pose-graph edges of @p graph as the graph layer
 /// draws them, coloured by the candidate solve @p result (its per-edge
 /// residuals, PoseGraphEdgeRecord::tag = index in graph.edges) instead of
