@@ -277,7 +277,15 @@ pcl::PolygonMeshPtr mesh(CloudConstPtr cloud, CloudNConstPtr normals,
   // are the ones make_pairs pairs, so use its pairing distance.
   auto structural = opt.structural;
   structural.wall_pair_max_m = opt.search_threshold;
-  select_structural_planes(planes, inliers, centroids, cloud, structural);
+  // A short wall line needs the walls table or a storey's full height to
+  // stay a line (reusex-72a).
+  StructuralEvidence evidence;
+  evidence.walls = opt.walls;
+  for (size_t k = 0; k + 1 < opt.section_heights.size(); k += 2)
+    evidence.storeys.push_back(
+        {opt.section_heights[k], opt.section_heights[k + 1]});
+  select_structural_planes(planes, inliers, centroids, cloud, structural,
+                           evidence);
 
   auto pairs = make_pairs(planes, inliers, centroids, opt.search_threshold,
                           opt.new_plane_offset);

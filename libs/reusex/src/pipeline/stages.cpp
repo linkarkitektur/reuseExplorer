@@ -1719,6 +1719,39 @@ std::vector<double> mesh_section_heights(const ProjectDB &db) {
   return heights;
 }
 
+std::vector<geometry::WallEvidence> mesh_wall_evidence(const ProjectDB &db) {
+  std::vector<geometry::WallEvidence> out;
+  const auto walls = db.walls();
+  if (walls.empty())
+    return out;
+  std::map<int, geometry::LevelFrame> frames;
+  for (const auto &s : db.storeys())
+    frames.emplace(s.idx, geometry::LevelFrame::from_record(s));
+  size_t orphans = 0;
+  for (const auto &w : walls) {
+    const auto it = frames.find(w.storey);
+    if (it == frames.end()) {
+      ++orphans;
+      continue;
+    }
+    const auto &f = it->second;
+    const Eigen::Vector3d a = f.to_world({w.x0, w.y0, w.z_base});
+    const Eigen::Vector3d b = f.to_world({w.x1, w.y1, w.z_base});
+    geometry::WallEvidence e;
+    e.a = a.head<2>();
+    e.b = b.head<2>();
+    e.z_lo = std::min(a.z(), b.z());
+    e.z_hi = std::max(a.z(), b.z()) + w.height;
+    e.thickness = w.thickness;
+    out.push_back(e);
+  }
+  if (orphans > 0)
+    warn("mesh: {} of {} wall(s) stand on a storey the storeys table does not "
+         "have; left out of the wall evidence. Re-run `rux create walls`",
+         orphans, walls.size());
+  return out;
+}
+
 geometry::MeshOptions mesh_options_for(const ProjectDB &db,
                                        const MeshStageOptions &stage,
                                        const std::vector<IndicesPtr> &inliers) {
@@ -1731,6 +1764,12 @@ geometry::MeshOptions mesh_options_for(const ProjectDB &db,
       info("mesh: section planes from the storeys table, storey floor/ceiling "
            "heights [{:.2f}] m",
            fmt::join(options.section_heights, ", "));
+    if (!options.section_heights.empty()) {
+      options.walls = mesh_wall_evidence(db);
+      if (!options.walls.empty())
+        info("mesh: {} wall(s) from the walls table back short wall lines",
+             options.walls.size());
+    }
   }
   return options;
 }
