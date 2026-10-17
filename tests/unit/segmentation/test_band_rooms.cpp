@@ -289,6 +289,51 @@ TEST_CASE("BandRooms_Grid_NarrowWcStalls_AreFloodedByTheCorridor",
   CHECK(wide != corridor);
 }
 
+TEST_CASE("BandRooms_Grid_PocketBehindAPost_MergesIntoItsRoom",
+          "[segmentation][band_rooms]") {
+  // reusex-3r1: a 5 x 1.9 m room with one free-standing post (a column, a
+  // tall cabinet end) 1.6 m from its east wall. The free space either side of
+  // the post is narrower than 2 x core_radius, so the east end gets a core of
+  // its own and the watershed splits it off -- but it meets the rest of the
+  // room through free space along much of its boundary, not through a door.
+  Plan p(-1, 6, -1, 3);
+  p.floor(0, 5, 0, 1.9);
+  p.wall(0, 0, 0, 1.9);
+  p.wall(5, 5, 0, 1.9);
+  p.wall(0, 5, 0, 0);
+  p.wall(0, 5, 1.9, 1.9);
+  p.wall(3.4, 3.4, 0.9, 1.0);
+
+  // Without the pocket merge the east end is a room of its own.
+  BandRoomsOptions off;
+  off.pocket_min_contact_share = 0.0;
+  RoomGrid split = p.g;
+  CHECK(partition_room_grid(split, off) == 2);
+
+  CHECK(partition_room_grid(p.g, BandRoomsOptions{}) == 1);
+  CHECK(p.g.merged_pockets == 1);
+  CHECK(p.at(4.4, 0.5) == p.at(1.5, 1.0));
+  CHECK(p.at(4.4, 0.5) > 0);
+}
+
+TEST_CASE("BandRooms_Grid_SmallRoomBehindADoor_IsNoPocket",
+          "[segmentation][band_rooms]") {
+  // A 1.7 x 1.8 m room (a WC) off a 4 m hall through a 0.8 m door: it meets
+  // the hall through the door only, a small share of its boundary.
+  Plan p(-1, 7, -1, 3);
+  p.floor(0, 5.8, 0, 1.9);
+  p.wall(0, 0, 0, 1.9);
+  p.wall(5.8, 5.8, 0, 1.9);
+  p.wall(0, 5.8, 0, 0);
+  p.wall(0, 5.8, 1.9, 1.9);
+  p.wall(4.0, 4.0, 0, 0.55);
+  p.wall(4.0, 4.0, 1.35, 1.9);
+
+  CHECK(partition_room_grid(p.g, BandRoomsOptions{}) == 2);
+  CHECK(p.g.merged_pockets == 0);
+  CHECK(p.at(4.9, 1.0) != p.at(2.0, 1.0));
+}
+
 TEST_CASE("BandRooms_Grid_SmallRegionsAndCoresAreDropped",
           "[segmentation][band_rooms]") {
   // A 0.9 x 0.9 m closet is below min_room_area (1 m^2) and has no core.
