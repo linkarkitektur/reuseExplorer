@@ -146,8 +146,11 @@ wall_z_ranges(const EigenVectorContainer<double, 4> &planes,
               const std::vector<IndicesPtr> &inliers, CloudConstPtr cloud,
               const std::vector<std::pair<size_t, size_t>> &pairs) {
   constexpr double nan = std::numeric_limits<double>::quiet_NaN();
-  constexpr double kVerticalEps = 0.1;  // |n_z| below this: a wall
-  constexpr double kTrim = 0.02;        // percentile cut at each end
+  constexpr double kVerticalEps = 0.1; // |n_z| below this: a wall
+  constexpr double kTrim = 0.02;       // percentile cut at each end
+  // Beyond the cut, the range follows the sorted inlier heights down (up)
+  // while consecutive ones are at most this far apart [m].
+  constexpr double kContiguousGap = 0.15;
   constexpr double kHorizontalNz = 0.9; // |n_z| above this: a floor/ceiling
   std::vector<std::array<double, 2>> out(planes.size(), {nan, nan});
   if (planes.size() != inliers.size())
@@ -168,8 +171,17 @@ wall_z_ranges(const EigenVectorContainer<double, 4> &planes,
       z.push_back(cloud->points[static_cast<size_t>(idx)].z);
     std::sort(z.begin(), z.end());
     const auto last = static_cast<double>(z.size() - 1);
-    const auto lo = static_cast<size_t>(std::floor(kTrim * last));
-    const auto hi = static_cast<size_t>(std::ceil((1.0 - kTrim) * last));
+    auto lo = static_cast<size_t>(std::floor(kTrim * last));
+    auto hi = static_cast<size_t>(std::ceil((1.0 - kTrim) * last));
+    // The percentiles cut a wall's stretch that reaches further than the
+    // rest when it is a small share of the wall: the part of a long wall
+    // that runs down to a split level's lower floor (house1, reusex-7co),
+    // or up under a sloped ceiling. Points that continue the wall without a
+    // gap belong to it; a stray point beyond a gap does not.
+    while (lo > 0 && z[lo] - z[lo - 1] <= kContiguousGap)
+      --lo;
+    while (hi + 1 < z.size() && z[hi + 1] - z[hi] <= kContiguousGap)
+      ++hi;
     out[i] = {z[lo], z[hi]};
   }
   // The two faces of a wall (or of a roof) share one range.

@@ -130,10 +130,14 @@ select_section_planes(const EigenVectorContainer<double, 4> &planes,
 /**
  * @brief World z-range of each wall plane, from its inliers (reusex-sba).
  *
- * For CellComplex's storey-local arrangement. A vertical plane's range is
- * the 2nd to 98th percentile of its inliers' z, so a few stray points do not
- * stretch a wall into the next storey. The two faces of a wall pair (@p
- * pairs, from make_pairs) share the union of their ranges, so a face
+ * For CellComplex's storey-local arrangement. A vertical plane's range
+ * starts at the 2nd to 98th percentile of its inliers' z and follows the
+ * sorted heights on outwards while consecutive ones are at most 0.15 m
+ * apart: a stray point beyond a gap does not stretch a wall into the next
+ * storey, but a stretch of the wall that reaches further than the rest is
+ * kept however small its share (a long wall reaching down to a split
+ * level's lower floor along one room only, reusex-7co). The two faces of a wall
+ * pair (@p pairs, from make_pairs) share the union of their ranges, so a face
  * make_pairs invented (no inliers) takes its partner's. Oblique planes (roof
  * slopes, reusex-e6z) get their range the same way, shared with their
  * invented back face. Floors and ceilings, and planes with no inliers on
