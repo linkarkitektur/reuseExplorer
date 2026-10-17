@@ -845,3 +845,35 @@ TEST_CASE("StoreyArrangement_SplitLevel_LowerRoomHasCellsUnderTheStep",
   }
   CHECK(lower_room_slab_cells == 1);
 }
+
+TEST_CASE("WallZRanges_StoreyHeights_StopTheRangeAtTheStoreyItEndsAt",
+          "[geometry][mesh][storey_local]") {
+  // A ground-storey wall on a drifted scan: dense from 0 to 2.5 m (its
+  // storey's ceiling), and a thin, gapless run of points on up to 2.75 m in
+  // the slab below the next storey's floor at 2.8 m. Without storey heights
+  // the gapless run would carry the range into the slab section; with them
+  // it ends at the ceiling (house2, reusex-2kd). A wall whose points mostly
+  // stop 0.2 m short of its storey's ceiling still reaches it (house1's
+  // north block under a 3.09 m ceiling).
+  auto cloud = std::make_shared<reusex::Cloud>();
+  auto on_wall = [](double s, double z) { return Eigen::Vector3d(0, s, z); };
+  auto drifted = std::make_shared<reusex::Indices>();
+  add_wall_grid(*cloud, *drifted, 0.0, 20.0, 0.0, 2.5, on_wall);
+  add_wall_grid(*cloud, *drifted, 0.0, 0.5, 2.5, 2.8, on_wall);
+  auto short_top = std::make_shared<reusex::Indices>();
+  add_wall_grid(*cloud, *short_top, 0.0, 20.0, 0.0, 2.9, on_wall);
+  add_wall_grid(*cloud, *short_top, 0.0, 0.5, 2.9, 3.1, on_wall);
+  reusex::EigenVectorContainer<double, 4> planes;
+  planes.emplace_back(1, 0, 0, 0);
+  planes.emplace_back(1, 0, 0, 0);
+  std::vector<reusex::IndicesPtr> inliers{drifted, short_top};
+
+  const auto free = wall_z_ranges(planes, inliers, cloud, {});
+  CHECK(free[0][1] == Approx(2.7).margin(0.06));
+  const auto two =
+      wall_z_ranges(planes, inliers, cloud, {}, {0.0, 2.5, 2.8, 5.3});
+  CHECK(two[0][1] <= 2.55);
+  CHECK(two[0][0] == Approx(0.0).margin(0.06));
+  const auto one = wall_z_ranges(planes, inliers, cloud, {}, {0.0, 3.09});
+  CHECK(one[1][1] == Approx(3.0).margin(0.06));
+}

@@ -141,19 +141,26 @@ select_section_planes(const EigenVectorContainer<double, 4> &planes,
  * apart: a stray point beyond a gap does not stretch a wall into the next
  * storey, but a stretch of the wall that reaches further than the rest is
  * kept however small its share (a long wall reaching down to a split
- * level's lower floor along one room only, reusex-7co). The two faces of a wall
- * pair (@p pairs, from make_pairs) share the union of their ranges, so a face
- * make_pairs invented (no inliers) takes its partner's. Oblique planes (roof
- * slopes, reusex-e6z) get their range the same way, shared with their
+ * level's lower floor along one room only, reusex-7co; a wall's top up to
+ * a ceiling higher than most of its points reach, reusex-2kd). With @p
+ * storey_heights it follows them no further than 0.05 m past the storey
+ * floor (ceiling) nearest to the percentile: a drifted scan's wall points
+ * run on into the slab between two storeys (house2). The two faces of a
+ * wall pair (@p pairs, from make_pairs) share the union of their ranges, so a
+ * face make_pairs invented (no inliers) takes its partner's. Oblique planes
+ * (roof slopes, reusex-e6z) get their range the same way, shared with their
  * invented back face. Floors and ceilings, and planes with no inliers on
  * either face, get {NaN, NaN}: a wall without one reaches every section.
  *
+ * @param storey_heights World z of the storey floors and ceilings
+ *   (MeshOptions::section_heights); empty: no such stop.
  * @return One range per plane, index-aligned with @p planes.
  */
 std::vector<std::array<double, 2>>
 wall_z_ranges(const EigenVectorContainer<double, 4> &planes,
               const std::vector<IndicesPtr> &inliers, CloudConstPtr cloud,
-              const std::vector<std::pair<size_t, size_t>> &pairs);
+              const std::vector<std::pair<size_t, size_t>> &pairs,
+              const std::vector<double> &storey_heights = {});
 
 /**
  * @brief Generate a mesh from point cloud and geometric primitives.
