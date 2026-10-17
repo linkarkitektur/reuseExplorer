@@ -291,13 +291,17 @@ TEST_CASE("OptimizeWatchSession: suggestion pastes, re-solves, keeps the last "
   INFO(p1.report);
   REQUIRE(p1.solved);
   CHECK(p1.edits_ok);
-  // The edit's line carries its verdict, judged by the block's RMS residual
-  // against its sigma (reusex-rcv.1.28). Against the one link at the break
-  // the block ends ~1.3 cm (2.7 sigma) short of its target here, so the
-  // verdict itself is not asserted; the held-move test below pins it.
+  // The edit's line carries its verdict (reusex-rcv.1.28). Against the one
+  // link at the break the block's RMS ends ~1.3 cm (2.7 sigma) off its
+  // target here, yet the move is realised: judged by the share of its
+  // rigid delta, with the bend reported apart, it is honoured (reusex-9ge).
   CHECK_THAT(p1.report, ContainsSubstring("edit m-"));
   CHECK_THAT(p1.report, ContainsSubstring("(rms "));
-  CHECK_THAT(p1.json, ContainsSubstring("\"honoured\""));
+  CHECK_THAT(p1.report, ContainsSubstring("realised "));
+  CHECK_THAT(p1.report, ContainsSubstring("block bent "));
+  CHECK_THAT(p1.report, !ContainsSubstring("NOT HONOURED"));
+  CHECK_THAT(p1.json, ContainsSubstring("\"honoured\": true"));
+  CHECK_THAT(p1.json, ContainsSubstring("\"share_trans\""));
   REQUIRE(p1.cross_segment_median_m);
   CHECK(*p1.cross_segment_median_m < 0.5 * *p0.cross_segment_median_m);
   double moved = 0.0;
@@ -735,6 +739,167 @@ TEST_CASE("judge_edit: a move is honoured by its block's residual, not by "
   CHECK(rux::judge_edit(residual("x", 0.5, 5.0), nullptr).honoured);
 }
 
+// ── reusex-9ge ──────────────────────────────────────────────────────────────
+
+namespace {
+
+/// A block of 11 poses along a 2 m line, each yawed a little, so the rigid
+/// fit has a rotation to find.
+std::vector<Eigen::Matrix4d> block_poses() {
+  std::vector<Eigen::Matrix4d> out;
+  for (int k = 0; k <= 10; ++k) {
+    Eigen::Matrix4d m = Eigen::Matrix4d::Identity();
+    m.topLeftCorner<3, 3>() =
+        Eigen::AngleAxisd(0.05 * k, Eigen::Vector3d::UnitZ())
+            .toRotationMatrix();
+    m.topRightCorner<3, 1>() = Eigen::Vector3d(0.2 * k, 1.0, 1.4);
+    out.push_back(m);
+  }
+  return out;
+}
+
+/// [R_z(yaw), t] about @p c: p' = c + t + R (p - c).
+Eigen::Matrix4d delta_about(const Eigen::Vector3d &t, double yaw_deg,
+                            const Eigen::Vector3d &c) {
+  Eigen::Matrix4d d = Eigen::Matrix4d::Identity();
+  const Eigen::Matrix3d r =
+      Eigen::AngleAxisd(yaw_deg * M_PI / 180.0, Eigen::Vector3d::UnitZ())
+          .toRotationMatrix();
+  d.topLeftCorner<3, 3>() = r;
+  d.topRightCorner<3, 1>() = c + t - r * c;
+  return d;
+}
+
+std::vector<Eigen::Matrix4d> moved_by(const Eigen::Matrix4d &d,
+                                      const std::vector<Eigen::Matrix4d> &in) {
+  std::vector<Eigen::Matrix4d> out;
+  for (const auto &m : in)
+    out.push_back(d * m);
+  return out;
+}
+
+} // namespace
+
+TEST_CASE("move_realisation: how much of a move's rigid delta the solve "
+          "realised, apart from the block's own bend",
+          "[rux_app][optimize][watch]") {
+  const auto initial = block_poses();
+  const Eigen::Vector3d c(1.0, 1.0, 1.4); // the block's centroid
+  const Eigen::Matrix4d d = delta_about({0.3, 0.0, 0.0}, 10.0, c);
+
+  // All of it.
+  const auto all = rux::move_realisation(initial, moved_by(d, initial), d);
+  CHECK(all.nodes == 11);
+  CHECK(std::abs(all.move_trans_m - 0.3) < 1e-9);
+  CHECK(std::abs(all.move_rot_deg - 10.0) < 1e-9);
+  CHECK(all.remaining_trans_m < 1e-9);
+  CHECK(all.remaining_rot_deg < 1e-9);
+  CHECK(std::abs(all.share_trans - 1.0) < 1e-9);
+  CHECK(std::abs(all.share_rot - 1.0) < 1e-9);
+  CHECK(all.bend_trans_m < 1e-9);
+
+  // None of it: the block stayed where it was.
+  const auto none = rux::move_realisation(initial, initial, d);
+  CHECK(std::abs(none.share_trans) < 1e-9);
+  CHECK(std::abs(none.share_rot) < 1e-9);
+  CHECK(std::abs(none.remaining_trans_m - 0.3) < 1e-9);
+  CHECK(std::abs(none.remaining_rot_deg - 10.0) < 1e-9);
+
+  // Half of it.
+  const auto half = rux::move_realisation(
+      initial, moved_by(delta_about({0.15, 0.0, 0.0}, 5.0, c), initial), d);
+  CHECK(std::abs(half.share_trans - 0.5) < 1e-9);
+  CHECK(std::abs(half.share_rot - 0.5) < 1e-9);
+
+  // Pushed the other way: a negative share.
+  const auto back = rux::move_realisation(
+      initial, moved_by(delta_about({-0.1, 0.0, 0.0}, 0.0, c), initial), d);
+  CHECK(back.share_trans < 0.0);
+
+  // All of it, but the block bent +-1 cm about its rigid pose (the fast
+  // graph measures plain optimize's shape, not the initial one's): the
+  // move is realised and the bend is reported apart.
+  auto bent = moved_by(d, initial);
+  for (std::size_t k = 0; k < bent.size(); ++k)
+    bent[k](2, 3) += (k % 2 == 0 ? 0.01 : -0.01);
+  const auto b = rux::move_realisation(initial, bent, d);
+  CHECK(b.share_trans > 0.99);
+  CHECK(b.share_rot > 0.99);
+  CHECK(std::abs(b.bend_trans_m - 0.01) < 1e-3);
+}
+
+TEST_CASE("judge_edit: a move is honoured by the share of it the solve "
+          "realised, not by the block's bend",
+          "[rux_app][optimize][watch]") {
+  const auto m = move_edit("m-1283-1603", 1283, 1603, 0.3);
+  // The calibration case (41069051-full-d1.0, round 1, the move alone): the
+  // block RMS 15.5 mm / 0.29 deg against 2 sigma = 10 mm / 0.2 deg, but 99%
+  // / 98% of a 0.306 m / 17.5 deg move realised; the RMS is the block's
+  // bend (15.1 mm / 0.45 deg), which no rigid move of it can remove.
+  rux::MoveRealisation cal;
+  cal.nodes = 321;
+  cal.move_trans_m = 0.3059;
+  cal.move_rot_deg = 17.51;
+  cal.remaining_trans_m = 0.0022;
+  cal.remaining_rot_deg = 0.32;
+  cal.share_trans = 0.99;
+  cal.share_rot = 0.98;
+  cal.bend_trans_m = 0.0151;
+  cal.bend_rot_deg = 0.45;
+  const auto r = residual(m.id, 0.0155, 0.288);
+  CHECK_FALSE(rux::judge_edit(r, &m).honoured); // the RMS rule alone
+  CHECK(rux::judge_edit(r, &m, &cal).honoured);
+
+  // Fought off: 30% of the move realised, 0.21 m / 12 deg from its target.
+  auto fought = cal;
+  fought.share_trans = 0.3;
+  fought.share_rot = 0.31;
+  fought.remaining_trans_m = 0.214;
+  fought.remaining_rot_deg = 12.1;
+  const auto f = rux::judge_edit(r, &m, &fought);
+  CHECK_FALSE(f.honoured);
+  CHECK_THAT(f.why, ContainsSubstring("30%"));
+  CHECK_THAT(f.why, ContainsSubstring("0.214 m"));
+  CHECK_THAT(f.why, ContainsSubstring("12.10 deg"));
+  CHECK_THAT(f.why, ContainsSubstring("from its target"));
+  // Short in rotation only.
+  auto rot = cal;
+  rot.share_rot = 0.5;
+  rot.remaining_rot_deg = 8.7;
+  const auto fr = rux::judge_edit(r, &m, &rot);
+  CHECK_FALSE(fr.honoured);
+  CHECK_THAT(fr.why, ContainsSubstring("50%"));
+  // Pushed back past where it started.
+  auto back = cal;
+  back.share_trans = -0.2;
+  back.remaining_trans_m = 0.367;
+  CHECK_FALSE(rux::judge_edit(r, &m, &back).honoured);
+  // A small move: a low share, but it ended within 2 sigma of its target.
+  auto small = cal;
+  small.move_trans_m = 0.004;
+  small.remaining_trans_m = 0.003;
+  small.share_trans = 0.25;
+  CHECK(rux::judge_edit(r, &m, &small).honoured);
+  // Exactly at the share bound: honoured.
+  auto edge = cal;
+  edge.share_trans = rux::kHonouredMoveShare;
+  edge.remaining_trans_m = 0.06;
+  CHECK(rux::judge_edit(r, &m, &edge).honoured);
+  // GNC dropped it: not honoured, however much was realised.
+  CHECK_FALSE(
+      rux::judge_edit(residual(m.id, 0.0155, 0.288, false), &m, &cal).honoured);
+  // A move restricted to some DoFs keeps the RMS rule (its residual counts
+  // only the constrained directions; a rigid share would count all six).
+  auto masked = m;
+  masked.dofs = reusex::core::Dof::x | reusex::core::Dof::y;
+  CHECK_FALSE(rux::judge_edit(r, &masked, &cal).honoured);
+  // The edit line's summary.
+  const std::string s = rux::describe_realisation(cal);
+  CHECK_THAT(s, ContainsSubstring("realised 99% / 98% of 0.306 m / 17.51 deg"));
+  CHECK_THAT(s, ContainsSubstring("2.2 mm / 0.32 deg from target"));
+  CHECK_THAT(s, ContainsSubstring("bent 15.1 mm / 0.45 deg"));
+}
+
 TEST_CASE("blocked_replacement: no REPLACES ping-pong on an unrealised move",
           "[rux_app][optimize][watch]") {
   // m-2565-2884-2 as the loop printed it on 41069051-full-d0.25: segment 8,
@@ -809,6 +974,9 @@ TEST_CASE("OptimizeWatchSession: a held move is NOT HONOURED and its "
   INFO(p1.report);
   REQUIRE(p1.solved);
   CHECK_THAT(p1.report, ContainsSubstring("NOT HONOURED"));
+  // reusex-9ge: a real conflict, not a bend -- the anchor fights most of
+  // the move off (33% / 58% of it realised here).
+  CHECK_THAT(p1.report, ContainsSubstring("fought the move off"));
   // The same segment's next move would REPLACE the pasted one: held back,
   // and the block says why.
   CHECK_THAT(p1.suggestions_yaml,

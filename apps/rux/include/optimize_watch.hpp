@@ -189,23 +189,67 @@ std::vector<std::int64_t> edited_nodes(const reusex::core::PoseEdits &edits,
 Eigen::Matrix4d fit_rigid_delta(const std::vector<Eigen::Matrix4d> &from,
                                 const std::vector<Eigen::Matrix4d> &to);
 
+/// reusex-9ge: how much of a move's rigid delta a solve realised.
+///
+/// A move's target is D * initial for every node of its block, so the
+/// block's RMS residual mixes two things: how far the block as a whole
+/// fell short of D (the rigid part) and how the block bent away from its
+/// initial shape (the rest). Under `--fast` the graph measures plain
+/// optimize's relative poses, not the initial ones, so a block bends 0.5-3
+/// cm / 0.2-1.5 deg however well it is moved -- no rigid move of the
+/// initial poses can remove that. Measured on the PR #74 calibration
+/// (41069051-full-d1.0 / -d0.25), every suggested move realised 95-100% of
+/// its delta while its RMS read 2-8 sigma.
+struct MoveRealisation {
+  int nodes = 0;
+  /// |D| at the block's centroid (its initial positions) and D's angle.
+  double move_trans_m = 0.0;
+  double move_rot_deg = 0.0;
+  /// The target vs the rigid fit A of the block (initial -> solved): |D c
+  /// - A c| at the centroid c, and the angle of R_D^T R_A.
+  double remaining_trans_m = 0.0;
+  double remaining_rot_deg = 0.0;
+  /// 1 - remaining / move: 1 all of it, 0 none, < 0 pushed the other way.
+  double share_trans = 1.0;
+  double share_rot = 1.0;
+  /// RMS of solved vs A * initial over the block: its bend, not judged.
+  double bend_trans_m = 0.0;
+  double bend_rot_deg = 0.0;
+};
+/// @p initial / @p solved: the block's poses (the same nodes, in order);
+/// @p delta: the move's delta in the poses' frame (about the world origin).
+MoveRealisation move_realisation(const std::vector<Eigen::Matrix4d> &initial,
+                                 const std::vector<Eigen::Matrix4d> &solved,
+                                 const Eigen::Matrix4d &delta);
+/// "realised 99% / 98% of 0.306 m / 17.51 deg, 2.2 mm / 0.32 deg from
+/// target, block bent 15.1 mm / 0.45 deg": the edit line's summary.
+std::string describe_realisation(const MoveRealisation &m);
+
 /// reusex-rcv.1.28: whether a solve honoured one pose edit.
 ///
 /// GNC's verdict alone is not enough: its threshold is per factor, and a
 /// move of n nodes lowers to n priors at sigma * sqrt(n) each, so a block
 /// can end 12 cm / 6.6 deg off its target with every factor still a GNC
 /// inlier. An anchor, move or relative edit is honoured only when GNC kept
-/// it AND its RMS residual over its factors (for a move: the block's own
-/// residual) is within kHonouredSigmas of the edit's own sigma, in
-/// translation and in rotation. same_surface / on_plan_wall: GNC only.
+/// it AND its RMS residual over its factors is within kHonouredSigmas of the
+/// edit's own sigma, in translation and in rotation. same_surface /
+/// on_plan_wall: GNC only.
+///
+/// reusex-9ge: an all-DoF move with a @p realisation is judged by its rigid
+/// part instead: honoured when, in translation and in rotation, it realised
+/// at least kHonouredMoveShare of its delta OR ended within kHonouredSigmas
+/// of its target (a small move). Its bend is reported, not judged. NOT
+/// HONOURED then means the graph fought the move off.
 inline constexpr double kHonouredSigmas = 2.0;
+inline constexpr double kHonouredMoveShare = 0.8;
 struct EditVerdict {
   bool honoured = true;
   std::string why; ///< empty when honoured
 };
 /// @p edit: the edit the residual's tag names (nullptr: GNC only).
 EditVerdict judge_edit(const reusex::geometry::EditResidual &residual,
-                       const reusex::core::PoseEdit *edit);
+                       const reusex::core::PoseEdit *edit,
+                       const MoveRealisation *realisation = nullptr);
 
 /// reusex-rcv.1.28: the gain a suggested move predicted for its segment
 /// (segment ICP into the rest), read back from the note the loop wrote on

@@ -218,8 +218,70 @@ std::string edit_yaml(const reusex::core::PoseEdit &e) {
 
 // ── Free helpers (tested directly) ──────────────────────────────────────────
 
+MoveRealisation move_realisation(const std::vector<Eigen::Matrix4d> &initial,
+                                 const std::vector<Eigen::Matrix4d> &solved,
+                                 const Eigen::Matrix4d &delta) {
+  MoveRealisation m;
+  const std::size_t n = std::min(initial.size(), solved.size());
+  if (n == 0)
+    return m;
+  m.nodes = static_cast<int>(n);
+  const std::vector<Eigen::Matrix4d> from(initial.begin(),
+                                          initial.begin() + std::ptrdiff_t(n));
+  const std::vector<Eigen::Matrix4d> to(solved.begin(),
+                                        solved.begin() + std::ptrdiff_t(n));
+  const Eigen::Matrix4d a = fit_rigid_delta(from, to);
+  Eigen::Vector3d c = Eigen::Vector3d::Zero();
+  for (const auto &f : from)
+    c += f.topRightCorner<3, 1>();
+  c /= static_cast<double>(n);
+  auto at_c = [&c](const Eigen::Matrix4d &x) -> Eigen::Vector3d {
+    return x.topLeftCorner<3, 3>() * c + x.topRightCorner<3, 1>();
+  };
+  auto angle_deg = [](const Eigen::Matrix3d &r) {
+    return Eigen::AngleAxisd(r).angle() * 180.0 / M_PI;
+  };
+  m.move_trans_m = (at_c(delta) - c).norm();
+  m.move_rot_deg = angle_deg(delta.topLeftCorner<3, 3>());
+  m.remaining_trans_m = (at_c(delta) - at_c(a)).norm();
+  m.remaining_rot_deg = angle_deg(delta.topLeftCorner<3, 3>().transpose() *
+                                  a.topLeftCorner<3, 3>());
+  // 1 - remaining / move; a zero move is all realised only if nothing
+  // remains (it then passes on the 2 sigma bound, not on its share).
+  auto share = [](double remaining, double move) {
+    if (move > 1e-12)
+      return 1.0 - remaining / move;
+    return remaining <= 1e-12 ? 1.0 : 0.0;
+  };
+  m.share_trans = share(m.remaining_trans_m, m.move_trans_m);
+  m.share_rot = share(m.remaining_rot_deg, m.move_rot_deg);
+  double t2 = 0.0, r2 = 0.0;
+  for (std::size_t k = 0; k < n; ++k) {
+    const Eigen::Matrix4d rigid = a * from[k];
+    t2 += (to[k].topRightCorner<3, 1>() - rigid.topRightCorner<3, 1>())
+              .squaredNorm();
+    const double r = angle_deg(rigid.topLeftCorner<3, 3>().transpose() *
+                               to[k].topLeftCorner<3, 3>());
+    r2 += r * r;
+  }
+  m.bend_trans_m = std::sqrt(t2 / static_cast<double>(n));
+  m.bend_rot_deg = std::sqrt(r2 / static_cast<double>(n));
+  return m;
+}
+
+std::string describe_realisation(const MoveRealisation &m) {
+  return fmt::format("realised {:.0f}% / {:.0f}% of {:.3f} m / {:.2f} deg, "
+                     "{:.1f} mm / {:.2f} deg from target, block bent "
+                     "{:.1f} mm / {:.2f} deg (not judged)",
+                     100.0 * m.share_trans, 100.0 * m.share_rot, m.move_trans_m,
+                     m.move_rot_deg, 1000.0 * m.remaining_trans_m,
+                     m.remaining_rot_deg, 1000.0 * m.bend_trans_m,
+                     m.bend_rot_deg);
+}
+
 EditVerdict judge_edit(const reusex::geometry::EditResidual &residual,
-                       const reusex::core::PoseEdit *edit) {
+                       const reusex::core::PoseEdit *edit,
+                       const MoveRealisation *realisation) {
   using reusex::core::PoseEditKind;
   if (!residual.gnc_inlier)
     return {false, "GNC dropped it: it contradicts the graph or another edit"};
@@ -227,6 +289,31 @@ EditVerdict judge_edit(const reusex::geometry::EditResidual &residual,
       (edit->kind != PoseEditKind::anchor && edit->kind != PoseEditKind::move &&
        edit->kind != PoseEditKind::relative))
     return {};
+  // reusex-9ge: an all-DoF move is judged by its rigid part. Its RMS
+  // residual also carries the block's bend (the fast graph measures plain
+  // optimize's shape, not the initial one's), which no rigid move removes.
+  if (realisation != nullptr && realisation->nodes > 0 &&
+      edit->kind == PoseEditKind::move &&
+      edit->dofs == reusex::core::Dof::all) {
+    const auto &m = *realisation;
+    const bool t_ok =
+        m.share_trans >= kHonouredMoveShare ||
+        m.remaining_trans_m <= kHonouredSigmas * edit->sigma_trans_m;
+    const bool r_ok =
+        m.share_rot >= kHonouredMoveShare ||
+        m.remaining_rot_deg <= kHonouredSigmas * edit->sigma_rot_deg;
+    if (t_ok && r_ok)
+      return {};
+    return {false,
+            fmt::format("the graph fought the move off: the block realised "
+                        "{:.0f}% / {:.0f}% of its {:.3f} m / {:.2f} deg and "
+                        "ended {:.3f} m / {:.2f} deg from its target (needs "
+                        "{:.0f}% or {} sigma in each)",
+                        100.0 * m.share_trans, 100.0 * m.share_rot,
+                        m.move_trans_m, m.move_rot_deg, m.remaining_trans_m,
+                        m.remaining_rot_deg, 100.0 * kHonouredMoveShare,
+                        kHonouredSigmas)};
+  }
   const double t_max = kHonouredSigmas * edit->sigma_trans_m;
   const double r_max = kHonouredSigmas * edit->sigma_rot_deg;
   std::vector<std::string> off;
@@ -923,23 +1010,56 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
     for (const auto &x : edits.edits)
       if (x.id == e.tag)
         named = &x;
-    const EditVerdict v = judge_edit(e, named);
+    // reusex-9ge: a move's block, initial vs solved, against its delta (in
+    // the world frame, about the default pivot the lowering uses).
+    std::optional<MoveRealisation> realised;
+    if (named != nullptr && named->kind == core::PoseEditKind::move) {
+      const Eigen::Matrix4d to_doc = document_frame(edits.frame, s.storeys);
+      std::vector<Eigen::Matrix4d> from, to;
+      Eigen::Vector3d pivot = Eigen::Vector3d::Zero();
+      for (std::size_t k = 0; k < s.ids.size(); ++k)
+        if (s.graph_index[k] >= 0 && named->nodes.contains(s.ids[k])) {
+          from.push_back(s.initial[k]);
+          to.push_back(r.poses[k]);
+          pivot += (to_doc * s.initial[k]).topRightCorner<3, 1>();
+        }
+      if (!from.empty()) {
+        pivot /= static_cast<double>(from.size());
+        const Eigen::Matrix4d d =
+            to_doc.inverse() * named->delta.to_matrix(pivot) * to_doc;
+        realised = move_realisation(from, to, d);
+      }
+    }
+    const EditVerdict v = judge_edit(e, named, realised ? &*realised : nullptr);
     out += fmt::format("  edit {:<24} {:>8.4f} m {:>7.3f} deg (rms {:.4f} m "
                        "{:.3f} deg)  chi2 {:>9.2f}  {} factor(s)  {}\n",
                        e.tag, e.trans_m, e.rot_deg, e.rms_trans_m,
                        e.rms_rot_deg, e.chi2, e.factors,
                        v.honoured ? std::string("honoured")
                                   : "NOT HONOURED: " + v.why);
-    j["edits"].push_back({{"id", e.tag},
-                          {"trans_m", e.trans_m},
-                          {"rot_deg", e.rot_deg},
-                          {"rms_trans_m", e.rms_trans_m},
-                          {"rms_rot_deg", e.rms_rot_deg},
-                          {"chi2", e.chi2},
-                          {"factors", e.factors},
-                          {"inlier", e.gnc_inlier},
-                          {"honoured", v.honoured},
-                          {"why", v.why}});
+    if (realised)
+      out += fmt::format("       {:<24} {}\n", "",
+                         describe_realisation(*realised));
+    json je = {{"id", e.tag},
+               {"trans_m", e.trans_m},
+               {"rot_deg", e.rot_deg},
+               {"rms_trans_m", e.rms_trans_m},
+               {"rms_rot_deg", e.rms_rot_deg},
+               {"chi2", e.chi2},
+               {"factors", e.factors},
+               {"inlier", e.gnc_inlier},
+               {"honoured", v.honoured},
+               {"why", v.why}};
+    if (realised)
+      je["realisation"] = {{"move_trans_m", realised->move_trans_m},
+                           {"move_rot_deg", realised->move_rot_deg},
+                           {"remaining_trans_m", realised->remaining_trans_m},
+                           {"remaining_rot_deg", realised->remaining_rot_deg},
+                           {"share_trans", realised->share_trans},
+                           {"share_rot", realised->share_rot},
+                           {"bend_trans_m", realised->bend_trans_m},
+                           {"bend_rot_deg", realised->bend_rot_deg}};
+    j["edits"].push_back(std::move(je));
   }
 
   // --- pose change and shear ------------------------------------------------
