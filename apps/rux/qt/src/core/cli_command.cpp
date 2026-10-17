@@ -100,6 +100,8 @@ const std::vector<StageSpec> &stage_specs() {
         {"plane_classes", {}, {}, "--no-plane-classes"},
         {"storey_sections", {}, {}, "--no-storey-sections"},
         {"storey_local", {}, {}, "--no-storey-local"},
+        {"space_prior", {}, {}, "--no-space-prior"},
+        {"space_prior_weight", "--space-prior-weight", {}, {}},
         {"filter", "--filter", {}, {}}}},
       {"optimize",
        {"optimize", {}},

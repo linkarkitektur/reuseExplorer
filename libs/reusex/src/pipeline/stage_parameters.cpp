@@ -387,6 +387,17 @@ const std::vector<ParameterDescriptor> &mesh_parameters() {
                 "the others (reusex-sba). Off extends every wall through "
                 "every section.",
                 d.storey_local),
+        boolean("space_prior", "Spaces as room prior",
+                "When `create spaces` has run, a cell inside a space's "
+                "footprint and storey height leans towards that space's "
+                "room where the ray-cast room probabilities are unsure (an "
+                "occluded pocket under a stair, reusex-6t4). Off uses the "
+                "rays alone.",
+                pipeline::MeshStageOptions{}.use_space_prior),
+        dnum("space_prior_weight", "Space prior weight",
+             "How much a space's room counts against the rays, in [0, 1). "
+             "Below 0.5 a cell every ray calls outside stays outside.",
+             d.space_prior_weight, 0.0, 0.99),
         optional_of(ParameterType::string, "filter", "Point filter",
                     "Filter expression restricting which points are meshed. "
                     "Empty means the whole cloud."),

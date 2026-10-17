@@ -570,6 +570,7 @@ those labels for a room-partitioned output is tracked under WP9
 | | |
 |---|---|
 | Consumes | `cloud`, `normals`, `rooms`, `planes`, `plane_centroids`, `plane_normals` |
+| Optional | `plane_classes` (drop furniture/clutter planes), `storeys` (section planes; with them `walls` back short wall lines), `spaces` (a room prior for the cells inside each space's footprint and storey height, key `space_prior`, weight `space_prior_weight`; a space whose `room_label` the `rooms` cloud lacks is skipped with a warning) |
 | Produces | `mesh` (`meshes` table) — one envelope mesh, not room-partitioned |
 | Options  | `MeshOptions` → `mesh()` (`libs/reusex/include/reconstruction/mesh.hpp`); builds a `SolidifierOptions` subset for `Solidifier` internally |
 | Checks   | `cloud`/`normals`/`rooms`/`planes` present + aligned; `plane_centroids`/`plane_normals` present + aligned |

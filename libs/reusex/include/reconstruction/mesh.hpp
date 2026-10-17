@@ -5,6 +5,7 @@
 #pragma once
 #include "reusex/reconstruction/CellComplex.hpp"
 #include "reusex/reconstruction/Solidifier.hpp"
+#include "reusex/reconstruction/space_prior.hpp"
 #include "reusex/reconstruction/structural_planes.hpp"
 #include "reusex/types.hpp"
 
@@ -101,6 +102,18 @@ struct MeshOptions {
   /// (reusex-72a, StructuralPlaneOptions::min_free_line_m). Empty = no
   /// short line is dropped (the behaviour before 72a).
   std::vector<WallEvidence> walls{};
+
+  /// The stored spaces' footprints (pipeline::mesh_space_footprints()), a
+  /// room prior for the cells inside them (reusex-6t4, apply_space_prior()):
+  /// a cell the rays cannot see from inside (house2's stair hall under the
+  /// stair) reads as its space's room when the rays are unsure. Empty: the
+  /// rays alone (the behaviour before 6t4).
+  std::vector<SpaceFootprint> spaces{};
+  /// How much a space's room counts against the rays, in [0, 1). Below 0.5
+  /// a cell every ray calls outside stays outside. 0.3 is the largest
+  /// weight measured without a regression on house1 / house2 / NewOffice
+  /// (space_prior.hpp has the numbers).
+  double space_prior_weight = 0.3;
 };
 
 /**

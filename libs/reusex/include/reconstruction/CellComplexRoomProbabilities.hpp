@@ -74,6 +74,12 @@ auto CellComplex::compute_room_probabilities(
   auto c_rp = this->add_property_map<Vertex, std::vector<double>>(
                       "c:room_probabilities")
                   .first;
+  // The share of the "outside" vote that is rays escaping the scan (no hit
+  // at all), as against hitting a surface from behind (reusex-6t4): an
+  // occluded pocket inside the building sees only back faces, a cell outside
+  // the building sees the open sky through some of its rays.
+  auto c_esc =
+      this->add_property_map<Vertex, double>("c:escape_probability").first;
 
   // Get unique labels
   std::vector<unsigned int> labels;
@@ -88,9 +94,13 @@ auto CellComplex::compute_room_probabilities(
   labels.erase(std::unique(labels.begin(), labels.end()), labels.end());
   reusex::debug("Room labels: {}", fmt::join(labels, ", "));
 
-  for (auto cit = this->cells_begin(); cit != this->cells_end(); ++cit)
+  // Every cell's entry exists before the parallel loop below writes them.
+  for (auto cit = this->cells_begin(); cit != this->cells_end(); ++cit) {
     c_rp[*cit] = std::vector<double>(labels.size() + 1, 0.0);
+    c_esc[*cit] = 0.0;
+  }
   this->n_rooms = labels.size();
+  this->room_labels = labels;
   reusex::debug("Number of rooms (labels): {}", labels.size());
 
   unsigned int old_mxcsr = _mm_getcsr(); // save current flagsq
@@ -258,10 +268,12 @@ auto CellComplex::compute_room_probabilities(
       std::vector<double> plain(n_labels, 0.0);
       double weight_sum = 0.0;
       std::vector<double> votes(n_labels);
+      double esc_weighted = 0.0, esc_plain = 0.0;
 
       for (const auto &o : origins) {
         std::fill(votes.begin(), votes.end(), 0.0);
         size_t n_far = 0;
+        size_t n_escape = 0;
         for (const auto &dir : dirs) {
           RTCRayHit rayhit;
           rayhit.ray.org_x = static_cast<float>(o.x());
@@ -283,6 +295,7 @@ auto CellComplex::compute_room_probabilities(
 
           if (rayhit.hit.geomID == RTC_INVALID_GEOMETRY_ID) { // No hit
             votes[0] += 1;
+            ++n_escape;
             ++n_far;
             continue;
           }
@@ -310,6 +323,8 @@ auto CellComplex::compute_room_probabilities(
           plain[j] += votes[j] / n_rays;
           weighted[j] += w * votes[j] / n_rays;
         }
+        esc_plain += static_cast<double>(n_escape) / n_rays;
+        esc_weighted += w * static_cast<double>(n_escape) / n_rays;
         weight_sum += w;
       }
 
@@ -319,6 +334,9 @@ auto CellComplex::compute_room_probabilities(
                        ? weighted[j] / weight_sum
                        : plain[j] / static_cast<double>(origins.size());
       c_rp[*cit] = std::move(probs);
+      c_esc[*cit] = weight_sum > 0.0
+                        ? esc_weighted / weight_sum
+                        : esc_plain / static_cast<double>(origins.size());
 
       ++observer;
     }

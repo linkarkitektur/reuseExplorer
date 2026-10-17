@@ -46,6 +46,11 @@ struct SubcommandMeshOptions {
   bool use_storey_sections =
       reusex::pipeline::MeshStageOptions{}.use_storey_sections;
   bool storey_local = reusex::geometry::MeshOptions{}.storey_local;
+  /// The spaces as a room prior (reusex-6t4). Defaults mirror
+  /// MeshStageOptions / MeshOptions.
+  bool use_space_prior = reusex::pipeline::MeshStageOptions{}.use_space_prior;
+  double space_prior_weight =
+      reusex::geometry::MeshOptions{}.space_prior_weight;
 
   std::string filter_expr; ///< Filter expression to limit processing
 };

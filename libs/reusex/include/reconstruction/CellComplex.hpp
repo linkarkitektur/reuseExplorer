@@ -117,6 +117,11 @@ class CellComplex
     public:
   size_t n_rooms, n_walls;
 
+  /// The "rooms" cloud label of each room, in the order of the
+  /// "c:room_probabilities" entries 1..n_rooms (entry 0 is outside); set by
+  /// compute_room_probabilities().
+  std::vector<unsigned int> room_labels{};
+
   /// Number of horizontal sections (storeys) in the arrangement, i.e.
   /// (# horizontal planes - 1). Cells are partitioned into these sections by
   /// the "c:section" property map; the Solidifier can solve the MIP per
