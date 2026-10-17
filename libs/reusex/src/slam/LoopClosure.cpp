@@ -31,6 +31,7 @@
 #include <cstring>
 #include <limits>
 #include <numeric>
+#include <optional>
 #include <random>
 #include <set>
 #include <stdexcept>
@@ -69,18 +70,16 @@ bool is_orb_descriptor_block(const cv::Mat &m) {
 ///  - rejecting a malformed ORB descriptor block outright instead of trusting
 ///    it into the Hamming-distance routines below.
 ///
-/// Known behavioural difference from the old local implementation: the
-/// shared helper also requires `db.has_sensor_frame_pose(node_id)` (it
-/// composes a world pose for the OTHER two callers) and returns no
-/// keypoints at all when that is false, even with perfectly good
-/// colour/depth/intrinsics. The old LoopClosure extractor never looked at
-/// the stored pose — `detect_loop_edges` takes `seed_poses` as an explicit
-/// argument instead. In practice every caller (`collect_loop_candidates` via
-/// `graph_discover`) only ever passes node ids that already have a stored
-/// pose (it requires `has_initial_pose` or `has_sensor_frame_pose` to include
-/// a frame at all), so this does not change today's results, but a future
-/// caller supplying externally-computed seed poses for frames with no stored
-/// `sensor_frames.transform` would now silently get zero features for them.
+/// Passes `require_pose = false` (reusex-467): the shared helper's pose gate
+/// exists for the OTHER two callers, which compose a world pose from
+/// `T_world_cam`; `detect_loop_edges` takes `seed_poses` as an explicit
+/// argument and only ever reads `local` (frame-optical points), so it never
+/// needed a *stored* pose. Before this fix, a caller supplying
+/// externally-computed seed poses for a frame whose `sensor_frames.transform`
+/// was missing or cleared would silently get zero loop-closure features for
+/// it; now the frame still contributes `local` points, and the aggregate
+/// warn below still surfaces the cases where a frame truly contributes
+/// nothing (missing colour/depth, degenerate intrinsics, no texture).
 pano_detail::FrameFeatures extract_features(ProjectDB &db, int node_id,
                                             const LoopClosureOptions &opt,
                                             const cv::Ptr<cv::ORB> &orb) {
@@ -101,7 +100,8 @@ pano_detail::FrameFeatures extract_features(ProjectDB &db, int node_id,
   }
 
   pano_detail::FrameFeatures f = pano_detail::extract_frame_features(
-      db, node_id, orb, opt.min_depth, opt.max_depth);
+      db, node_id, orb, opt.min_depth, opt.max_depth, /*region=*/std::nullopt,
+      /*require_pose=*/false);
   if (!is_orb_descriptor_block(f.descriptors)) {
     core::warn("LoopClosure: node {} produced {}x{} descriptors of type {} "
                "(expected Nx{} CV_8U); skipping frame",
@@ -590,9 +590,24 @@ detect_loop_edges(ProjectDB &db, const std::vector<int> &node_ids,
   // --- 1. Per-frame features (cached) -------------------------------------
   auto orb = cv::ORB::create(opt.max_features);
   std::vector<pano_detail::FrameFeatures> feats(N);
-  for (int i = 0; i < N; ++i)
+  int empty_frames = 0;
+  for (int i = 0; i < N; ++i) {
     feats[i] = extract_features(db, node_ids[i], opt, orb);
+    if (feats[i].descriptors.empty())
+      ++empty_frames;
+  }
   core::info("LoopClosure: extracted ORB features for {} frames", N);
+  // No-silent-failure (STANDARDS §5): now that extraction no longer requires
+  // a stored pose (reusex-467), a frame can only still contribute nothing for
+  // a reason intrinsic to the frame itself (missing colour/depth, degenerate
+  // intrinsics, or no ORB-detectable texture) — worth a warn with the count,
+  // since those frames can neither propose nor support any loop edge.
+  if (empty_frames > 0)
+    core::warn("LoopClosure: {} of {} frames contributed zero ORB features "
+               "(missing colour/depth, degenerate intrinsics, or no "
+               "detectable texture); they cannot propose or support a loop "
+               "edge",
+               empty_frames, N);
 
   // --- 2. Candidate proposal --------------------------------------------
   // Dedup as ordered (i<j) pairs regardless of proposal mode.
