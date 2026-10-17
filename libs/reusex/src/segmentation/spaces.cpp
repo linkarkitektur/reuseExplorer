@@ -635,7 +635,7 @@ auto polygonise_spaces(const std::vector<RoomGrid> &grids,
     // Furniture pockets belong to their room: the faces count them and the
     // raster fallback has no furniture holes.
     std::map<int32_t, int> furniture;
-    const std::vector<int32_t> filled =
+    std::vector<int32_t> filled =
         fill_room_pockets(g, labels, o.open_plan_min_hole_area, furniture);
 
     // The storey's walls, by guid so the result does not depend on their
@@ -665,6 +665,85 @@ auto polygonise_spaces(const std::vector<RoomGrid> &grids,
                      });
     st.walls = static_cast<int>(walls.size());
 
+    // --- 0. exterior beyond the external walls (reusex-e0k) --------------
+    if (o.exterior_depth_m > 0.0) {
+      std::vector<uint8_t> outside(filled.size(), 0);
+      for (const auto &W : walls) {
+        if (!W.rec->is_external)
+          continue;
+        // The cells within exterior_depth_m of the wall's run, by side.
+        const Vec2 b = W.a + W.len * W.u;
+        const double reach = std::max(W.half, 0.0) + o.exterior_depth_m;
+        const auto lo = [&](double v, int origin) {
+          return static_cast<int>(std::floor(v / cell)) - origin;
+        };
+        const int c0 =
+            std::max(0, lo(std::min(W.a.x(), b.x()) - reach, g.col0));
+        const int c1 =
+            std::min(g.width - 1, lo(std::max(W.a.x(), b.x()) + reach, g.col0));
+        const int r0 =
+            std::max(0, lo(std::min(W.a.y(), b.y()) - reach, g.row0));
+        const int r1 = std::min(g.height - 1,
+                                lo(std::max(W.a.y(), b.y()) + reach, g.row0));
+        std::vector<size_t> left, right; // room cells beyond each face
+        size_t n_left = 0, n_right = 0;
+        for (int r = r0; r <= r1; ++r)
+          for (int c = c0; c <= c1; ++c) {
+            const size_t i = g.index(c, r);
+            if (filled[i] <= 0)
+              continue;
+            const Vec2 q((g.col0 + c + 0.5) * cell, (g.row0 + r + 0.5) * cell);
+            const double s = (q - W.a).dot(W.u);
+            const double d = (q - W.a).dot(W.n);
+            if (s < 0.0 || s > W.len || std::abs(d) > reach)
+              continue;
+            (d > 0.0 ? n_left : n_right) += 1;
+            if (std::abs(d) > W.half)
+              (d > 0.0 ? left : right).push_back(i);
+          }
+        const bool in_left =
+            static_cast<double>(n_left) >=
+                o.exterior_min_ratio * static_cast<double>(n_right) &&
+            n_left > 0;
+        const bool in_right =
+            static_cast<double>(n_right) >=
+                o.exterior_min_ratio * static_cast<double>(n_left) &&
+            n_right > 0;
+        if (in_left == in_right) {
+          debug("spaces: storey {}: external wall {}: {} room cells left, {} "
+                "right; inside unclear, not cut",
+                g.storey_idx, W.rec->guid, n_left, n_right);
+          continue;
+        }
+        const auto &cut = in_left ? right : left;
+        if (cut.empty())
+          continue;
+        ++st.exterior_walls;
+        for (size_t i : cut)
+          outside[i] = 1;
+      }
+      std::map<int32_t, size_t> before, after;
+      for (size_t i = 0; i < filled.size(); ++i) {
+        if (filled[i] <= 0)
+          continue;
+        ++before[filled[i]];
+        if (outside[i]) {
+          filled[i] = 0;
+          st.exterior_area += cell_area;
+        } else {
+          ++after[filled[i]];
+        }
+      }
+      for (const auto &[L, n] : before)
+        if (!after.count(L)) {
+          ++st.exterior_rooms;
+          labels.erase(L);
+          info("spaces: storey {}: room {} ({:.2f} m^2) lies beyond the "
+               "external walls; no space",
+               g.storey_idx, L, static_cast<double>(n) * cell_area);
+        }
+    }
+
     // --- 1. arrangement of the wall faces --------------------------------
     Arr arr;
     std::vector<FaceInfo> faces;
@@ -691,6 +770,54 @@ auto polygonise_spaces(const std::vector<RoomGrid> &grids,
         } else {
           add(W.a - ext, b + ext);
         }
+      }
+      // Bridges across offset runs of one wall line (reusex-ajf).
+      if (o.bridge_max_offset_m > 0.0) {
+        const double sin_max = std::sin(o.bridge_max_angle_deg * kPi / 180.0);
+        for (size_t i = 0; i < walls.size(); ++i)
+          for (size_t j = i + 1; j < walls.size(); ++j) {
+            // Each pair is measured from the wall whose axis comes first by
+            // its coordinates, so the bridges depend on the geometry alone,
+            // not on the walls' GUIDs (they are new on every fresh run).
+            const auto geo = [](const PlacedWall &W) {
+              const Vec2 e = W.a + W.len * W.u;
+              auto k = std::make_tuple(W.a.x(), W.a.y(), e.x(), e.y());
+              if (std::tie(std::get<2>(k), std::get<3>(k)) <
+                  std::tie(std::get<0>(k), std::get<1>(k)))
+                k = std::make_tuple(e.x(), e.y(), W.a.x(), W.a.y());
+              return k;
+            };
+            const bool swap = geo(walls[j]) < geo(walls[i]);
+            const auto &A = swap ? walls[j] : walls[i];
+            const auto &B = swap ? walls[i] : walls[j];
+            if (std::abs(A.u.x() * B.u.y() - A.u.y() * B.u.x()) > sin_max)
+              continue;
+            const Vec2 b0 = B.a;
+            const Vec2 b1 = B.a + B.len * B.u;
+            const double off =
+                0.5 * ((b0 - A.a).dot(A.n) + (b1 - A.a).dot(A.n));
+            if (std::abs(off) > o.bridge_max_offset_m)
+              continue;
+            const double t0 =
+                std::min((b0 - A.a).dot(A.u), (b1 - A.a).dot(A.u));
+            const double t1 =
+                std::max((b0 - A.a).dot(A.u), (b1 - A.a).dot(A.u));
+            // B after A along A, or before it.
+            double s_mid = 0.0;
+            if (std::abs(t0 - A.len) <= o.bridge_max_gap_m && t1 > A.len)
+              s_mid = 0.5 * (A.len + t0);
+            else if (std::abs(t1) <= o.bridge_max_gap_m && t0 < 0.0)
+              s_mid = 0.5 * t1;
+            else
+              continue;
+            const double lo = std::min(-A.half, off - B.half);
+            const double hi = std::max(A.half, off + B.half);
+            if (!(hi - lo > 1e-6))
+              continue;
+            const Vec2 m = A.a + s_mid * A.u;
+            add(m + lo * A.n, m + hi * A.n);
+            ++st.bridges;
+          }
       }
       // The outline of the storey's interior closes what the wall graph
       // leaves open (a gap between two offset wall runs, a doorway with no
@@ -1042,12 +1169,14 @@ auto polygonise_spaces(const std::vector<RoomGrid> &grids,
     st.arrangement_share =
         total_area > 0.0 ? arrangement_area / total_area : 0.0;
 
-    info("spaces: storey {}: {} wall(s), {} face(s) ({} pure, {} empty, {} "
+    info("spaces: storey {}: {} wall(s), {} bridge(s), {:.2f} m^2 beyond {} "
+         "external wall(s) ({} room(s)), {} face(s) ({} pure, {} empty, {} "
          "mixed, {} sliver), {} room(s) -> {} space(s), {} lost; {:.0f} % of "
          "the area on wall faces",
-         st.storey_idx, st.walls, st.faces, st.pure_faces, st.empty_faces,
-         st.mixed_faces, st.sliver_faces, st.rooms, st.spaces, st.lost_rooms,
-         100.0 * st.arrangement_share);
+         st.storey_idx, st.walls, st.bridges, st.exterior_area,
+         st.exterior_walls, st.exterior_rooms, st.faces, st.pure_faces,
+         st.empty_faces, st.mixed_faces, st.sliver_faces, st.rooms, st.spaces,
+         st.lost_rooms, 100.0 * st.arrangement_share);
     if (o.use_walls && walls.empty())
       warn("spaces: storey {} has no wall (of seen share >= {}); its spaces "
            "are the raster outlines of the rooms",
