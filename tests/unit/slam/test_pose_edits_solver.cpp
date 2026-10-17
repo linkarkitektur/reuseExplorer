@@ -618,6 +618,60 @@ TEST_CASE("PoseEditsSolver_MoveAndRejectEdge_ThroughTheDatabase",
   CHECK(found);
 }
 
+TEST_CASE("PoseEditsSolver_Relative_TombstonesTheStoredEdge",
+          "[slam][pose_edits][optimize]") {
+  // docs/design/pose-edits.md, ### relative: a relative edit leaves the
+  // stored edge between a and b, in either direction, out of the solve, as
+  // if it had been rejected -- the same as reject_edge, just implied by
+  // naming the pair. Without that tombstone the stored edge and the edit
+  // both act and the solve settles on a compromise instead of the edit.
+  TempPath tmp("test_pose_edits_relative_tombstone");
+  ProjectDB db(tmp.path);
+  ghost_wall_project(db);
+  // A stored loop-closure edge between 2 and 7 that claims the OPPOSITE of
+  // the true relation (b 0.10 m ABOVE a; the ghost actually put it 0.10 m
+  // below): a plausible wrong loop match, not an outlier so extreme that
+  // GNC would zero it on its own.
+  {
+    ProjectDB::PoseGraphEdge e;
+    e.from_node_id = 2;
+    e.to_node_id = 7;
+    e.edge_type = std::string(pg::kTypeLoopClosure);
+    e.source = std::string(pg::kSourceManual);
+    e.status = std::string(pg::kStatusAuto);
+    e.transform = translation_pose(0.0, 0.0, 0.10);
+    db.upsert_pose_graph_edge(e);
+  }
+
+  // The relative edit restates the TRUE relation ('current', i.e. the
+  // poses exactly as seeded): if the stored edge above is left out of the
+  // solve as the doc says, this edit is the only force on the pair and it
+  // is already satisfied, so nothing should move.
+  core::PoseEdits edits;
+  core::PoseEdit r;
+  r.id = "r-2-7";
+  r.kind = core::PoseEditKind::relative;
+  r.nodes.first = r.nodes.last = 2;
+  r.nodes_b.first = r.nodes_b.last = 7;
+  r.pose.source = core::PoseSpec::Source::current;
+  edits.edits.push_back(r);
+
+  const double gap_before = position(db, 2).z() - position(db, 7).z();
+  REQUIRE(std::abs(gap_before - 0.10) < 1e-9);
+
+  const auto res =
+      geometry::optimize_sensor_poses(db, wall_options(), false, &edits);
+  REQUIRE(res.converged);
+  REQUIRE(res.edit_residuals.size() == 1);
+  // The stored loop edge between 2 and 7 is tombstoned by the relative
+  // edit naming that pair, exactly as reject_edge would have done.
+  CHECK(res.edges_rejected_by_edits == 1);
+
+  const double gap_after = position(db, 2).z() - position(db, 7).z();
+  INFO("gap before " << gap_before << " m, after " << gap_after << " m");
+  CHECK(std::abs(gap_after - 0.10) < 0.001);
+}
+
 TEST_CASE("PoseEditsSolver_EmptyEdits_SameAsNoEdits",
           "[slam][pose_edits][optimize]") {
   TempPath ta("test_pose_edits_empty_a"), tb("test_pose_edits_empty_b");

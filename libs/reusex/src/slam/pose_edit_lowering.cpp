@@ -384,6 +384,23 @@ LoweredEdits lower_pose_edits(const ProjectDB &db, const core::PoseEdits &edits,
           information_stored_to_optical(masked_information(e), nb.local);
       s.tag = e.id;
       out.surfaces.push_back(std::move(s));
+
+      // docs/design/pose-edits.md, ### relative: the stored edge between a
+      // and b, in either direction, is left out of the solve as if it had
+      // been rejected -- naming the pair implies the same tombstone
+      // reject_edge writes explicitly, for every edge type that could be
+      // stored between them.
+      const int node_a = static_cast<int>(e.nodes.first);
+      const int node_b = static_cast<int>(e.nodes_b.first);
+      for (const std::string_view type :
+           {pg::kTypeOdometry, pg::kTypeLoopClosure, pg::kTypePanorama}) {
+        EdgeTombstone t;
+        t.from = std::min(node_a, node_b);
+        t.to = std::max(node_a, node_b);
+        t.edge_type = std::string(type);
+        t.tag = e.id;
+        out.tombstones.push_back(std::move(t));
+      }
       break;
     }
     case PoseEditKind::same_surface: {

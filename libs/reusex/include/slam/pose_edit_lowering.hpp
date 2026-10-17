@@ -14,7 +14,10 @@
 //   move          -> one PosePrior per node at delta * initial pose, each
 //                    with its information divided by n (sigma * sqrt(n)), so
 //                    the block carries one anchor's authority
-//   relative      -> one SurfaceConstraint with full (DoF-masked) information
+//   relative      -> one SurfaceConstraint with full (DoF-masked) information,
+//                    plus a tombstone per edge type for the stored edge
+//                    between a and b (either direction), as if reject_edge
+//                    had named it
 //   same_surface  -> SurfaceConstraints between the frames of a and of b
 //                    (up to 12 each, evenly spread), from a point-to-plane
 //                    fit of b's region points onto a's plane; information
