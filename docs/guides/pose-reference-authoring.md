@@ -94,12 +94,14 @@ rux analyze drift / the block  ->  write / edit e.yaml  ->  save
    they are). A segment that changes storey is split, and the note says
    which nodes were left out. A suggestion whose range overlaps an existing
    move says `REPLACES <id>`: delete that one. A suggestion that would
-   replace a move pasted from the previous cycle's suggestions is held
-   back until that move's predicted gain is realised (its segment's
-   residual fell by at least half the predicted before -> after); the block
-   prints `held back -- ...` with the numbers, and a REPLACES of a realised
-   move says so (`reusex-rcv.1.28`: two moves of one segment used to
-   alternate, each predicting a gain the other undid). The segment that holds the
+   replace a pasted suggestion is held back until that move's predicted
+   gain is realised (its segment's residual fell by at least half the
+   before -> after its note predicted; the note travels in the file, so
+   this holds across `--watch-cycles 0` runs). The block prints
+   `held back -- ...` with the numbers: drop the unrealised move rather than
+   replace it. A REPLACES of a realised move says so (`reusex-rcv.1.28`:
+   two moves of one segment used to alternate, each predicting a gain the
+   other undid). The segment that holds the
    gauge (frame 0's prior) is never suggested: its move outvotes the gauge
    and drags the whole trajectory along (`reusex-rcv.1.23`); the block says
    so in a comment. When an untouched segment sheared, a shear guard

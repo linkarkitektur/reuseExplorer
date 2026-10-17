@@ -737,55 +737,43 @@ TEST_CASE("judge_edit: a move is honoured by its block's residual, not by "
 
 TEST_CASE("blocked_replacement: no REPLACES ping-pong on an unrealised move",
           "[rux_app][optimize][watch]") {
-  using reusex::core::PoseEdits;
-  // Cycle 2 suggested m-2565-2884-2 for segment 8, predicting 8.2 -> 4.8 mm;
-  // it was pasted (replacing m-2565-2884) and cycle 3 measures 8.9 mm.
-  const auto old_move = move_edit("m-2565-2884", 2565, 2884, 0.025);
-  const auto pasted = move_edit("m-2565-2884-2", 2565, 2884, 0.020);
-  std::vector<rux::SuggestedMove> history;
-  history.push_back({old_move, 8, 0.0093, 0.0050, 0});
-  history.push_back({pasted, 8, 0.0082, 0.0048, 2});
-  PoseEdits previous; // cycle 2's edits: the old move
-  previous.edits.push_back(old_move);
+  // m-2565-2884-2 as the loop printed it on 41069051-full-d0.25: segment 8,
+  // predicted 8.2 -> 4.8 mm. The next cycle measured 8.9 mm.
+  auto pasted = move_edit("m-2565-2884-2", 2565, 2884, 0.020);
+  pasted.note = "cycle 0: seg 8 (2565-2884) into the rest 8.2 -> 4.8 mm "
+                "(segment ICP on the candidate solve); replaces m-2565-2884";
+  const auto p = rux::move_prediction(pasted);
+  REQUIRE(p);
+  CHECK(p->segment == 8);
+  CHECK(std::abs(p->before_m - 0.0082) < 1e-12);
+  CHECK(std::abs(p->after_m - 0.0048) < 1e-12);
 
-  const auto why =
-      rux::blocked_replacement(pasted, previous, history, {{8, 0.0089}});
+  const auto why = rux::blocked_replacement(pasted, {{8, 0.0089}});
   REQUIRE(why);
   CHECK_THAT(*why, ContainsSubstring("m-2565-2884-2"));
   CHECK_THAT(*why, ContainsSubstring("8.2 -> 4.8 mm"));
   CHECK_THAT(*why, ContainsSubstring("8.9 mm"));
   CHECK_THAT(*why, ContainsSubstring("not realised"));
+  CHECK(rux::move_realised(pasted, {{8, 0.0089}}) == false);
 
   // Realised (8.2 -> 5.5 mm is more than half of the predicted 3.4 mm): a
   // further move of the segment may replace it.
-  CHECK_FALSE(
-      rux::blocked_replacement(pasted, previous, history, {{8, 0.0055}}));
-  // Not made in the previous cycle (it was already in that cycle's edits):
-  // the rule does not apply.
-  PoseEdits had_it;
-  had_it.edits.push_back(pasted);
-  CHECK_FALSE(rux::blocked_replacement(pasted, had_it, history, {{8, 0.0089}}));
-  // Not a move the loop suggested (a hand-written delta): no prediction to
-  // judge, the rule does not apply.
+  CHECK(rux::move_realised(pasted, {{8, 0.0055}}) == true);
+  CHECK_FALSE(rux::blocked_replacement(pasted, {{8, 0.0055}}));
+  // Less than half of the gain: not realised.
+  CHECK_FALSE(rux::move_realised(pasted, {{8, 0.0070}}).value());
+  // No residual for its segment this cycle: nothing to judge by.
+  CHECK_FALSE(rux::blocked_replacement(pasted, {{7, 0.0089}}));
+  // A hand-written move (no prediction in its note) is never held to one.
   auto hand = pasted;
-  hand.delta.xyz[1] = 0.01;
-  CHECK_FALSE(rux::blocked_replacement(hand, previous, history, {{8, 0.0089}}));
-  // An id the loop reuses (m-2565-2884 again, a new delta) matches the
-  // suggestion that printed THAT delta.
-  auto reused = move_edit("m-2565-2884", 2565, 2884, 0.010);
-  history.push_back({reused, 8, 0.0089, 0.0055, 3});
-  PoseEdits with_pasted;
-  with_pasted.edits.push_back(pasted);
-  const auto why2 =
-      rux::blocked_replacement(reused, with_pasted, history, {{8, 0.0091}});
-  REQUIRE(why2);
-  CHECK_THAT(*why2, ContainsSubstring("8.9 -> 5.5 mm"));
-  // The printed precision round-trips: a delta read back from the YAML
-  // (rounded to 0.1 mm / 0.001 deg) is the same move.
-  auto read_back = pasted;
-  read_back.delta.xyz[0] += 1e-9;
-  CHECK(rux::same_move(pasted, read_back));
-  CHECK_FALSE(rux::same_move(pasted, hand));
+  hand.note = "the north wall, by eye";
+  CHECK_FALSE(rux::move_prediction(hand));
+  CHECK_FALSE(rux::blocked_replacement(hand, {{8, 0.0089}}));
+  // Only moves carry a prediction.
+  reusex::core::PoseEdit a;
+  a.kind = reusex::core::PoseEditKind::anchor;
+  a.note = pasted.note;
+  CHECK_FALSE(rux::move_prediction(a));
 }
 
 TEST_CASE("OptimizeWatchSession: a held move is NOT HONOURED and its "
@@ -814,7 +802,10 @@ TEST_CASE("OptimizeWatchSession: a held move is NOT HONOURED and its "
                    "  - id: a-hold\n    kind: anchor\n    node: 36\n"
                    "    pose: current\n"
                    "    sigma: {trans_m: 0.001, rot_deg: 0.02}\n");
-  const auto p1 = session.pass(true);
+  // A new session, as the calibration harness runs one process per cycle:
+  // the prediction travels in the move's note, not in session memory.
+  rux::OptimizeWatchSession next(watch_options(edits), global);
+  const auto p1 = next.pass(true);
   INFO(p1.report);
   REQUIRE(p1.solved);
   CHECK_THAT(p1.report, ContainsSubstring("NOT HONOURED"));

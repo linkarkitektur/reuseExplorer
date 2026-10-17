@@ -38,6 +38,7 @@
 #include <limits>
 #include <map>
 #include <numeric>
+#include <regex>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -243,60 +244,47 @@ EditVerdict judge_edit(const reusex::geometry::EditResidual &residual,
                       fmt::join(off, " and "))};
 }
 
-bool same_move(const reusex::core::PoseEdit &a,
-               const reusex::core::PoseEdit &b) {
-  if (a.kind != b.kind || a.id != b.id || !(a.nodes == b.nodes))
-    return false;
-  const auto &da = a.delta, &db = b.delta;
-  if (da.matrix.has_value() != db.matrix.has_value() ||
-      da.pivot.has_value() != db.pivot.has_value())
-    return false;
-  // The YAML prints 0.1 mm / 0.001 deg: well above this.
-  constexpr double kTol = 1e-6;
-  auto near = [](double x, double y) { return std::abs(x - y) <= kTol; };
-  for (std::size_t i = 0; i < 3; ++i) {
-    if (!near(da.xyz[i], db.xyz[i]))
-      return false;
-    if (da.pivot && !near((*da.pivot)[i], (*db.pivot)[i]))
-      return false;
-  }
-  if (da.matrix)
-    for (std::size_t i = 0; i < da.matrix->size(); ++i)
-      if (!near((*da.matrix)[i], (*db.matrix)[i]))
-        return false;
-  return near(da.yaw_deg, db.yaw_deg) && near(da.pitch_deg, db.pitch_deg) &&
-         near(da.roll_deg, db.roll_deg);
+std::optional<MovePrediction>
+move_prediction(const reusex::core::PoseEdit &edit) {
+  if (edit.kind != reusex::core::PoseEditKind::move)
+    return std::nullopt;
+  // The note the suggestion loop writes (see the suggestions below).
+  static const std::regex re(
+      R"(seg (\d+) \(\d+-\d+\) into the rest ([0-9.]+) -> ([0-9.]+) mm)");
+  std::smatch m;
+  if (!std::regex_search(edit.note, m, re))
+    return std::nullopt;
+  MovePrediction p;
+  p.segment = std::stoi(m[1].str());
+  p.before_m = std::stod(m[2].str()) / 1000.0;
+  p.after_m = std::stod(m[3].str()) / 1000.0;
+  return p;
+}
+
+std::optional<bool> move_realised(const reusex::core::PoseEdit &e,
+                                  const std::map<int, double> &segment_now) {
+  const auto p = move_prediction(e);
+  if (!p)
+    return std::nullopt;
+  const auto now = segment_now.find(p->segment);
+  if (now == segment_now.end())
+    return std::nullopt;
+  return now->second <=
+         p->before_m - kRealisedShare * (p->before_m - p->after_m);
 }
 
 std::optional<std::string>
 blocked_replacement(const reusex::core::PoseEdit &replaced,
-                    const std::optional<reusex::core::PoseEdits> &previous,
-                    const std::vector<SuggestedMove> &history,
                     const std::map<int, double> &segment_now) {
-  if (replaced.kind != reusex::core::PoseEditKind::move)
+  const auto realised = move_realised(replaced, segment_now);
+  if (!realised || *realised)
     return std::nullopt;
-  if (previous)
-    for (const auto &e : previous->edits)
-      if (same_move(e, replaced))
-        return std::nullopt; // not made in the previous cycle
-  // The latest suggestion that printed this very move.
-  const SuggestedMove *from = nullptr;
-  for (const auto &h : history)
-    if (same_move(h.edit, replaced))
-      from = &h;
-  if (from == nullptr)
-    return std::nullopt; // not the loop's: no prediction to hold it to
-  const auto now = segment_now.find(from->segment);
-  if (now == segment_now.end())
-    return std::nullopt;
-  const double gain = from->before_m - from->after_m;
-  if (now->second <= from->before_m - kRealisedShare * gain)
-    return std::nullopt; // realised
+  const auto p = *move_prediction(replaced);
   return fmt::format(
-      "it would replace {}, made last cycle on cycle {}'s prediction for seg "
-      "{} ({:.1f} -> {:.1f} mm), which was not realised (now {:.1f} mm)",
-      replaced.id, from->cycle, from->segment, from->before_m * 1000.0,
-      from->after_m * 1000.0, now->second * 1000.0);
+      "it would replace {}, whose predicted seg {} {:.1f} -> {:.1f} mm was "
+      "not realised (now {:.1f} mm); drop {} rather than replace it",
+      replaced.id, p.segment, p.before_m * 1000.0, p.after_m * 1000.0,
+      segment_now.at(p.segment) * 1000.0, replaced.id);
 }
 
 PoseChange pose_change(const std::vector<std::int64_t> &ids,
@@ -618,9 +606,7 @@ struct OptimizeWatchSession::State {
   std::vector<std::string> edge_status;
 
   std::optional<reusex::core::PoseEdits> edits; ///< last good
-  /// reusex-rcv.1.28: every move the loop printed, with its prediction.
-  std::vector<SuggestedMove> suggested;
-  std::vector<Eigen::Matrix4d> shown; ///< last good solve's poses
+  std::vector<Eigen::Matrix4d> shown;           ///< last good solve's poses
   int shown_pass = -1;
   OptimizeWatchPass shown_block; ///< the block of the last good solve
   int passes = 0;
@@ -1185,7 +1171,6 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
       segment_now[g.segment] = g.before_m;
     std::string held_back_comment;
     j["held_back"] = json::array();
-    std::vector<SuggestedMove> printed;
     for (const auto &g : sug) {
       if (emitted >= s.opt.suggestions || g.after_m >= g.before_m)
         break;
@@ -1249,26 +1234,19 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
         if (e.kind == core::PoseEditKind::move && !e.nodes.is_list() &&
             e.nodes.first <= best->last && e.nodes.last >= best->first)
           overlaps.push_back(e.id);
-      // reusex-rcv.1.28: no REPLACES ping-pong. A move made last cycle on
-      // the loop's own prediction is not replaced until that prediction
-      // came true; a realised one is, and the comment says so.
+      // reusex-rcv.1.28: no REPLACES ping-pong. A suggested move is not
+      // replaced until its predicted gain came true; a realised one is, and
+      // the comment says so.
       std::optional<std::string> held;
       std::vector<std::string> realised;
       for (const auto &e : edits.edits) {
         if (std::find(overlaps.begin(), overlaps.end(), e.id) == overlaps.end())
           continue;
-        if (auto why =
-                blocked_replacement(e, s.edits, s.suggested, segment_now)) {
+        if (auto why = blocked_replacement(e, segment_now)) {
           held = std::move(why);
           break;
         }
-        const bool made_last_cycle =
-            !(s.edits &&
-              std::any_of(s.edits->edits.begin(), s.edits->edits.end(),
-                          [&](const auto &x) { return same_move(x, e); })) &&
-            std::any_of(s.suggested.begin(), s.suggested.end(),
-                        [&](const auto &h) { return same_move(h.edit, e); });
-        if (made_last_cycle)
+        if (move_realised(e, segment_now).value_or(false))
           realised.push_back(e.id);
       }
       if (held) {
@@ -1285,11 +1263,9 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
         continue;
       }
       const std::string realised_note =
-          realised.empty()
-              ? std::string()
-              : fmt::format(" (made last cycle, its predicted gain "
-                            "realised: {})",
-                            fmt::join(realised, ", "));
+          realised.empty() ? std::string()
+                           : fmt::format(" (its predicted gain realised: {})",
+                                         fmt::join(realised, ", "));
 
       core::PoseEdit m;
       m.id = unique_id(fmt::format("m-{}-{}", best->first, best->last));
@@ -1332,7 +1308,6 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
                                                      fmt::join(overlaps, ", "),
                                                      realised_note));
       const std::string item = comment + edit_yaml(m);
-      printed.push_back({m, g.segment, g.before_m, g.after_m, r.index});
       r.suggestion_items.push_back(item);
       yaml += item;
       j["suggestions"].push_back({{"id", m.id},
@@ -1402,8 +1377,6 @@ OptimizeWatchPass OptimizeWatchSession::pass(bool edits_changed) {
            "they are -- plus the shear guards when offered)\n";
     out += gauge_comment;
     out += held_back_comment;
-    for (auto &p : printed)
-      s.suggested.push_back(std::move(p));
     out +=
         yaml.empty() ? "  # none: no segment move lowers its residual\n" : yaml;
     j["suggestions_yaml"] = yaml;

@@ -207,36 +207,41 @@ struct EditVerdict {
 EditVerdict judge_edit(const reusex::geometry::EditResidual &residual,
                        const reusex::core::PoseEdit *edit);
 
-/// reusex-rcv.1.28: a move the loop suggested, as it printed it, with the
-/// gain it predicted for its segment (segment ICP into the rest).
-struct SuggestedMove {
-  reusex::core::PoseEdit edit; ///< id, nodes and delta as printed
+/// reusex-rcv.1.28: the gain a suggested move predicted for its segment
+/// (segment ICP into the rest), read back from the note the loop wrote on
+/// it ("cycle N: seg S (a-b) into the rest X -> Y mm ..."). The note travels
+/// with the edits file, so the rule below holds across processes: the
+/// calibration harness and an agent run one `--watch-cycles 0` process per
+/// cycle, with no session memory between them.
+struct MovePrediction {
   int segment = -1;
   double before_m = 0.0, after_m = 0.0;
-  int cycle = -1; ///< the cycle that printed it
 };
-
-/// The same move: kind, id, nodes and delta (to the printed precision).
-bool same_move(const reusex::core::PoseEdit &a,
-               const reusex::core::PoseEdit &b);
+/// nullopt: not a move, or its note carries no prediction (hand-written).
+std::optional<MovePrediction>
+move_prediction(const reusex::core::PoseEdit &edit);
 
 /// A move counts as realised once its segment's residual fell by at least
 /// this share of the predicted gain.
 inline constexpr double kRealisedShare = 0.5;
 
+/// Whether the move @p e realised its predicted gain: its segment's
+/// residual now (@p segment_now, by segment index) is at most
+/// before - kRealisedShare * (before - after). nullopt when there is no
+/// prediction or no residual for the segment.
+std::optional<bool> move_realised(const reusex::core::PoseEdit &e,
+                                  const std::map<int, double> &segment_now);
+
 /// reusex-rcv.1.28: why a suggestion that would replace the move
 /// @p replaced must not be offered, or nullopt when it may be. It is held
-/// back when @p replaced was made in the previous cycle (not in
-/// @p previous, the edits of the solve before this one), the loop
-/// suggested it (@p history) and its predicted gain did not materialise:
-/// the segment's residual now (@p segment_now, by segment index) has not
-/// fallen by kRealisedShare of the predicted before -> after. Without that
-/// guard the loop alternates two moves of one segment, each predicting a
-/// gain that the other undoes (the REPLACES ping-pong).
+/// back while @p replaced is a suggested move whose predicted gain did not
+/// materialise (move_realised() == false): replacing it with another move
+/// of the same segment, predicting another gain, is the REPLACES ping-pong
+/// (41069051-full-d0.25: m-2565-2884 -> -2 -> m-2565-2884, each predicting
+/// 8-9 -> 5 mm, none realised). The way on is to drop the move, not to
+/// replace it.
 std::optional<std::string>
 blocked_replacement(const reusex::core::PoseEdit &replaced,
-                    const std::optional<reusex::core::PoseEdits> &previous,
-                    const std::vector<SuggestedMove> &history,
                     const std::map<int, double> &segment_now);
 
 /// reusex-rcv.1.18: the pose-graph edges of @p graph as the graph layer
