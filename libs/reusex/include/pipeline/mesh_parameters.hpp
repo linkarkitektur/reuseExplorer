@@ -27,16 +27,20 @@ namespace reusex::pipeline {
 struct MeshStageOptions {
   geometry::MeshOptions options;
   std::string output_name = "mesh";
-  /// Leave out the planes `rux create classify` called furniture or clutter
-  /// (key "plane_classes"; reusex-z1v.4.3). Has no effect on a project
-  /// without plane_classes rows for the "planes" cloud.
+  /// Leave out the planes `rux create classify` called furniture, and the
+  /// horizontal ones it called clutter (key "plane_classes";
+  /// reusex-z1v.4.3); vertical clutter goes on to the structural filter
+  /// (geometry::drop_planes_by_role(), reusex-rtx). Has no effect on a
+  /// project without plane_classes rows for the "planes" cloud.
   ///
-  /// Off by default: measured 2026-10-15 (reusex-vwa) it lowered the fit on
-  /// house1 (the 12 clutter planes it drops include short hallway walls:
-  /// mean deviation 21.4 -> 28.4 cm, uncovered 28.7% -> 37.1%) and on
-  /// NewOffice it left the uncovered share unchanged (36.9% -> 37.3%) while
-  /// adding a third section (5020 cells, over the 5000 default limit).
-  bool use_plane_classes = false;
+  /// On by default since reusex-rtx (2026-10-17, scripts/bench-solid.sh on
+  /// house1 / house2 / NewOffice, mean fit / unsupported mesh share,
+  /// off -> on): house1 12.9 -> 12.9 cm / 26.5% -> 25.4%, house2 26.0 ->
+  /// 26.5 cm / 25.3% -> 25.4% (off itself varies 26.0..26.5 cm between
+  /// runs), NewOffice 23.3 -> 22.5 cm / 8.6% -> 8.3%. Dropping vertical
+  /// clutter as well (reusex-vwa) had cost house1 4.7 cm and house2 63 cm:
+  /// the height rule calls hallway walls seen to door height clutter.
+  bool use_plane_classes = true;
   /// Only the horizontal planes inside the building become section planes
   /// of the cell complex when the project has a storeys table (key
   /// "storey_sections"; reusex-z1v.3.4, reusex-x8s): MeshOptions::
