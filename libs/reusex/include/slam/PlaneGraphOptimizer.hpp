@@ -434,6 +434,43 @@ struct PlaneGraphOptions {
   /// small (house2's storeys: ~1 deg) while real ceilings slope: house1's
   /// mono-pitch ceiling (~7 deg) forced level tilted the floors 1 deg.
   float manhattan_level_max_angle_deg = 4.0f;
+  /// Std (deg) of the per-frame Manhattan HEADING factor (reusex-0oi); <= 0
+  /// switches that factor off and leaves only the landmark factors above.
+  ///
+  /// The landmark factors pull a wall LANDMARK onto the grid, and a frame
+  /// follows only through its plane factors (`plane_sigma_normal`, 14 deg).
+  /// A frame whose walls are seen only through such loose factors, or whose
+  /// detections never form a kept landmark, is barely turned: on house2 the
+  /// upper-storey N room and the blurred stair tail (frames 342-389) kept a
+  /// 3-4 deg heading error under --manhattan. This factor ties the POSE
+  /// directly: each of the frame's own vertical plane detections, rotated to
+  /// world by the frame's pose, gets a 1-DoF residual to the nearest grid
+  /// axis (theta + k * 90 deg, the same jointly estimated azimuth). It uses
+  /// the wall gate (`manhattan_max_angle_deg`) both to pick the detections
+  /// and as its GNC-TLS inlier threshold (Huber under --no-gnc), so off-grid
+  /// walls and door leaves drop out per detection. Only active under
+  /// `manhattan`.
+  ///
+  /// Two things keep it from bending the map (both found on the ARKitScenes
+  /// drift bench, reusex-xka cells): it acts on HEADING only (its pose
+  /// Jacobian is rotation about up; tilt stays with the plane and level
+  /// factors), and with it the grid's azimuth starts from the walls the
+  /// first frames see, next to the gauge, instead of from all landmarks of
+  /// the drifted seed. The latter limits how much accumulated drift one run
+  /// reaches: a wall drifted past `manhattan_max_angle_deg` from the start
+  /// frames' grid is only caught once the frames before it have turned (two
+  /// association rounds carried a synthetic 30 deg; 36 deg was not).
+  ///
+  /// The default is measured (reusex-0oi). A single detection's heading
+  /// residual has a robust std of 2.0-2.1 deg (house2, at every sigma
+  /// tried), but a frame's 2-4 detections share its depth and tilt errors,
+  /// so they are not independent: at 2 deg house2 came closest to its DRAFT
+  /// pose reference (ATE 0.131 m without the factor -> 0.075 m) while house1
+  /// lost local consistency (plane flatness 11.5 -> 14.4 mm, worse than no
+  /// optimisation). 4 deg keeps most of the house2 correction (ATE 0.091 m,
+  /// tail -4.0 -> -0.9 deg, mesh QA mean 24.5 -> 19.1 cm) with house1 at
+  /// 11.4 mm; 8 deg gives back half of it (0.103 m, tail -1.7 deg).
+  float manhattan_frame_sigma_deg = 4.0f;
   /// The up axis the prior levels to. z is the pipeline's convention
   /// (storeys, plan renders, RTABMap / MuSHRoom imports).
   ManhattanUp manhattan_up = ManhattanUp::z;
@@ -605,6 +642,12 @@ struct PlaneGraphResult {
   int manhattan_vertical = 0;   ///< wall landmarks tied to a horizontal axis
   int manhattan_horizontal = 0; ///< floor/ceiling landmarks tied to up
   int manhattan_skipped = 0;    ///< landmarks outside the gate (no factor)
+  /// Per-frame heading factors (reusex-0oi), final round: vertical plane
+  /// detections tied to the grid, detections outside the wall gate (no
+  /// factor), and factors GNC down-weighted below 0.5 at the solution.
+  int manhattan_frame_factors = 0;
+  int manhattan_frame_skipped = 0;
+  int manhattan_frame_outliers = 0;
   /// Solved azimuth of the first horizontal axis, wrapped to [-45, 45) deg and
   /// measured from the world axis after `manhattan_up_axis` (x for z-up).
   double manhattan_axis_deg = 0.0;

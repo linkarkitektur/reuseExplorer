@@ -323,6 +323,14 @@ NOTES:
                   "it below real ceiling slopes")
       ->default_val(opt->manhattan_level_max_angle_deg)
       ->check(CLI::Range(0.1f, 45.0f));
+  sub->add_option("--manhattan-frame-sigma", opt->manhattan_frame_sigma_deg,
+                  "Std (deg) of the per-frame heading factor: each frame's "
+                  "own vertical plane detections are tied to the nearest "
+                  "grid axis (robust, same gate as --manhattan-max-angle), "
+                  "so frames whose walls are seen only through loose plane "
+                  "factors are turned too. 0 switches it off")
+      ->default_val(opt->manhattan_frame_sigma_deg)
+      ->check(CLI::Range(0.0f, 20.0f));
   sub->add_option("--manhattan-up", opt->manhattan_up,
                   "Up axis of the Manhattan grid: z (the pipeline's "
                   "convention), x, y, or auto (the axis the camera positions "
@@ -493,6 +501,7 @@ std::string optimize_stage_parameters(SubcommandOptimizeOptions const &opt) {
       .set("manhattan_sigma_deg", opt.manhattan_sigma_deg)
       .set("manhattan_max_angle_deg", opt.manhattan_max_angle_deg)
       .set("manhattan_level_max_angle_deg", opt.manhattan_level_max_angle_deg)
+      .set("manhattan_frame_sigma_deg", opt.manhattan_frame_sigma_deg)
       .set("dry_run", opt.dry_run)
       .dump();
 }
@@ -556,6 +565,7 @@ plane_graph_options(SubcommandOptimizeOptions const &opt) {
   options.manhattan_sigma_deg = opt.manhattan_sigma_deg;
   options.manhattan_max_angle_deg = opt.manhattan_max_angle_deg;
   options.manhattan_level_max_angle_deg = opt.manhattan_level_max_angle_deg;
+  options.manhattan_frame_sigma_deg = opt.manhattan_frame_sigma_deg;
   options.edit_inlier_cost = opt.edit_inlier_cost;
   options.manhattan_up =
       opt.manhattan_up == "x"

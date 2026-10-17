@@ -43,6 +43,8 @@ void apply_optimize_parameters(PlaneGraphOptions &options, bool &dry_run,
       get("manhattan_max_angle_deg", options.manhattan_max_angle_deg);
   options.manhattan_level_max_angle_deg = get(
       "manhattan_level_max_angle_deg", options.manhattan_level_max_angle_deg);
+  options.manhattan_frame_sigma_deg =
+      get("manhattan_frame_sigma_deg", options.manhattan_frame_sigma_deg);
   dry_run = get("dry_run", dry_run);
 }
 
