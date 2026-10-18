@@ -90,6 +90,10 @@ const std::vector<WallParameter> &wall_parameter_table() {
        "Runs shorter than this are dropped.", WALL(min_run_m), 0.0, 20.0},
       {"min_run_points", "--min-run-points", "Minimum run points",
        "Runs with fewer points are dropped.", WALL(min_run_points), 0.0, kInf},
+      {"door_max_width_m", "--door-max-width", "Door max width [m]",
+       "Door-labelled planes carry a run across a doorway but make no run "
+       "alone, unless it is longer than this (the label bled over a wall).",
+       WALL(door_max_width_m), 0.0, 20.0},
       {"cell_m", "--cell", "Occupancy cell [m]",
        "Side of the (s, z) occupancy cells, anchored at the frame origin.",
        WALL(cell_m), 0.01, 2.0},

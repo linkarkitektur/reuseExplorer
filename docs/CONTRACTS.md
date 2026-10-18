@@ -315,7 +315,9 @@ trusted and the geometry does not contradict it, otherwise from geometric
 rules. Each labelled point votes for its class's role, so near-synonyms add
 up ("cabinet" + "shelf" = furniture); a role needs `min_class_share` of the
 votes, or furniture and clutter together do and the larger of the two is
-taken (reusex-rqn.4). Every class of the default `rux create annotate`
+taken (reusex-rqn.4). The class role `wall` needs a vertical plane that
+reaches within 2 × `band_m` of the floor, the ceiling or a split level, or
+runs at least `min_floating_wall_run_m` along the wall. Every class of the default `rux create annotate`
 prompt list (`vision/default_prompts.hpp`) has a role in the built-in map;
 a column is `clutter` (not a wall), a glass partition `wall`.
 
@@ -357,7 +359,9 @@ plane_classes` removes it, and needs `--force` when any row is locked.
 Per storey, in its level frame (`reconstruction/walls.hpp`, `detect_walls`):
 the directions walls run in (axis families, from the normals of the planes
 whose role is `wall`), the faces of those planes' points from their offset
-profile, which two faces are the two sides of one wall (gap, an empty valley
+profile (vertical planes whose majority class names a door are support: a
+closed door carries its wall's run across the doorway, but door points alone
+make no face unless the run is wider than `door_max_width_m`, reusex-mc6), which two faces are the two sides of one wall (gap, an empty valley
 between them, co-visibility), its thickness at mid-height with a bootstrap
 CI and its lean, whether it is external (no room evidence beyond one face),
 and the bounded wall graph: faces snapped to their points, collinear walls

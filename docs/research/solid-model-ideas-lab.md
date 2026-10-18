@@ -253,6 +253,22 @@ stored labels the new classify gives main's numbers exactly. house1
 0.790 → 0.791. house2 (first annotation, 384 frames, 76 s): wall recall
 0.537 → 0.610, opening recall 0.556 → 0.667, room IoU 0.631 → 0.613.
 
+Second round (same PR): a "wall"-labelled vertical plane must reach within
+2 × `band_m` of the floor or ceiling, or run ≥ 1.5 m (a backsplash), else
+the geometry overrules it (window reveals and cupboard sides above desks
+were walls by class); door-class planes are wall support in the walls stage
+(reusex-mc6). Ablations showed the WC 1 / printer room drops came from two
+floating "wall" sheets (a reveal in the closed office, an open stall leaf),
+not from the doors: WC 1 is back to 0.889. NewOffice, `create project`
+route: room IoU 0.889, wall precision / recall 0.486 / 0.630, openings
+0.649 / 0.828; `create clouds` route 0.878 / 0.472 / 0.630. The family
+direction moves 0.016° when roles change, which alone shifts single walls
+(meeting/storage 0.969 → 0.898 is not tied to any one plane). house1
+unchanged (0.791). house2 0.615: its first labels make plane 92, a 1.4 m
+tall floor-standing "wall" sheet north of the conservatory, a wall that
+splits the conservatory (0.764 → 0.309); with it left to the rules house2
+is 0.642.
+
 ### 4.4 (d) Trajectory
 
 - Every reference space in all three scans contains camera positions

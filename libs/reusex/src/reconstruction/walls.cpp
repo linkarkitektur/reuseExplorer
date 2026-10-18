@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -274,6 +275,7 @@ int cell_index(double v, double cell) {
 struct EvidenceSample {
   double s = 0.0, z = 0.0, o = 0.0;
   int side = 0; ///< wall points: the side they were seen from; others: 0
+  bool support = false; ///< a support point (WallPoints::support)
 };
 
 /// Per family (by position in the families vector), sorted by offset.
@@ -291,6 +293,10 @@ void check_aligned(const WallPoints &wp, const char *who) {
     throw std::invalid_argument(
         fmt::format("{}: {} wall points but {} plane ids", who,
                     wp.points.size(), wp.plane.size()));
+  if (!wp.support.empty() && wp.support.size() != wp.points.size())
+    throw std::invalid_argument(
+        fmt::format("{}: {} wall points but {} support flags", who,
+                    wp.points.size(), wp.support.size()));
 }
 
 void sort_by_offset(std::vector<EvidenceSample> &v) {
@@ -414,7 +420,8 @@ EvidenceIndex index_evidence(const WallPoints &wp,
     }
     const int side =
         opt.use_normal_sign ? (n.dot(families[f].d) > 0.0 ? 1 : -1) : 0;
-    ev.wall[f].push_back({xy.dot(tangent(families[f].d)), p.z(), o, side});
+    ev.wall[f].push_back({xy.dot(tangent(families[f].d)), p.z(), o, side,
+                          !wp.support.empty() && wp.support[i] != 0});
   }
   if (with_others)
     for (size_t f = 0; f < families.size(); ++f) {
@@ -600,9 +607,24 @@ void profile_faces(std::vector<FaceSample> samples, int family, int side,
         if (c >= c0 && c <= c1)
           f.samples.push_back(q);
       }
+      // Support points (a closed door) carry the run across its gap but
+      // make no face on their own (reusex-mc6).
+      double own_s0 = std::numeric_limits<double>::infinity(), own_s1 = -own_s0;
+      int own = 0;
+      for (const auto &q : f.samples)
+        if (!q.support) {
+          own_s0 = std::min(own_s0, q.s);
+          own_s1 = std::max(own_s1, q.s);
+          ++own;
+        }
       if (f.samples.empty() ||
-          f.samples.back().s - f.samples.front().s < opt.min_run_m ||
           static_cast<int>(f.samples.size()) < opt.min_run_points)
+        continue;
+      const bool own_run =
+          own_s1 - own_s0 >= opt.min_run_m && own >= opt.min_run_points;
+      const bool too_wide_for_a_door =
+          f.samples.back().s - f.samples.front().s > opt.door_max_width_m;
+      if (!own_run && !too_wide_for_a_door)
         continue;
       f.family = family;
       f.side = side;
@@ -628,7 +650,7 @@ std::vector<WallFace> wall_faces(const WallPoints &wp,
   std::map<std::pair<size_t, int>, std::vector<FaceSample>> buckets;
   for (size_t f = 0; f < families.size(); ++f)
     for (const auto &q : ev.wall[f])
-      buckets[{f, q.side}].push_back({q.s, q.z, q.o});
+      buckets[{f, q.side}].push_back({q.s, q.z, q.o, q.support});
 
   std::vector<WallFace> faces;
   for (auto &[key, samples] : buckets)
@@ -1856,7 +1878,8 @@ detect_walls(const Cloud &cloud, const CloudL &planes,
              const CloudN &plane_normals,
              const std::vector<core::PlaneClassRecord> &plane_classes,
              const core::StoreyRecord &storey, const WallOptions &opt,
-             const std::vector<Eigen::Vector3d> &camera_path) {
+             const std::vector<Eigen::Vector3d> &camera_path,
+             const std::set<int> &support_planes) {
   WallsResult r;
   r.families = axis_families(plane_classes, plane_normals, storey, opt);
   if (r.families.empty()) {
@@ -1865,8 +1888,8 @@ detect_walls(const Cloud &cloud, const CloudL &planes,
          storey.idx, plane_classes.size());
     return r;
   }
-  WallPoints wp =
-      wall_points(cloud, planes, plane_normals, plane_classes, storey, opt);
+  WallPoints wp = wall_points(cloud, planes, plane_normals, plane_classes,
+                              storey, opt, support_planes);
   const Eigen::Affine3d T = to_affine(storey.level_transform);
   wp.trajectory.reserve(camera_path.size());
   for (const auto &c : camera_path)
@@ -1930,11 +1953,32 @@ wall_records(const WallGraph &graph, const core::StoreyRecord &storey) {
   return {std::move(walls), std::move(joins)};
 }
 
+std::set<int>
+door_support_planes(const std::vector<core::PlaneClassRecord> &plane_classes,
+                    const std::map<int, std::string> &class_names) {
+  std::set<int> out;
+  for (const auto &pc : plane_classes) {
+    if (pc.plane_label < 1 || pc.orientation != "vertical" ||
+        pc.role == "wall" || pc.semantic_class < 0)
+      continue;
+    const auto it = class_names.find(pc.semantic_class);
+    if (it == class_names.end())
+      continue;
+    std::string name = it->second;
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
+    if (name.find("door") != std::string::npos)
+      out.insert(pc.plane_label);
+  }
+  return out;
+}
+
 WallPoints wall_points(const Cloud &cloud, const CloudL &planes,
                        const CloudN &plane_normals,
                        const std::vector<core::PlaneClassRecord> &plane_classes,
-                       const core::StoreyRecord &storey,
-                       const WallOptions &opt) {
+                       const core::StoreyRecord &storey, const WallOptions &opt,
+                       const std::set<int> &support_planes) {
   if (planes.size() != cloud.size())
     throw std::invalid_argument(
         fmt::format("wall_points: cloud has {} points but the planes cloud "
@@ -1950,9 +1994,15 @@ WallPoints wall_points(const Cloud &cloud, const CloudL &planes,
 
   // Level-frame horizontal normal per wall plane label.
   std::map<uint32_t, Eigen::Vector2d> wall_normal;
+  std::set<uint32_t> support;
   for (const auto &pc : plane_classes) {
-    if (pc.role != "wall" || pc.plane_label < 1)
+    if (pc.plane_label < 1)
       continue;
+    if (pc.role != "wall") {
+      if (!support_planes.count(pc.plane_label))
+        continue;
+      support.insert(static_cast<uint32_t>(pc.plane_label));
+    }
     const auto k = static_cast<size_t>(pc.plane_label - 1);
     if (k >= plane_normals.size())
       throw std::invalid_argument(fmt::format(
@@ -1986,7 +2036,10 @@ WallPoints wall_points(const Cloud &cloud, const CloudL &planes,
     wp.points.push_back(p);
     wp.normals.push_back(it->second);
     wp.plane.push_back(static_cast<int>(label));
+    wp.support.push_back(support.count(label) ? 1 : 0);
   }
+  if (support.empty())
+    wp.support.clear();
   return wp;
 }
 

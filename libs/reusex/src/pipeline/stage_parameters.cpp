@@ -642,8 +642,12 @@ const std::vector<ParameterDescriptor> &classify_parameters() {
              "inliers carries a label ...",
              d.min_labelled_share, 0.0, 1.0),
         dnum("min_class_share", "Minimum class share",
-             "... and the majority class holds this share of those votes.",
+             "... and one role holds this share of those votes.",
              d.min_class_share, 0.0, 1.0),
+        dnum("min_floating_wall_run_m", "Floating wall run [m]",
+             "A 'wall'-labelled plane that reaches neither floor nor ceiling "
+             "is a wall only if it runs this far along the wall.",
+             d.min_floating_wall_run_m, 0.0, 100.0),
         text("role_map", "Role map file",
              "Class -> role map JSON file (core/class_role_map.hpp); empty = "
              "the built-in map.",

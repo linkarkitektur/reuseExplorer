@@ -682,6 +682,33 @@ TEST_CASE("ClassifyPlanes_ObjectRolesTogetherOutvoteWall_NotAWall",
   CHECK(rec(r, ids[2]).role == "wall");
 }
 
+TEST_CASE("ClassifyPlanes_WallClassFloatingFree_GeometryOverrules",
+          "[classify_planes]") {
+  // reusex-rqn.4: a short vertical plane labelled "wall" that reaches
+  // neither the floor nor the ceiling (a cupboard side above a desk, a
+  // window reveal from 0.7 to 1.9 m) is not a wall, whatever the label says.
+  // A wall seen only to door height still is (it stands on the floor), and
+  // so is a long one seen only between cabinets.
+  Scene sc;
+  const auto ids = sc.room(0.0, /*label=*/true);
+  const size_t floating = sc.wall_x(1.0, 1.0, 2.0, 0.7, 1.9, kWall);
+  const size_t door_high = sc.wall_x(4.0, 1.0, 2.5, 0.0, 1.9, kWall);
+  // A kitchen backsplash between counter and wall cabinets: the wall's
+  // face, seen only from 0.9 to 1.5 m, but long.
+  const size_t backsplash = sc.wall_y(0.5, 1.0, 3.5, 0.9, 1.5, kWall);
+  const auto c = sc.build();
+  const auto r = classify_planes(c.cloud, c.planes, c.normals,
+                                 {storey(0, 0.0, 2.6)}, semantic_of(c.labels));
+  CHECK(rec(r, floating).semantic_class == kWall);
+  CHECK(rec(r, floating).role == "clutter");
+  CHECK(r.role_source[floating] == RoleSource::overruled);
+  CHECK(rec(r, door_high).role == "wall");
+  CHECK(r.role_source[door_high] == RoleSource::semantic);
+  CHECK(rec(r, backsplash).role == "wall");
+  CHECK(r.role_source[backsplash] == RoleSource::semantic);
+  CHECK(rec(r, ids[2]).role == "wall");
+}
+
 // ── determinism and degenerate input ──────────────────────────────────────
 
 TEST_CASE("ClassifyPlanes_PermutedPoints_IdenticalRecords",

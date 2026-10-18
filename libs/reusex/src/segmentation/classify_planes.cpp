@@ -130,6 +130,8 @@ struct PlaneGeometry {
   double area = 0.0;
   double z_med = 0.0, z_lo = 0.0, z_hi = 0.0; ///< robust, plane's frame
   double z_min = 0.0, z_max = 0.0;
+  /// Vertical planes: robust horizontal extent along the plane [m].
+  double run = 0.0;
   [[nodiscard]] bool may_face_up() const { return facing >= 0; }
   [[nodiscard]] bool may_face_down() const { return facing <= 0; }
 };
@@ -174,6 +176,24 @@ PlaneRole horizontal_rule(const PlaneGeometry &g, const Reference &ref,
   return PlaneRole::clutter;
 }
 
+/// Does a vertical plane reach within @p band of the floor, the ceiling or a
+/// split level of its storey? @p base, when given, becomes the floor it stands
+/// on (the storey's, or the split level it touches).
+bool touches_floor_or_ceiling(const PlaneGeometry &g, const Reference &ref,
+                              double band, double *base = nullptr) {
+  bool touches = (!ref.has_floor() && !ref.has_ceiling()) ||
+                 (ref.has_floor() && g.z_lo <= ref.floor + band) ||
+                 (ref.has_ceiling() && g.z_hi >= ref.ceiling - band);
+  for (double f : ref.split_floors)
+    if (std::abs(g.z_lo - f) <= band) {
+      touches = true;
+      if (base)
+        *base = f;
+      break;
+    }
+  return touches;
+}
+
 /// The geometric rules (Poux 2019/2020).
 PlaneRole rule_role(const PlaneGeometry &g, const Reference &ref,
                     bool in_storey, const ClassifyPlanesOptions &opt) {
@@ -183,17 +203,8 @@ PlaneRole rule_role(const PlaneGeometry &g, const Reference &ref,
   case Orientation::horizontal:
     return horizontal_rule(g, ref, opt);
   case Orientation::vertical: {
-    bool touches = (!ref.has_floor() && !ref.has_ceiling()) ||
-                   (ref.has_floor() && g.z_lo <= ref.floor + opt.band_m) ||
-                   (ref.has_ceiling() && g.z_hi >= ref.ceiling - opt.band_m);
-    // The floor it stands on: the storey's, or a split level it touches.
     double base = ref.floor;
-    for (double f : ref.split_floors)
-      if (std::abs(g.z_lo - f) <= opt.band_m) {
-        touches = true;
-        base = f;
-        break;
-      }
+    const bool touches = touches_floor_or_ceiling(g, ref, opt.band_m, &base);
     double min_height = opt.min_wall_height_m;
     if (!std::isnan(base) && ref.has_ceiling())
       min_height = std::min(min_height,
@@ -217,7 +228,15 @@ bool class_role_fits(PlaneRole role, PlaneRole rules, const PlaneGeometry &g,
   const bool horizontal = g.orientation == Orientation::horizontal;
   switch (role) {
   case PlaneRole::wall:
-    return g.orientation == Orientation::vertical;
+    // A wall stands on a floor or meets the ceiling; a "wall"-labelled
+    // sheet floating free of both is a cupboard side or a reveal
+    // (reusex-rqn.4). It need not be full height: walls seen to door height
+    // keep their class.
+    // The band is twice the rules' one: skirting, a radiator or a desk can
+    // hide a wall's foot, a soffit its head.
+    return g.orientation == Orientation::vertical &&
+           (touches_floor_or_ceiling(g, ref, 2.0 * opt.band_m) ||
+            g.run >= opt.min_floating_wall_run_m);
   case PlaneRole::floor:
     return horizontal && g.may_face_up() &&
            (!ref.has_floor() || rules == PlaneRole::floor ||
@@ -316,6 +335,8 @@ void check_options(const ClassifyPlanesOptions &o) {
     bad("min_class_share");
   if (!(o.min_labelled_share >= 0.0 && o.min_labelled_share <= 1.0))
     bad("min_labelled_share");
+  if (!(o.min_floating_wall_run_m >= 0.0))
+    bad("min_floating_wall_run_m");
 }
 
 } // namespace
@@ -427,6 +448,19 @@ ClassifyPlanesResult classify_planes(
     g.z_hi = quantile(h.sorted, 1.0 - opt.extent_quantile);
     g.z_min = h.sorted.front();
     g.z_max = h.sorted.back();
+    if (g.orientation == Orientation::vertical) {
+      // Along the plane, horizontally: up x n (world frame).
+      const Eigen::Vector3d t = up.cross(n).normalized();
+      std::vector<double> s;
+      s.reserve(inliers[k].size());
+      for (size_t i : inliers[k]) {
+        const auto &p = cloud.points[i];
+        s.push_back(t.x() * p.x + t.y() * p.y + t.z() * p.z);
+      }
+      std::sort(s.begin(), s.end());
+      g.run = quantile(s, 1.0 - opt.extent_quantile) -
+              quantile(s, opt.extent_quantile);
+    }
   }
 
   // No storeys: one implicit storey from the large horizontal planes.
