@@ -250,3 +250,47 @@ TEST_CASE("WallPoints_FromClouds_SplitsWallEvidenceInTheLevelFrame",
       reusex::geometry::wall_points(cloud, planes, normals, {w, f}, s),
       std::invalid_argument);
 }
+
+TEST_CASE("WallPoints_FurnitureAndColumnPlanes_AreNotWallEvidence",
+          "[walls][wall_faces]") {
+  // reusex-rqn.4: a cupboard side or desk screen (role furniture) and a
+  // column face (role clutter) are vertical planes like a wall, but only
+  // role "wall" planes are wall evidence, so no wall is built on them.
+  using reusex::core::PlaneClassRecord;
+  reusex::Cloud cloud;
+  reusex::CloudL planes;
+  pcl::PointCloud<pcl::Normal> normals;
+  for (int k = 0; k < 3; ++k) {
+    pcl::Normal n;
+    n.normal_x = 1.0f;
+    normals.push_back(n);
+  }
+  for (uint32_t label = 1; label <= 3; ++label)
+    for (int i = 0; i < 10; ++i) {
+      reusex::PointT p;
+      p.x = static_cast<float>(label);
+      p.y = 0.1f * static_cast<float>(i);
+      p.z = 1.0f;
+      cloud.push_back(p);
+      pcl::Label l;
+      l.label = label;
+      planes.push_back(l);
+    }
+  PlaneClassRecord w, f, c;
+  w.plane_label = 1;
+  w.role = "wall";
+  f.plane_label = 2;
+  f.role = "furniture";
+  c.plane_label = 3;
+  c.role = "clutter";
+  reusex::core::StoreyRecord s;
+  s.z_floor = 0.0;
+  s.z_ceiling = 2.6;
+  s.level_transform = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  const auto wp =
+      reusex::geometry::wall_points(cloud, planes, normals, {w, f, c}, s);
+  CHECK(wp.points.size() == 10);
+  CHECK(std::all_of(wp.plane.begin(), wp.plane.end(),
+                    [](int l) { return l == 1; }));
+  CHECK(wp.others.size() == 20);
+}

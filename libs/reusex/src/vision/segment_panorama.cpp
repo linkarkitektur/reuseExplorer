@@ -41,7 +41,7 @@ cv::Mat segment_panorama(IModel &model, const cv::Mat &equirect_bgr,
   // per-text class-id assignment stable across the whole panorama.
   std::vector<Sam3PromptUnit> prompts;
   if (opts.prompts.empty()) {
-    prompts = TensorRTData{}.prompts; // 13 default architectural classes
+    prompts = TensorRTData::default_prompt_units(); // vision/default_prompts
   } else {
     prompts.reserve(opts.prompts.size());
     for (const auto &text : opts.prompts)

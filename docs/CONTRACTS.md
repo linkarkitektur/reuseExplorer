@@ -309,10 +309,15 @@ Classify every plane of the plane segmentation (`segmentation/classify_planes.hp
 frame, the majority semantic class of its points with the vote share (when a
 `labels` cloud exists), its role — `wall`, `floor`, `ceiling`, `slab`,
 `furniture`, `clutter` or `unknown` — its storey, area and height range. The
-role comes from the class through the class → role map
-(`core/class_role_map.json`, or `--role-map file.json`) when the class is
+role comes from the classes through the class → role map
+(`core/class_role_map.json`, or `--role-map file.json`) when they are
 trusted and the geometry does not contradict it, otherwise from geometric
-rules.
+rules. Each labelled point votes for its class's role, so near-synonyms add
+up ("cabinet" + "shelf" = furniture); a role needs `min_class_share` of the
+votes, or furniture and clutter together do and the larger of the two is
+taken (reusex-rqn.4). Every class of the default `rux create annotate`
+prompt list (`vision/default_prompts.hpp`) has a role in the built-in map;
+a column is `clutter` (not a wall), a glass partition `wall`.
 
 | | |
 |---|---|

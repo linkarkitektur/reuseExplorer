@@ -7,6 +7,7 @@
 #include <reusex/geometry/level_frame.hpp>
 #include <reusex/segmentation/classify_planes.hpp>
 #include <reusex/types/point_types.hpp>
+#include <reusex/vision/default_prompts.hpp>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -191,10 +192,82 @@ TEST_CASE("DefaultClassRoleMap_BuiltIn_MapsStructureAndFurniture",
   CHECK(m.role_of("ceiling") == core::PlaneRole::ceiling);
   CHECK(m.role_of(" Table ") == core::PlaneRole::furniture);
   CHECK(m.role_of("cabinet") == core::PlaneRole::furniture);
-  CHECK_FALSE(m.role_of("column").has_value());
+  CHECK(m.role_of("column") == core::PlaneRole::clutter);
+  CHECK_FALSE(m.role_of("person").has_value());
   CHECK(
       core::parse_class_role_map(core::default_class_role_map_json()).size() ==
       m.size());
+}
+
+TEST_CASE("DefaultClassRoleMap_WallLikeClasses_AreNotWalls",
+          "[classify_planes]") {
+  // reusex-rqn.4: the furniture and fixtures that stand like walls get a
+  // role that keeps them out of the walls stage; glass partitions are walls.
+  const auto &m = core::default_class_role_map();
+  CHECK(m.role_of("glass partition") == core::PlaneRole::wall);
+  CHECK(m.role_of("desk divider") == core::PlaneRole::furniture);
+  CHECK(m.role_of("office partition") == core::PlaneRole::furniture);
+  CHECK(m.role_of("cabinet") == core::PlaneRole::furniture);
+  CHECK(m.role_of("shelf") == core::PlaneRole::furniture);
+  CHECK(m.role_of("desk") == core::PlaneRole::furniture);
+  CHECK(m.role_of("monitor") == core::PlaneRole::furniture);
+  CHECK(m.role_of("column") == core::PlaneRole::clutter);
+  CHECK(m.role_of("door") == core::PlaneRole::clutter);
+  CHECK(m.role_of("radiator") == core::PlaneRole::clutter);
+}
+
+TEST_CASE("DefaultPrompts_EveryClass_HasARole", "[classify_planes]") {
+  // The annotate default list (vision/default_prompts.hpp) and the role map
+  // are one contract: a default class without a role would leave its planes
+  // to the geometric rules, which call any tall vertical plane a wall.
+  const auto &m = core::default_class_role_map();
+  const auto &prompts = vision::default_prompt_texts();
+  REQUIRE_FALSE(prompts.empty());
+  for (const auto &p : prompts) {
+    INFO("default prompt: " << p);
+    CHECK(m.role_of(p).has_value());
+  }
+  // No duplicates: annotate assigns class ids by first-seen text.
+  auto sorted = prompts;
+  std::sort(sorted.begin(), sorted.end());
+  CHECK(std::adjacent_find(sorted.begin(), sorted.end()) == sorted.end());
+}
+
+TEST_CASE("DefaultClassRoleMap_LegacyDefaultLists_KeepTheirRoles",
+          "[classify_planes]") {
+  // Projects annotated with an older default list keep their stored class
+  // ids and names (annotate_class_map); their names must still map.
+  const std::vector<std::string> legacy_tensor_rt{
+      "wall",          "floor",
+      "ceiling",       "column",
+      "beam",          "door",
+      "door frame",    "window",
+      "staircase",     "railing",
+      "radiator",      "pipe",
+      "duct",          "electrical outlet",
+      "ceiling light", "sink",
+      "cabinet",       "shelf"};
+  const std::vector<std::string> legacy_onnx{"ceiling",
+                                             "floor",
+                                             "wall",
+                                             "door frame",
+                                             "window",
+                                             "radiator",
+                                             "table",
+                                             "chair",
+                                             "shelf",
+                                             "bench",
+                                             "ceiling lamp",
+                                             "desk lamp",
+                                             "electrical outlet"};
+  const auto &m = core::default_class_role_map();
+  for (const auto &list : {legacy_tensor_rt, legacy_onnx})
+    for (const auto &name : list) {
+      INFO("legacy class: " << name);
+      CHECK(m.role_of(name).has_value());
+    }
+  CHECK(m.role_of("door frame") == core::PlaneRole::wall);
+  CHECK(m.role_of("ceiling lamp") == core::PlaneRole::clutter);
 }
 
 TEST_CASE("ParseClassRoleMap_InvalidInput_Throws", "[classify_planes]") {
@@ -480,10 +553,11 @@ TEST_CASE("ClassifyPlanes_SparseOrSplitLabels_FallsBackToRules",
   auto &t = sc.patches[ids[6]];
   for (size_t i = 0; i < t.api.size(); i += 20)
     t.api[i] = kCabinet;
-  // Wall: labels split 40/30/30 -> no clear majority.
+  // Wall: labels split 40/30/30 over three roles (furniture, wall, floor)
+  // -> no clear majority.
   auto &w = sc.patches[ids[2]];
   for (size_t i = 0; i < w.api.size(); ++i)
-    w.api[i] = (i % 10 < 4) ? kCabinet : (i % 10 < 7 ? kTable : kFloor);
+    w.api[i] = (i % 10 < 4) ? kCabinet : (i % 10 < 7 ? kWall : kFloor);
   const auto c = sc.build();
   const auto r = classify_planes(c.cloud, c.planes, c.normals,
                                  {storey(0, 0.0, 2.6)}, semantic_of(c.labels));
@@ -513,6 +587,99 @@ TEST_CASE("ClassifyPlanes_ClassNotInRoleMap_RulesDecide", "[classify_planes]") {
   CHECK(r.role_source[ids[6]] == RoleSource::semantic);
   CHECK(rec(r, ids[2]).role == "wall");
   CHECK(r.role_source[ids[2]] == RoleSource::rules);
+}
+
+TEST_CASE("ClassifyPlanes_WallLikeFurnitureAndColumns_AreNotWalls",
+          "[classify_planes]") {
+  // reusex-rqn.4. In a labelled room: a full-height cupboard side and a
+  // column face (the rules call both walls: vertical, floor to ceiling), a
+  // 1.4 m desk screen labelled "wall" by a class list that has no screen
+  // class is a wall by class; labelled "desk divider" it is furniture. A
+  // glass partition stays a wall.
+  Scene sc;
+  const auto ids = sc.room(0.0, /*label=*/true);
+  enum : int { kColumn = 5, kDivider = 6, kGlass = 7 };
+  const size_t cupboard = sc.wall_x(1.0, 1.0, 2.0, 0.0, 2.6, kCabinet);
+  const size_t column = sc.wall_y(2.0, 3.6, 4.0, 0.0, 2.6, kColumn);
+  const size_t screen = sc.wall_x(2.5, 0.5, 2.0, 0.0, 1.4, kDivider);
+  const size_t screen_as_wall = sc.wall_x(3.5, 0.5, 2.0, 0.0, 1.4, kWall);
+  const size_t glass = sc.wall_y(1.0, 3.5, 5.0, 0.0, 2.6, kGlass);
+  const auto c = sc.build();
+  auto sem = semantic_of(c.labels);
+  sem.class_names[core::api_to_point_label(kColumn)] = "column";
+  sem.class_names[core::api_to_point_label(kDivider)] = "desk divider";
+  sem.class_names[core::api_to_point_label(kGlass)] = "glass partition";
+  const auto r =
+      classify_planes(c.cloud, c.planes, c.normals, {storey(0, 0.0, 2.6)}, sem);
+
+  CHECK(rec(r, ids[2]).role == "wall");
+  CHECK(rec(r, cupboard).role == "furniture");
+  CHECK(r.role_source[cupboard] == RoleSource::semantic);
+  CHECK(rec(r, column).semantic_class == kColumn);
+  CHECK(rec(r, column).role == "clutter");
+  CHECK(r.role_source[column] == RoleSource::semantic);
+  CHECK(rec(r, screen).role == "furniture");
+  CHECK(r.role_source[screen] == RoleSource::semantic);
+  CHECK(rec(r, screen_as_wall).role == "wall"); // why the screen class exists
+  CHECK(rec(r, glass).role == "wall");
+  CHECK(r.role_source[glass] == RoleSource::semantic);
+}
+
+TEST_CASE("ClassifyPlanes_ClassesSplitOverOneRole_RoleMajorityDecides",
+          "[classify_planes]") {
+  // reusex-rqn.4: with a richer class list, SAM splits a cupboard front
+  // over "cabinet" and "shelf" (and some "wall"). No class holds half the
+  // votes, but the furniture role does: the role is decided by the role
+  // share, the record keeps the majority class and its own share.
+  Scene sc;
+  const auto ids = sc.room(0.0, /*label=*/true);
+  enum : int { kShelf = 5 };
+  const size_t cupboard = sc.wall_x(1.0, 1.0, 2.0, 0.0, 2.6);
+  auto &cp = sc.patches[cupboard];
+  for (size_t i = 0; i < cp.api.size(); ++i)
+    cp.api[i] = (i % 20 < 9) ? kCabinet : (i % 20 < 15 ? kShelf : kWall);
+  const auto c = sc.build();
+  auto sem = semantic_of(c.labels);
+  sem.class_names[core::api_to_point_label(kShelf)] = "shelf";
+  const auto r =
+      classify_planes(c.cloud, c.planes, c.normals, {storey(0, 0.0, 2.6)}, sem);
+
+  CHECK(rec(r, cupboard).semantic_class == kCabinet);
+  CHECK(rec(r, cupboard).class_confidence == Approx(0.45).margin(0.02));
+  CHECK(rec(r, cupboard).role == "furniture");
+  CHECK(r.role_source[cupboard] == RoleSource::semantic);
+  CHECK(rec(r, ids[2]).role == "wall");
+}
+
+TEST_CASE("ClassifyPlanes_ObjectRolesTogetherOutvoteWall_NotAWall",
+          "[classify_planes]") {
+  // reusex-rqn.4: a pilaster or a cupboard box against a pier collects
+  // "column", "cabinet" and "wall" votes. No role holds half of them, but
+  // furniture and clutter together do: the plane is not a wall. Of the two
+  // it takes the one with more votes. Two structural roles split the same
+  // way (wall + floor votes) leave it to the rules.
+  Scene sc;
+  const auto ids = sc.room(0.0, /*label=*/true);
+  enum : int { kColumn = 5 };
+  const size_t pier = sc.wall_x(1.0, 1.0, 2.0, 0.0, 2.6);
+  auto &pp = sc.patches[pier];
+  for (size_t i = 0; i < pp.api.size(); ++i)
+    pp.api[i] = (i % 20 < 7) ? kColumn : (i % 20 < 13 ? kCabinet : kWall);
+  const size_t mixed = sc.wall_x(4.0, 1.0, 2.0, 0.0, 2.6);
+  auto &mp = sc.patches[mixed];
+  for (size_t i = 0; i < mp.api.size(); ++i)
+    mp.api[i] = (i % 20 < 7) ? kColumn : (i % 20 < 13 ? kFloor : kWall);
+  const auto c = sc.build();
+  auto sem = semantic_of(c.labels);
+  sem.class_names[core::api_to_point_label(kColumn)] = "column";
+  const auto r =
+      classify_planes(c.cloud, c.planes, c.normals, {storey(0, 0.0, 2.6)}, sem);
+
+  CHECK(rec(r, pier).role == "clutter");
+  CHECK(r.role_source[pier] == RoleSource::semantic);
+  CHECK(rec(r, mixed).role == "wall");
+  CHECK(r.role_source[mixed] == RoleSource::rules);
+  CHECK(rec(r, ids[2]).role == "wall");
 }
 
 // ── determinism and degenerate input ──────────────────────────────────────

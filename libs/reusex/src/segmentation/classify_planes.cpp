@@ -19,6 +19,7 @@
 #include <map>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -241,6 +242,55 @@ bool class_role_fits(PlaneRole role, PlaneRole rules, const PlaneGeometry &g,
     return true;
   }
   return true;
+}
+
+/// The role most of a plane's labelled points vote for through their class,
+/// when it holds at least @p min_share of the @p labelled votes; ties go to
+/// the lower PlaneRole value (deterministic). Points of a class with no name
+/// or no role vote for nothing but still count in @p labelled.
+std::optional<PlaneRole>
+majority_role(const std::vector<std::pair<uint32_t, int>> &votes,
+              const std::map<uint32_t, std::string> &class_names,
+              const core::ClassRoleMap &role_map, int labelled,
+              double min_share) {
+  if (labelled <= 0)
+    return std::nullopt;
+  std::map<uint32_t, int> per_class;
+  for (const auto &[label, n] : votes)
+    per_class[label] += n;
+  std::map<PlaneRole, int> per_role;
+  for (const auto &[label, n] : per_class) {
+    const auto name = class_names.find(label);
+    if (name == class_names.end())
+      continue;
+    if (const auto role = role_map.role_of(name->second))
+      per_role[*role] += n;
+  }
+  std::optional<PlaneRole> best;
+  int best_n = 0;
+  for (const auto &[role, n] : per_role)
+    if (n > best_n) {
+      best = role;
+      best_n = n;
+    }
+  const auto share = [labelled](int n) {
+    return static_cast<double>(n) / static_cast<double>(labelled);
+  };
+  if (best && share(best_n) >= min_share)
+    return best;
+  // No single role has the majority, but the object roles together may: a
+  // pier or cupboard box votes "column" and "cabinet" (clutter + furniture)
+  // over a little "wall". Then it is an object, whichever of the two has
+  // more votes (ties: furniture).
+  const auto votes_for = [&per_role](PlaneRole role) {
+    const auto it = per_role.find(role);
+    return it == per_role.end() ? 0 : it->second;
+  };
+  const int furniture = votes_for(PlaneRole::furniture);
+  const int clutter = votes_for(PlaneRole::clutter);
+  if (share(furniture + clutter) >= min_share)
+    return furniture >= clutter ? PlaneRole::furniture : PlaneRole::clutter;
+  return std::nullopt;
 }
 
 void check_options(const ClassifyPlanesOptions &o) {
@@ -485,11 +535,13 @@ ClassifyPlanesResult classify_planes(
             static_cast<double>(won) / static_cast<double>(labelled);
         const double labelled_share = static_cast<double>(labelled) /
                                       static_cast<double>(inliers[k].size());
-        const auto name = semantic.class_names.find(winner);
-        if (labelled_share >= opt.min_labelled_share &&
-            r.class_confidence >= opt.min_class_share &&
-            name != semantic.class_names.end())
-          class_role = role_map.role_of(name->second);
+        // The role is voted by role, not by class (reusex-rqn.4): a richer
+        // class list splits one object over near-synonyms ("cabinet" and
+        // "shelf" on one cupboard front) that share a role. A labelled point
+        // whose class has no name or no role votes for no role.
+        if (labelled_share >= opt.min_labelled_share)
+          class_role = majority_role(votes, semantic.class_names, role_map,
+                                     labelled, opt.min_class_share);
       }
     }
 
