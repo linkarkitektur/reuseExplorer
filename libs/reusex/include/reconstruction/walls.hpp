@@ -196,6 +196,28 @@ struct WallOptions {
   /// A wall whose face area (25 cm cells over its length and the storey
   /// height) is seen less than this is flagged (WallSegment::low_seen).
   double min_seen_share = 0.5;
+
+  // --- not walls (reusex-1pi) ---------------------------------------------
+  /// A wall up to recess_max_length_m long whose whole extent lies behind
+  /// the seen face of a perpendicular one-sided wall (its nearer end within
+  /// reveal_tol_m of that face, its farther end more than reveal_tol_m
+  /// behind it), with that face going on at least min_run_m past it on
+  /// both sides, is a reveal of it (a window niche's side): the room sees
+  /// that face, so nothing behind it bounds the room. Where the face ends
+  /// it is a corner and stays. Dropped before the corners and tees [m].
+  double reveal_tol_m = 0.2;
+  /// After the joins, a group of walls joined only to one another (a
+  /// connected component of the wall graph) is free-standing. It is not a
+  /// wall -- a column, a cupboard, a desk screen -- when its footprint (the
+  /// diagonal of its axes' bounding box) is at most free_max_extent_m...
+  double free_max_extent_m = 1.5;
+  /// ...or when none of its walls has wall evidence reaching
+  /// free_min_top_m over the floor (the free_top_quantile of the evidence
+  /// heights in the wall's body): a desk screen, a counter. A wall that
+  /// meets another wall stays whatever its height (walls seen only to door
+  /// height, reusex-rtx) [m].
+  double free_min_top_m = 1.8;
+  double free_top_quantile = 0.95;
 };
 
 /// One direction family: walls whose normal is (anti)parallel to @ref d.
@@ -441,6 +463,11 @@ struct WallGraph {
   int low_seen = 0; ///< walls flagged WallSegment::low_seen
   /// Gaps wider than bridge_gap_m bridged as openings (reusex-3e9).
   int door_bridges = 0;
+  /// Walls dropped as reveals behind a seen face (WallOptions::reveal_tol_m).
+  int reveals = 0;
+  /// Walls dropped as free-standing (WallOptions::free_max_extent_m,
+  /// free_min_top_m).
+  int free_standing = 0;
 };
 
 /// The bounded wall graph of a storey (W3.4):
@@ -468,7 +495,13 @@ struct WallGraph {
 ///     wall seen below min_seen_share (before the joins) is tried last when
 ///     the other wall's end could tee onto a seen wall within corner_m
 ///     instead; if that end tees, the barely seen wall ends on it
-///     (reusex-47m);
+///     (reusex-47m). Before them, a short wall standing behind the seen face
+///     of a perpendicular one-sided wall that goes on past it is a window
+///     reveal and leaves the graph (WallOptions::reveal_tol_m; reusex-1pi);
+///     after them, a group of walls joined only to one another that is
+///     small or nowhere reaches WallOptions::free_min_top_m is a column, a
+///     cupboard or a desk screen and leaves it too (free_max_extent_m;
+///     counted in WallGraph::reveals / free_standing);
 ///  5. seen share: the share of the wall's 25 cm (s, z) cells over its
 ///     length and the storey height with wall evidence within its body;
 ///     below min_seen_share it is flagged.

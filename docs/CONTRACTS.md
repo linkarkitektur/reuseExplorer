@@ -388,7 +388,11 @@ face of a one-sided wall; level frame),
 `face_b_points`, `co_visibility` (−1 for a one-sided wall), `axis_family`,
 `metadata` (`{"low_seen_share": true}` below `min_seen_share`). `storey` is the
 storey's `idx`, not a foreign key, as for `plane_classes`: re-run `walls` after
-`storeys`. `wall_joins` rows name two walls (by row id in the table, by GUID
+`storeys`. Not every vertical sheet is a wall: a short one standing behind
+a perpendicular wall's seen face (a window reveal) and a group of walls
+joined to no other wall that is small (`free_max_extent_m`) or nowhere seen
+up to `free_min_top_m` (a column, a cupboard, a desk screen) are left out
+(reusex-1pi). `wall_joins` rows name two walls (by row id in the table, by GUID
 in the API) and where each meets the other (`start`, `end` or along its
 `path`); they go with their walls.
 
