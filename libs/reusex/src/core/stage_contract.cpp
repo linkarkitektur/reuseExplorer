@@ -61,6 +61,13 @@ const std::vector<Artifact> &artifacts() {
       {"space_boundaries", ArtifactKind::table, Alignment::none,
        "space_boundaries: the stretch (side, s range) of each wall that "
        "bounds a space (schema v35)"},
+      {"solid_walls", ArtifactKind::mesh, Alignment::none,
+       "one closed solid per wall, its openings cut out; the mesh's "
+       "parameters index the elements (W6.1)"},
+      {"solid_slabs", ArtifactKind::mesh, Alignment::none,
+       "one closed floor slab per storey (piece), plus the roof (W6.1)"},
+      {"solid_spaces", ArtifactKind::mesh, Alignment::none,
+       "one closed volume per space: its polygon x its height (W6.1)"},
       {"mesh", ArtifactKind::mesh, Alignment::none,
        "the reconstructed watertight mesh"},
       {"textured_mesh", ArtifactKind::mesh, Alignment::none,
@@ -255,6 +262,21 @@ const std::vector<StageContract> &contracts() {
         {{"walls"}, 1, 0, /*optional=*/true},
         {{"openings"}, 1, 0, /*optional=*/true}},
        {"spaces", "space_boundaries"}},
+
+      {PipelineStage::solids,
+       "solids",
+       {},
+       "rux create solids",
+       "typed solids: walls minus their openings, slabs, space volumes",
+       // A wall box per wall (in its storey's level frame), cut by its
+       // openings; a slab per storey from the union of its spaces and wall
+       // footprints (the walls' hull without spaces); a volume per space.
+       // openings and spaces are optional but sit earlier in this table.
+       {{{"walls"}},
+        {{"storeys"}},
+        {{"openings"}, 1, 0, /*optional=*/true},
+        {{"spaces"}, 1, 0, /*optional=*/true}},
+       {"solid_walls", "solid_slabs", "solid_spaces"}},
 
       {PipelineStage::mesh,
        "mesh",

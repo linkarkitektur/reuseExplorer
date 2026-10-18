@@ -52,6 +52,7 @@ enum class PipelineStage {
   rooms,          ///< partition into rooms; after walls -> openings, whose
                   ///< walls and doors cut the band rooms (optional inputs)
   spaces,         ///< the band rooms as space polygons against the walls
+  solids,         ///< typed solids: walls minus openings, slabs, spaces
   mesh,           ///< generate the reconstructed mesh
   texture,        ///< texture-map the reconstructed mesh
   windows,        ///< derive window building components

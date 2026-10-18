@@ -51,10 +51,11 @@ const std::vector<PipelineStage> &all_stages() {
       PipelineStage::storeys,        PipelineStage::instances,
       PipelineStage::classify,       PipelineStage::walls,
       PipelineStage::openings,       PipelineStage::rooms,
-      PipelineStage::spaces,         PipelineStage::mesh,
-      PipelineStage::texture,        PipelineStage::windows,
-      PipelineStage::materials,      PipelineStage::survey,
-      PipelineStage::attributes,     PipelineStage::gsplat,
+      PipelineStage::spaces,         PipelineStage::solids,
+      PipelineStage::mesh,           PipelineStage::texture,
+      PipelineStage::windows,        PipelineStage::materials,
+      PipelineStage::survey,         PipelineStage::attributes,
+      PipelineStage::gsplat,
   };
   return stages;
 }
@@ -429,4 +430,31 @@ TEST_CASE("StageContract_Spaces_AfterRooms_WallsAndOpeningsOptional",
         stage_index(PipelineStage::spaces));
   CHECK(stage_index(PipelineStage::rooms) < stage_index(PipelineStage::spaces));
   CHECK(parse_pipeline_stage("spaces") == PipelineStage::spaces);
+}
+
+TEST_CASE("StageContract_Solids_AfterSpaces_OpeningsAndSpacesOptional",
+          "[core][contract]") {
+  // W6.1 (reusex-z1v.8.1): one closed solid per wall (minus its openings),
+  // slab and space, as three meshes.
+  const auto &solids = stage_contract(PipelineStage::solids);
+  CHECK(solids.command == "rux create solids");
+  std::set<std::string> optional;
+  std::set<std::string> required;
+  for (const auto &input : solids.inputs)
+    for (const auto &name : input.any_of)
+      (input.optional ? optional : required).insert(std::string(name));
+  CHECK(optional == std::set<std::string>{"openings", "spaces"});
+  CHECK(required == std::set<std::string>{"walls", "storeys"});
+  CHECK(std::vector<std::string_view>(solids.outputs.begin(),
+                                      solids.outputs.end()) ==
+        std::vector<std::string_view>{"solid_walls", "solid_slabs",
+                                      "solid_spaces"});
+  for (const auto *name : {"solid_walls", "solid_slabs", "solid_spaces"}) {
+    CHECK(producing_stage(name) == PipelineStage::solids);
+    REQUIRE(find_artifact(name) != nullptr);
+    CHECK(find_artifact(name)->kind == ArtifactKind::mesh);
+  }
+  CHECK(stage_index(PipelineStage::spaces) <
+        stage_index(PipelineStage::solids));
+  CHECK(parse_pipeline_stage("solids") == PipelineStage::solids);
 }

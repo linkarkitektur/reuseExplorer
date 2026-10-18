@@ -6,6 +6,7 @@
 #include "reusex/core/label_encoding.hpp"
 #include "reusex/pipeline/mesh_parameters.hpp"
 #include "reusex/pipeline/opening_parameters.hpp"
+#include "reusex/pipeline/solid_parameters.hpp"
 #include "reusex/pipeline/space_parameters.hpp"
 #include "reusex/pipeline/stage_parameters.hpp"
 #include "reusex/pipeline/tile_index.hpp"
@@ -30,6 +31,7 @@
 #include "reusex/io/solid_model_json.hpp"
 #include "reusex/reconstruction/mesh.hpp"
 #include "reusex/reconstruction/openings.hpp"
+#include "reusex/reconstruction/solids.hpp"
 #include "reusex/reconstruction/walls.hpp"
 #include "reusex/segmentation/band_rooms.hpp"
 #include "reusex/segmentation/classify_planes.hpp"
@@ -47,6 +49,10 @@
 #include <nlohmann/json.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
+#include <pcl/PolygonMesh.h>
+#include <pcl/conversions.h>
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
 
 #include <algorithm>
 #include <array>
@@ -77,7 +83,7 @@ struct StageName {
 // used in `ruxd`'s HTTP contract (docs/gui/openapi.yaml, in its own repo) and
 // `contract` selects the input check run before the stage executes
 // (docs/CONTRACTS.md).
-constexpr std::array<StageName, 13> kStages{{
+constexpr std::array<StageName, 14> kStages{{
     {JobStage::clouds, "clouds", "cloud_reconstruction",
      core::PipelineStage::clouds, false},
     {JobStage::planes, "planes", "segment_planes", core::PipelineStage::planes,
@@ -131,6 +137,9 @@ constexpr std::array<StageName, 13> kStages{{
     // (cancellable inside segment_band_rooms) and one CGAL arrangement per
     // storey is labelled; a few seconds on NewOffice.
     {JobStage::spaces, "spaces", "spaces", core::PipelineStage::spaces, true},
+    // Not cancellable: one box and a corefinement per opening per wall, a
+    // polygon union per storey; about a second on NewOffice.
+    {JobStage::solids, "solids", "solids", core::PipelineStage::solids, false},
 }};
 
 const StageName &descriptor(JobStage stage) {
@@ -1574,6 +1583,141 @@ StageResult run_spaces(ProjectDB &db, const StageContext &ctx,
         static_cast<int64_t>(db.space_boundaries().size())}});
 }
 
+json profile_json(const geometry::ExtrusionProfile &p) {
+  return {{"outer", p.outer},
+          {"holes", p.holes},
+          {"depth", p.depth},
+          {"placement", p.placement}};
+}
+
+/// Concatenate @p elements into one mesh, and the per-element mapping (face
+/// and vertex ranges, type, source GUID, the IFC-ready profile) into
+/// @p index.
+pcl::PolygonMesh
+concat_solids(const std::vector<geometry::ElementSolid> &elements,
+              json &index) {
+  pcl::PointCloud<pcl::PointXYZ> all;
+  pcl::PolygonMesh out;
+  index = json::array();
+  for (const auto &e : elements) {
+    pcl::PointCloud<pcl::PointXYZ> pts;
+    pcl::fromPCLPointCloud2(e.mesh.cloud, pts);
+    const auto v0 = static_cast<std::uint32_t>(all.size());
+    const auto f0 = out.polygons.size();
+    all += pts;
+    for (const auto &f : e.mesh.polygons) {
+      pcl::Vertices g;
+      for (const auto v : f.vertices)
+        g.vertices.push_back(v + v0);
+      out.polygons.push_back(std::move(g));
+    }
+    json voids = json::array();
+    for (const auto &v : e.voids)
+      voids.push_back({{"guid", v.guid},
+                       {"kind", v.kind},
+                       {"profile", profile_json(v.profile)}});
+    index.push_back({{"guid", e.source_guid},
+                     {"type", geometry::to_string(e.type)},
+                     {"storey", e.storey},
+                     {"predefined", e.predefined},
+                     {"part", e.part},
+                     {"closed", e.closed},
+                     {"volume", e.volume},
+                     {"faces", {f0, e.mesh.polygons.size()}},
+                     {"vertices", {v0, pts.size()}},
+                     {"profile", profile_json(e.profile)},
+                     {"voids", std::move(voids)},
+                     {"voids_failed", e.voids_failed}});
+  }
+  pcl::toPCLPointCloud2(all, out.cloud);
+  return out;
+}
+
+/// `solids` (W6.1, reusex-z1v.8.1): the typed model (storeys, walls,
+/// openings, spaces) as one closed solid per element, stored as the meshes
+/// solid_walls / solid_slabs / solid_spaces. Each mesh's `parameters` holds
+/// the stage parameters and the element index (concat_solids), so a reader
+/// can split the mesh back into its elements without a schema change.
+StageResult run_solids(ProjectDB &db, const json &params) {
+  SolidStageOptions so;
+  try {
+    so = solid_options_from_parameters(params.dump());
+  } catch (const std::invalid_argument &e) {
+    return StageResult::invalid(e.what());
+  }
+  const core::SolidModel model = io::load_solid_model(db);
+  if (model.storeys.empty())
+    return StageResult::invalid(
+        "solids: the project has no storeys; run `rux create storeys`");
+  if (model.walls.empty())
+    return StageResult::invalid(
+        "solids: the project has no walls; run `rux create walls`");
+  if (model.spaces.empty())
+    warn("solids: no spaces table (run `rux create spaces` first): no space "
+         "volumes, and each storey's slab is the hull of its walls");
+
+  const auto r = geometry::build_solids(model, so.solids);
+  if (r.openings_failed > 0)
+    warn("solids: {} of {} opening(s) could not be subtracted from their wall "
+         "(the corefinement failed); those walls are left uncut there",
+         r.openings_failed, model.openings.size());
+  if (r.openings_skipped > 0)
+    warn("solids: {} of {} opening(s) lie outside their wall's box or name a "
+         "wall the walls table does not hold; not cut",
+         r.openings_skipped, model.openings.size());
+  if (r.not_closed > 0)
+    warn("solids: {} solid(s) are not closed (a degenerate or self-touching "
+         "polygon); they are stored as they are",
+         r.not_closed);
+  if (r.walls_skipped > 0 || r.spaces_skipped > 0)
+    warn("solids: {} wall(s) and {} space(s) skipped (zero length, area or "
+         "height)",
+         r.walls_skipped, r.spaces_skipped);
+
+  std::vector<StageArtifact> outputs;
+  const std::string stage_params = solid_parameters_json(so);
+  const auto store = [&](std::string_view name,
+                         const std::vector<geometry::ElementSolid> &elements,
+                         std::string_view type) {
+    if (elements.empty()) {
+      if (db.delete_mesh(name))
+        warn("solids: no {} solid; the stale '{}' mesh was removed", type,
+             name);
+      else
+        warn("solids: no {} solid; no '{}' mesh written", type, name);
+      return;
+    }
+    json index;
+    const pcl::PolygonMesh mesh = concat_solids(elements, index);
+    const json meta = {{"solids_version", 1},
+                       {"type", type},
+                       {"parameters", json::parse(stage_params)},
+                       {"elements", std::move(index)}};
+    db.save_mesh(name, mesh, "solids", meta.dump());
+    outputs.push_back({"mesh", std::string(name),
+                       static_cast<int64_t>(mesh.polygons.size())});
+  };
+  store(kSolidWallsMesh, r.walls, "wall");
+  store(kSolidSlabsMesh, r.slabs, "slab");
+  store(kSolidSpacesMesh, r.spaces, "space");
+  if (outputs.empty())
+    return StageResult::failure(fmt::format(
+        "solids: no solid from {} wall(s), {} space(s) on {} storey(s)",
+        model.walls.size(), model.spaces.size(), model.storeys.size()));
+
+  double wall_volume = 0.0;
+  for (const auto &w : r.walls)
+    wall_volume += w.volume;
+  return StageResult::success(
+      fmt::format("{} wall solid(s) ({:.1f} m3; {} opening(s) cut, {} "
+                  "failed, {} skipped), {} slab(s), {} space volume(s); {} "
+                  "not closed",
+                  r.walls.size(), wall_volume, r.openings_cut,
+                  r.openings_failed, r.openings_skipped, r.slabs.size(),
+                  r.spaces.size(), r.not_closed),
+      std::move(outputs));
+}
+
 StageResult dispatch(ProjectDB &db, const StageContext &ctx, const json &params,
                      int log_id) {
   switch (ctx.stage) {
@@ -1619,6 +1763,8 @@ StageResult dispatch(ProjectDB &db, const StageContext &ctx, const json &params,
     return run_openings(db, params, log_id);
   case JobStage::spaces:
     return run_spaces(db, ctx, params, log_id);
+  case JobStage::solids:
+    return run_solids(db, params);
   }
   return StageResult::failure("unknown stage");
 }

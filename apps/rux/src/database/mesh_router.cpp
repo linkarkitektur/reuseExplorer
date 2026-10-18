@@ -295,9 +295,25 @@ void MeshRouter::set(const std::vector<PathComponent> &components,
   }
 }
 
-void MeshRouter::del(const std::vector<PathComponent> & /*components*/) {
-  throw std::runtime_error(
-      "Mesh deletion not yet implemented (no delete API in ProjectDB).");
+void MeshRouter::del(const std::vector<PathComponent> &components) {
+  if (components.size() != 1)
+    throw std::runtime_error(
+        "Delete one mesh at a time: 'rux del meshes.<name>'");
+  std::string name;
+  if (components[0].is_index()) {
+    auto resolved = resolve_index(*components[0].index);
+    if (!resolved)
+      throw std::runtime_error("Array index out of range: " +
+                               std::to_string(*components[0].index));
+    name = *resolved;
+  } else if (components[0].is_item()) {
+    name = components[0].value;
+  } else {
+    throw std::runtime_error("Expected a mesh name or index after 'meshes'");
+  }
+  if (!db_->delete_mesh(name))
+    throw std::runtime_error("No mesh named '" + name + "'");
+  spdlog::info("Deleted mesh '{}'", name);
 }
 
 } // namespace rux::database

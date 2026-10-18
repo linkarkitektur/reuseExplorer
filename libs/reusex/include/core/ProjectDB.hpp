@@ -520,6 +520,9 @@ class ProjectDB {
   std::shared_ptr<pcl::PolygonMesh> mesh(std::string_view name) const;
   std::shared_ptr<pcl::TextureMesh> texture_mesh(std::string_view name) const;
   bool has_mesh(std::string_view name) const;
+  /// Remove the mesh @p name (and its textures). @return false when there
+  /// was none.
+  bool delete_mesh(std::string_view name);
   std::vector<std::string> list_meshes() const;
   std::string mesh_format(std::string_view name) const;
 
