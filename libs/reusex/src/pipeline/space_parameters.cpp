@@ -127,6 +127,26 @@ const std::vector<SpaceParameter> &space_parameter_table() {
       {"open_plan_min_hole_area", "--open-plan-min-hole-area",
        "Furniture hole [m2]", "... of at least this area.",
        SPACE(open_plan_min_hole_area), 0.0, 1000.0},
+      // --- heights (measure_space_heights)
+      {"measure_heights", "--storey-heights", "Measure each space's heights",
+       "Measure each space's own floor and ceiling from the points over it "
+       "(split levels, sloped ceilings); off, every space takes its "
+       "storey's.",
+       SPACE(measure_heights), std::nullopt, std::nullopt},
+      {"height_floor_band_m", "--height-floor-band", "Floor sample band [m]",
+       "A horizontal point this close to its cell's floor is a floor "
+       "sample ...",
+       SPACE(height_floor_band_m), 0.0, 1.0},
+      {"height_ceiling_min_m", "--height-ceiling-min",
+       "Ceiling sample height [m]",
+       "... and one at least this far above it a ceiling sample.",
+       SPACE(height_ceiling_min_m), 0.5, 10.0},
+      {"height_min_cells", "--height-min-cells", "Sampled cells",
+       "A space needs samples in this many grid cells to take a measured "
+       "height ...",
+       SPACE(height_min_cells), 1.0, kInf},
+      {"height_min_share", "--height-min-share", "Sampled share",
+       "... and in this share of its area.", SPACE(height_min_share), 0.0, 1.0},
       // --- identity (core::SpaceIdentityOptions)
       {"guid_match_m", "--guid-match", "Same space within [m]",
        "A re-detected space keeps the GUID of the stored one of its storey "

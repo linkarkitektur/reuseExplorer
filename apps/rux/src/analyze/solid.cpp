@@ -35,6 +35,7 @@ std::string format_solid_summary(const reusex::geometry::SolidModelReport &r) {
   return fmt::format(
       "room count error      {}\n"
       "room IoU (mean)       {}\n"
+      "space floor / ceiling error  mean {} / {}\n"
       "wall recall           {}  ({} of {} reference walls)\n"
       "wall precision        {}  ({} detected walls)\n"
       "wall position RMS     {}\n"
@@ -51,9 +52,10 @@ std::string format_solid_summary(const reusex::geometry::SolidModelReport &r) {
       !r.room_count_error        ? std::string("n/a")
       : *r.room_count_error == 0 ? std::string("0")
                                  : fmt::format("{:+d}", *r.room_count_error),
-      show(r.room_iou_mean), show(r.wall_recall), r.matched_walls,
-      r.reference_walls, show(r.wall_precision), r.detected_walls,
-      show(r.wall_position_rms_m, 1000.0, " mm"),
+      show(r.room_iou_mean), show(r.space_floor_err_mean_m, 1000.0, " mm"),
+      show(r.space_ceiling_err_mean_m, 1000.0, " mm"), show(r.wall_recall),
+      r.matched_walls, r.reference_walls, show(r.wall_precision),
+      r.detected_walls, show(r.wall_position_rms_m, 1000.0, " mm"),
       show(r.wall_thickness_err_mean_m, 1000.0, " mm"),
       show(r.wall_thickness_err_p95_m, 1000.0, " mm"), show(r.opening_recall),
       r.matched_openings, r.reference_openings, show(r.opening_precision),

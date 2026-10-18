@@ -239,6 +239,7 @@ storey at all (no storeys, walls or spaces) covers everything.
 |---|---|---|
 | `room_count_error` | detected spaces - reference spaces (signed) | 0 |
 | `room_iou_mean` | mean over reference spaces of the 2D IoU with the detected space matched to it; unmatched = 0 | higher |
+| `space_floor_err_mean_m` / `space_ceiling_err_mean_m` | mean \|detected - reference\| `z_floor` (`z_ceiling`) over the matched spaces, both in world z at the detected polygon's vertex mean: whether split levels and per-space ceilings are found | lower |
 | `wall_recall` / `wall_precision` | matched / reference walls, matched / detected walls | higher |
 | `wall_position_rms_m` | RMS of matched detected walls' endpoint distances to the reference axis line; face to face when exactly one of the pair is drawn on a face (thickness -1; see Matching) | lower |
 | `wall_thickness_err_mean_m` / `_p95_m` | \|detected - reference\| thickness over matched walls whose thickness is known (> 0) and measured (`assumed` false) on both sides; mean and nearest-rank P95. Pairs left out for `assumed` are counted in `counts.thickness_assumed_excluded`, scored pairs in `counts.thickness_pairs` | lower |

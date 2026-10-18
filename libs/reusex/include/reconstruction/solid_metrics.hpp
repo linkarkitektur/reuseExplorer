@@ -71,6 +71,11 @@ struct SolidModelReport {
   /// matched to (one-to-one, greedy by IoU); an unmatched reference space
   /// counts 0.
   std::optional<double> room_iou_mean;
+  /// Mean |detected - reference| floor (ceiling) height over the matched
+  /// spaces, in world z at the detected polygon's vertex mean [m]: split
+  /// levels and per-space ceilings (reusex-546).
+  std::optional<double> space_floor_err_mean_m;
+  std::optional<double> space_ceiling_err_mean_m;
   /// RMS of the matched detected walls' endpoint distances to their reference
   /// wall's axis line [m]. Face to face when one of the two is drawn on its
   /// one seen face (thickness -1) and the other as a centre line (thickness

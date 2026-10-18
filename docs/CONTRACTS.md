@@ -534,7 +534,12 @@ rooms -> spaces**.
 Each row: `storey` (the storey's idx), `name` ("Space <room label>" until
 naming lands), `kind`, `polygon` (a blob: outer ring + holes, open rings,
 level frame, `core/space_polygon.hpp`), `z_floor` / `z_ceiling` (the
-storey's), `area`, `perimeter`, `volume`, `compactness`, `room_label` (the
+space's own, measured: the median over its room's grid cells of each cell's
+median floor / ceiling sample, `geometry::measure_space_heights`, so a split
+level or a lowered ceiling shows; the storey's when fewer than
+`height_min_cells` / `height_min_share` of its cells were sampled or
+`measure_heights` is off; the sampled cell counts are in `metadata` as
+`z_floor_cells` / `z_ceiling_cells`), `area`, `perimeter`, `volume`, `compactness`, `room_label` (the
 `rooms` label it was made from), `confidence` (the share of its area that
 comes from wall-bounded faces, the rest is raster) and `metadata` (that share
 and the furniture holes). A boundary names its space by row (it goes with
@@ -567,7 +572,17 @@ and a window a hole); a slab is the storey's floor polygon -- the union of
 its spaces' outer rings and its walls' footprints, or the convex hull of the
 footprints when the storey has no space -- from the ceiling of the storey
 below up to its floor (else `slab_thickness_m`), plus a roof over the top
-storey; a space is its polygon (with holes) from `z_floor` to `z_ceiling`. A
+storey; a space is its polygon (with holes) from `z_floor` to `z_ceiling`.
+Split levels (reusex-546): the spaces of a storey group into floor levels
+(and, on the top storey, ceiling levels) by their own heights
+(`level_tol_m`; a level within it of the storey's height is that height);
+each floor level is a slab region of its own (its spaces and the walls
+standing on it, the higher level taking what two share), filled down to the
+storey's slab bottom, and each ceiling level a roof region; a detected,
+unlocked wall runs from the floor level of the lowest space beside it to
+the ceiling level of the highest (`walls_follow_spaces`), so a wall between
+two levels covers both. A storey whose spaces all sit at its own heights is
+built as one slab and one roof, as before. A
 wall of unknown thickness (`-1`, its axis is the seen face) grows
 `unknown_wall_thickness_m` away from the space it faces; wall ends at a
 corner or tee run on to the far face of the wall they meet.

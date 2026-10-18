@@ -1546,6 +1546,14 @@ StageResult run_spaces(ProjectDB &db, const StageContext &ctx,
   } catch (const std::invalid_argument &e) {
     return StageResult::failure(e.what());
   }
+  // Each space's own floor and ceiling (split levels, sloped ceilings;
+  // reusex-546).
+  try {
+    geometry::measure_space_heights(sp.spaces, r.grids, storeys, *cloud,
+                                    *normals, so.spaces);
+  } catch (const std::invalid_argument &e) {
+    return StageResult::failure(e.what());
+  }
   info("spaces: {} matched a stored space ({} locked, kept as stored), {} "
        "new GUID(s)",
        ids.matched, ids.locked_matched, ids.minted);

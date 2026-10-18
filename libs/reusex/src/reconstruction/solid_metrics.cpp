@@ -309,6 +309,18 @@ void compare_spaces(const core::SolidModel &det, const core::SolidModel &ref,
   for (const auto &m : matches)
     sum += m.score;
   r.room_iou_mean = sum / static_cast<double>(rp.size());
+  if (matches.empty())
+    return;
+  double floor_err = 0.0, ceiling_err = 0.0;
+  for (const auto &m : matches) {
+    floor_err +=
+        std::abs(det.spaces[m.det].z_floor - ref.spaces[m.ref].z_floor);
+    ceiling_err +=
+        std::abs(det.spaces[m.det].z_ceiling - ref.spaces[m.ref].z_ceiling);
+  }
+  r.space_floor_err_mean_m = floor_err / static_cast<double>(matches.size());
+  r.space_ceiling_err_mean_m =
+      ceiling_err / static_cast<double>(matches.size());
 }
 
 // ---------------------------------------------------------------------------
@@ -606,6 +618,18 @@ core::SolidModel to_reference_frames(const core::SolidModel &det,
     const Eigen::Affine3d T = det_to_ref(sp.storey, *r);
     core::SpaceRecord m = sp;
     m.storey = *r;
+    // Floor and ceiling heights at the polygon's vertex mean.
+    double cx = 0.0, cy = 0.0;
+    for (const auto &q : sp.polygon.outer) {
+      cx += q[0];
+      cy += q[1];
+    }
+    if (!sp.polygon.outer.empty()) {
+      cx /= static_cast<double>(sp.polygon.outer.size());
+      cy /= static_cast<double>(sp.polygon.outer.size());
+    }
+    m.z_floor = (T * Eigen::Vector3d(cx, cy, sp.z_floor)).z();
+    m.z_ceiling = (T * Eigen::Vector3d(cx, cy, sp.z_ceiling)).z();
     auto map_ring = [&](std::vector<core::PlanPoint> &ring) {
       for (auto &q : ring) {
         const Eigen::Vector3d p = T * Eigen::Vector3d(q[0], q[1], sp.z_floor);
@@ -665,6 +689,8 @@ std::string SolidModelReport::to_json(int indent) const {
                               ? nlohmann::ordered_json(*room_count_error)
                               : nlohmann::ordered_json(nullptr);
   j["room_iou_mean"] = opt_json(room_iou_mean);
+  j["space_floor_err_mean_m"] = opt_json(space_floor_err_mean_m);
+  j["space_ceiling_err_mean_m"] = opt_json(space_ceiling_err_mean_m);
   j["wall_position_rms_m"] = opt_json(wall_position_rms_m);
   j["wall_thickness_err_mean_m"] = opt_json(wall_thickness_err_mean_m);
   j["wall_thickness_err_p95_m"] = opt_json(wall_thickness_err_p95_m);

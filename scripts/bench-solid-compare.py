@@ -42,6 +42,8 @@ LOWER_ABS = "lower |x|"
 DIRECTIONS: "dict[str, str]" = {
     "room_count_error": LOWER_ABS,
     "room_iou_mean": HIGHER,
+    "space_floor_err_mean_m": LOWER,
+    "space_ceiling_err_mean_m": LOWER,
     "wall_position_rms_m": LOWER,
     "wall_thickness_err_mean_m": LOWER,
     "wall_thickness_err_p95_m": LOWER,
