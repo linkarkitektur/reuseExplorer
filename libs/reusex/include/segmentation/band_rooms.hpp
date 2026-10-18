@@ -62,6 +62,7 @@
 /// raster-order seeding; the result does not depend on point order.
 
 #include "reusex/core/solid_model.hpp"
+#include "reusex/segmentation/split_level.hpp"
 #include "reusex/types/point_types.hpp"
 
 #include <atomic>
@@ -184,6 +185,16 @@ struct BandRoomsOptions {
   double pocket_max_area = 4.0;
   double pocket_min_contact_share = 0.2;
 
+  // --- split levels (reusex-546) -------------------------------------------
+  /// Find the storey's raised floor parts (split_level.hpp) and measure the
+  /// wall band, the floor / ceiling footprint heights and floor_max_height /
+  /// ceiling_min_height from each cell's own floor instead of the storey
+  /// floor. On house1 (north block 0.75 m up) the band over the raised half
+  /// otherwise sits 0.45-1.55 m above its floor, among kitchen counters and
+  /// parapets. A storey without a raised part is unchanged.
+  bool split_levels = true;
+  SplitLevelOptions split_level;
+
   /// Optional cancellation flag, checked between storeys. Caller keeps it
   /// alive for the call.
   const std::atomic_bool *cancel_token = nullptr;
@@ -217,6 +228,12 @@ struct RoomGrid {
   std::vector<float> clearance;
   /// Room id per cell, 0 = none (wall, exterior, dropped region).
   std::vector<int32_t> labels;
+  /// The floor each cell's evidence was measured from (split levels,
+  /// FloorLevelMap::floor_z); empty = the storey floor everywhere. Set by
+  /// segment_band_rooms(), not by partition_room_grid().
+  std::vector<float> floor_z;
+  /// The storey's floor levels (base first); empty when not looked for.
+  std::vector<FloorLevel> floor_levels;
 
   int cores = 0;       ///< cores seeded (after the min_core_area filter)
   int coreless = 0;    ///< rooms from components no core reached
@@ -230,6 +247,10 @@ struct RoomGrid {
   int dropped_regions = 0;    ///< regions below min_room_area
   double interior_area = 0.0; ///< [m^2]
 
+  /// The floor of cell @p i: floor_z[i], or @p storey_floor without a map.
+  [[nodiscard]] double floor_at(size_t i, double storey_floor) const {
+    return floor_z.empty() ? storey_floor : static_cast<double>(floor_z[i]);
+  }
   [[nodiscard]] size_t index(int col, int row) const {
     return static_cast<size_t>(row) * static_cast<size_t>(width) +
            static_cast<size_t>(col);

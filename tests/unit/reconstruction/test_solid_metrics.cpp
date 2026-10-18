@@ -705,3 +705,34 @@ TEST_CASE("CompareSolidModels_SingularLevelTransform_Throws",
   det.storeys[0].level_transform = {};
   CHECK_THROWS_AS(compare_solid_models(det, ref), std::invalid_argument);
 }
+
+TEST_CASE("CompareSolidModels_SpaceHeights_ScoreTheSplitLevel",
+          "[reconstruction][solid_metrics][split_level]") {
+  // Two rooms, the east one raised 0.75 m (house1's split level): a
+  // detection with every room on the storey floor is 0.375 m off on average;
+  // one with each room's own floor and ceiling scores 0.
+  SolidModel ref;
+  auto w = rect_space("w", 0, 0, 4, 4);
+  auto e = rect_space("e", 4.2, 0, 8, 4);
+  w.z_floor = 0.0;
+  w.z_ceiling = 2.7;
+  e.z_floor = 0.75;
+  e.z_ceiling = 3.09;
+  ref.spaces = {w, e};
+  SolidModel flat = ref;
+  for (auto &s : flat.spaces) {
+    s.z_floor = 0.0;
+    s.z_ceiling = 3.09;
+  }
+  const auto bad = compare_solid_models(flat, ref);
+  CHECK_THAT(bad.space_floor_err_mean_m.value(), WithinAbs(0.375, 1e-9));
+  CHECK_THAT(bad.space_ceiling_err_mean_m.value(), WithinAbs(0.195, 1e-9));
+  const auto good = compare_solid_models(ref, ref);
+  CHECK_THAT(good.space_floor_err_mean_m.value(), WithinAbs(0.0, 1e-12));
+  CHECK_THAT(good.space_ceiling_err_mean_m.value(), WithinAbs(0.0, 1e-12));
+  const auto j = nlohmann::json::parse(bad.to_json());
+  CHECK(j.contains("space_floor_err_mean_m"));
+  CHECK(j.contains("space_ceiling_err_mean_m"));
+  CHECK_FALSE(compare_solid_models(SolidModel{}, ref)
+                  .space_floor_err_mean_m.has_value());
+}

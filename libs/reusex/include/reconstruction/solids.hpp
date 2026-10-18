@@ -16,7 +16,27 @@
 //    footprints, else the hull of its walls) extruded down from the floor by
 //    the gap to the storey below (else a default thickness), plus a roof
 //    slab over the top storey;
-//  - a space is its polygon (with holes) extruded from z_floor to z_ceiling.
+//  - a space is its polygon (with holes) extruded from its own z_floor to
+//    its own z_ceiling.
+//
+// Split levels and differing ceilings (reusex-546): the spaces of a storey
+// fall into floor levels (z_floor within level_tol_m of each other; a level
+// within that of the storey floor IS the storey floor) and, on the top
+// storey, ceiling levels likewise. Each floor level is a slab region of its
+// own -- its spaces and the footprints of the walls standing on it, minus
+// the regions of the higher levels -- whose top is the level's height and
+// whose bottom is the storey's lowest slab bottom, so a raised part's slab
+// fills down to the lower floor's slab and the step is closed whether or not
+// a wall stands on it (the fill under a raised floor is not observed; the
+// scan only sees its top). Roof regions are built per ceiling level the
+// same way, the higher level taking the walls between them, each with the
+// default thickness on its level. A detected wall (not locked, source
+// "detected") runs from the floor level of the lowest space beside it to
+// the ceiling level of the highest one (probed along both faces), so a wall
+// between two levels covers both and every wall stands on its slab and
+// meets its roof; a wall with no space beside it, or a locked / manual one,
+// keeps its own z_base / height. A storey whose spaces all sit at its floor
+// and ceiling (within level_tol_m) is built exactly as before.
 //
 // Each ElementSolid carries a triangle mesh in WORLD coordinates (each
 // storey's level frame mapped back through the inverse of its
@@ -74,7 +94,8 @@ struct ElementSolid {
   /// IFC predefined type: wall "STANDARD"; slab "FLOOR" | "ROOF"; space its
   /// kind (room | corridor | open_plan | unknown).
   std::string predefined;
-  /// Slabs: which piece of the storey's floor polygon this is (0 = largest).
+  /// Slabs: which piece of the storey's floor (or roof) this is, numbered
+  /// over its levels, lowest first, each level's pieces largest first.
   int part = 0;
   ExtrusionProfile profile;
   std::vector<OpeningVoid> voids; ///< walls only
@@ -109,6 +130,12 @@ struct SolidsOptions {
   double slab_min_hole_area_m2 = 1.0;
   /// Also build a roof slab over the top storey's ceiling.
   bool roof = true;
+  /// Space floors (ceilings) within this of each other are one floor
+  /// (ceiling) level, and a level within this of the storey's floor
+  /// (ceiling) is that floor (ceiling) [m]. See the file comment.
+  double level_tol_m = 0.15;
+  /// Detected walls take their base / top from the spaces beside them.
+  bool walls_follow_spaces = true;
 };
 
 /// What build_solids() made.
@@ -124,7 +151,8 @@ struct SolidsResult {
 
 /// Build one solid per wall, slab piece and space of @p model.
 /// Deterministic for a given model (STANDARDS §6): elements come out in the
-/// model's order; slabs by storey, then piece area (largest first).
+/// model's order; slabs by storey, then floor level (lowest first), then
+/// piece area (largest first); roof slabs likewise by ceiling level.
 SolidsResult build_solids(const core::SolidModel &model,
                           const SolidsOptions &options = {});
 

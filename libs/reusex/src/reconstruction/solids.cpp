@@ -28,8 +28,11 @@
 
 #include <Eigen/Geometry>
 
+#include <fmt/ranges.h>
+
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <list>
 #include <map>
 #include <optional>
@@ -520,10 +523,9 @@ Ring dring(const EPolygon &p) {
   return r;
 }
 
-/// The union of @p rings (each simple), split into pieces, largest first.
-std::vector<Piece> union_pieces(const std::vector<Ring> &rings,
-                                const SolidsOptions &opts,
-                                std::size_t &not_simple) {
+/// The union of @p rings (each simple; a non-simple one is counted in
+/// @p not_simple and left out).
+EPolygonSet ring_set(const std::vector<Ring> &rings, std::size_t &not_simple) {
   EPolygonSet set;
   for (const auto &r0 : rings) {
     const Ring r = clean_ring(r0, true);
@@ -538,6 +540,13 @@ std::vector<Piece> union_pieces(const std::vector<Ring> &rings,
       p.reverse_orientation();
     set.join(p);
   }
+  return set;
+}
+
+/// @p set split into pieces, largest first; small holes filled, small
+/// pieces dropped.
+std::vector<Piece> set_pieces(const EPolygonSet &set,
+                              const SolidsOptions &opts) {
   std::vector<EPolygonWithHoles> pwhs;
   set.polygons_with_holes(std::back_inserter(pwhs));
   std::vector<Piece> out;
@@ -561,6 +570,68 @@ std::vector<Piece> union_pieces(const std::vector<Ring> &rings,
   std::stable_sort(out.begin(), out.end(), [](const Piece &a, const Piece &b) {
     return a.area > b.area;
   });
+  return out;
+}
+
+/// The heights a storey's spaces sit at (floors, or ceilings), grouped:
+/// ascending, each the area-weighted mean of a chain of heights less than
+/// tol apart, snapped to the storey's own height when within tol of it.
+struct Levels {
+  std::vector<double> z;
+  /// Index of the level nearest @p v (ties: the lower).
+  [[nodiscard]] std::size_t of(double v) const {
+    std::size_t best = 0;
+    for (std::size_t i = 1; i < z.size(); ++i)
+      if (std::abs(z[i] - v) < std::abs(z[best] - v))
+        best = i;
+    return best;
+  }
+  [[nodiscard]] double snap(double v) const { return z.empty() ? v : z[of(v)]; }
+};
+
+Levels group_levels(std::vector<std::pair<double, double>> z_area,
+                    double storey_z, double tol) {
+  Levels out;
+  std::stable_sort(z_area.begin(), z_area.end());
+  for (std::size_t i = 0; i < z_area.size();) {
+    double sum = 0.0, weight = 0.0;
+    std::size_t j = i;
+    do {
+      const double w = std::max(z_area[j].second, 1e-6);
+      sum += w * z_area[j].first;
+      weight += w;
+      ++j;
+    } while (j < z_area.size() && z_area[j].first - z_area[j - 1].first < tol);
+    double z = sum / weight;
+    if (std::abs(z - storey_z) <= tol)
+      z = storey_z;
+    if (out.z.empty() || std::abs(out.z.back() - z) > 1e-9)
+      out.z.push_back(z);
+    i = j;
+  }
+  std::sort(out.z.begin(), out.z.end());
+  out.z.erase(std::unique(out.z.begin(), out.z.end()), out.z.end());
+  if (out.z.empty())
+    out.z.push_back(storey_z);
+  return out;
+}
+
+/// Regions of one storey per level, the higher level first taking what two
+/// levels share: rings[k] are level k's spaces and walls. Returns per level
+/// its pieces (ascending level order).
+std::vector<std::vector<Piece>>
+level_regions(const std::vector<std::vector<Ring>> &rings,
+              const SolidsOptions &opts, std::size_t &not_simple) {
+  std::vector<std::vector<Piece>> out(rings.size());
+  EPolygonSet higher;
+  for (std::size_t k = rings.size(); k-- > 0;) {
+    EPolygonSet set = ring_set(rings[k], not_simple);
+    EPolygonSet own = set;
+    if (!higher.is_empty())
+      own.difference(higher);
+    out[k] = set_pieces(own, opts);
+    higher.join(set);
+  }
   return out;
 }
 
@@ -629,8 +700,75 @@ SolidsResult build_solids(const core::SolidModel &model,
   SolidsResult result;
   const Frames frames = make_frames(model);
 
+  // Floor and ceiling levels of each storey's spaces (split levels).
+  std::map<int, Levels> floor_levels, ceiling_levels;
+  {
+    std::map<int, std::vector<std::pair<double, double>>> floors, ceilings;
+    for (const auto &s : model.spaces) {
+      if (!std::isfinite(s.z_floor) || !std::isfinite(s.z_ceiling) ||
+          !(s.z_ceiling > s.z_floor))
+        continue;
+      const double area = std::max(s.area, 0.0);
+      floors[s.storey].emplace_back(s.z_floor, area);
+      ceilings[s.storey].emplace_back(s.z_ceiling, area);
+    }
+    for (const auto &st : model.storeys) {
+      floor_levels[st.idx] =
+          group_levels(floors[st.idx], st.z_floor, opts.level_tol_m);
+      ceiling_levels[st.idx] =
+          group_levels(ceilings[st.idx], st.z_ceiling, opts.level_tol_m);
+    }
+  }
+  const auto levels_of = [](const std::map<int, Levels> &m, int storey,
+                            double fallback) {
+    const auto it = m.find(storey);
+    return it == m.end() ? Levels{{fallback}} : it->second;
+  };
+
   // Walls, with their openings cut out.
-  const auto boxes = wall_boxes(model, opts, result.walls_skipped);
+  auto boxes = wall_boxes(model, opts, result.walls_skipped);
+  if (opts.walls_follow_spaces) {
+    // From the floor level of the lowest space beside the wall to the
+    // ceiling level of the highest one.
+    for (auto &b : boxes) {
+      const core::WallRecord &w = *b.wall;
+      if (!b.valid || w.locked || w.source != "detected")
+        continue;
+      const double off =
+          std::max(0.15, std::max(std::abs(b.lo), std::abs(b.hi)) + 0.1);
+      double lo = std::numeric_limits<double>::infinity();
+      double hi = -std::numeric_limits<double>::infinity();
+      for (const double f : {0.1, 0.3, 0.5, 0.7, 0.9}) {
+        const double sv = f * b.len;
+        for (const double t : {off, -off}) {
+          const Vec2 p = b.at(sv, t);
+          for (const auto &s : model.spaces) {
+            if (s.storey != w.storey || !(s.z_ceiling > s.z_floor) ||
+                !inside_space(s, p))
+              continue;
+            lo = std::min(lo, s.z_floor);
+            hi = std::max(hi, s.z_ceiling);
+          }
+        }
+      }
+      if (!std::isfinite(lo) || !std::isfinite(hi))
+        continue;
+      const auto *st = [&]() -> const core::StoreyRecord * {
+        for (const auto &x : model.storeys)
+          if (x.idx == w.storey)
+            return &x;
+        return nullptr;
+      }();
+      const double z0 =
+          levels_of(floor_levels, w.storey, st ? st->z_floor : lo).snap(lo);
+      const double z1 =
+          levels_of(ceiling_levels, w.storey, st ? st->z_ceiling : hi).snap(hi);
+      if (z1 > z0) {
+        b.z0 = z0;
+        b.z1 = z1;
+      }
+    }
+  }
   std::unordered_map<std::string, std::vector<const core::OpeningRecord *>>
       openings;
   std::unordered_map<std::string, bool> valid_wall;
@@ -682,8 +820,9 @@ SolidsResult build_solids(const core::SolidModel &model,
     result.spaces.push_back(std::move(e));
   }
 
-  // Slabs: one floor slab per storey (its floor polygon, down to the storey
-  // below), and a roof over the top one.
+  // Slabs: per storey, one floor region per floor level (its spaces and the
+  // walls standing on it), all down to the storey's slab bottom; a roof per
+  // ceiling level over the top storey.
   std::vector<const core::StoreyRecord *> storeys;
   for (const auto &s : model.storeys)
     storeys.push_back(&s);
@@ -691,37 +830,59 @@ SolidsResult build_solids(const core::SolidModel &model,
       storeys.begin(), storeys.end(),
       [](const auto *a, const auto *b) { return a->idx < b->idx; });
   std::size_t not_simple = 0;
-  std::vector<Piece> top_pieces;
   for (std::size_t k = 0; k < storeys.size(); ++k) {
     const auto &st = *storeys[k];
-    std::vector<Ring> space_rings, wall_rings;
+    const Levels fl = levels_of(floor_levels, st.idx, st.z_floor);
+    const Levels cl = levels_of(ceiling_levels, st.idx, st.z_ceiling);
+    std::vector<std::vector<Ring>> floor_rings(fl.z.size()),
+        roof_rings(cl.z.size());
+    bool any_space = false;
     for (const auto &s : model.spaces)
-      if (s.storey == st.idx && s.polygon.outer.size() >= 3)
-        space_rings.push_back(to_ring(s.polygon.outer));
+      if (s.storey == st.idx && s.polygon.outer.size() >= 3) {
+        floor_rings[fl.of(s.z_floor)].push_back(to_ring(s.polygon.outer));
+        roof_rings[cl.of(s.z_ceiling)].push_back(to_ring(s.polygon.outer));
+        any_space = true;
+      }
+    std::vector<Ring> wall_rings;
     for (const auto &b : boxes)
-      if (b.valid && b.wall->storey == st.idx)
+      if (b.valid && b.wall->storey == st.idx) {
         wall_rings.push_back(b.footprint());
-    std::vector<Piece> pieces;
-    if (!space_rings.empty()) {
-      std::vector<Ring> all = space_rings;
-      all.insert(all.end(), wall_rings.begin(), wall_rings.end());
-      pieces = union_pieces(all, opts, not_simple);
+        floor_rings[fl.of(b.z0)].push_back(b.footprint());
+        roof_rings[cl.of(b.z1)].push_back(b.footprint());
+      }
+    std::vector<std::vector<Piece>> floors, roofs;
+    if (any_space) {
+      floors = level_regions(floor_rings, opts, not_simple);
+      roofs = level_regions(roof_rings, opts, not_simple);
     } else {
-      pieces = hull_piece(wall_rings);
+      // No space: the hull of the walls; fl / cl hold only the storey's
+      // own floor and ceiling then.
+      floors = {hull_piece(wall_rings)};
+      roofs = floors;
     }
-    if (pieces.empty()) {
+    const Levels &fl_used = fl;
+    const Levels &cl_used = cl;
+    std::size_t n_floor = 0;
+    for (const auto &f : floors)
+      n_floor += f.size();
+    if (n_floor == 0) {
       warn("solids: storey {} has no space and no wall to draw a floor from; "
            "no slab",
            st.idx);
       continue;
     }
     // The gap to the storey below, in world z at the floor's centre.
+    const double z_low = fl_used.z.front();
     double thickness = opts.slab_thickness_m;
     if (k > 0) {
       const auto &below = *storeys[k - 1];
-      const Vec2 c = centroid(pieces.front().outer);
+      const Piece *first = nullptr;
+      for (const auto &f : floors)
+        if (!f.empty() && (!first || f.front().area > first->area))
+          first = &f.front();
+      const Vec2 c = centroid(first->outer);
       const double z_floor =
-          (frames.of(st.idx) * Eigen::Vector3d(c.x(), c.y(), st.z_floor)).z();
+          (frames.of(st.idx) * Eigen::Vector3d(c.x(), c.y(), z_low)).z();
       const double z_ceiling = (frames.of(below.idx) *
                                 Eigen::Vector3d(c.x(), c.y(), below.z_ceiling))
                                    .z();
@@ -734,19 +895,25 @@ SolidsResult build_solids(const core::SolidModel &model,
              st.idx, below.idx, gap, opts.max_slab_thickness_m,
              opts.slab_thickness_m);
     }
-    for (std::size_t i = 0; i < pieces.size(); ++i)
-      result.slabs.push_back(build_slab(st, pieces[i], static_cast<int>(i),
-                                        st.z_floor - thickness, thickness,
-                                        "FLOOR", frames));
-    if (k + 1 == storeys.size())
-      top_pieces = std::move(pieces);
-  }
-  if (opts.roof && !storeys.empty() && !top_pieces.empty()) {
-    const auto &top = *storeys.back();
-    for (std::size_t i = 0; i < top_pieces.size(); ++i)
-      result.slabs.push_back(build_slab(top, top_pieces[i], static_cast<int>(i),
-                                        top.z_ceiling, opts.slab_thickness_m,
-                                        "ROOF", frames));
+    const double z_bottom = z_low - thickness;
+    if (fl_used.z.size() > 1)
+      info("solids: storey {} is split into {} floor levels ({}); each "
+           "level's slab fills down to {:.2f} m",
+           st.idx, fl_used.z.size(), fmt::join(fl_used.z, ", "), z_bottom);
+    int part = 0;
+    for (std::size_t lv = 0; lv < floors.size(); ++lv)
+      for (const auto &piece : floors[lv])
+        result.slabs.push_back(build_slab(st, piece, part++, z_bottom,
+                                          fl_used.z[lv] - z_bottom, "FLOOR",
+                                          frames));
+    if (opts.roof && k + 1 == storeys.size()) {
+      int roof_part = 0;
+      for (std::size_t lv = 0; lv < roofs.size(); ++lv)
+        for (const auto &piece : roofs[lv])
+          result.slabs.push_back(
+              build_slab(st, piece, roof_part++, cl_used.z[lv],
+                         opts.slab_thickness_m, "ROOF", frames));
+    }
   }
   if (not_simple > 0)
     warn("solids: {} space / wall outline(s) are not simple polygons and were "

@@ -5,6 +5,7 @@
 #include "reusex/segmentation/spaces.hpp"
 
 #include "reusex/core/logging.hpp"
+#include "reusex/geometry/level_frame.hpp"
 
 #include <CGAL/Arr_batched_point_location.h>
 #include <CGAL/Arr_segment_traits_2.h>
@@ -24,8 +25,10 @@
 #include <array>
 #include <cmath>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -1184,6 +1187,173 @@ auto polygonise_spaces(const std::vector<RoomGrid> &grids,
     result.stats.push_back(st);
   }
   return result;
+}
+
+namespace {
+
+/// Median of @p v (upper middle for an even count); v is reordered.
+double median_in_place(std::vector<float> &v) {
+  const auto mid = v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2);
+  std::nth_element(v.begin(), mid, v.end());
+  return static_cast<double>(*mid);
+}
+
+/// Per-cell medians of (cell, z) samples, then their median; also the
+/// number of cells. NaN without samples.
+std::pair<double, int> cell_median(std::vector<std::pair<size_t, float>> &s) {
+  if (s.empty())
+    return {std::numeric_limits<double>::quiet_NaN(), 0};
+  std::sort(s.begin(), s.end());
+  std::vector<float> per_cell, run;
+  for (size_t i = 0; i < s.size();) {
+    size_t j = i;
+    run.clear();
+    while (j < s.size() && s[j].first == s[i].first)
+      run.push_back(s[j++].second);
+    per_cell.push_back(static_cast<float>(median_in_place(run)));
+    i = j;
+  }
+  const int n = static_cast<int>(per_cell.size());
+  return {median_in_place(per_cell), n};
+}
+
+/// @p meta (a JSON object, or empty) with the sample counts added.
+std::string with_height_counts(const std::string &meta, int floor_cells,
+                               int ceiling_cells) {
+  const std::string add = fmt::format(
+      R"("z_floor_cells":{},"z_ceiling_cells":{})", floor_cells, ceiling_cells);
+  const auto close = meta.find_last_of('}');
+  if (meta.empty() || close == std::string::npos)
+    return "{" + add + "}";
+  const auto open = meta.find_first_not_of(" \t\n{");
+  const bool empty_object = open == std::string::npos || open >= close;
+  return meta.substr(0, close) + (empty_object ? "" : ",") + add +
+         meta.substr(close);
+}
+
+} // namespace
+
+SpaceHeightStats measure_space_heights(
+    std::vector<core::SpaceRecord> &spaces, const std::vector<RoomGrid> &grids,
+    const std::vector<core::StoreyRecord> &storeys, const Cloud &cloud,
+    const CloudN &normals, const SpacesOptions &o) {
+  if (cloud.size() != normals.size())
+    throw std::invalid_argument(
+        fmt::format("measure_space_heights: cloud has {} points but normals {}",
+                    cloud.size(), normals.size()));
+  SpaceHeightStats stats;
+  if (!o.measure_heights || spaces.empty())
+    return stats;
+
+  for (const auto &g : grids) {
+    const auto st =
+        std::find_if(storeys.begin(), storeys.end(),
+                     [&](const auto &s) { return s.idx == g.storey_idx; });
+    if (st == storeys.end() || g.width <= 0 || g.height <= 0)
+      continue;
+    // Spaces of this grid by room id.
+    std::map<int32_t, size_t> of_room;
+    for (size_t i = 0; i < spaces.size(); ++i)
+      if (spaces[i].storey == g.storey_idx && spaces[i].room_label > 0)
+        of_room.emplace(spaces[i].room_label, i);
+    if (of_room.empty())
+      continue;
+
+    const LevelFrame frame = LevelFrame::from_record(*st);
+    const Eigen::Matrix3d rot = frame.world_to_level.linear();
+    const double zf = st->z_floor, zc = st->z_ceiling;
+    const double cell = g.cell_size;
+    std::vector<std::vector<std::pair<size_t, float>>> floors(spaces.size()),
+        ceilings(spaces.size());
+    for (size_t i = 0; i < cloud.size(); ++i) {
+      const auto &p = cloud.points[i];
+      const auto &nn = normals.points[i];
+      if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z))
+        continue;
+      const Eigen::Vector3d nl =
+          rot * Eigen::Vector3d(nn.normal_x, nn.normal_y, nn.normal_z);
+      // Horizontal points only: the band-rooms footprint threshold.
+      if (!std::isfinite(nl.z()) || std::abs(nl.z()) <= 0.8)
+        continue;
+      const Eigen::Vector3d q = frame.to_level(Eigen::Vector3d(p.x, p.y, p.z));
+      // Loose prefilter; the per-cell bounds below decide.
+      if (q.z() < zf - 0.3 || q.z() > zc + 2.0)
+        continue;
+      const int c = static_cast<int>(std::floor(q.x() / cell)) - g.col0;
+      const int r = static_cast<int>(std::floor(q.y() / cell)) - g.row0;
+      if (c < 0 || r < 0 || c >= g.width || r >= g.height)
+        continue;
+      const size_t ci = g.index(c, r);
+      const auto it = of_room.find(g.labels[ci]);
+      if (it == of_room.end())
+        continue;
+      const double f = g.floor_at(ci, zf);
+      const auto z = static_cast<float>(q.z());
+      if (std::abs(q.z() - f) <= o.height_floor_band_m)
+        floors[it->second].emplace_back(ci, z);
+      else if (q.z() >= f + o.height_ceiling_min_m &&
+               q.z() <= std::max(zc, f + (zc - zf)) + 0.3)
+        ceilings[it->second].emplace_back(ci, z);
+    }
+
+    for (const auto &[room, si] : of_room) {
+      auto &s = spaces[si];
+      (void)room;
+      const auto [zfl, n_floor] = cell_median(floors[si]);
+      const auto [zce, n_ceil] = cell_median(ceilings[si]);
+      // The space's size in cells: its polygon (wall faces) or its raster.
+      const double room_cells =
+          std::max(static_cast<double>(std::count(
+                       g.labels.begin(), g.labels.end(), s.room_label)),
+                   std::max(s.area, 0.0) / (cell * cell));
+      const auto enough = [&](int n) {
+        return n >= o.height_min_cells &&
+               static_cast<double>(n) >= o.height_min_share * room_cells;
+      };
+      double z_floor = zf, z_ceiling = zc;
+      bool floor_measured = false;
+      if (enough(n_floor)) {
+        z_floor = zfl;
+        floor_measured = true;
+        ++stats.floors_measured;
+      } else if (!g.floor_z.empty()) {
+        std::vector<float> lv;
+        for (size_t ci = 0; ci < g.labels.size(); ++ci)
+          if (g.labels[ci] == s.room_label)
+            lv.push_back(g.floor_z[ci]);
+        if (!lv.empty()) {
+          z_floor = median_in_place(lv);
+          ++stats.floors_from_levels;
+        }
+      }
+      bool ceiling_measured = false;
+      if (enough(n_ceil) && zce > z_floor) {
+        z_ceiling = zce;
+        ceiling_measured = true;
+        ++stats.ceilings_measured;
+      }
+      if (!floor_measured && !ceiling_measured)
+        ++stats.kept;
+      if (!(z_ceiling > z_floor)) {
+        warn("spaces: space {} measured floor {:.2f} m at or above its "
+             "ceiling {:.2f} m; it keeps the storey's {:.2f}-{:.2f} m",
+             s.guid, z_floor, z_ceiling, zf, zc);
+        z_floor = zf;
+        z_ceiling = zc;
+      }
+      s.z_floor = z_floor;
+      s.z_ceiling = z_ceiling;
+      if (s.area > 0.0 && z_ceiling > z_floor)
+        s.volume = s.area * (z_ceiling - z_floor);
+      s.metadata = with_height_counts(s.metadata, n_floor, n_ceil);
+    }
+  }
+  if (stats.floors_measured + stats.ceilings_measured > 0)
+    info("spaces: own heights: {} floor(s) and {} ceiling(s) measured, {} "
+         "floor(s) from the floor levels, {} space(s) kept the storey's",
+         stats.floors_measured, stats.ceilings_measured,
+         stats.floors_from_levels, stats.kept);
+  return stats;
 }
 
 } // namespace reusex::geometry

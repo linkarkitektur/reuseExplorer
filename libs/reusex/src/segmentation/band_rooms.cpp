@@ -22,7 +22,9 @@
 #include <map>
 #include <queue>
 #include <stdexcept>
+#include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace reusex::geometry {
@@ -37,6 +39,8 @@ void RoomGrid::resize(int w, int h) {
   interior.assign(n, 0);
   clearance.assign(n, 0.0F);
   labels.assign(n, 0);
+  floor_z.clear();
+  floor_levels.clear();
 }
 
 namespace {
@@ -858,6 +862,35 @@ auto segment_band_rooms(const Cloud &cloud, const CloudN &normals,
           st.idx, w, h, cell, kMaxCells));
     g.resize(static_cast<int>(w), static_cast<int>(h));
 
+    // Split levels (reusex-546): each cell's own floor. A storey without a
+    // raised part keeps the storey floor everywhere (floor_z stays empty).
+    if (o.split_levels) {
+      std::vector<uint8_t> mask(members.size(), 0);
+      for (size_t k = 0; k < members.size(); ++k)
+        mask[k] = use[members[k]] && !above[k] ? 1 : 0;
+      FloorLevelMap fl =
+          floor_level_map(lp, nz, mask, zf, g.col0, g.row0, g.width, g.height,
+                          cell, o.split_level);
+      g.floor_levels = fl.levels;
+      if (fl.split()) {
+        g.floor_z = std::move(fl.floor_z);
+        std::string desc;
+        for (const auto &l : g.floor_levels)
+          desc +=
+              fmt::format("{}{:.2f} m ({:.1f} m^2{})", desc.empty() ? "" : ", ",
+                          l.z, l.area_m2, l.base ? ", storey floor" : "");
+        info("band rooms: storey {} is split: {} floor levels: {}; the wall "
+             "band and footprint follow each cell's own floor",
+             st.idx, g.floor_levels.size(), desc);
+      }
+    }
+    const auto local_band = [&](double f) {
+      const double top = has_ceiling
+                             ? std::min(f + o.band_top, zc - o.ceiling_margin)
+                             : f + o.band_top;
+      return std::make_pair(f + o.band_bottom, top);
+    };
+
     // Evidence rasterisation.
     std::vector<int> wall_count(g.wall.size(), 0);
     size_t n_wall_pts = 0;
@@ -867,13 +900,16 @@ auto segment_band_rooms(const Cloud &cloud, const CloudN &normals,
         continue;
       const auto &q = lp[k];
       const size_t ci = g.index(col_of(q.x()) - g.col0, col_of(q.y()) - g.row0);
-      if (q.z() > band_lo && q.z() < band_hi && nz[k] < o.wall_max_abs_nz) {
+      const double f = g.floor_at(ci, zf);
+      const auto [b_lo, b_hi] =
+          g.floor_z.empty() ? std::make_pair(band_lo, band_hi) : local_band(f);
+      if (q.z() > b_lo && q.z() < b_hi && nz[k] < o.wall_max_abs_nz) {
         ++wall_count[ci];
         ++n_wall_pts;
       }
       if (nz[k] > o.horizontal_min_abs_nz &&
-          (q.z() < zf + o.floor_max_height ||
-           q.z() > zf + o.ceiling_min_height)) {
+          (q.z() < f + o.floor_max_height ||
+           q.z() > f + o.ceiling_min_height)) {
         g.footprint[ci] = 1;
         ++n_fp_pts;
       }

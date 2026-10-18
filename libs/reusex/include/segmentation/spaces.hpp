@@ -159,6 +159,26 @@ struct SpacesOptions {
   /// A furniture hole (an unlabelled pocket inside a room's raster) counts
   /// from this area [m^2].
   double open_plan_min_hole_area = 0.1;
+
+  // --- Per-space heights (measure_space_heights(), reusex-546) -------------
+  /// Measure each space's own z_floor / z_ceiling from the points over its
+  /// room cells. Off: every space takes its storey's floor and ceiling.
+  bool measure_heights = true;
+  /// A horizontal point (|n_z| above this) is a floor sample within
+  /// height_floor_band_m of its cell's floor (RoomGrid::floor_z, else the
+  /// storey floor) [m]...
+  double height_floor_band_m = 0.15;
+  /// ...and a ceiling sample at least height_ceiling_min_m above it [m]
+  /// (and at most 0.3 m above the storey ceiling raised by the cell's
+  /// step).
+  double height_ceiling_min_m = 1.9;
+  /// A space needs samples in this many cells, and in this share of its
+  /// area (in cells), to take a measured height; with fewer it keeps the
+  /// storey's (or its cells' floor level). NewOffice: a 5.2 m^2 room at the
+  /// edge of the scan had ceiling samples in 4 % of its cells (shelf tops,
+  /// 2.29 m against a 2.92 m ceiling); its lowered-ceiling WCs 9-18 %.
+  int height_min_cells = 20;
+  double height_min_share = 0.05;
 };
 
 /// What polygonise_spaces() did on one storey.
@@ -201,5 +221,36 @@ auto polygonise_spaces(const std::vector<RoomGrid> &grids,
                        const std::vector<core::StoreyRecord> &storeys,
                        const std::vector<core::WallRecord> &walls,
                        const SpacesOptions &options = {}) -> SpacesResult;
+
+/// What measure_space_heights() did.
+struct SpaceHeightStats {
+  int floors_measured = 0;    ///< spaces whose z_floor is measured
+  int ceilings_measured = 0;  ///< spaces whose z_ceiling is measured
+  int floors_from_levels = 0; ///< too few floor samples: its cells' level
+  int kept = 0; ///< spaces with neither measured (storey values kept)
+};
+
+/// Give every space of @p spaces its own floor and ceiling height
+/// (split levels, sloped ceilings; reusex-546): over the cells of its room
+/// (RoomGrid::labels == SpaceRecord::room_label on the grid of its storey),
+/// each cell's floor is the median of its floor samples and its ceiling the
+/// median of its ceiling samples (SpacesOptions::height_*), and the space's
+/// z_floor / z_ceiling are the medians over its cells -- so area-weighted,
+/// not point-weighted, and robust to furniture tops and ceiling lamps. A
+/// sloped ceiling gives its footprint median, as the reference plans record
+/// it. With fewer than height_min_cells sampled cells (or height_min_share
+/// of its area) a space keeps the storey's height; its floor then takes the
+/// median of its cells' floor levels (RoomGrid::floor_z) when the storey is
+/// split. Volumes are recomputed (area x height) and the sample counts go into
+/// the metadata
+/// ("z_floor_cells", "z_ceiling_cells").
+///
+/// @param grids   The band-rooms grids the spaces were polygonised from.
+/// @param cloud   The scan, @p normals per point (index-aligned).
+/// @throws std::invalid_argument when cloud and normals sizes differ.
+SpaceHeightStats measure_space_heights(
+    std::vector<core::SpaceRecord> &spaces, const std::vector<RoomGrid> &grids,
+    const std::vector<core::StoreyRecord> &storeys, const Cloud &cloud,
+    const CloudN &normals, const SpacesOptions &options = {});
 
 } // namespace reusex::geometry

@@ -21,8 +21,11 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
+#include <algorithm>
 #include <cmath>
 #include <string>
+#include <utility>
+#include <vector>
 
 using Catch::Matchers::WithinAbs;
 using namespace reusex;
@@ -325,4 +328,146 @@ TEST_CASE("Solids_DegenerateElements_AreSkipped", "[reconstruction][solids]") {
   CHECK(r.walls_skipped == 2);
   CHECK(r.spaces.empty());
   CHECK(r.spaces_skipped == 1);
+}
+
+// ---------------------------------------------------------------------------
+// Split levels (reusex-546)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// The z range of an element's mesh.
+std::pair<double, double> z_range(const ElementSolid &e) {
+  pcl::PointCloud<pcl::PointXYZ> pts;
+  pcl::fromPCLPointCloud2(e.mesh.cloud, pts);
+  double lo = 1e9, hi = -1e9;
+  for (const auto &p : pts) {
+    lo = std::min(lo, static_cast<double>(p.z));
+    hi = std::max(hi, static_cast<double>(p.z));
+  }
+  return {lo, hi};
+}
+
+const ElementSolid &wall_solid(const geometry::SolidsResult &r,
+                               const std::string &guid) {
+  for (const auto &w : r.walls)
+    if (w.source_guid == guid)
+      return w;
+  FAIL("no wall solid " << guid);
+  return r.walls.front();
+}
+
+bool inside_any(const std::vector<const ElementSolid *> &v, double x, double y,
+                double z) {
+  for (const auto *e : v)
+    if (side(*e, x, y, z) == CGAL::ON_BOUNDED_SIDE)
+      return true;
+  return false;
+}
+
+/// One storey (floor 0, ceiling 3.4, the walls table's storey-wide heights)
+/// whose east half is raised 0.85 m: the lower room (0-4.9 x 0-4) has its
+/// ceiling at 2.7, the upper (5.1-10 x 0-4) at 3.4, a 0.2 m wall between
+/// them at x = 5, and a south wall along each half.
+core::SolidModel two_levels() {
+  core::SolidModel m;
+  m.storeys = {storey(0, 0.0, 3.4)};
+  auto lo = space("lo", {{0, 0}, {4.9, 0}, {4.9, 4}, {0, 4}}, 0.0, 2.7);
+  auto hi = space("hi", {{5.1, 0}, {10, 0}, {10, 4}, {5.1, 4}}, 0.85, 3.4);
+  lo.area = hi.area = 4.9 * 4;
+  m.spaces = {lo, hi};
+  m.walls = {wall("split", 5, 0, 5, 4, 0.2, 3.4),
+             wall("south-lo", 0, -0.1, 4.9, -0.1, 0.2, 3.4),
+             wall("south-hi", 5.1, -0.1, 10, -0.1, 0.2, 3.4)};
+  return m;
+}
+
+} // namespace
+
+TEST_CASE("Solids_SplitLevel_WallsSpanTheirSpaces",
+          "[reconstruction][solids][split_level]") {
+  SolidsOptions o;
+  o.extend_at_joins = false;
+  const auto r = build_solids(two_levels(), o);
+  REQUIRE(r.walls.size() == 3);
+  // Between the levels: from the lower floor to the higher ceiling.
+  const auto split = z_range(wall_solid(r, "split"));
+  CHECK_THAT(split.first, WithinAbs(0.0, 1e-6));
+  CHECK_THAT(split.second, WithinAbs(3.4, 1e-6));
+  // Beside one level only: that level's floor and ceiling.
+  const auto low = z_range(wall_solid(r, "south-lo"));
+  CHECK_THAT(low.first, WithinAbs(0.0, 1e-6));
+  CHECK_THAT(low.second, WithinAbs(2.7, 1e-6));
+  const auto high = z_range(wall_solid(r, "south-hi"));
+  CHECK_THAT(high.first, WithinAbs(0.85, 1e-6));
+  CHECK_THAT(high.second, WithinAbs(3.4, 1e-6));
+  for (const auto &w : r.walls)
+    CHECK(w.closed);
+  CHECK(r.not_closed == 0);
+
+  // A locked wall keeps its own heights.
+  auto m = two_levels();
+  m.walls[2].locked = true;
+  const auto locked = z_range(wall_solid(build_solids(m, o), "south-hi"));
+  CHECK_THAT(locked.first, WithinAbs(0.0, 1e-6));
+  CHECK_THAT(locked.second, WithinAbs(3.4, 1e-6));
+}
+
+TEST_CASE("Solids_SplitLevel_SlabsAndRoofsStep",
+          "[reconstruction][solids][split_level]") {
+  SolidsOptions o;
+  o.extend_at_joins = false;
+  o.slab_thickness_m = 0.2;
+  const auto r = build_solids(two_levels(), o);
+  std::vector<const ElementSolid *> floors, roofs;
+  for (const auto &s : r.slabs) {
+    CHECK(s.closed);
+    (s.predefined == "FLOOR" ? floors : roofs).push_back(&s);
+  }
+  REQUIRE(floors.size() == 2);
+  REQUIRE(roofs.size() == 2);
+  // Lowest level first: the lower slab 0.2 m thick under the lower room and
+  // the split wall, the raised one filled from -0.2 up to 0.85.
+  CHECK_THAT(z_range(*floors[0]).second, WithinAbs(0.0, 1e-6));
+  CHECK_THAT(z_range(*floors[1]).first, WithinAbs(-0.2, 1e-6));
+  CHECK_THAT(z_range(*floors[1]).second, WithinAbs(0.85, 1e-6));
+  CHECK(inside_any(floors, 7, 2, 0.5));  // the fill under the raised floor
+  CHECK(inside_any(floors, 5, 2, -0.1)); // under the split wall
+  CHECK_FALSE(inside_any(floors, 2, 2, 0.1));
+  CHECK_FALSE(inside_any(floors, 7, 2, 0.9));
+  // Roofs on each ceiling; the higher one over the split wall.
+  CHECK(inside_any(roofs, 2, 2, 2.8));
+  CHECK(inside_any(roofs, 7, 2, 3.5));
+  CHECK(inside_any(roofs, 5, 2, 3.5));
+  CHECK_FALSE(inside_any(roofs, 7, 2, 2.8));
+  CHECK_FALSE(inside_any(roofs, 5, 2, 2.8));
+  // Space volumes use their own heights.
+  REQUIRE(r.spaces.size() == 2);
+  CHECK_THAT(r.spaces[0].volume, WithinAbs(4.9 * 4 * 2.7, 1e-6));
+  CHECK_THAT(r.spaces[1].volume, WithinAbs(4.9 * 4 * 2.55, 1e-6));
+  // Watertight floor: every plan point of the footprint has a floor slab
+  // just below its level's floor.
+  for (double x = 0.2; x < 10; x += 0.4)
+    for (double y = 0.2; y < 4; y += 0.6)
+      CHECK(inside_any(floors, x, y, (x < 5.1 ? 0.0 : 0.85) - 0.1));
+}
+
+TEST_CASE("Solids_FlatStorey_SpaceHeightsNearTheStoreyKeepIt",
+          "[reconstruction][solids][split_level]") {
+  // Measured floors / ceilings a centimetre off the storey's are the
+  // storey's level: one slab, one roof, walls at the storey's heights.
+  core::SolidModel m;
+  m.storeys = {storey(0, 0.0, 2.6)};
+  auto a = space("a", {{0, 0}, {2, 0}, {2, 3}, {0, 3}}, 0.012, 2.59);
+  auto b = space("b", {{2.2, 0}, {4.2, 0}, {4.2, 3}, {2.2, 3}}, -0.008, 2.63);
+  a.area = b.area = 6.0;
+  m.spaces = {a, b};
+  m.walls = {wall("p", 2.1, 0, 2.1, 3, 0.2, 2.6)};
+  const auto r = build_solids(m, SolidsOptions{});
+  REQUIRE(r.slabs.size() == 2);
+  CHECK_THAT(z_range(r.slabs[0]).second, WithinAbs(0.0, 1e-6));
+  CHECK_THAT(z_range(r.slabs[1]).first, WithinAbs(2.6, 1e-6));
+  const auto p = z_range(r.walls[0]);
+  CHECK_THAT(p.first, WithinAbs(0.0, 1e-6));
+  CHECK_THAT(p.second, WithinAbs(2.6, 1e-6));
 }

@@ -495,6 +495,11 @@ and deleted the shims. `include/geometry/` now holds only the real
   the `walls` / `openings` tables when present (wall graph blocks the grid,
   doors cut rooms; optional contract inputs, so run walls -> openings ->
   rooms)
+- `split_level.hpp`: `floor_level_map()` — raised floor parts of one
+  storey (house1's north block, +0.75 m) on the band grid; band rooms
+  measure the wall band from each cell's own floor, and the spaces stage
+  gives every space its own measured `z_floor` / `z_ceiling`
+  (`measure_space_heights()`, reusex-546). A split level stays one storey
 - `spaces.hpp`: `polygonise_spaces()` (W4.2) — band rooms as space
   polygons: CGAL arrangement of the wall faces (+ the interior outline)
   labelled by the band grid, raster fallback where the walls do not close
@@ -544,6 +549,9 @@ and deleted the shims. `include/geometry/` now holds only the real
 - `solids.hpp`: typed solids (W6.1, `build_solids`): a wall box minus its
   openings (CGAL corefinement), a slab per storey (union of its spaces and
   wall footprints, down to the storey below) plus a roof, a space volume;
+  split levels (reusex-546): one slab / roof region per floor / ceiling
+  level of the spaces, walls from the lowest adjacent floor to the highest
+  adjacent ceiling;
   each `ElementSolid` has a world mesh and the IFC-ready extrusion profile.
   Stored by the `solids` stage (`rux create solids`, after spaces) as the
   meshes `solid_walls` / `solid_slabs` / `solid_spaces`, the element index
