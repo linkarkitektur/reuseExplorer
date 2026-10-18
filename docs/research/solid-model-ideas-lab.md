@@ -219,6 +219,40 @@ door. Adding glass-labelled cells as walls in §4.1 lowers the NewOffice IoU
 (0.663 → 0.604): the labels also bleed onto windows and furniture. They
 are evidence for openings and glass walls, not for room cuts.
 
+**Landed (reusex-rqn.4, 2026-10-18).** One default prompt list for both
+backends (`vision/default_prompts.hpp`, 16 classes: wall, floor, ceiling,
+column, door, window, glass partition, desk divider, cabinet, shelf, desk,
+table, chair, monitor, radiator, plant), a role for each in
+`core/class_role_map.json` (column → clutter, glass partition → wall, the
+furniture → furniture), and `classify` voting by role (cabinet + shelf add
+up to furniture; furniture + clutter together outvote wall). Annotate on
+NewOffice (3876 frames, RTX 6000 Ada, TensorRT): 751 s for the 16 classes,
+866 s for a 21-class trial list (≈ 23 s per class plus ≈ 380 s fixed).
+`desk divider` and `office partition` each label < 0.1 % of NewOffice's
+points (its "screens" are mostly wall piers, which SAM calls `column`);
+`staircase`, `sofa`, `whiteboard` and `ceiling light` were left out of the
+default for the same reason. Chain storeys → solids against the reference
+plan, labels rebuilt with `create clouds` (bit-identical cloud, as main's
+labels were made) / with `create project`:
+
+| | main (stored labels) | new labels, `clouds` | old labels, `project` | new labels, `project` |
+|---|---:|---:|---:|---:|
+| wall precision / recall | 0.459 / 0.630 | 0.472 / 0.630 | 0.381 / 0.593 | 0.500 / 0.630 |
+| room IoU (count error) | 0.883 (+1) | 0.860 (+1) | 0.838 (+1) | 0.860 (+1) |
+| opening recall / precision | 0.676 / 0.714 | 0.649 / 0.774 | 0.649 / 0.686 | 0.649 / 0.828 |
+
+Re-projecting the *same* SAM output with `create project` instead of
+`create clouds` moves wall precision by 0.08 and room IoU by 0.045, the
+noise scale of this chain. Per room, the new labels win the kitchen
+(0.913 → 0.977: the cabinet front is no longer its wall) and meeting
+room 1 (0.878 → 0.944), and lose WC 1 (0.889 → 0.764: its stall door is
+`door` → clutter, so the stall-front wall line ends early) and the
+printer / server rooms (0.70 / 0.67 → 0.64 / 0.55). On NewOffice's
+stored labels the new classify gives main's numbers exactly. house1
+(re-annotated, 238 frames, 47 s): wall precision 0.667 → 0.690, room IoU
+0.790 → 0.791. house2 (first annotation, 384 frames, 76 s): wall recall
+0.537 → 0.610, opening recall 0.556 → 0.667, room IoU 0.631 → 0.613.
+
 ### 4.4 (d) Trajectory
 
 - Every reference space in all three scans contains camera positions
