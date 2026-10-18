@@ -41,7 +41,24 @@ newoffice         local      tests/fixtures/solid_model/newoffice.plan.yaml -   
 # at a copy of each project.rux whose clouds/planes were regenerated (sensor-
 # oriented normals): the references use the detected level frames, which the
 # row's storeys stage re-detects (deterministic). house1 = one storey with a
-# split level; house2 = two storeys in their own frames, heavily drifted.
+# split level.
+# house2 = two storeys, re-fitted (reusex-ghy, 2026-10-17) on the house2 pose
+# reference (DRAFT v3, tests/fixtures/pose_reference/house2.*), so build
+# $REUSEX_HOUSE2_RUX on the REFERENCE poses, not the stored ones:
+#   cp <scan archive>/house-2_c582d1f758/reusex/project.rux house2-ref.rux
+#   rux -p house2-ref.rux optimize \
+#       --edits tests/fixtures/pose_reference/house2.edits.yaml \
+#       --manhattan --odometry-robust --prior-sigma-trans 1 --prior-sigma-rot 1
+#   rux -p house2-ref.rux analyze poses \
+#       --reference tests/fixtures/pose_reference/house2.trajectory.tum  # ATE 0
+#   rux -p house2-ref.rux create clouds   # defaults
+#   rux -p house2-ref.rux create planes   # defaults
+# A copy on the stored poses scores far lower against this plan (its cloud is
+# turned ~4 deg on storey 0 and 7-15 deg on storey 1 against it): expected.
+# (2026-10-17, main 9e3c2eab, chain storeys,classify,walls,openings,rooms,
+# spaces,mesh: room IoU 0.631 / -2, wall recall 0.54 / precision 0.59, rms
+# 0.076 m, openings 0.56 / 0.18 (IoU 0.40) -- the stored-pose copy against the
+# same plan: 0.464 / -1, 0.29 / 0.27, 0.319 m, openings 0 / 0.)
 # The local rows run storeys -> classify -> walls (WP3, reusex-z1v.5.7) ->
 # openings (WP5, reusex-z1v.7.5), so they score the wall metrics
 # (wall_recall / wall_precision / wall_position_rms_m /

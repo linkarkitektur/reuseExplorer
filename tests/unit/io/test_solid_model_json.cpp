@@ -424,6 +424,39 @@ TEST_CASE("SolidModelFixture_NewOffice_IsAValidDraftReference",
              ContainsSubstring("draft - needs maintainer review"));
 }
 
+TEST_CASE("SolidModelFixture_House2_IsAManhattanDraftOnThePoseReference",
+          "[io][solid_model]") {
+  // Re-fitted on the house2 pose reference (DRAFT v3, reusex-ghy): one
+  // detected level frame for both storeys, whose axes are the Manhattan grid
+  // the reference was solved on, so every wall runs along x or y. The
+  // re-fit kept every element of the old plan under its guid (only geometry
+  // moved), dropped one opening the corrected cloud does not show and added
+  // three it does.
+  const SolidModel m =
+      reusex::io::solid_model_from_file(fixture("house2.plan.yaml"));
+  REQUIRE(m.storeys.size() == 2);
+  CHECK(m.storeys[0].level_transform == m.storeys[1].level_transform);
+  CHECK(m.walls.size() == 41);
+  CHECK(m.spaces.size() == 17);
+  CHECK(m.openings.size() == 9);
+  for (const auto &w : m.walls) {
+    INFO(w.guid);
+    CHECK((w.x0 == w.x1 || w.y0 == w.y1));
+  }
+  std::vector<std::string> openings;
+  for (const auto &o : m.openings)
+    openings.push_back(o.guid);
+  std::sort(openings.begin(), openings.end());
+  CHECK(openings ==
+        std::vector<std::string>{"o0-hall-bath", "o0-liv-cons", "o0-ne-door",
+                                 "o0-util-door", "o0-w-win", "o1-corr-e",
+                                 "o1-corr-e-2", "o1-corr-w-1", "o1-gable-win"});
+  CHECK_THAT(m.description, ContainsSubstring("DRAFT"));
+  CHECK_THAT(m.description, ContainsSubstring("pose reference"));
+  CHECK_THAT(m.storeys[0].metadata,
+             ContainsSubstring("draft - needs maintainer review"));
+}
+
 TEST_CASE("SolidModelFixture_NewOffice_FollowsTheMaintainersRoomLayout",
           "[io][solid_model]") {
   // The maintainer's description of NewOffice (2026-10-15, reusex-z1v.2.6):

@@ -328,8 +328,9 @@ cannot reach (`reusex-wg8`: a "this block is Manhattan" edit). Two lessons:
 - Through-wall crossings against `house2.plan.yaml` rose from 6 / 11 to
   11 / 20, because that plan was drawn on the stored, rotated poses. Count
   crossings against the scan's own wall points under the same poses instead
-  (a step whose line passes within 3 cm of them), until the plan is re-fit
-  (`reusex-ghy`).
+  (a step whose line passes within 3 cm of them). The plan has since been
+  re-fitted on the reference (`reusex-ghy`): a reference trajectory and the
+  plan drawn on its cloud have to change together.
 
 **v3: a wall needs two faces.** The review of v2's long section: the
 stair-hall north wall had no thickness. Measure it per source, not as one
