@@ -622,9 +622,12 @@ cv::Mat render_view(const ProjectDB &db, const RenderOptions &opts,
                "at z={:.3f}",
                cut.z, cut.height, cut.from_planes ? "detected" : "bounding-box",
                cut.floor_z);
-    if (opts.mesh_section_line)
+    if (opts.mesh_section_line) {
       add_mesh_section_line(renderer, info, {0.0, 0.0, cut.z}, {0.0, 0.0, 1.0},
                             {0.0, 0.0, 0.0}, scene.mesh_edge_rgb);
+      add_solids_section(renderer, info, {0.0, 0.0, cut.z}, {0.0, 0.0, 1.0},
+                         {0.0, 0.0, 0.0});
+    }
   }
 
   // A vertical section: clip to the slab, and draw the mesh's cut through
@@ -644,6 +647,10 @@ cv::Mat render_view(const ProjectDB &db, const RenderOptions &opts,
           {section->view[0], section->view[1], 0.0},
           {-section->view[0] * toward, -section->view[1] * toward, 0.0},
           scene.mesh_edge_rgb);
+      add_solids_section(
+          renderer, info, {section->p0[0], section->p0[1], 0.0},
+          {section->view[0], section->view[1], 0.0},
+          {-section->view[0] * toward, -section->view[1] * toward, 0.0});
     }
     core::info("render: section {} ({:.3f},{:.3f})->({:.3f},{:.3f}), slab "
                "{:.2f} m",

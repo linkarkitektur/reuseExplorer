@@ -1031,3 +1031,37 @@ TEST_CASE("PopulateScene_Solids_ColouredByType_RevealsByKind",
   CHECK(info.bounds.min[2] == Catch::Approx(-0.2).margin(1e-4));
   CHECK(info.bounds.max[2] == Catch::Approx(2.7).margin(1e-4));
 }
+
+TEST_CASE("AddSolidsSection_PlanCut_FillsTheWallsWithTheDoorGap",
+          "[visualize][scene][solids]") {
+  TempPath tmp("test_scene_solids_section");
+  ProjectDB db(tmp.path);
+  seed_solids(db, tmp);
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.layers = {viz::Layer::solids};
+  const auto info = viz::populate_scene(renderer, db, o);
+  // Below the door head: four walls, the south one in two pieces.
+  const auto actors =
+      viz::add_solids_section(renderer, info, {0, 0, 1.0}, {0, 0, 1}, {});
+  REQUIRE(actors.size() == 2); // the walls' fill and outline (slabs missed)
+  for (vtkActor *a : actors)
+    CHECK(std::string(a->GetObjectName()) == viz::kSectionLineActorName);
+  auto *outline = vtkPolyData::SafeDownCast(actors[1]->GetMapper()->GetInput());
+  REQUIRE(outline != nullptr);
+  CHECK(outline->GetNumberOfLines() == 5);
+  auto *fill = vtkPolyData::SafeDownCast(actors[0]->GetMapper()->GetInput());
+  REQUIRE(fill != nullptr);
+  CHECK(fill->GetNumberOfPolys() >= 10);
+  for (vtkIdType i = 0; i < fill->GetNumberOfPoints(); ++i) {
+    double p[3];
+    fill->GetPoint(i, p);
+    CHECK(p[2] == Catch::Approx(1.0).margin(1e-6));
+    // Nothing in the door gap (x 1.0 .. 1.9 on the south wall).
+    if (p[1] < 0.2)
+      CHECK_FALSE((p[0] > 1.01 && p[0] < 1.89));
+  }
+  // Above everything: nothing.
+  CHECK(viz::add_solids_section(renderer, info, {0, 0, 50.0}, {0, 0, 1}, {})
+            .empty());
+}

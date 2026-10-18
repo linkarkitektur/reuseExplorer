@@ -42,12 +42,14 @@
 #include <vtkPolygon.h>
 #include <vtkProperty.h>
 #include <vtkRenderer.h>
+#include <vtkStripper.h>
 #include <vtkUnsignedCharArray.h>
 #include <vtkVectorText.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <map>
 #include <numbers>
@@ -1373,9 +1375,22 @@ void add_solids_layer(vtkRenderer *renderer, const ProjectDB &db,
     actor->GetProperty()->SetDiffuse(0.7);
     actor->GetProperty()->SetSpecular(0.05);
     actor->GetProperty()->SetOpacity(space ? opts.solid_space_opacity : 1.0);
+    if (space) {
+      // A space is a tint on the room's inside: only its inner faces are
+      // drawn (front faces culled, so each pixel blends one face, not a
+      // depth-order-dependent stack of them), unlit, and a little in front
+      // of the wall and slab faces they lie on, so they do not fight those
+      // coincident faces triangle by triangle.
+      actor->GetProperty()->FrontfaceCullingOn();
+      actor->GetProperty()->SetLighting(false);
+      mapper->SetResolveCoincidentTopologyToPolygonOffset();
+      mapper->SetRelativeCoincidentTopologyPolygonOffsetParameters(-2.0, -8.0);
+    }
     actor->SetObjectName(kSolidsActorName);
     renderer->AddActor(actor);
     drawn.actors.push_back(actor);
+    if (!space)
+      drawn.section_surfaces.emplace_back(poly.GetPointer(), base);
 
     // Feature edges in a darker shade of the type's colour: the solid's
     // corners, and the outline of every void.
@@ -2779,6 +2794,152 @@ vtkActor *add_mesh_section_line(vtkRenderer *renderer, const SceneInfo &info,
   actor->GetProperty()->SetLighting(false);
   renderer->AddActor(actor);
   return actor;
+}
+
+std::vector<vtkActor *> add_solids_section(vtkRenderer *renderer,
+                                           const SceneInfo &info,
+                                           const std::array<double, 3> &origin,
+                                           const std::array<double, 3> &normal,
+                                           const std::array<double, 3> &shift) {
+  std::vector<vtkActor *> actors;
+  for (const auto &layer : info.layers) {
+    if (layer.layer != Layer::solids)
+      continue;
+    for (const auto &[surface, rgb] : layer.section_surfaces) {
+      vtkNew<vtkPlane> plane;
+      plane->SetOrigin(origin[0], origin[1], origin[2]);
+      plane->SetNormal(normal[0], normal[1], normal[2]);
+      vtkNew<vtkCutter> cutter;
+      cutter->SetInputData(surface);
+      cutter->SetCutFunction(plane);
+      cutter->GenerateTrianglesOff();
+      vtkNew<vtkStripper> stripper;
+      stripper->SetInputConnection(cutter->GetOutputPort());
+      stripper->JoinContiguousSegmentsOn();
+      stripper->Update();
+      vtkPolyData *loops = stripper->GetOutput();
+      if (loops == nullptr || loops->GetNumberOfLines() == 0)
+        continue;
+      vtkNew<vtkPoints> points;
+      points->SetDataType(VTK_DOUBLE);
+      for (vtkIdType i = 0; i < loops->GetNumberOfPoints(); ++i) {
+        double p[3];
+        loops->GetPoint(i, p);
+        points->InsertNextPoint(p[0] + shift[0], p[1] + shift[1],
+                                p[2] + shift[2]);
+      }
+      vtkNew<vtkCellArray> fills;
+      std::size_t open = 0, unfilled = 0;
+      vtkNew<vtkIdList> ids;
+      loops->GetLines()->InitTraversal();
+      while (loops->GetLines()->GetNextCell(ids)) {
+        const vtkIdType n = ids->GetNumberOfIds();
+        // A closed loop repeats its first point.
+        if (n < 4 || ids->GetId(0) != ids->GetId(n - 1)) {
+          ++open;
+          continue;
+        }
+        // The loop without repeated and collinear points: a cut through a
+        // triangulated face leaves a point at every edge it crosses, and the
+        // ear cut gives up on runs of collinear ones.
+        std::vector<vtkIdType> loop;
+        for (vtkIdType k = 0; k + 1 < n; ++k)
+          loop.push_back(ids->GetId(k));
+        const auto at = [&](vtkIdType id) {
+          double p[3];
+          points->GetPoint(id, p);
+          return Eigen::Vector3d(p[0], p[1], p[2]);
+        };
+        for (bool changed = true; changed && loop.size() >= 3;) {
+          changed = false;
+          for (std::size_t k = 0; k < loop.size() && loop.size() >= 3; ++k) {
+            const Eigen::Vector3d
+                a = at(loop[(k + loop.size() - 1) % loop.size()]),
+                b = at(loop[k]), c = at(loop[(k + 1) % loop.size()]);
+            const double ab = (b - a).norm(), bc = (c - b).norm();
+            if (ab < 1e-7 || bc < 1e-7 ||
+                (b - a).cross(c - b).norm() < 1e-7 * ab * bc) {
+              loop.erase(loop.begin() + static_cast<long>(k));
+              changed = true;
+              --k;
+            }
+          }
+        }
+        // Ear-cut the loop; a loop that touches itself (the cut crossed a
+        // pinch in a slab outline) is split at the repeated point first.
+        std::function<bool(const std::vector<vtkIdType> &)> triangulate =
+            [&](const std::vector<vtkIdType> &lp) -> bool {
+          if (lp.size() < 3)
+            return true;
+          for (std::size_t i = 0; i < lp.size(); ++i)
+            for (std::size_t j = i + 1; j < lp.size(); ++j)
+              if ((at(lp[i]) - at(lp[j])).norm() < 1e-6) {
+                const std::vector<vtkIdType> a(
+                    lp.begin() + static_cast<long>(i),
+                    lp.begin() + static_cast<long>(j));
+                std::vector<vtkIdType> b(lp.begin() + static_cast<long>(j),
+                                         lp.end());
+                b.insert(b.end(), lp.begin(),
+                         lp.begin() + static_cast<long>(i));
+                const bool ok_a = triangulate(a);
+                const bool ok_b = triangulate(b);
+                return ok_a && ok_b;
+              }
+          vtkNew<vtkPolygon> polygon;
+          const auto m = static_cast<vtkIdType>(lp.size());
+          polygon->GetPointIds()->SetNumberOfIds(m);
+          polygon->GetPoints()->SetNumberOfPoints(m);
+          for (vtkIdType k = 0; k < m; ++k) {
+            polygon->GetPointIds()->SetId(k, k);
+            const Eigen::Vector3d q = at(lp[static_cast<std::size_t>(k)]);
+            polygon->GetPoints()->SetPoint(k, q.x(), q.y(), q.z());
+          }
+          vtkNew<vtkIdList> tris;
+          if (!polygon->TriangulateLocalIds(0, tris))
+            return false;
+          for (vtkIdType t = 0; t + 2 < tris->GetNumberOfIds(); t += 3) {
+            const vtkIdType tri[3] = {
+                lp[static_cast<std::size_t>(tris->GetId(t))],
+                lp[static_cast<std::size_t>(tris->GetId(t + 1))],
+                lp[static_cast<std::size_t>(tris->GetId(t + 2))]};
+            fills->InsertNextCell(3, tri);
+          }
+          return true;
+        };
+        if (!triangulate(loop))
+          ++unfilled;
+      }
+      if (open + unfilled > 0)
+        core::debug("render: solids section: {} open and {} untriangulable "
+                    "loop(s) not filled",
+                    open, unfilled);
+      const auto add = [&](vtkPolyData *poly,
+                           const std::array<std::uint8_t, 3> &c, double width) {
+        vtkNew<vtkPolyDataMapper> mapper;
+        mapper->SetInputData(poly);
+        mapper->ScalarVisibilityOff();
+        vtkNew<vtkActor> actor;
+        actor->SetMapper(mapper);
+        actor->SetObjectName(kSectionLineActorName);
+        actor->GetProperty()->SetColor(c[0] / 255.0, c[1] / 255.0,
+                                       c[2] / 255.0);
+        actor->GetProperty()->SetLineWidth(width);
+        actor->GetProperty()->SetLighting(false);
+        renderer->AddActor(actor);
+        actors.push_back(actor);
+      };
+      vtkNew<vtkPolyData> fill;
+      fill->SetPoints(points);
+      fill->SetPolys(fills);
+      if (fill->GetNumberOfPolys() > 0)
+        add(fill, rgb, 1.0);
+      vtkNew<vtkPolyData> outline;
+      outline->SetPoints(points);
+      outline->SetLines(loops->GetLines());
+      add(outline, lerp_rgb(rgb, {0, 0, 0}, 0.55), 2.0);
+    }
+  }
+  return actors;
 }
 
 // ── Camera placement ─────────────────────────────────────────────────────────

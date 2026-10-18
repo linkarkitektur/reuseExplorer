@@ -193,7 +193,7 @@ struct SceneOptions {
   std::array<std::uint8_t, 3> solid_wall_rgb{0x00, 0x72, 0xb2};
   std::array<std::uint8_t, 3> solid_slab_rgb{0x99, 0x99, 0x99};
   std::array<std::uint8_t, 3> solid_space_rgb{0xe6, 0x9f, 0x00};
-  double solid_space_opacity = 0.18;
+  double solid_space_opacity = 0.25;
 
   /// How a `mesh` layer is drawn. MeshStyle::automatic resolves to
   /// MeshStyle::overlay when a point layer is drawn too.
@@ -324,6 +324,10 @@ struct SceneLayer {
   /// add_mesh_section_line(). Owned by a surface actor in the renderer (a
   /// hidden one, not in @ref actors, under MeshStyle::edges).
   vtkPolyData *mesh_surface = nullptr;
+  /// Solids layer only: the wall and slab surfaces with their type colour,
+  /// the sources of add_solids_section() (owned by their actors' mappers).
+  std::vector<std::pair<vtkPolyData *, std::array<std::uint8_t, 3>>>
+      section_surfaces;
 };
 
 /// What populate_scene() added.
@@ -447,6 +451,21 @@ vtkActor *add_mesh_section_line(vtkRenderer *renderer, const SceneInfo &info,
                                 const std::array<double, 3> &shift,
                                 const std::array<std::uint8_t, 3> &rgb,
                                 double width = 3.0);
+
+/// Draw the section of the scene's `solids` walls and slabs by a plane
+/// (origin @p origin, normal @p normal) as poché: each closed loop of the cut
+/// filled in its type's colour with a dark outline, shifted by @p shift (e.g.
+/// toward the camera). Named kSectionLineActorName, so the cut and the
+/// section slab leave it alone. What `rux render --view plan` and
+/// `--section` show of the solids: the walls in section, their thickness
+/// and the door gaps.
+/// @return the actors added (none when @p info has no solids layer or the
+///         plane misses it).
+std::vector<vtkActor *> add_solids_section(vtkRenderer *renderer,
+                                           const SceneInfo &info,
+                                           const std::array<double, 3> &origin,
+                                           const std::array<double, 3> &normal,
+                                           const std::array<double, 3> &shift);
 
 /// How a preset camera frames the scene.
 struct CameraFraming {
