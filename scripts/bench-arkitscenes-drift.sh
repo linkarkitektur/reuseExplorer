@@ -26,7 +26,7 @@
 #   scripts/bench-arkitscenes-drift.sh [-d dataset_dir] [-o out_dir]
 #                                      [-s "scale ..."] [-S seed]
 #                                      [-e edges_dir] [-v "video_id ..."]
-#                                      [-c "config ..."]
+#                                      [-c "config ..."] [-m full|yaw]
 #
 #   -d  dataset dir holding <video_id>.rux and raw/Validation/<video_id>
 #                                             (default ~/datasets/arkitscenes)
@@ -36,6 +36,8 @@
 #   -e  dir with <video_id>.json external loop edges (enables the xfeat rows)
 #   -v  video ids                  (default "41069048 41069050 41069051")
 #   -c  configs to run             (default all four; see CONFIGS below)
+#   -m  drift mode of perturb-poses (default full; yaw = heading drift only,
+#       the house1/house2 failure mode — use it at -s 0.25)
 #
 # ORIGINALS ARE NEVER MUTATED: every run works on a copy under -o, and each
 # copy is deleted as soon as it has been scored (these scans are 80-175 MB and
@@ -49,6 +51,7 @@ rux="$repo_root/build/apps/rux/rux"
 data="$HOME/datasets/arkitscenes"
 out=""
 scales="0.25 1.0"
+mode="full"
 seed=1
 edges_dir=""
 video_ids="41069048 41069050 41069051"
@@ -69,10 +72,14 @@ video_ids="41069048 41069050 41069051"
 #   opt-register  the plane graph first, then the local polish.
 #   manhattan   the shipped default plus the Manhattan-world prior
 #               (--manhattan, reusex-rqn.1): wall landmarks tied to a jointly
-#               estimated horizontal grid, floors/ceilings to up.
+#               estimated horizontal grid, floors/ceilings to up, plus
+#               the per-frame heading factor (reusex-0oi).
+#   manhattan-landmark  --manhattan with the per-frame heading factor off
+#               (--manhattan-frame-sigma 0): the landmark-only prior as it
+#               shipped in reusex-rqn.1, for the A/B.
 configs="none optimize noplane xfeat"
 
-while getopts "d:o:s:S:e:v:c:" o; do
+while getopts "d:o:s:S:e:v:c:m:" o; do
   case "$o" in
     d) data="$OPTARG" ;;
     o) out="$OPTARG" ;;
@@ -81,6 +88,7 @@ while getopts "d:o:s:S:e:v:c:" o; do
     e) edges_dir="$OPTARG" ;;
     v) video_ids="$OPTARG" ;;
     c) configs="$OPTARG" ;;
+    m) mode="$OPTARG" ;;
     *) echo "usage: see header of $0" >&2; exit 2 ;;
   esac
 done
@@ -127,21 +135,25 @@ for vid in $video_ids; do
 
   for scale in $scales; do
     # ── 1. one drifted master per (scene, scale) ─────────────────────────────
-    master="$out/${vid}-d${scale}.rux"
+    # A yaw-mode cell is named apart, so full and yaw runs can share -o.
+    dtag="d${scale}"
+    [[ "$mode" == full ]] || dtag="${mode}-d${scale}"
+    master="$out/${vid}-${dtag}.rux"
     rm -f "$master" "$master-shm" "$master-wal"
     cp "$src" "$master"
-    echo "==> $vid drift-scale $scale (seed $seed): perturbing poses"
+    echo "==> $vid drift-scale $scale mode $mode (seed $seed): perturbing poses"
     # -v so the realised drift statistics (extent, ratio, pose error) land in
     # the log: what was injected is half of every row's meaning, and at default
     # verbosity those lines are suppressed.
     "$rux" -v -p "$master" edit perturb-poses \
-        --seed "$seed" --drift-scale "$scale" --yes \
-        2>&1 | tee "$out/${vid}-d${scale}-perturb.log" \
+        --seed "$seed" --drift-scale "$scale" --mode "$mode" --yes \
+        2>&1 | tee "$out/${vid}-${dtag}-perturb.log" \
       | grep -E "Frames:|Drift ratio:|Pose error:" || true
 
     for cfg in $configs; do
       tag="$vid d=$scale $cfg"
-      work="$out/${vid}-d${scale}-${cfg}.rux"
+      [[ "$mode" == full ]] || tag="$vid $mode d=$scale $cfg"
+      work="$out/${vid}-${dtag}-${cfg}.rux"
       rm -f "$work" "$work-shm" "$work-wal"
       cp "$master" "$work"
       echo "==> $tag"
@@ -178,6 +190,9 @@ for vid in $video_ids; do
           "$rux" -v -p "$work" optimize
           ;;
         manhattan)    "$rux" -v -p "$work" optimize --manhattan ;;
+        manhattan-landmark)
+                      "$rux" -v -p "$work" optimize --manhattan \
+                          --manhattan-frame-sigma 0 ;;
         register)     "$rux" -v -p "$work" register ;;
         opt-register) "$rux" -v -p "$work" optimize
                       "$rux" -v -p "$work" register ;;
@@ -187,15 +202,15 @@ for vid in $video_ids; do
       # ── 3. same scoring protocol as §9.9 ──────────────────────────────────
       "$rux" -p "$work" create clouds -g 0.05
       "$rux" -p "$work" create planes
-      "$rux" -p "$work" analyze quality -o "$out/${vid}-d${scale}-${cfg}.quality.json"
+      "$rux" -p "$work" analyze quality -o "$out/${vid}-${dtag}-${cfg}.quality.json"
       if [[ -f "$gt" ]]; then
         "$rux" -p "$work" analyze accuracy "$gt" \
-            -o "$out/${vid}-d${scale}-${cfg}.accuracy.json"
+            -o "$out/${vid}-${dtag}-${cfg}.accuracy.json"
       else
         echo "  !! no GT mesh $gt — skipping accuracy" >&2
       fi
-      score_line "$tag" "$out/${vid}-d${scale}-${cfg}.quality.json" \
-                        "$out/${vid}-d${scale}-${cfg}.accuracy.json"
+      score_line "$tag" "$out/${vid}-${dtag}-${cfg}.quality.json" \
+                        "$out/${vid}-${dtag}-${cfg}.accuracy.json"
 
       # Disk hygiene: these copies are large and the scores are already saved.
       rm -f "$work" "$work-shm" "$work-wal"
