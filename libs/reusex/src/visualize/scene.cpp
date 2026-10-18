@@ -18,6 +18,7 @@
 #include "visualize/drift_layers.hpp"
 
 #include <fmt/format.h>
+#include <nlohmann/json.hpp>
 #include <pcl/PolygonMesh.h>
 #include <pcl/conversions.h>
 
@@ -41,12 +42,14 @@
 #include <vtkPolygon.h>
 #include <vtkProperty.h>
 #include <vtkRenderer.h>
+#include <vtkStripper.h>
 #include <vtkUnsignedCharArray.h>
 #include <vtkVectorText.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <map>
 #include <numbers>
@@ -153,6 +156,8 @@ std::string producing_command(Layer layer) {
     return "rux create openings";
   case Layer::spaces:
     return "rux create spaces";
+  case Layer::solids:
+    return "rux create solids";
   }
   return "the corresponding rux create subcommand";
 }
@@ -1235,6 +1240,197 @@ add_spaces_layer(vtkRenderer *renderer, const ProjectDB &db,
   return actors;
 }
 
+// ── Solids layer (reusex-z1v.8.1) ────────────────────────────────────────────
+//
+// The meshes of the solids stage (solid_walls / solid_slabs / solid_spaces),
+// in world coordinates, coloured by type; spaces translucent. A wall face
+// that lies inside one of its opening voids (a jamb, sill or head: inside
+// the void's box and not facing across the wall) is coloured by the
+// opening's kind, read from the element index in the mesh's parameters.
+
+/// The cells of @p mesh whose triangle is a reveal of one of its walls'
+/// opening voids, with the void's kind (0 door, 1 window, 2 opening).
+std::vector<int> solid_reveals(const pcl::PolygonMesh &mesh,
+                               const std::string &parameters) {
+  std::vector<int> kind(mesh.polygons.size(), -1);
+  nlohmann::json meta;
+  try {
+    meta = nlohmann::json::parse(parameters);
+  } catch (const std::exception &) {
+    return kind;
+  }
+  if (!meta.is_object() || !meta.contains("elements"))
+    return kind;
+  pcl::PointCloud<pcl::PointXYZ> v;
+  pcl::fromPCLPointCloud2(mesh.cloud, v);
+  const auto P = [&](std::uint32_t i) {
+    return Eigen::Vector3d(v[i].x, v[i].y, v[i].z);
+  };
+  for (const auto &e : meta.at("elements")) {
+    if (!e.contains("voids") || e.at("voids").empty() || !e.contains("faces"))
+      continue;
+    const auto f0 = e.at("faces").at(0).get<std::size_t>();
+    const auto fn = e.at("faces").at(1).get<std::size_t>();
+    for (const auto &vd : e.at("voids")) {
+      const auto &pr = vd.at("profile");
+      const auto pl = pr.at("placement").get<std::array<double, 16>>();
+      Eigen::Matrix4d m;
+      for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+          m(r, c) = pl[static_cast<std::size_t>(4 * r + c)];
+      const Eigen::Affine3d to_local(m.inverse());
+      double xmax = 0.0, ymax = 0.0;
+      for (const auto &q : pr.at("outer")) {
+        xmax = std::max(xmax, q.at(0).get<double>());
+        ymax = std::max(ymax, q.at(1).get<double>());
+      }
+      const double zmax = pr.at("depth").get<double>();
+      const std::string k = vd.value("kind", "opening");
+      const int code = k == "door" ? 0 : k == "window" ? 1 : 2;
+      constexpr double eps = 2e-3;
+      for (std::size_t f = f0; f < f0 + fn && f < mesh.polygons.size(); ++f) {
+        const auto &t = mesh.polygons[f].vertices;
+        if (t.size() != 3)
+          continue;
+        const Eigen::Vector3d a = to_local * P(t[0]), b = to_local * P(t[1]),
+                              c = to_local * P(t[2]);
+        const Eigen::Vector3d g = (a + b + c) / 3.0;
+        const Eigen::Vector3d n = (b - a).cross(c - a);
+        if (n.norm() <= 0.0 || std::abs(n.normalized().y()) > 0.5)
+          continue; // a face of the wall, not a reveal
+        if (g.x() > -eps && g.x() < xmax + eps && g.y() > -eps &&
+            g.y() < ymax + eps && g.z() > -eps && g.z() < zmax + eps)
+          kind[f] = code;
+      }
+    }
+  }
+  return kind;
+}
+
+void add_solids_layer(vtkRenderer *renderer, const ProjectDB &db,
+                      const SceneOptions &opts, SceneBounds &bounds,
+                      SceneLayer &drawn) {
+  bool any = false;
+  const std::array<std::array<std::uint8_t, 3>, 3> reveal_rgb{
+      opts.plan_door_rgb, opts.plan_window_rgb, opts.plan_opening_rgb};
+  for (std::size_t k = 0; k < kSolidMeshNames.size(); ++k) {
+    const char *name = kSolidMeshNames[k];
+    if (!db.has_mesh(name))
+      continue;
+    const auto mesh = db.mesh(name);
+    if (!mesh || mesh->polygons.empty())
+      continue;
+    any = true;
+    const auto meta = db.mesh_metadata(name);
+    try {
+      const auto j = nlohmann::json::parse(meta.parameters);
+      drawn.items += j.at("elements").size();
+    } catch (const std::exception &) {
+      core::warn("render: solids: mesh '{}' has no element index in its "
+                 "parameters; re-run `{}`",
+                 name, producing_command(Layer::solids));
+    }
+    const auto &base = k == 0   ? opts.solid_wall_rgb
+                       : k == 1 ? opts.solid_slab_rgb
+                                : opts.solid_space_rgb;
+    // Per-cell colours: the type's, or a reveal's kind.
+    const std::vector<int> reveal =
+        k == 0 ? solid_reveals(*mesh, meta.parameters) : std::vector<int>{};
+    vtkNew<vtkUnsignedCharArray> colors;
+    colors->SetName("solid_rgb");
+    colors->SetNumberOfComponents(3);
+    std::size_t reveals = 0;
+    for (std::size_t f = 0; f < mesh->polygons.size(); ++f) {
+      const int r = reveal.empty() ? -1 : reveal[f];
+      const auto &c = r >= 0 ? reveal_rgb[static_cast<std::size_t>(r)] : base;
+      reveals += r >= 0 ? 1 : 0;
+      colors->InsertNextTypedTuple(c.data());
+    }
+    pcl::PointCloud<pcl::PointXYZ> vertices;
+    pcl::fromPCLPointCloud2(mesh->cloud, vertices);
+    vtkNew<vtkPoints> points;
+    for (const auto &p : vertices) {
+      points->InsertNextPoint(p.x, p.y, p.z);
+      bounds.add(p.x, p.y, p.z);
+    }
+    vtkNew<vtkCellArray> polys;
+    for (const auto &face : mesh->polygons) {
+      std::vector<vtkIdType> ids(face.vertices.begin(), face.vertices.end());
+      polys->InsertNextCell(static_cast<vtkIdType>(ids.size()), ids.data());
+    }
+    vtkNew<vtkPolyData> poly;
+    poly->SetPoints(points);
+    poly->SetPolys(polys);
+    poly->GetCellData()->SetScalars(colors);
+
+    vtkNew<vtkPolyDataMapper> mapper;
+    mapper->SetInputData(poly);
+    mapper->SetScalarModeToUseCellData();
+    mapper->SetColorModeToDirectScalars();
+    mapper->ScalarVisibilityOn();
+    vtkNew<vtkActor> actor;
+    actor->SetMapper(mapper);
+    const bool space = k == 2;
+    actor->GetProperty()->SetAmbient(0.3);
+    actor->GetProperty()->SetDiffuse(0.7);
+    actor->GetProperty()->SetSpecular(0.05);
+    actor->GetProperty()->SetOpacity(space ? opts.solid_space_opacity : 1.0);
+    if (space) {
+      // A space is a tint on the room's inside: only its inner faces are
+      // drawn (front faces culled, so each pixel blends one face, not a
+      // depth-order-dependent stack of them), unlit, and a little in front
+      // of the wall and slab faces they lie on, so they do not fight those
+      // coincident faces triangle by triangle.
+      actor->GetProperty()->FrontfaceCullingOn();
+      actor->GetProperty()->SetLighting(false);
+      mapper->SetResolveCoincidentTopologyToPolygonOffset();
+      mapper->SetRelativeCoincidentTopologyPolygonOffsetParameters(-2.0, -8.0);
+    }
+    actor->SetObjectName(kSolidsActorName);
+    renderer->AddActor(actor);
+    drawn.actors.push_back(actor);
+    if (!space)
+      drawn.section_surfaces.emplace_back(poly.GetPointer(), base);
+
+    // Feature edges in a darker shade of the type's colour: the solid's
+    // corners, and the outline of every void.
+    vtkNew<vtkFeatureEdges> edges;
+    edges->SetInputData(poly);
+    edges->BoundaryEdgesOn();
+    edges->FeatureEdgesOn();
+    edges->NonManifoldEdgesOff();
+    edges->ManifoldEdgesOff();
+    edges->ColoringOff();
+    edges->SetFeatureAngle(30.0);
+    edges->Update();
+    vtkNew<vtkPolyData> lines;
+    lines->ShallowCopy(edges->GetOutput());
+    lines->GetCellData()->SetScalars(nullptr);
+    vtkNew<vtkPolyDataMapper> emapper;
+    emapper->SetInputData(lines);
+    emapper->ScalarVisibilityOff();
+    vtkNew<vtkActor> eactor;
+    eactor->SetMapper(emapper);
+    const auto dark = lerp_rgb(base, {0, 0, 0}, 0.45);
+    eactor->GetProperty()->SetColor(dark[0] / 255.0, dark[1] / 255.0,
+                                    dark[2] / 255.0);
+    eactor->GetProperty()->SetLineWidth(space ? 1.0 : 1.5);
+    eactor->GetProperty()->SetOpacity(space ? 0.5 : 1.0);
+    eactor->GetProperty()->SetLighting(false);
+    eactor->SetObjectName(kSolidsActorName);
+    renderer->AddActor(eactor);
+    drawn.actors.push_back(eactor);
+
+    drawn.faces += mesh->polygons.size();
+    core::info("render: solids: '{}' {} faces{}", name, mesh->polygons.size(),
+               k == 0 ? fmt::format(", {} opening reveal face(s)", reveals)
+                      : std::string());
+  }
+  if (!any)
+    throw std::runtime_error("render: project has no solids — run `" +
+                             producing_command(Layer::solids) + "` first");
+}
+
 // ── Openings layer (reusex-z1v.7.3) ──────────────────────────────────────────
 //
 // The `openings` table drawn in its host walls' faces, through the host
@@ -1916,7 +2112,7 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
         "render: no layers selected — pass at least one of "
         "cloud, labels, planes, rooms, instances, mesh, "
         "components, frustums, panoramas, deviation, passes, graph, drift, "
-        "walls, openings, spaces");
+        "walls, openings, spaces, solids");
   if (!(opts.deviation.within_m > 0.0) ||
       !(opts.deviation.uncovered_m > opts.deviation.within_m))
     throw std::runtime_error(
@@ -2012,7 +2208,8 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
           return l != Layer::mesh && l != Layer::components &&
                  l != Layer::frustums && l != Layer::panoramas &&
                  l != Layer::graph && l != Layer::drift && l != Layer::walls &&
-                 l != Layer::openings && l != Layer::spaces;
+                 l != Layer::openings && l != Layer::spaces &&
+                 l != Layer::solids;
         });
     info.mesh_style = with_points ? MeshStyle::overlay : MeshStyle::solid;
   }
@@ -2234,6 +2431,10 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
     case Layer::spaces:
       // Before the walls, so in plan the walls draw over the fills.
       spaces_layer = info.layers.size();
+      break;
+
+    case Layer::solids:
+      add_solids_layer(renderer, db, opts, bounds, drawn);
       break;
     }
     info.drawn_points += drawn.points;
@@ -2593,6 +2794,152 @@ vtkActor *add_mesh_section_line(vtkRenderer *renderer, const SceneInfo &info,
   actor->GetProperty()->SetLighting(false);
   renderer->AddActor(actor);
   return actor;
+}
+
+std::vector<vtkActor *> add_solids_section(vtkRenderer *renderer,
+                                           const SceneInfo &info,
+                                           const std::array<double, 3> &origin,
+                                           const std::array<double, 3> &normal,
+                                           const std::array<double, 3> &shift) {
+  std::vector<vtkActor *> actors;
+  for (const auto &layer : info.layers) {
+    if (layer.layer != Layer::solids)
+      continue;
+    for (const auto &[surface, rgb] : layer.section_surfaces) {
+      vtkNew<vtkPlane> plane;
+      plane->SetOrigin(origin[0], origin[1], origin[2]);
+      plane->SetNormal(normal[0], normal[1], normal[2]);
+      vtkNew<vtkCutter> cutter;
+      cutter->SetInputData(surface);
+      cutter->SetCutFunction(plane);
+      cutter->GenerateTrianglesOff();
+      vtkNew<vtkStripper> stripper;
+      stripper->SetInputConnection(cutter->GetOutputPort());
+      stripper->JoinContiguousSegmentsOn();
+      stripper->Update();
+      vtkPolyData *loops = stripper->GetOutput();
+      if (loops == nullptr || loops->GetNumberOfLines() == 0)
+        continue;
+      vtkNew<vtkPoints> points;
+      points->SetDataType(VTK_DOUBLE);
+      for (vtkIdType i = 0; i < loops->GetNumberOfPoints(); ++i) {
+        double p[3];
+        loops->GetPoint(i, p);
+        points->InsertNextPoint(p[0] + shift[0], p[1] + shift[1],
+                                p[2] + shift[2]);
+      }
+      vtkNew<vtkCellArray> fills;
+      std::size_t open = 0, unfilled = 0;
+      vtkNew<vtkIdList> ids;
+      loops->GetLines()->InitTraversal();
+      while (loops->GetLines()->GetNextCell(ids)) {
+        const vtkIdType n = ids->GetNumberOfIds();
+        // A closed loop repeats its first point.
+        if (n < 4 || ids->GetId(0) != ids->GetId(n - 1)) {
+          ++open;
+          continue;
+        }
+        // The loop without repeated and collinear points: a cut through a
+        // triangulated face leaves a point at every edge it crosses, and the
+        // ear cut gives up on runs of collinear ones.
+        std::vector<vtkIdType> loop;
+        for (vtkIdType k = 0; k + 1 < n; ++k)
+          loop.push_back(ids->GetId(k));
+        const auto at = [&](vtkIdType id) {
+          double p[3];
+          points->GetPoint(id, p);
+          return Eigen::Vector3d(p[0], p[1], p[2]);
+        };
+        for (bool changed = true; changed && loop.size() >= 3;) {
+          changed = false;
+          for (std::size_t k = 0; k < loop.size() && loop.size() >= 3; ++k) {
+            const Eigen::Vector3d
+                a = at(loop[(k + loop.size() - 1) % loop.size()]),
+                b = at(loop[k]), c = at(loop[(k + 1) % loop.size()]);
+            const double ab = (b - a).norm(), bc = (c - b).norm();
+            if (ab < 1e-7 || bc < 1e-7 ||
+                (b - a).cross(c - b).norm() < 1e-7 * ab * bc) {
+              loop.erase(loop.begin() + static_cast<long>(k));
+              changed = true;
+              --k;
+            }
+          }
+        }
+        // Ear-cut the loop; a loop that touches itself (the cut crossed a
+        // pinch in a slab outline) is split at the repeated point first.
+        std::function<bool(const std::vector<vtkIdType> &)> triangulate =
+            [&](const std::vector<vtkIdType> &lp) -> bool {
+          if (lp.size() < 3)
+            return true;
+          for (std::size_t i = 0; i < lp.size(); ++i)
+            for (std::size_t j = i + 1; j < lp.size(); ++j)
+              if ((at(lp[i]) - at(lp[j])).norm() < 1e-6) {
+                const std::vector<vtkIdType> a(
+                    lp.begin() + static_cast<long>(i),
+                    lp.begin() + static_cast<long>(j));
+                std::vector<vtkIdType> b(lp.begin() + static_cast<long>(j),
+                                         lp.end());
+                b.insert(b.end(), lp.begin(),
+                         lp.begin() + static_cast<long>(i));
+                const bool ok_a = triangulate(a);
+                const bool ok_b = triangulate(b);
+                return ok_a && ok_b;
+              }
+          vtkNew<vtkPolygon> polygon;
+          const auto m = static_cast<vtkIdType>(lp.size());
+          polygon->GetPointIds()->SetNumberOfIds(m);
+          polygon->GetPoints()->SetNumberOfPoints(m);
+          for (vtkIdType k = 0; k < m; ++k) {
+            polygon->GetPointIds()->SetId(k, k);
+            const Eigen::Vector3d q = at(lp[static_cast<std::size_t>(k)]);
+            polygon->GetPoints()->SetPoint(k, q.x(), q.y(), q.z());
+          }
+          vtkNew<vtkIdList> tris;
+          if (!polygon->TriangulateLocalIds(0, tris))
+            return false;
+          for (vtkIdType t = 0; t + 2 < tris->GetNumberOfIds(); t += 3) {
+            const vtkIdType tri[3] = {
+                lp[static_cast<std::size_t>(tris->GetId(t))],
+                lp[static_cast<std::size_t>(tris->GetId(t + 1))],
+                lp[static_cast<std::size_t>(tris->GetId(t + 2))]};
+            fills->InsertNextCell(3, tri);
+          }
+          return true;
+        };
+        if (!triangulate(loop))
+          ++unfilled;
+      }
+      if (open + unfilled > 0)
+        core::debug("render: solids section: {} open and {} untriangulable "
+                    "loop(s) not filled",
+                    open, unfilled);
+      const auto add = [&](vtkPolyData *poly,
+                           const std::array<std::uint8_t, 3> &c, double width) {
+        vtkNew<vtkPolyDataMapper> mapper;
+        mapper->SetInputData(poly);
+        mapper->ScalarVisibilityOff();
+        vtkNew<vtkActor> actor;
+        actor->SetMapper(mapper);
+        actor->SetObjectName(kSectionLineActorName);
+        actor->GetProperty()->SetColor(c[0] / 255.0, c[1] / 255.0,
+                                       c[2] / 255.0);
+        actor->GetProperty()->SetLineWidth(width);
+        actor->GetProperty()->SetLighting(false);
+        renderer->AddActor(actor);
+        actors.push_back(actor);
+      };
+      vtkNew<vtkPolyData> fill;
+      fill->SetPoints(points);
+      fill->SetPolys(fills);
+      if (fill->GetNumberOfPolys() > 0)
+        add(fill, rgb, 1.0);
+      vtkNew<vtkPolyData> outline;
+      outline->SetPoints(points);
+      outline->SetLines(loops->GetLines());
+      add(outline, lerp_rgb(rgb, {0, 0, 0}, 0.55), 2.0);
+    }
+  }
+  return actors;
 }
 
 // ── Camera placement ─────────────────────────────────────────────────────────

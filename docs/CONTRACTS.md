@@ -556,6 +556,43 @@ directly. `rux create rooms --spaces-json out.yaml` is the earlier debug
 path: it writes the same spaces (same code, same GUIDs) to a file without
 storing them.
 
+### `solids` (`rux create solids`)
+
+The typed model as closed solids, one per element
+(`reconstruction/solids.hpp`, `build_solids`, W6.1): a wall is a box in its
+wall frame (axis, thickness, `z_base`, height, in its storey's level frame)
+minus a box per opening (CGAL corefinement; the box runs `opening_overcut_m`
+past every face it touches, so a door leaves a gap through the wall's foot
+and a window a hole); a slab is the storey's floor polygon -- the union of
+its spaces' outer rings and its walls' footprints, or the convex hull of the
+footprints when the storey has no space -- from the ceiling of the storey
+below up to its floor (else `slab_thickness_m`), plus a roof over the top
+storey; a space is its polygon (with holes) from `z_floor` to `z_ceiling`. A
+wall of unknown thickness (`-1`, its axis is the seen face) grows
+`unknown_wall_thickness_m` away from the space it faces; wall ends at a
+corner or tee run on to the far face of the wall they meet.
+
+| | |
+|---|---|
+| Consumes | `walls`, `storeys` |
+| Optional | `openings` (cut out of the walls), `spaces` (space volumes; the slab outline) |
+| Produces | `solid_walls`, `solid_slabs`, `solid_spaces` (`meshes` table; no schema change) |
+| Options  | `SolidsOptions` (`libs/reusex/include/reconstruction/solids.hpp`), parameter keys are its field names. One table, `pipeline::solid_parameter_table()`, defines the keys, the CLI flags and their bounds |
+| Checks   | ≥1 wall; ≥1 storey |
+
+Each mesh is world coordinates (the level frames mapped back), triangles,
+outward faces. Its `parameters` column is a JSON object `{solids_version: 1,
+type, parameters, elements}`; each element has `guid` (the source wall's,
+space's or -- for a slab -- storey's GUID), `type`, `storey`, `predefined`
+(wall `STANDARD`, slab `FLOOR` / `ROOF`, space its kind), `part` (slab piece,
+largest first), `closed` (`CGAL::is_closed`), `volume`, `faces` / `vertices`
+(`[first, count]` in the mesh), `profile` (`outer`, `holes`, `depth`,
+`placement`: the IFC-ready extrusion, local -> world, 4x4 row-major) and, for a
+wall, `voids` (each opening cut: `guid`, `kind`, `profile`) and
+`voids_failed`. A type with no element leaves no mesh (a stale one is
+deleted). The `solids` render layer and the Qt 3D workspace's "Solider
+(typede)" row draw the three meshes.
+
 ### `mesh` (`rux create mesh`)
 
 Solidify the cell complex into **one watertight envelope mesh** covering every
@@ -780,7 +817,7 @@ rasterizer.
 ## Typical pipeline order
 
 ```
-import → [graph_init] → [graph_discover] → (optimize|register) → clouds → planes → [storeys → classify → walls → openings] → rooms → [spaces] → mesh → texture
+import → [graph_init] → [graph_discover] → (optimize|register) → clouds → planes → [storeys → classify → walls → openings] → rooms → [spaces → solids] → mesh → texture
                                                     ↘ annotate → project → instances → windows
                                                     ↘ gsplat (leaf: produces `splat`)
 ```
@@ -794,6 +831,8 @@ without walls / openings band cuts at constrictions only. The stage table
 lists `storeys`, `walls` and `openings` before `rooms` for that reason.
 `spaces` follows `rooms`: it polygonises the band rooms against the walls
 table, and the openings come first because they cut the rooms it reads.
+`solids` follows `spaces`: it reads the walls, openings, spaces and storeys
+tables and needs nothing from `mesh`.
 
 Stage order in the table is load-bearing and asserted by a test: an input may
 only be produced by a **strictly earlier** stage. That invariant is what lets a

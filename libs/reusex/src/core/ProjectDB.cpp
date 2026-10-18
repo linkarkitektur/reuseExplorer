@@ -7311,6 +7311,22 @@ class ProjectDB::Impl {
     return false;
   }
 
+  bool deleteMesh(std::string_view name) {
+    // mesh_texture_data rows go with it (ON DELETE CASCADE).
+    const char *sql = "DELETE FROM meshes WHERE name = ?;";
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+      throw std::runtime_error("Failed to prepare mesh delete: " +
+                               std::string(sqlite3_errmsg(db)));
+    StmtGuard guard(stmt);
+    sqlite3_bind_text(stmt, 1, name.data(), static_cast<int>(name.size()),
+                      SQLITE_TRANSIENT);
+    if (sqlite3_step(stmt) != SQLITE_DONE)
+      throw std::runtime_error("Failed to delete mesh '" + std::string(name) +
+                               "': " + std::string(sqlite3_errmsg(db)));
+    return sqlite3_changes(db) > 0;
+  }
+
   std::vector<std::string> listMeshes() const {
     const char *sql = "SELECT name FROM meshes ORDER BY id;";
     sqlite3_stmt *stmt;
@@ -9623,6 +9639,11 @@ pcl::TextureMesh::Ptr ProjectDB::texture_mesh(std::string_view name) const {
 
 bool ProjectDB::has_mesh(std::string_view name) const {
   return impl_->hasMesh(name);
+}
+
+bool ProjectDB::delete_mesh(std::string_view name) {
+  impl_->checkWritable();
+  return impl_->deleteMesh(name);
 }
 
 std::vector<std::string> ProjectDB::list_meshes() const {

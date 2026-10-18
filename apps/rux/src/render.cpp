@@ -232,6 +232,11 @@ EXAMPLES:
   rux -p scan.rux render -o op.png --view plan --layers cloud,walls,openings
   rux -p scan.rux render -o el.png --section 0,0:5,0 --section-thickness 0.6 --layers cloud,openings
 
+  # Typed solids (rux create solids): an axo, a plan cut and a section
+  rux -p scan.rux render -o axo.png --view orbit:8 --layers cloud,solids
+  rux -p scan.rux render -o plan.png --view plan:1.2 --layers cloud,solids
+  rux -p scan.rux render -o sec.png --section y=2 --section-thickness 0.3 --layers cloud,solids
+
   # Detected spaces (rux create spaces) under the walls
   rux -p scan.rux render -o sp.png --view plan:1.2 --layers cloud,spaces,walls
 
@@ -286,6 +291,13 @@ MESH QA (reusex-8vx):
     cover). A legend with mean, P95 and the two shares is drawn in.
   - --qa writes a contact sheet: plan cut, four elevations, three sections
     (or the given --section ones) and a deviation plan.
+
+SOLIDS (reusex-z1v.8.1):
+  - The `solids` layer draws the meshes of `rux create solids`: walls blue
+    with their doors and windows cut out (the reveals orange for a door,
+    light blue for a window), slabs grey, spaces translucent orange. Cut
+    with the scene, so `--view plan` shows the walls in section with their
+    thickness and door gaps.
 
 SPACES (reusex-z1v.6.3):
   - The `spaces` layer draws the spaces table as translucent polygons in

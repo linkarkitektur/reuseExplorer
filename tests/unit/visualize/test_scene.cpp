@@ -14,6 +14,7 @@
 
 #include <reusex/core/ProjectDB.hpp>
 #include <reusex/core/solid_model.hpp>
+#include <reusex/pipeline/stages.hpp>
 #include <reusex/types/point_types.hpp>
 #include <reusex/visualize/scene.hpp>
 #include <rux_qt/tokens.hpp>
@@ -24,6 +25,7 @@
 
 #include <vtkActor.h>
 #include <vtkCamera.h>
+#include <vtkCellData.h>
 #include <vtkMapper.h>
 #include <vtkNew.h>
 #include <vtkPointData.h>
@@ -913,4 +915,153 @@ TEST_CASE("PopulateScene_Spaces_AboveScene_IsASheetUnderTheWalls",
   viz::apply_cut_plane(renderer, 0.2);
   for (vtkActor *a : l.actors)
     CHECK(a->GetMapper()->GetNumberOfClippingPlanes() == 0);
+}
+
+// ── solids (reusex-z1v.8.1) ───────────────────────────────────────────────
+
+namespace {
+
+/// One room with a door in its south wall, through the solids stage.
+void seed_solids(ProjectDB &db, const TempPath &tmp) {
+  reusex::core::SolidModel m;
+  reusex::core::StoreyRecord st;
+  st.guid = "st0";
+  st.z_ceiling = 2.5;
+  m.storeys = {st};
+  const auto wall = [](const char *g, double x0, double y0, double x1,
+                       double y1) {
+    reusex::core::WallRecord w;
+    w.guid = g;
+    w.x0 = x0;
+    w.y0 = y0;
+    w.x1 = x1;
+    w.y1 = y1;
+    w.thickness = 0.2;
+    w.height = 2.5;
+    return w;
+  };
+  m.walls = {wall("s", 0, 0, 4, 0), wall("e", 4, 0, 4, 3),
+             wall("n", 4, 3, 0, 3), wall("w", 0, 3, 0, 0)};
+  reusex::core::OpeningRecord d;
+  d.guid = "d";
+  d.wall = "s";
+  d.kind = "door";
+  d.s_start = 1.0;
+  d.s_end = 1.9;
+  d.z_sill = 0.0;
+  d.z_head = 2.1;
+  m.openings = {d};
+  reusex::core::SpaceRecord sp;
+  sp.guid = "a";
+  sp.polygon.outer = {{0.1, 0.1}, {3.9, 0.1}, {3.9, 2.9}, {0.1, 2.9}};
+  sp.z_ceiling = 2.5;
+  m.spaces = {sp};
+  db.save_storeys(m.storeys);
+  db.save_walls(m.walls, m.wall_joins);
+  db.save_openings(m.openings);
+  db.save_spaces(m.spaces, {});
+  reusex::pipeline::StageContext ctx;
+  ctx.project = tmp.path;
+  ctx.stage = reusex::pipeline::JobStage::solids;
+  const auto r = reusex::pipeline::run_stage(db, ctx);
+  INFO(r.message);
+  REQUIRE(r.ok);
+}
+
+} // namespace
+
+TEST_CASE("PopulateScene_Solids_NoSolids_NamesTheStageToRun",
+          "[visualize][scene][solids]") {
+  TempPath tmp("test_scene_solids_missing");
+  ProjectDB db(tmp.path);
+  seed_cloud(db, 10);
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.layers = {viz::Layer::cloud, viz::Layer::solids};
+  CHECK_THROWS_WITH(viz::populate_scene(renderer, db, o),
+                    ContainsSubstring("rux create solids"));
+  CHECK(viz::layer_from_string("solids") == viz::Layer::solids);
+  CHECK(viz::to_string(viz::Layer::solids) == "solids");
+}
+
+TEST_CASE("PopulateScene_Solids_ColouredByType_RevealsByKind",
+          "[visualize][scene][solids]") {
+  TempPath tmp("test_scene_solids");
+  ProjectDB db(tmp.path);
+  seed_solids(db, tmp);
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.layers = {viz::Layer::solids};
+  const auto info = viz::populate_scene(renderer, db, o);
+  REQUIRE(info.layers.size() == 1);
+  const auto &l = info.layers[0];
+  CHECK(l.layer == viz::Layer::solids);
+  CHECK(l.items == 4 + 2 + 1); // walls, floor + roof, space
+  CHECK(l.faces > 0);
+  REQUIRE(l.actors.size() == 6); // surface + edges per mesh
+  // The type colours are the tokens' scale: walls --label-4, slabs
+  // --label-7, spaces --label-0.
+  const auto &pal = viz::default_label_palette();
+  CHECK(o.solid_wall_rgb == pal.colors[4]);
+  CHECK(o.solid_slab_rgb == pal.colors[7]);
+  CHECK(o.solid_space_rgb == pal.colors[0]);
+  bool translucent = false;
+  for (vtkActor *a : l.actors) {
+    CHECK(std::string(a->GetObjectName()) == viz::kSolidsActorName);
+    translucent |= a->GetProperty()->GetOpacity() < 0.5;
+  }
+  CHECK(translucent);
+  // The wall surface's cells: the wall colour, and the door's reveals.
+  auto *walls = vtkPolyData::SafeDownCast(l.actors[0]->GetMapper()->GetInput());
+  REQUIRE(walls != nullptr);
+  auto *rgb =
+      vtkUnsignedCharArray::SafeDownCast(walls->GetCellData()->GetScalars());
+  REQUIRE(rgb != nullptr);
+  std::size_t door = 0, wall = 0;
+  for (vtkIdType i = 0; i < rgb->GetNumberOfTuples(); ++i) {
+    const std::array<std::uint8_t, 3> c{rgb->GetValue(3 * i),
+                                        rgb->GetValue(3 * i + 1),
+                                        rgb->GetValue(3 * i + 2)};
+    door += c == o.plan_door_rgb ? 1 : 0;
+    wall += c == o.solid_wall_rgb ? 1 : 0;
+  }
+  CHECK(door >= 6); // two jambs and the head, two triangles each
+  CHECK(wall > door);
+  // In world: the walls stand from z 0 to 2.5, the roof slab above.
+  CHECK(info.bounds.min[2] == Catch::Approx(-0.2).margin(1e-4));
+  CHECK(info.bounds.max[2] == Catch::Approx(2.7).margin(1e-4));
+}
+
+TEST_CASE("AddSolidsSection_PlanCut_FillsTheWallsWithTheDoorGap",
+          "[visualize][scene][solids]") {
+  TempPath tmp("test_scene_solids_section");
+  ProjectDB db(tmp.path);
+  seed_solids(db, tmp);
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.layers = {viz::Layer::solids};
+  const auto info = viz::populate_scene(renderer, db, o);
+  // Below the door head: four walls, the south one in two pieces.
+  const auto actors =
+      viz::add_solids_section(renderer, info, {0, 0, 1.0}, {0, 0, 1}, {});
+  REQUIRE(actors.size() == 2); // the walls' fill and outline (slabs missed)
+  for (vtkActor *a : actors)
+    CHECK(std::string(a->GetObjectName()) == viz::kSectionLineActorName);
+  auto *outline = vtkPolyData::SafeDownCast(actors[1]->GetMapper()->GetInput());
+  REQUIRE(outline != nullptr);
+  CHECK(outline->GetNumberOfLines() == 5);
+  auto *fill = vtkPolyData::SafeDownCast(actors[0]->GetMapper()->GetInput());
+  REQUIRE(fill != nullptr);
+  CHECK(fill->GetNumberOfPolys() >= 10);
+  for (vtkIdType i = 0; i < fill->GetNumberOfPoints(); ++i) {
+    double p[3];
+    fill->GetPoint(i, p);
+    CHECK(p[2] == Catch::Approx(1.0).margin(1e-6));
+    // Nothing in the door gap (x 1.0 .. 1.9 on the south wall).
+    if (p[1] < 0.2)
+      CHECK_FALSE((p[0] > 1.01 && p[0] < 1.89));
+  }
+  // Above everything: nothing.
+  CHECK(viz::add_solids_section(renderer, info, {0, 0, 50.0}, {0, 0, 1}, {})
+            .empty());
 }

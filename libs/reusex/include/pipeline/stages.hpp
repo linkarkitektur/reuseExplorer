@@ -54,6 +54,8 @@ enum class JobStage {
   walls,          ///< walls + their joins -> "walls" / "wall_joins" tables
   openings,       ///< doors, windows, openings in the walls -> "openings"
   spaces,         ///< band rooms as polygons -> "spaces" / "space_boundaries"
+  solids,         ///< typed solids -> "solid_walls" / "solid_slabs" /
+                  ///< "solid_spaces" meshes
 };
 
 /// Canonical lower-case stage name (the token used on the wire and the CLI).

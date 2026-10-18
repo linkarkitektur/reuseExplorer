@@ -293,6 +293,16 @@ const std::vector<StageSpec> &stage_specs() {
         {"open_plan_min_hole_area", "--open-plan-min-hole-area", {}, {}},
         {"guid_match_m", "--guid-match", {}, {}},
         {"guid_min_area_ratio", "--guid-min-area-ratio", {}, {}}}},
+      {"solids",
+       {"create", "solids"},
+       {{"unknown_wall_thickness_m", "--unknown-thickness", {}, {}},
+        {"extend_at_joins", {}, {}, "--no-join-extension"},
+        {"opening_overcut_m", "--opening-overcut", {}, {}},
+        {"slab_thickness_m", "--slab-thickness", {}, {}},
+        {"max_slab_thickness_m", "--max-slab-thickness", {}, {}},
+        {"slab_min_area_m2", "--slab-min-area", {}, {}},
+        {"slab_min_hole_area_m2", "--slab-min-hole-area", {}, {}},
+        {"roof", {}, {}, "--no-roof"}}},
   };
   return specs;
 }

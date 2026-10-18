@@ -76,6 +76,7 @@ enum class Layer {
   walls,      ///< `walls` table: footprints in plan, boxes in 3D (WP3)
   openings,   ///< `openings` table: rectangles in the wall faces (WP5)
   spaces,     ///< `spaces` table: translucent polygons with names (WP4)
+  solids,     ///< `solid_*` meshes: typed solids coloured by type (W6.1)
 };
 
 /// Parse a layer name as accepted by `rux render --layers`.

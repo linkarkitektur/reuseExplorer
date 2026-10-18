@@ -42,6 +42,8 @@ QString stage_name_da(pl::JobStage stage) {
     return "Åbninger";
   case pl::JobStage::spaces:
     return "Rum som polygoner";
+  case pl::JobStage::solids:
+    return "Solider (typede)";
   }
   return {};
 }
@@ -78,6 +80,9 @@ QString stage_blurb_da(pl::JobStage stage) {
   case pl::JobStage::spaces:
     return "Tegn båndrummene som polygoner langs væggene: areal, volumen, "
            "type og de vægge, der afgrænser dem.";
+  case pl::JobStage::solids:
+    return "Byg lukkede solider pr. element: vægge med døre og vinduer "
+           "skåret ud, dæk pr. etage og rumvolumener.";
   }
   return {};
 }
@@ -327,6 +332,15 @@ QString parameter_label_da(pl::JobStage stage,
           {{"spaces", "open_plan_min_hole_area"}, "Møbelhul [m²]"},
           {{"spaces", "guid_match_m"}, "Samme rum inden for [m]"},
           {{"spaces", "guid_min_area_ratio"}, "Samme rum arealforhold"},
+          {{"solids", "unknown_wall_thickness_m"}, "Ukendt vægtykkelse [m]"},
+          {{"solids", "extend_at_joins"}, "Forlæng vægge ved samlinger"},
+          {{"solids", "opening_overcut_m"}, "Åbning skærer forbi [m]"},
+          {{"solids", "slab_thickness_m"}, "Dæktykkelse, standard [m]"},
+          {{"solids", "max_slab_thickness_m"},
+           "Tykkeste dæk mellem etager [m]"},
+          {{"solids", "slab_min_area_m2"}, "Mindste dækstykke [m²]"},
+          {{"solids", "slab_min_hole_area_m2"}, "Mindste hul i dæk [m²]"},
+          {{"solids", "roof"}, "Tagdæk over øverste etage"},
   };
   if (auto it = labels.find({std::string(pl::to_string(stage)), d.key});
       it != labels.end())
@@ -372,6 +386,8 @@ reusex::core::PipelineStage contract_stage(pl::JobStage stage) {
     return P::openings;
   case pl::JobStage::spaces:
     return P::spaces;
+  case pl::JobStage::solids:
+    return P::solids;
   }
   return P::clouds;
 }

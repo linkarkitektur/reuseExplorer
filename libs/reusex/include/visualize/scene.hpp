@@ -185,6 +185,16 @@ struct SceneOptions {
   /// one side) or seen over less than half its face is drawn dimmer.
   std::array<std::uint8_t, 3> walls_rgb{0x00, 0x72, 0xb2};
 
+  /// Colours of the `solids` layer, by type: walls `--label-4` (blue, as
+  /// the walls layer), slabs `--label-7` (grey), spaces `--label-0` (orange,
+  /// as the plan's spaces) drawn translucent. A wall's opening reveals (the
+  /// faces its doors and windows cut) take the plan's door / window /
+  /// opening colours, so the voids read at a glance.
+  std::array<std::uint8_t, 3> solid_wall_rgb{0x00, 0x72, 0xb2};
+  std::array<std::uint8_t, 3> solid_slab_rgb{0x99, 0x99, 0x99};
+  std::array<std::uint8_t, 3> solid_space_rgb{0xe6, 0x9f, 0x00};
+  double solid_space_opacity = 0.25;
+
   /// How a `mesh` layer is drawn. MeshStyle::automatic resolves to
   /// MeshStyle::overlay when a point layer is drawn too.
   MeshStyle mesh_style = MeshStyle::automatic;
@@ -264,6 +274,15 @@ inline constexpr const char *kOpeningsActorName = "reusex.openings";
 /// plan the layer is a sheet like the walls layer's.
 inline constexpr const char *kSpacesActorName = "reusex.spaces";
 
+/// vtkObject name of every `solids` layer actor (cut with the scene).
+inline constexpr const char *kSolidsActorName = "reusex.solids";
+
+/// The meshes the `solids` layer draws, as the solids stage names them
+/// (pipeline/solid_parameters.hpp, docs/CONTRACTS.md `solids`): walls,
+/// slabs, spaces.
+inline constexpr std::array<const char *, 3> kSolidMeshNames{
+    "solid_walls", "solid_slabs", "solid_spaces"};
+
 /// vtkObject name of a mesh section line (add_mesh_section_line()); exempt
 /// from the cut and the section slab like the plan overlay.
 inline constexpr const char *kSectionLineActorName = "reusex.section_line";
@@ -295,7 +314,7 @@ struct SceneLayer {
   std::size_t points = 0; ///< points drawn (per point layer)
   std::size_t faces = 0;  ///< mesh faces drawn
   std::size_t items = 0;  ///< frustums / panoramas / components / walls /
-                          ///< openings drawn
+                          ///< openings / solid elements drawn
   /// Walls layer only: walls drawn dimmer (assumed, or seen_share < 0.5).
   std::size_t dim = 0;
   /// `drift` layer only: the storey of each actor in @ref actors (-1 = world
@@ -305,6 +324,10 @@ struct SceneLayer {
   /// add_mesh_section_line(). Owned by a surface actor in the renderer (a
   /// hidden one, not in @ref actors, under MeshStyle::edges).
   vtkPolyData *mesh_surface = nullptr;
+  /// Solids layer only: the wall and slab surfaces with their type colour,
+  /// the sources of add_solids_section() (owned by their actors' mappers).
+  std::vector<std::pair<vtkPolyData *, std::array<std::uint8_t, 3>>>
+      section_surfaces;
 };
 
 /// What populate_scene() added.
@@ -428,6 +451,21 @@ vtkActor *add_mesh_section_line(vtkRenderer *renderer, const SceneInfo &info,
                                 const std::array<double, 3> &shift,
                                 const std::array<std::uint8_t, 3> &rgb,
                                 double width = 3.0);
+
+/// Draw the section of the scene's `solids` walls and slabs by a plane
+/// (origin @p origin, normal @p normal) as poché: each closed loop of the cut
+/// filled in its type's colour with a dark outline, shifted by @p shift (e.g.
+/// toward the camera). Named kSectionLineActorName, so the cut and the
+/// section slab leave it alone. What `rux render --view plan` and
+/// `--section` show of the solids: the walls in section, their thickness
+/// and the door gaps.
+/// @return the actors added (none when @p info has no solids layer or the
+///         plane misses it).
+std::vector<vtkActor *> add_solids_section(vtkRenderer *renderer,
+                                           const SceneInfo &info,
+                                           const std::array<double, 3> &origin,
+                                           const std::array<double, 3> &normal,
+                                           const std::array<double, 3> &shift);
 
 /// How a preset camera frames the scene.
 struct CameraFraming {

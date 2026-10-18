@@ -13,6 +13,8 @@
 #include <reusex/core/label_semantics.hpp>
 #include <reusex/visualize/scene.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <QApplication>
 #include <QButtonGroup>
 #include <QCheckBox>
@@ -320,6 +322,11 @@ bool Viewer3DWorkspace::has_data(Layer l) const {
     return db->has_openings();
   case Layer::spaces:
     return db->has_spaces();
+  case Layer::solids:
+    for (const char *name : vis::kSolidMeshNames)
+      if (db->has_mesh(name))
+        return true;
+    return false;
   case Layer::deviation:
   case Layer::drift:
     // TODO: Let the 3D workspace draw the drift heatmap
@@ -345,6 +352,14 @@ void Viewer3DWorkspace::reset() {
   visible_[static_cast<int>(Layer::panoramas)] = true;
   visible_[static_cast<int>(Layer::walls)] = true;    // the WP3 product
   visible_[static_cast<int>(Layer::openings)] = true; // ...and WP5's
+  visible_[static_cast<int>(Layer::solids)] = true;   // ...and WP6's
+  if (has_data(Layer::solids)) {
+    // The solids draw the walls and their openings already (cut out, the
+    // reveals coloured by kind); the walls / openings boxes would sit on
+    // top of them. Both stay a click away.
+    visible_[static_cast<int>(Layer::walls)] = false;
+    visible_[static_cast<int>(Layer::openings)] = false;
+  }
   rebuild_panel();
   if (!session_.is_open()) {
     view_->set_message(session_.state() == ProjectSession::State::loading
@@ -372,9 +387,9 @@ void Viewer3DWorkspace::activate() {
                            : Layer::cloud;
   if (visible_.value(static_cast<int>(Layer::cloud)) && has_data(colour))
     ensure_layer(colour);
-  for (Layer l : {Layer::mesh, Layer::spaces, Layer::walls, Layer::openings,
-                  Layer::components, Layer::frustums, Layer::panoramas,
-                  Layer::passes, Layer::graph})
+  for (Layer l : {Layer::mesh, Layer::solids, Layer::spaces, Layer::walls,
+                  Layer::openings, Layer::components, Layer::frustums,
+                  Layer::panoramas, Layer::passes, Layer::graph})
     if (visible_.value(static_cast<int>(l)) && has_data(l))
       ensure_layer(l);
   view_->request_render();
@@ -412,11 +427,21 @@ void Viewer3DWorkspace::rebuild_panel() {
   for (const auto &c : s.clouds)
     if (c.name == "cloud")
       cloud_points = c.point_count;
-  std::size_t db_walls = 0, db_openings = 0, db_spaces = 0;
+  std::size_t db_walls = 0, db_openings = 0, db_spaces = 0, db_solids = 0;
   if (open && session_.db()) {
     db_walls = session_.db()->walls().size();
     db_openings = session_.db()->openings().size();
     db_spaces = session_.db()->spaces().size();
+    // Elements in the solids meshes' index (docs/CONTRACTS.md `solids`).
+    for (const char *name : vis::kSolidMeshNames)
+      if (session_.db()->has_mesh(name))
+        try {
+          db_solids += nlohmann::json::parse(
+                           session_.db()->mesh_metadata(name).parameters)
+                           .at("elements")
+                           .size();
+        } catch (const std::exception &) {
+        }
   }
 
   auto row = [&](Layer l, const QString &name, const QString &count) {
@@ -481,6 +506,8 @@ void Viewer3DWorkspace::rebuild_panel() {
 
   std::size_t meshes = s.meshes.size();
   row(Layer::mesh, "Mesh", meshes ? QString::number(meshes) : QString());
+  row(Layer::solids, "Solider (typede)",
+      db_solids ? format_count(static_cast<qulonglong>(db_solids)) : QString());
   row(Layer::walls, "Vægge",
       db_walls ? format_count(static_cast<qulonglong>(db_walls)) : QString());
   row(Layer::openings, "Åbninger",

@@ -541,6 +541,16 @@ and deleted the shims. `include/geometry/` now holds only the real
   state and swing, local floor/ceiling per wall (`detect_openings`); stored
   by the `openings` stage, parameters in one table,
   `pipeline/opening_parameters.hpp`
+- `solids.hpp`: typed solids (W6.1, `build_solids`): a wall box minus its
+  openings (CGAL corefinement), a slab per storey (union of its spaces and
+  wall footprints, down to the storey below) plus a roof, a space volume;
+  each `ElementSolid` has a world mesh and the IFC-ready extrusion profile.
+  Stored by the `solids` stage (`rux create solids`, after spaces) as the
+  meshes `solid_walls` / `solid_slabs` / `solid_spaces`, the element index
+  (type, source GUID, face range, profile, voids) in each mesh's
+  `parameters` JSON (no schema change); parameters in one table,
+  `pipeline/solid_parameters.hpp`; drawn by the `solids` render layer and
+  the Qt 3D row "Solider (typede)"
 - `solid_metrics.hpp`: the solid-model benchmark (`rux analyze solid`,
   `scripts/bench-solid.sh`): a detected `core::SolidModel` vs a reference plan
   in the solid-model JSON format (`io/solid_model_json.hpp`,
@@ -761,7 +771,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | Command | Sub-commands | Source |
 |---|---|---|
 | `import` | `rtabmap`, `mushroom`, `arkitscenes`, `e57`, `ply`, `gsplat`, `materialepas`, `csv`, `360`, `photos` | `src/import/` |
-| `create` | `clouds`, `dense`, `annotate`, `annotate-360`, `material`, `project`, `planes`, `rooms`, `instances`, `storeys`, `classify`, `walls`, `openings`, `spaces`, `materials`, `survey`, `mesh`, `texture`, `windows` (deprecated) | `src/create/` |
+| `create` | `clouds`, `dense`, `annotate`, `annotate-360`, `material`, `project`, `planes`, `rooms`, `instances`, `storeys`, `classify`, `walls`, `openings`, `spaces`, `solids`, `materials`, `survey`, `mesh`, `texture`, `windows` (deprecated) | `src/create/` |
 | `export` | `ply`, `e57`, `materialepas`, `csv`, `rhino`, `semantic-images`, `speckle`, `colmap`, `pdf` | `src/export/` |
 | `align` | `360` (content-based panorama pose refinement) | `src/align/` |
 | `edit` | `downsample`, `perturb-poses` (drift synthesis, #338) | `src/edit/` |
@@ -774,7 +784,7 @@ Top-level commands, as registered in `apps/rux/src/rux.cpp`:
 | `info` | — (project summary) | `src/info.cpp` |
 | `log` | — (pipeline execution history) | `src/log.cpp` |
 | `view` | — (interactive viewer, needs a display; `--plan gt.yaml --watch` = hot-reloading ground-truth workbench over `populate_scene`, `view/plan_workbench.hpp`) | `src/view/` |
-| `render` | — (headless render to PNG: `--view top\|plan[:h]\|front\|back\|left\|right\|orbit:N\|frame:<id>`, `--section x=<m>\|y=<m>\|<x0>,<y0>:<x1>,<y1>`; layers incl. `frustums`, `panoramas`, `deviation` (cloud coloured by distance to the mesh), `walls` (the walls table: footprints on a sheet over the cut in plan/top, boxes in 3D; assumed or < 50 % seen dimmer — also a Qt 3D layer, "Vægge"), `openings` (the openings table: bars on the walls in plan/top, rectangles in both wall faces in 3D, coloured by kind — Qt 3D "Åbninger"), `spaces` (the spaces table: translucent polygons in their room's label colour with name and area, at floor height in 3D, a sheet under the walls in plan/top — Qt 3D "Rum (polygoner)"); label layers on the `--label-*` token scale; `--qa` writes the mesh-QA contact sheet, `visualize/qa_sheet.hpp`; `--plan gt.yaml --watch` re-renders and prints plan scores on every save, `render_watch.hpp`) | `src/render.cpp` |
+| `render` | — (headless render to PNG: `--view top\|plan[:h]\|front\|back\|left\|right\|orbit:N\|frame:<id>`, `--section x=<m>\|y=<m>\|<x0>,<y0>:<x1>,<y1>`; layers incl. `frustums`, `panoramas`, `deviation` (cloud coloured by distance to the mesh), `walls` (the walls table: footprints on a sheet over the cut in plan/top, boxes in 3D; assumed or < 50 % seen dimmer — also a Qt 3D layer, "Vægge"), `openings` (the openings table: bars on the walls in plan/top, rectangles in both wall faces in 3D, coloured by kind — Qt 3D "Åbninger"), `spaces` (the spaces table: translucent polygons in their room's label colour with name and area, at floor height in 3D, a sheet under the walls in plan/top — Qt 3D "Rum (polygoner)"), `solids` (the `solid_*` meshes: walls blue with door / window reveals in their kind's colour, slabs grey, spaces translucent orange, cut with the scene — Qt 3D "Solider (typede)", on by default when present, walls / openings rows then off); label layers on the `--label-*` token scale; `--qa` writes the mesh-QA contact sheet, `visualize/qa_sheet.hpp`; `--plan gt.yaml --watch` re-renders and prints plan scores on every save, `render_watch.hpp`) | `src/render.cpp` |
 | `assemble` | — (multi-scan assembly) | `src/assemble.cpp` |
 
 With **no** subcommand, `rux` launches the Qt client (help without a display).
@@ -1048,6 +1058,7 @@ rux -p scan.rux create planes
 rux -p scan.rux create storeys          # rooms defaults to --method band, which needs this
 rux -p scan.rux create rooms
 rux -p scan.rux create spaces           # after walls -> openings -> rooms
+rux -p scan.rux create solids           # typed solids: walls - openings, slabs, spaces
 rux -p scan.rux create mesh --solver auto
 
 # Check a stage's inputs before running it
