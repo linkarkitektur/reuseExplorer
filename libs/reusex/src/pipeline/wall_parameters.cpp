@@ -216,6 +216,22 @@ const std::vector<WallParameter> &wall_parameter_table() {
       {"min_seen_share", "--min-seen-share", "Minimum seen share",
        "A wall whose face area is seen less than this is flagged.",
        WALL(min_seen_share), 0.0, 1.0},
+      {"reveal_tol_m", "--reveal-tol", "Reveal tolerance [m]",
+       "A short wall standing behind a perpendicular wall's seen face (its "
+       "near end within this of the face, its far end beyond), with the "
+       "face going on past it, is a window reveal, not a wall.",
+       WALL(reveal_tol_m), 0.0, 2.0},
+      {"free_max_extent_m", "--free-max-extent", "Free-standing size [m]",
+       "Walls joined to no other wall whose footprint is at most this are "
+       "a column or a cupboard, not walls ...",
+       WALL(free_max_extent_m), 0.0, 20.0},
+      {"free_min_top_m", "--free-min-top", "Free-standing top [m]",
+       "... nor are they when none reaches this height over the floor (a "
+       "desk screen).",
+       WALL(free_min_top_m), 0.0, 10.0},
+      {"free_top_quantile", "--free-top-quantile", "Free-standing top quantile",
+       "The quantile of a wall's evidence heights taken as its top.",
+       WALL(free_top_quantile), 0.0, 1.0},
       // --- identity (core::WallIdentityOptions)
       {"guid_match_m", "--guid-match", "Same wall within [m]",
        "A re-detected wall keeps the GUID of the stored wall whose axis lies "

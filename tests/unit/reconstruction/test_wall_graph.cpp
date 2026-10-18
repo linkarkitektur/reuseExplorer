@@ -165,7 +165,10 @@ TEST_CASE("JoinWalls_DoorwayInAWall_BridgesIntoOneWall",
 TEST_CASE("JoinWalls_HalfSeenWall_IsFlagged", "[walls][join_walls]") {
   auto wp = storey_points();
   add_room(wp, {{0, 0}, {4, 0}, {4, 3}, {0, 3}}, 80);
-  // A second room's wall seen only up to 1 m (4 of 10 cell rows).
+  // A second room's wall seen only up to 1 m (4 of 10 cell rows), at the
+  // end of the first room's south wall run on to x = 8 (joined: a wall
+  // standing free that low would be no wall, reusex-1pi).
+  add_face(wp, {4.2, 0}, {8, 0}, {0, 1}, 0.0, 2.5, 0.003, 84);
   add_face(wp, {8, 0}, {8, 3}, {1, 0}, 0.0, 1.0, 0.003, 85);
   const auto g = graph_of(wp);
   REQUIRE(g.walls.size() == 5);
@@ -503,4 +506,129 @@ TEST_CASE("Openings_PatioDoorInABridgedGap_LandsOnTheWall",
   CHECK(o.kind == "door");
   const double width = o.s_end - o.s_start;
   CHECK_THAT(width, WithinAbs(2.1, 0.15));
+}
+
+// reusex-1pi: desk screens, columns and window reveals in an open office
+// came out of the wall graph as short walls (NewOffice wall precision
+// 0.26). A 10 x 10 m room, its walls seen from inside, floor seen.
+namespace {
+
+WallPoints open_office(unsigned seed) {
+  auto wp = storey_points();
+  add_room(wp, {{0, 0}, {10, 0}, {10, 10}, {0, 10}}, seed);
+  add_floor(wp, 0.0, 0.0, 10.0, 10.0, 0.1);
+  return wp;
+}
+
+/// A thin free-standing panel along y at x, both faces seen, z in [0, top).
+void add_panel_y(WallPoints &wp, double x, double y0, double y1, double top,
+                 double thickness, unsigned seed) {
+  add_face(wp, {x - 0.5 * thickness, y0}, {x - 0.5 * thickness, y1}, {-1, 0},
+           0.0, top, 0.003, seed);
+  add_face(wp, {x + 0.5 * thickness, y0}, {x + 0.5 * thickness, y1}, {1, 0},
+           0.0, top, 0.003, seed + 1);
+}
+
+/// A thin panel along x at y, both faces seen, z in [0, top).
+void add_panel_x(WallPoints &wp, double y, double x0, double x1, double top,
+                 double thickness, unsigned seed) {
+  add_face(wp, {x0, y - 0.5 * thickness}, {x1, y - 0.5 * thickness}, {0, -1},
+           0.0, top, 0.003, seed);
+  add_face(wp, {x0, y + 0.5 * thickness}, {x1, y + 0.5 * thickness}, {0, 1},
+           0.0, top, 0.003, seed + 1);
+}
+
+} // namespace
+
+TEST_CASE("JoinWalls_DeskScreenInARoom_IsNotAWall", "[walls][join_walls]") {
+  // A 2.4 m desk screen, 1.2 or 1.6 m tall, standing free in the room.
+  for (const double top : {1.2, 1.6}) {
+    auto wp = open_office(200);
+    add_panel_y(wp, 5.0, 3.8, 6.2, top, 0.05, 210);
+    const auto g = graph_of(wp);
+    CHECK(g.walls.size() == 4);
+    CHECK(g.free_standing == 1);
+    CHECK(wall_at(g, 0, 5.0) == nullptr);
+  }
+}
+
+TEST_CASE("JoinWalls_ColumnInARoom_IsNotAWall", "[walls][join_walls]") {
+  // A 0.6 m square column, floor to ceiling, in the middle of the room.
+  auto wp = open_office(220);
+  add_face(wp, {4.7, 4.7}, {5.3, 4.7}, {0, -1}, 0.0, 2.5, 0.003, 230);
+  add_face(wp, {4.7, 5.3}, {5.3, 5.3}, {0, 1}, 0.0, 2.5, 0.003, 231);
+  add_face(wp, {4.7, 4.7}, {4.7, 5.3}, {-1, 0}, 0.0, 2.5, 0.003, 232);
+  add_face(wp, {5.3, 4.7}, {5.3, 5.3}, {1, 0}, 0.0, 2.5, 0.003, 233);
+  const auto g = graph_of(wp);
+  CHECK(g.walls.size() == 4);
+  CHECK(g.free_standing == 4);
+}
+
+TEST_CASE("JoinWalls_DoorHeightStubJoinedToAWall_Stays",
+          "[walls][join_walls]") {
+  // A 0.8 m wall stub seen to door height (2.1 m) off the west wall: short,
+  // but it meets a wall, so it is one (reusex-rtx: walls seen to door
+  // height stay).
+  auto wp = open_office(240);
+  add_face(wp, {0.0, 5.0}, {0.8, 5.0}, {0, 1}, 0.0, 2.1, 0.003, 250);
+  const auto g = graph_of(wp);
+  CHECK(g.walls.size() == 5);
+  CHECK(g.free_standing == 0);
+  CHECK(wall_at(g, 1, 5.0) != nullptr);
+}
+
+TEST_CASE("JoinWalls_WcStallPartition_Stays", "[walls][join_walls]") {
+  // A 2.0 m tall, 1.5 m deep stall partition off the west wall...
+  {
+    auto wp = open_office(260);
+    add_panel_x(wp, 5.0, 0.0, 1.5, 2.0, 0.1, 270);
+    const auto g = graph_of(wp);
+    CHECK(g.walls.size() == 5);
+    CHECK(wall_at(g, 1, 5.0) != nullptr);
+  }
+  // ... and one standing free, 1.8 m long: tall enough to be a wall.
+  {
+    auto wp = open_office(280);
+    add_panel_x(wp, 5.0, 4.1, 5.9, 2.0, 0.1, 290);
+    const auto g = graph_of(wp);
+    CHECK(g.walls.size() == 5);
+    CHECK(g.free_standing == 0);
+    CHECK(wall_at(g, 1, 5.0) != nullptr);
+  }
+}
+
+TEST_CASE("JoinWalls_WindowRevealsBehindAFacade_AreNotWalls",
+          "[walls][join_walls]") {
+  // The west wall (x = 0, seen from +x) has a 1 m window at y 4..5 in a
+  // niche 0.6 m deep: its two reveals stand behind the seen face.
+  auto wp = storey_points();
+  add_face(wp, {0, 0}, {0, 4}, {1, 0}, 0.0, 2.5, 0.003, 300);
+  add_face(wp, {0, 5}, {0, 10}, {1, 0}, 0.0, 2.5, 0.003, 301);
+  add_face(wp, {0, 0}, {10, 0}, {0, 1}, 0.0, 2.5, 0.003, 302);
+  add_face(wp, {10, 0}, {10, 10}, {-1, 0}, 0.0, 2.5, 0.003, 303);
+  add_face(wp, {0, 10}, {10, 10}, {0, -1}, 0.0, 2.5, 0.003, 304);
+  add_floor(wp, 0.0, 0.0, 10.0, 10.0, 0.1);
+  add_face(wp, {-0.6, 4.0}, {0.0, 4.0}, {0, 1}, 0.9, 2.2, 0.003, 305);
+  add_face(wp, {-0.6, 5.0}, {0.0, 5.0}, {0, -1}, 0.9, 2.2, 0.003, 306);
+  const auto g = graph_of(wp);
+  CHECK(g.walls.size() == 4);
+  CHECK(g.reveals == 2);
+  const auto *west = wall_at(g, 0, 0.0);
+  REQUIRE(west != nullptr);
+  CHECK_THAT(west->s0, WithinAbs(0.0, 0.05));
+  CHECK_THAT(west->s1, WithinAbs(10.0, 0.05));
+}
+
+TEST_CASE("JoinWalls_ShortWallAtTheEndOfASeenFace_IsACornerNotAReveal",
+          "[walls][join_walls]") {
+  // house2's upper floor: a wall seen from the north (y = 7, x 0..3) and,
+  // at its east end, a 0.6 m wall running south behind its face (the side
+  // of a closet). Behind the face, but where the face ends: a corner.
+  auto wp = open_office(320);
+  add_face(wp, {0, 7}, {3, 7}, {0, 1}, 0.0, 2.5, 0.003, 330);
+  add_face(wp, {2.9, 7}, {2.9, 6.4}, {1, 0}, 0.0, 2.5, 0.003, 331);
+  const auto g = graph_of(wp);
+  CHECK(g.reveals == 0);
+  CHECK(wall_at(g, 0, 2.9) != nullptr);
+  CHECK(wall_at(g, 1, 7.0) != nullptr);
 }

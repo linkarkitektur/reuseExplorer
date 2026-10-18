@@ -1469,6 +1469,25 @@ WallGraph join_walls(std::vector<WallSegment> walls,
     const double total = static_cast<double>(is1 - is0 + 1) * (iz1 - iz0 + 1);
     return total > 0.0 ? static_cast<double>(seen.size()) / total : 0.0;
   };
+  // The height over the floor that the wall's evidence (within its body,
+  // over its extent) reaches: the free_top_quantile of the heights.
+  auto evidence_top = [&](const WallSegment &w) {
+    const size_t fam = family_pos(w.family);
+    const auto [lo, hi] = body(w);
+    const double pad = opt.face_window_m;
+    std::vector<double> z;
+    const auto [qlo, qhi] = offset_range(ev.wall[fam], lo - pad, hi + pad);
+    for (auto q = qlo; q != qhi; ++q)
+      if (q->s >= w.s0 && q->s <= w.s1)
+        z.push_back(q->z - wp.z_floor);
+    if (z.empty())
+      return 0.0;
+    const auto k = static_cast<size_t>(
+        std::clamp(opt.free_top_quantile * static_cast<double>(z.size() - 1),
+                   0.0, static_cast<double>(z.size() - 1)));
+    std::nth_element(z.begin(), z.begin() + static_cast<long>(k), z.end());
+    return z[k];
+  };
 
   // 1. Squaring happened on the evidence (wall_faces turns every wall plane
   //    within square_deg onto its family axis), so each wall is already
@@ -1563,6 +1582,41 @@ WallGraph join_walls(std::vector<WallSegment> walls,
                          WallEnd::start});
     }
 
+  // Reveals (reusex-1pi): a short wall standing wholly behind the seen face
+  // of a perpendicular one-sided wall, across that wall, is the side of a
+  // window niche in it -- the room sees that face, so what stands behind it
+  // bounds nothing. Dropped (at the end) and kept out of the joins.
+  std::vector<char> dropped(walls.size(), 0);
+  for (size_t i = 0; i < walls.size(); ++i) {
+    const auto &w = walls[i];
+    if (w.s1 - w.s0 > opt.recess_max_length_m)
+      continue;
+    const Eigen::Vector2d tw = tangent(w.d);
+    const Eigen::Vector2d pa = w.axis_offset * w.d + w.s0 * tw;
+    const Eigen::Vector2d pb = w.axis_offset * w.d + w.s1 * tw;
+    for (size_t j = 0; j < walls.size() && !dropped[i]; ++j) {
+      const auto &v = walls[j];
+      const int sv = seen_side(v);
+      if (j == i || sv == 0 || !v.assumed || v.family == w.family ||
+          v.s1 - v.s0 <= w.s1 - w.s0)
+        continue;
+      const Eigen::Vector2d tv = tangent(v.d);
+      // Across v: its face goes on past w by at least a run on both sides
+      // (a niche side; a short wall at v's end is a corner).
+      const double sm = (0.5 * (pa + pb)).dot(tv);
+      if (sm < v.s0 + opt.min_run_m || sm > v.s1 - opt.min_run_m)
+        continue;
+      // Offsets from v's seen face, + toward the side it was seen from.
+      const double ea = sv * (pa.dot(v.d) - v.axis_offset);
+      const double eb = sv * (pb.dot(v.d) - v.axis_offset);
+      if (std::max(ea, eb) <= opt.reveal_tol_m &&
+          std::min(ea, eb) < -opt.reveal_tol_m)
+        dropped[i] = 1;
+    }
+    if (dropped[i])
+      ++g.reveals;
+  }
+
   // 4. Corners and tees between non-parallel walls, nearest first.
   struct Meet {
     size_t a, b;
@@ -1574,7 +1628,7 @@ WallGraph join_walls(std::vector<WallSegment> walls,
   for (size_t i = 0; i < walls.size(); ++i)
     for (size_t j = i + 1; j < walls.size(); ++j) {
       const auto &a = walls[i], &b = walls[j];
-      if (a.family == b.family)
+      if (a.family == b.family || dropped[i] || dropped[j])
         continue;
       Eigen::Matrix2d m;
       m.row(0) = a.d.transpose();
@@ -1689,6 +1743,66 @@ WallGraph join_walls(std::vector<WallSegment> walls,
     else if (free_a && on_wall(mt.b, mt.sb) && move_end(mt.a, mt.end_a, mt.sa))
       g.joins.push_back({static_cast<int>(mt.a), static_cast<int>(mt.b),
                          WallJoinKind::tee, end_name(mt.end_a), WallEnd::path});
+  }
+
+  // Free-standing (reusex-1pi): a group of walls joined only to one another
+  // is a column, a cupboard or a desk screen when it is small, or when none
+  // of it reaches free_min_top_m. A wall joined to the rest stays, however
+  // low it was seen (reusex-rtx).
+  {
+    std::vector<size_t> root(walls.size());
+    for (size_t i = 0; i < walls.size(); ++i)
+      root[i] = i;
+    const auto find = [&](size_t i) {
+      while (root[i] != i)
+        i = root[i] = root[root[i]];
+      return i;
+    };
+    for (const auto &j : g.joins)
+      root[find(static_cast<size_t>(j.a))] = find(static_cast<size_t>(j.b));
+    std::map<size_t, std::vector<size_t>> groups;
+    for (size_t i = 0; i < walls.size(); ++i)
+      if (!dropped[i])
+        groups[find(i)].push_back(i);
+    for (const auto &[r, members] : groups) {
+      Eigen::AlignedBox2d box;
+      double top = 0.0;
+      for (const size_t i : members) {
+        const auto &w = walls[i];
+        const Eigen::Vector2d t = tangent(w.d);
+        box.extend(w.axis_offset * w.d + w.s0 * t);
+        box.extend(w.axis_offset * w.d + w.s1 * t);
+        top = std::max(top, evidence_top(w));
+      }
+      const double extent = box.diagonal().norm();
+      if (extent > opt.free_max_extent_m && top >= opt.free_min_top_m)
+        continue;
+      debug("walls: {} free-standing wall(s) dropped: footprint {:.2f} m "
+            "(max {:.2f}), evidence top {:.2f} m (min {:.2f})",
+            members.size(), extent, opt.free_max_extent_m, top,
+            opt.free_min_top_m);
+      for (const size_t i : members)
+        dropped[i] = 1;
+      g.free_standing += static_cast<int>(members.size());
+    }
+  }
+  if (std::find(dropped.begin(), dropped.end(), 1) != dropped.end()) {
+    std::vector<int> index(walls.size(), -1);
+    std::vector<WallSegment> kept;
+    for (size_t i = 0; i < walls.size(); ++i)
+      if (!dropped[i]) {
+        index[i] = static_cast<int>(kept.size());
+        kept.push_back(std::move(walls[i]));
+      }
+    std::vector<WallJoin> joins;
+    for (auto j : g.joins) {
+      j.a = index[static_cast<size_t>(j.a)];
+      j.b = index[static_cast<size_t>(j.b)];
+      if (j.a >= 0 && j.b >= 0)
+        joins.push_back(j);
+    }
+    walls = std::move(kept);
+    g.joins = std::move(joins);
   }
 
   // 5. Seen share: (s, z) cells of the wall's face area with evidence.

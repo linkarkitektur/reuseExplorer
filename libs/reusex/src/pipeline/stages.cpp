@@ -1137,10 +1137,13 @@ StageResult run_walls(ProjectDB &db, const json &params, int log_id) {
     }
     auto [w, j] = geometry::wall_records(r.graph, st);
     info("walls: storey {}: {} axis famil{}, {} face(s), {} pair(s) ({} "
-         "rejected), {} wall(s), {} join(s), {} wide doorway(s) bridged",
+         "rejected), {} wall(s), {} join(s), {} wide doorway(s) bridged; "
+         "not walls: {} window reveal(s), {} free-standing (columns, "
+         "cupboards, desk screens)",
          st.idx, r.families.size(), r.families.size() == 1 ? "y" : "ies",
          r.faces.size(), r.pairing.pairs.size(), r.pairing.rejected, w.size(),
-         j.size(), r.graph.door_bridges);
+         j.size(), r.graph.door_bridges, r.graph.reveals,
+         r.graph.free_standing);
     families += static_cast<int>(r.families.size());
     faces += static_cast<int>(r.faces.size());
     pairs += static_cast<int>(r.pairing.pairs.size());
