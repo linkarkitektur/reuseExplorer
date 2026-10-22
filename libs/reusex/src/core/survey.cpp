@@ -85,7 +85,23 @@ constexpr std::array<std::pair<std::string_view, std::string_view>, 15> kEak{{
 
 double round2(double x) { return std::round(x * 100.0) / 100.0; }
 
+constexpr std::array<std::pair<ProvenanceKind, std::string_view>, 5>
+    kProvenanceKinds{{
+        {ProvenanceKind::scan, "scan"},
+        {ProvenanceKind::measured, "measured"},
+        {ProvenanceKind::calculated, "calculated"},
+        {ProvenanceKind::entered, "entered"},
+        {ProvenanceKind::suggested, "suggested"},
+    }};
+
 } // namespace
+
+std::string_view to_string(ProvenanceKind v) {
+  return to_table(v, kProvenanceKinds);
+}
+std::optional<ProvenanceKind> provenance_kind_from_string(std::string_view s) {
+  return from_table(s, kProvenanceKinds);
+}
 
 std::string_view to_string(Treatment v) { return to_table(v, kTreatments); }
 std::string_view to_string(ReviewStatus v) { return to_table(v, kStatuses); }

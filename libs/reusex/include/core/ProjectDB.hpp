@@ -1424,6 +1424,14 @@ class ProjectDB {
     int semantic_class = -1; // the class sync_survey seeded it from
     std::string created_at;  // ISO 8601 UTC
     std::string updated_at;
+    /// The chosen build-up (schema v37, survey_types.buildup_id): an id in
+    /// core::buildup_library(). nullopt: none chosen, or before v37.
+    std::optional<std::string> buildup_id{};
+    /// What building element the type's element-backed parts are
+    /// (core::BuildupCategory text: ydervaeg | indervaeg | daek | tag), set
+    /// when core::measure_survey seeded the type from the typed model;
+    /// nullopt for every other type. Kept LAST for aggregate initializers.
+    std::optional<std::string> element_category{};
   };
   /// Sparse update; an engaged optional sets the field. For the nullable
   /// numbers the outer optional says "change it", the inner one the new value.
@@ -1433,8 +1441,13 @@ class ProjectDB {
     // Unchecked storage write — set approval through core::set_review_status,
     // which enforces the sample gate.
     std::optional<core::ReviewStatus> review_status;
+    /// mass_t is the user's override (schema v37): null clears it, and
+    /// the type's mass is then calculated (core/survey_mass.hpp).
     std::optional<std::optional<double>> confidence, mass_t;
     std::optional<bool> starred;
+    /// Choose (or clear) the build-up (schema v37). Throws
+    /// std::runtime_error on a project below v37 (opened read-only).
+    std::optional<std::optional<std::string>> buildup_id{};
   };
   struct SurveyPartRecord {
     std::string code; // "RX-001"
@@ -1472,8 +1485,22 @@ class ProjectDB {
     /// core/survey_service leaves it out of its type's quantity
     /// (set_type_quantity, report_survey_rows) and of rooms_without_parts.
     /// sync_survey never re-creates or un-dismisses it. Always false before
-    /// v36. Kept LAST so positional aggregate initializers still compile.
+    /// v36. Kept before the geometry fields so positional aggregate
+    /// initializers still compile.
     bool dismissed = false;
+    /// Model geometry the part is grounded in (schema v37), written by
+    /// core::measure_survey through set_survey_part_geometry; read-only on
+    /// add (except element_guid) and patch. element_guid names the wall,
+    /// opening or slab piece (walls.guid, openings.guid, or the slab
+    /// piece's deterministic guid); an element-backed part (no instance)
+    /// is keyed on it. geom_quantity is the measured quantity in geom_unit
+    /// ("m²" | "m³" | "stk"); geom_source says how it was measured:
+    /// solid_volume | wall_area | opening_area | slab_area | plane_area |
+    /// count. All empty before v37 or before the first measure.
+    std::optional<std::string> element_guid{};
+    std::optional<double> geom_quantity{};
+    std::string geom_unit{};
+    std::string geom_source{};
   };
   struct SurveyPartPatch {
     std::optional<int64_t> type_id;
@@ -1524,6 +1551,61 @@ class ProjectDB {
   ///         std::out_of_range (no part, no sensor frame, no panorama).
   void set_survey_part_view(std::string_view code,
                             const std::optional<core::ResourceView> &view);
+  /// Set or clear (nullopt quantity) a part's measured geometry (schema
+  /// v37). @p element_guid replaces the stored one (nullopt clears it).
+  /// Does not open a transaction. @throws std::out_of_range (no part),
+  /// std::invalid_argument (unknown source, empty unit with a quantity),
+  /// std::runtime_error (below v37).
+  void set_survey_part_geometry(std::string_view code,
+                                const std::optional<std::string> &element_guid,
+                                std::optional<double> geom_quantity,
+                                std::string_view geom_unit,
+                                std::string_view geom_source);
+  /// The part filed under @p element_guid, if any (schema v37).
+  [[nodiscard]] std::optional<SurveyPartRecord>
+  survey_part_for_element(std::string_view element_guid) const;
+  /// True when the survey tables carry the v37 mass columns.
+  [[nodiscard]] bool has_survey_mass_columns() const;
+
+  // --- Build-up overrides (schema v37) ---
+  /// One row of `buildups`: a project build-up (core/buildups.hpp JSON
+  /// object) that replaces the library entry of the same id or adds one.
+  struct ProjectBuildupRecord {
+    std::string id;
+    std::string definition; ///< JSON object, parsed by core::parse_buildup
+    std::string updated_at;
+  };
+  /// By id. Empty before v37.
+  [[nodiscard]] std::vector<ProjectBuildupRecord> project_buildups() const;
+  /// Upsert. Storage only: validate with core::parse_buildup first.
+  void set_project_buildup(std::string_view id, std::string_view definition);
+  bool delete_project_buildup(std::string_view id); // false when absent
+
+  // --- Value provenance (schema v37) ---
+  /// Where one survey value came from (gap 2): scope "type" (id = the
+  /// type id as text) or "part" (id = the part code); field is the record
+  /// field ("quantity", "mass_t", "buildup_id", ...); kind is
+  /// core::ProvenanceKind text (scan | measured | calculated | entered |
+  /// suggested); source says which step or element (free text, e.g.
+  /// "measure:wall_area" or "user"); confidence 0..1 when known.
+  struct ValueProvenanceRecord {
+    std::string scope, id, field, kind, source;
+    std::optional<double> confidence;
+    std::string updated_at; ///< ISO 8601 UTC; ignored on write
+  };
+  /// Upsert on (scope, id, field). Does not open a transaction.
+  /// @throws std::invalid_argument (scope / kind outside the vocabulary),
+  ///         std::runtime_error (below v37).
+  void set_value_provenance(const ValueProvenanceRecord &rec);
+  /// False when there was none (or before v37).
+  bool delete_value_provenance(std::string_view scope, std::string_view id,
+                               std::string_view field);
+  /// The rows of one value holder, by field. Empty before v37.
+  [[nodiscard]] std::vector<ValueProvenanceRecord>
+  value_provenance(std::string_view scope, std::string_view id) const;
+  /// Every row, by scope, id, field. Empty before v37.
+  [[nodiscard]] std::vector<ValueProvenanceRecord> all_value_provenance() const;
+
   /// Deletes a survey type; its parts and sample links cascade. Storage only:
   /// tombstones and passports are core::delete_survey_type's job.
   /// @throws std::out_of_range when @p id is unknown.

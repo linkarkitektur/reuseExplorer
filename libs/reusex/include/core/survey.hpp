@@ -47,6 +47,14 @@ enum class EnvironmentStatus {
   ren_proevesvar
 };
 
+/// Where a survey value came from (value_provenance.kind, schema v37, gap
+/// 2): seen in the scan (an instance, a classifier confidence), measured on
+/// the model geometry, calculated (mass from a build-up), entered by a user,
+/// or suggested by a step and not yet confirmed.
+enum class ProvenanceKind { scan, measured, calculated, entered, suggested };
+std::string_view to_string(ProvenanceKind);
+std::optional<ProvenanceKind> provenance_kind_from_string(std::string_view);
+
 std::string_view to_string(Treatment);
 std::string_view to_string(ReviewStatus);
 std::string_view to_string(SampleStage);
