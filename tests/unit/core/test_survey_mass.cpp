@@ -372,9 +372,11 @@ TEST_CASE("SurveyMass_BuildupTimesQuantity_OverrideWins", "[survey][mass]") {
   CHECK(m.source == "calculated");
   CHECK(*m.effective_t == Approx(17.64));
 
-  // Etagedæk b5: 20 m³ × 2400 kg/m³ = 48 t. Tag b7: 50 m² × 5 kg/m² = 0.25 t.
+  // Etagedæk b5: 20 m³ × 2400 kg/m³ = 48 t. Tag: the structural deck b11,
+  // not the membrane b7: 50 m² × 0.2 m × 2400 kg/m³ = 24 t.
   CHECK(*type_mass(db, type_named(db, "Etagedæk")->id).calc_t == Approx(48.0));
-  CHECK(*type_mass(db, type_named(db, "Tag")->id).calc_t == Approx(0.25));
+  CHECK(type_named(db, "Tag")->buildup_id == "b11");
+  CHECK(*type_mass(db, type_named(db, "Tag")->id).calc_t == Approx(24.0));
   // Indervæg b4 (gips, 26 mm, two layers): 12 m² × 0.026 × 900 = 0.2808 t.
   CHECK(*type_mass(db, type_named(db, "Indervæg")->id).calc_t ==
         Approx(0.2808));

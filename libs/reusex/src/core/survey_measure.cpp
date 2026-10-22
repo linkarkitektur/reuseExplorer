@@ -377,7 +377,15 @@ SurveyMeasureReport measure_survey(ProjectDB &db,
           candidates.push_back(&b);
       if (candidates.empty())
         continue;
-      const Buildup *pick = candidates.front();
+      // An element part is a solid of the model (a slab, a wall), so its
+      // tonnes are its structure: prefer a build-up whose main layer is
+      // structural (t x rho), not a membrane per m² (tagpap, kg_m2).
+      const auto structural = std::find_if(
+          candidates.begin(), candidates.end(), [](const Buildup *b) {
+            return !b->main.kg_m2 && b->main.t && b->main.rho;
+          });
+      const Buildup *pick =
+          structural != candidates.end() ? *structural : candidates.front();
       std::string why = "measure:category";
       const auto th = thicknesses.find(id);
       if (th != thicknesses.end() && !th->second.empty()) {

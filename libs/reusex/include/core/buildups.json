@@ -71,6 +71,16 @@
       ]
     },
     {
+      "id": "b11",
+      "category": "tag",
+      "name": "Betontagdæk med tagpap",
+      "main": { "material": "beton", "t": 0.2, "rho": 2400, "eak": "17.01.01" },
+      "others": [
+        { "material": "tagpap", "kg_m2": 5, "eak": "17.03.02", "name": "Tagpap" }
+      ],
+      "note": "Tagdækket er hovedlaget; tagpappen kan oprettes som egen type."
+    },
+    {
       "id": "b9",
       "category": "indervaeg",
       "name": "Skillevæg, tegl, ½ sten, 11 cm",

@@ -32,7 +32,9 @@
 /// suggested from its category (kind `suggested`): for walls, the candidate
 /// whose layered thickness is closest to the median *measured* thickness
 /// of the type's walls (walls.assumed = 0), else the category's first
-/// build-up; an empty EAK takes the build-up's main layer code.
+/// build-up whose main layer is structural (t × rho, not a kg/m² membrane:
+/// a roof slab is the deck, b11, not the tagpap of b7); an empty EAK takes the
+/// build-up's main layer code.
 ///
 /// Idempotent: a re-run refreshes the geometry, never duplicates a part,
 /// never re-creates a deleted element part (its guid is tombstoned like an
