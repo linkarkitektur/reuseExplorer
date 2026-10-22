@@ -38,6 +38,8 @@
 #include <array>
 #include <cmath>
 #include <fstream>
+#include <map>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -789,6 +791,36 @@ TEST_CASE("PopulateScene_Openings_Level_AreRectanglesInTheWallFaces",
   CHECK(window_rgb);
 }
 
+TEST_CASE("PopulateScene_Openings_ActorCategories_SplitDoorsFromWindows",
+          "[visualize][scene][openings]") {
+  TempPath tmp("test_scene_openings_categories");
+  ProjectDB db(tmp.path);
+  seed_openings(db);
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.layers = {viz::Layer::openings};
+  o.plan_placement = viz::PlanPlacement::level;
+  const auto info = viz::populate_scene(renderer, db, o);
+  REQUIRE(info.layers.size() == 1);
+  const auto &l = info.layers[0];
+  REQUIRE(l.actor_categories.size() == l.actors.size());
+  REQUIRE(l.actor_storeys.size() == l.actors.size());
+  // A door and a window: a fill and an outline actor each, no "opening".
+  std::map<std::string, int> n;
+  for (const auto &c : l.actor_categories)
+    ++n[c];
+  CHECK(n.size() == 2);
+  CHECK(n["door"] == 2);
+  CHECK(n["window"] == 2);
+  for (std::size_t i = 0; i < l.actors.size(); ++i) {
+    double rgb[3];
+    l.actors[i]->GetProperty()->GetColor(rgb);
+    const auto &want =
+        l.actor_categories[i] == "door" ? o.plan_door_rgb : o.plan_window_rgb;
+    CHECK(std::abs(rgb[0] * 255.0 - want[0]) < 0.5);
+  }
+}
+
 TEST_CASE("PopulateScene_Openings_AboveScene_AreBarsOverTheCut",
           "[visualize][scene][openings]") {
   TempPath tmp("test_scene_openings_plan");
@@ -998,7 +1030,9 @@ TEST_CASE("PopulateScene_Solids_ColouredByType_RevealsByKind",
   CHECK(l.layer == viz::Layer::solids);
   CHECK(l.items == 4 + 2 + 1); // walls, floor + roof, space
   CHECK(l.faces > 0);
-  REQUIRE(l.actors.size() == 6); // surface + edges per mesh
+  // Surface + edges per category and storey: walls, floor slab, roof,
+  // space (one storey).
+  REQUIRE(l.actors.size() == 8);
   // The type colours are the tokens' scale: walls --label-4, slabs
   // --label-7, spaces --label-0.
   const auto &pal = viz::default_label_palette();
@@ -1030,6 +1064,198 @@ TEST_CASE("PopulateScene_Solids_ColouredByType_RevealsByKind",
   // In world: the walls stand from z 0 to 2.5, the roof slab above.
   CHECK(info.bounds.min[2] == Catch::Approx(-0.2).margin(1e-4));
   CHECK(info.bounds.max[2] == Catch::Approx(2.7).margin(1e-4));
+}
+
+namespace {
+
+std::map<std::string, int> category_histogram(const viz::SceneLayer &l) {
+  std::map<std::string, int> n;
+  for (const auto &c : l.actor_categories)
+    ++n[c];
+  return n;
+}
+
+bool is_element_category(const std::string &c) {
+  return std::find_if(viz::kElementCategories.begin(),
+                      viz::kElementCategories.end(), [&](const char *k) {
+                        return c == k;
+                      }) != viz::kElementCategories.end();
+}
+
+} // namespace
+
+TEST_CASE("PopulateScene_Solids_ActorCategories_NameEachActorsElementType",
+          "[visualize][scene][solids]") {
+  TempPath tmp("test_scene_solids_categories");
+  ProjectDB db(tmp.path);
+  seed_solids(db, tmp);
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.layers = {viz::Layer::solids};
+  const auto info = viz::populate_scene(renderer, db, o);
+  REQUIRE(info.layers.size() == 1);
+  const auto &l = info.layers[0];
+  // One category and one storey per actor (surface + edges per category and
+  // storey), so a viewer can switch walls, floor slabs, the roof and space
+  // volumes on and off one by one, and show one storey.
+  REQUIRE(l.actor_categories.size() == l.actors.size());
+  REQUIRE(l.actor_storeys.size() == l.actors.size());
+  const auto n = category_histogram(l);
+  CHECK(n.size() == 4);
+  CHECK(n.at("wall") == 2);
+  CHECK(n.at("slab") == 2);
+  CHECK(n.at("roof") == 2); // the roof over the top storey is its own
+  CHECK(n.at("space") == 2);
+  for (const auto &[c, k] : n)
+    CHECK(is_element_category(c));
+  for (const int s : l.actor_storeys)
+    CHECK(s == 0);
+  // The wall actor still carries the door's reveal colours.
+  bool door_reveal = false;
+  for (std::size_t i = 0; i < l.actors.size(); ++i) {
+    if (l.actor_categories[i] != "wall")
+      continue;
+    auto *poly =
+        vtkPolyData::SafeDownCast(l.actors[i]->GetMapper()->GetInput());
+    REQUIRE(poly != nullptr);
+    auto *rgb = poly->GetCellData()->GetScalars();
+    if (rgb == nullptr)
+      continue; // the edges actor
+    for (vtkIdType c = 0; c < rgb->GetNumberOfTuples(); ++c)
+      if (std::abs(rgb->GetComponent(c, 0) - o.plan_door_rgb[0]) < 0.5 &&
+          std::abs(rgb->GetComponent(c, 1) - o.plan_door_rgb[1]) < 0.5 &&
+          std::abs(rgb->GetComponent(c, 2) - o.plan_door_rgb[2]) < 0.5)
+        door_reveal = true;
+  }
+  CHECK(door_reveal);
+}
+
+TEST_CASE("PopulateScene_Walls_ActorsAreGroupedByStorey",
+          "[visualize][scene][walls]") {
+  TempPath tmp("test_scene_walls_storeys");
+  ProjectDB db(tmp.path);
+  seed_walls(db);
+  // A second storey with one wall over wall-a.
+  auto storeys = db.storeys();
+  core::StoreyRecord up = storeys.at(0);
+  up.guid = "storey-1";
+  up.idx = 1;
+  up.z_floor = 3.0;
+  up.z_ceiling = 5.5;
+  storeys.push_back(up);
+  db.save_storeys(storeys);
+  auto walls = db.walls();
+  core::WallRecord c = walls.at(0);
+  c.guid = "wall-c";
+  c.storey = 1;
+  c.z_base = 3.0;
+  walls.push_back(c);
+  db.save_walls(walls, {});
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.layers = {viz::Layer::walls};
+  o.plan_placement = viz::PlanPlacement::level;
+  const auto info = viz::populate_scene(renderer, db, o);
+  REQUIRE(info.layers.size() == 1);
+  const auto &l = info.layers[0];
+  REQUIRE(l.actor_categories.size() == l.actors.size());
+  REQUIRE(l.actor_storeys.size() == l.actors.size());
+  for (const auto &cat : l.actor_categories)
+    CHECK(cat == "wall");
+  const std::set<int> st(l.actor_storeys.begin(), l.actor_storeys.end());
+  CHECK(st == std::set<int>{0, 1});
+  // Storey 1's actors hold only wall-c: every point at or above its base.
+  for (std::size_t i = 0; i < l.actors.size(); ++i) {
+    if (l.actor_storeys[i] != 1)
+      continue;
+    auto *poly =
+        vtkPolyData::SafeDownCast(l.actors[i]->GetMapper()->GetInput());
+    REQUIRE(poly != nullptr);
+    double b[6];
+    poly->GetBounds(b);
+    CHECK(b[4] >= 3.0 - 1.5 - 1e-6); // level origin z is -1.5 below world
+  }
+}
+
+TEST_CASE("PopulateScene_Spaces_ActorCategories_AreSpaces",
+          "[visualize][scene][spaces]") {
+  TempPath tmp("test_scene_spaces_categories");
+  ProjectDB db(tmp.path);
+  seed_spaces(db);
+  vtkNew<vtkRenderer> renderer;
+  viz::SceneOptions o;
+  o.layers = {viz::Layer::spaces};
+  o.plan_placement = viz::PlanPlacement::level;
+  const auto info = viz::populate_scene(renderer, db, o);
+  REQUIRE(info.layers.size() == 1);
+  const auto &l = info.layers[0];
+  REQUIRE(l.actor_categories.size() == l.actors.size());
+  REQUIRE(l.actor_storeys.size() == l.actors.size());
+  for (const auto &cat : l.actor_categories)
+    CHECK(cat == "space");
+  for (const int s : l.actor_storeys)
+    CHECK(s == 0);
+}
+
+TEST_CASE("StoreyFloorZ_IsTheFloorInWorld", "[visualize][scene][walls]") {
+  TempPath tmp("test_scene_storey_floor");
+  ProjectDB db(tmp.path);
+  seed_walls(db); // storey 0: level origin at world z -1.5
+  auto storeys = db.storeys();
+  core::StoreyRecord up = storeys.at(0);
+  up.guid = "storey-1";
+  up.idx = 1;
+  up.z_floor = 3.0;
+  storeys.push_back(up);
+  db.save_storeys(storeys);
+  REQUIRE(viz::storey_floor_z(db, 0).has_value());
+  CHECK(*viz::storey_floor_z(db, 0) == Catch::Approx(-1.5).margin(1e-9));
+  CHECK(*viz::storey_floor_z(db, 1) == Catch::Approx(1.5).margin(1e-9));
+  CHECK_FALSE(viz::storey_floor_z(db, 7).has_value());
+}
+
+TEST_CASE("CountBuildingElements_Solids_CountsByCategoryAndStorey",
+          "[visualize][scene][solids]") {
+  TempPath tmp("test_scene_count_solids");
+  ProjectDB db(tmp.path);
+  seed_solids(db, tmp);
+  std::map<std::string, std::size_t> n;
+  for (const auto &c : viz::count_building_elements(db)) {
+    CHECK(c.storey == 0);
+    CHECK(c.count > 0);
+    n[c.category] += c.count;
+  }
+  CHECK(n.at("wall") == 4);
+  CHECK(n.at("slab") == 1);
+  CHECK(n.at("roof") == 1);
+  CHECK(n.at("space") == 1);
+  CHECK(n.at("door") == 1);
+  CHECK(n.count("window") == 0); // zero counts are left out
+  CHECK(n.count("opening") == 0);
+}
+
+TEST_CASE("CountBuildingElements_NoSolids_ReadsTheTables",
+          "[visualize][scene][openings]") {
+  TempPath tmp("test_scene_count_tables");
+  ProjectDB db(tmp.path);
+  seed_openings(db);
+  const auto rows = viz::count_building_elements(db);
+  std::map<std::string, std::size_t> n;
+  for (const auto &c : rows)
+    n[c.category] += c.count;
+  CHECK(n.at("wall") == 2);
+  CHECK(n.at("door") == 1);
+  CHECK(n.at("window") == 1);
+  CHECK(n.count("slab") == 0);
+  // In kElementCategories order.
+  REQUIRE(rows.size() == 3);
+  CHECK(rows[0].category == "wall");
+  CHECK(rows[1].category == "door");
+  CHECK(rows[2].category == "window");
+
+  TempPath tmp_empty("test_scene_count_empty");
+  ProjectDB empty(tmp_empty.path);
+  CHECK(viz::count_building_elements(empty).empty());
 }
 
 TEST_CASE("AddSolidsSection_PlanCut_FillsTheWallsWithTheDoorGap",

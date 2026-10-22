@@ -399,12 +399,28 @@ DeviationStats to_stats(const geometry::DistanceSummary &s) {
   return d;
 }
 
-/// Draw building-component boundaries as closed polylines.
+/// The element category (element_category) of a building component.
+const char *component_category(geometry::ComponentType type) {
+  switch (type) {
+  case geometry::ComponentType::door:
+    return element_category::door;
+  case geometry::ComponentType::window:
+    return element_category::window;
+  case geometry::ComponentType::wall:
+    return element_category::wall;
+  }
+  return element_category::opening;
+}
+
+/// Draw building-component boundaries as closed polylines; @p categories
+/// gets each actor's element category.
 std::vector<vtkActor *>
 add_component_actors(vtkRenderer *renderer,
                      const std::vector<geometry::BuildingComponent> &components,
-                     SceneBounds &bounds) {
+                     SceneBounds &bounds,
+                     std::vector<std::string> &categories) {
   std::vector<vtkActor *> out;
+  categories.clear();
   for (const auto &comp : components) {
     const auto &verts = comp.boundary.vertices;
     if (verts.size() < 2)
@@ -441,6 +457,7 @@ add_component_actors(vtkRenderer *renderer,
     actor->GetProperty()->SetLighting(false);
     renderer->AddActor(actor);
     out.push_back(actor);
+    categories.emplace_back(component_category(comp.type));
   }
   return out;
 }
@@ -1029,7 +1046,9 @@ std::vector<vtkActor *> add_walls_layer(vtkRenderer *renderer,
   frames.storeys = db.storeys();
   const bool sheet = opts.plan_placement == PlanPlacement::above_scene;
   PlanBuilder b(frames, opts.plan_placement, bounds, opts.plan_sheet_z);
-  PlanGeometry fill, fill_dim, outline, outline_dim, axis;
+  // Per storey: fill, fill_dim, outline, outline_dim, axis -- one actor set
+  // per storey, so a viewer can show one storey.
+  std::map<int, std::array<PlanGeometry, 5>> groups;
   std::size_t skipped = 0;
   for (const auto &w : walls) {
     const Eigen::Vector2d p0(w.x0, w.y0), p1(w.x1, w.y1);
@@ -1039,8 +1058,10 @@ std::vector<vtkActor *> add_walls_layer(vtkRenderer *renderer,
       continue;
     }
     const bool dim = wall_is_dim(w);
-    PlanGeometry &f = dim ? fill_dim : fill;
-    PlanGeometry &o = dim ? outline_dim : outline;
+    auto &geo = groups[w.storey];
+    PlanGeometry &f = dim ? geo[1] : geo[0];
+    PlanGeometry &o = dim ? geo[3] : geo[2];
+    PlanGeometry &axis = geo[4];
     const Eigen::Vector2d d = (p1 - p0) / len;
     const Eigen::Vector2d n(-d.y(), d.x());
     const double h = w.thickness > 0.0 ? 0.5 * w.thickness : kUnknownWallHalfM;
@@ -1092,21 +1113,31 @@ std::vector<vtkActor *> add_walls_layer(vtkRenderer *renderer,
   const std::array<std::uint8_t, 3> grey{0x80, 0x80, 0x80};
   const auto dim_rgb = lerp_rgb(rgb, grey, 0.5);
   std::vector<vtkActor *> actors;
-  const auto add = [&](PlanGeometry &g, const std::array<std::uint8_t, 3> &c,
-                       double width, double opacity) {
+  drawn.actor_categories.clear();
+  drawn.actor_storeys.clear();
+  const auto add = [&](PlanGeometry &g, int storey,
+                       const std::array<std::uint8_t, 3> &c, double width,
+                       double opacity) {
     if (g.empty())
       return;
     vtkActor *a = add_plan_actor(renderer, g, c, width, opacity);
     if (!sheet)
       a->SetObjectName(kWallsActorName); // cut with the scene in 3D
     actors.push_back(a);
+    drawn.actor_categories.emplace_back(element_category::wall);
+    drawn.actor_storeys.push_back(storey);
   };
   // Translucent fills first, so the outlines draw over them.
-  add(fill_dim, dim_rgb, 1.0, sheet ? 0.18 : 0.12);
-  add(fill, rgb, 1.0, sheet ? 0.45 : 0.35);
-  add(outline_dim, dim_rgb, 1.5, 0.7);
-  add(outline, rgb, 2.5, 1.0);
-  add(axis, rgb, 1.0, 1.0);
+  for (auto &[st, g] : groups)
+    add(g[1], st, dim_rgb, 1.0, sheet ? 0.18 : 0.12);
+  for (auto &[st, g] : groups)
+    add(g[0], st, rgb, 1.0, sheet ? 0.45 : 0.35);
+  for (auto &[st, g] : groups)
+    add(g[3], st, dim_rgb, 1.5, 0.7);
+  for (auto &[st, g] : groups)
+    add(g[2], st, rgb, 2.5, 1.0);
+  for (auto &[st, g] : groups)
+    add(g[4], st, rgb, 1.0, 1.0);
   b.extend(bounds);
   core::info("render: walls: {} drawn, {} dimmer (assumed or seen under 50 %)",
              drawn.items, drawn.dim);
@@ -1136,13 +1167,17 @@ add_spaces_layer(vtkRenderer *renderer, const ProjectDB &db,
   frames.storeys = db.storeys();
   const bool sheet = opts.plan_placement == PlanPlacement::above_scene;
   PlanBuilder b(frames, opts.plan_placement, bounds, opts.plan_sheet_z);
-  // One fill and one outline geometry per colour.
-  std::map<std::array<std::uint8_t, 3>, std::array<PlanGeometry, 2>> g;
+  // One fill and one outline geometry per storey and colour (a viewer shows
+  // one storey by toggling actors).
+  std::map<std::pair<int, std::array<std::uint8_t, 3>>,
+           std::array<PlanGeometry, 2>>
+      g;
   struct Label {
     std::string text;
     Eigen::Vector3d at;
     std::array<std::uint8_t, 3> rgb;
     Eigen::Vector2d dir;
+    int storey = -1;
   };
   std::vector<Label> labels;
   std::size_t untriangulated = 0;
@@ -1152,7 +1187,7 @@ add_spaces_layer(vtkRenderer *renderer, const ProjectDB &db,
                                   ? static_cast<std::uint32_t>(s.room_label)
                                   : static_cast<std::uint32_t>(i + 1);
     const auto rgb = label_palette_color(palette, key);
-    auto &geo = g[rgb];
+    auto &geo = g[{s.storey, rgb}];
     const auto to_world = [&](const std::vector<core::PlanPoint> &ring) {
       std::vector<Eigen::Vector3d> out;
       for (const auto &p : ring)
@@ -1205,32 +1240,35 @@ add_spaces_layer(vtkRenderer *renderer, const ProjectDB &db,
         {fmt::format("{} ({:.1f} m2)",
                      s.name.empty() ? s.guid.substr(0, 8) : s.name, s.area),
          b.world(s.storey, c[0], c[1], s.z_floor), rgb,
-         Eigen::Vector2d(std::cos(yaw), std::sin(yaw))});
+         Eigen::Vector2d(std::cos(yaw), std::sin(yaw)), s.storey});
     ++drawn.items;
   }
 
   std::vector<vtkActor *> actors;
-  const auto add = [&](PlanGeometry &geo, const std::array<std::uint8_t, 3> &c,
-                       double width, double opacity) {
-    if (geo.empty())
-      return;
-    vtkActor *a = add_plan_actor(renderer, geo, c, width, opacity);
+  drawn.actor_categories.clear();
+  drawn.actor_storeys.clear();
+  const auto tag = [&](vtkActor *a, int storey) {
     if (!sheet)
       a->SetObjectName(kSpacesActorName); // cut with the scene in 3D
     actors.push_back(a);
+    drawn.actor_categories.emplace_back(element_category::space);
+    drawn.actor_storeys.push_back(storey);
   };
-  for (auto &[rgb, geo] : g) // translucent fills first
-    add(geo[0], rgb, 1.0, kSpacesFillOpacity);
-  for (auto &[rgb, geo] : g)
-    add(geo[1], rgb, 2.0, 1.0);
+  const auto add = [&](PlanGeometry &geo, int storey,
+                       const std::array<std::uint8_t, 3> &c, double width,
+                       double opacity) {
+    if (!geo.empty())
+      tag(add_plan_actor(renderer, geo, c, width, opacity), storey);
+  };
+  for (auto &[key, geo] : g) // translucent fills first
+    add(geo[0], key.first, key.second, 1.0, kSpacesFillOpacity);
+  for (auto &[key, geo] : g)
+    add(geo[1], key.first, key.second, 2.0, 1.0);
   if (opts.plan_labels)
-    for (const auto &l : labels) {
-      vtkActor *a = add_plan_label(renderer, l.text, l.at, l.rgb,
-                                   kSpaceLabelM * 0.8, l.dir);
-      if (!sheet)
-        a->SetObjectName(kSpacesActorName);
-      actors.push_back(a);
-    }
+    for (const auto &l : labels)
+      tag(add_plan_label(renderer, l.text, l.at, l.rgb, kSpaceLabelM * 0.8,
+                         l.dir),
+          l.storey);
   b.extend(bounds);
   if (untriangulated > 0)
     core::warn("render: spaces: {} of {} polygon(s) could not be ear-cut and "
@@ -1307,12 +1345,65 @@ std::vector<int> solid_reveals(const pcl::PolygonMesh &mesh,
   return kind;
 }
 
+/// One (category, storey) group of a solids mesh: the faces of its elements.
+struct SolidGroup {
+  std::string category;
+  int storey = -1;
+  std::vector<std::size_t> faces;
+};
+
+/// The faces of @p mesh grouped by element category (element_category: a
+/// slab's predefined ROOF is `roof`) and storey, from the element index in
+/// @p parameters; in first-seen order. Faces no element claims (an index
+/// without them, or none at all) go to a group of @p fallback on storey -1.
+std::vector<SolidGroup> solid_groups(const pcl::PolygonMesh &mesh,
+                                     const std::string &parameters,
+                                     const char *fallback) {
+  std::vector<SolidGroup> groups;
+  std::map<std::pair<std::string, int>, std::size_t> at;
+  std::vector<char> claimed(mesh.polygons.size(), 0);
+  const auto group = [&](const std::string &cat, int storey) -> SolidGroup & {
+    const auto [it, fresh] = at.try_emplace({cat, storey}, groups.size());
+    if (fresh)
+      groups.push_back({cat, storey, {}});
+    return groups[it->second];
+  };
+  try {
+    const auto meta = nlohmann::json::parse(parameters);
+    for (const auto &e : meta.at("elements")) {
+      if (!e.contains("faces"))
+        continue;
+      std::string cat = fallback;
+      if (std::strcmp(fallback, element_category::slab) == 0 &&
+          e.value("predefined", std::string()) == "ROOF")
+        cat = element_category::roof;
+      auto &g = group(cat, e.value("storey", -1));
+      const auto f0 = e.at("faces").at(0).get<std::size_t>();
+      const auto fn = e.at("faces").at(1).get<std::size_t>();
+      for (std::size_t f = f0; f < f0 + fn && f < mesh.polygons.size(); ++f)
+        if (!claimed[f]) {
+          claimed[f] = 1;
+          g.faces.push_back(f);
+        }
+    }
+  } catch (const std::exception &) {
+    // No usable index: everything falls back below (warned by the caller).
+  }
+  for (std::size_t f = 0; f < mesh.polygons.size(); ++f)
+    if (!claimed[f])
+      group(fallback, -1).faces.push_back(f);
+  return groups;
+}
+
 void add_solids_layer(vtkRenderer *renderer, const ProjectDB &db,
                       const SceneOptions &opts, SceneBounds &bounds,
                       SceneLayer &drawn) {
   bool any = false;
   const std::array<std::array<std::uint8_t, 3>, 3> reveal_rgb{
       opts.plan_door_rgb, opts.plan_window_rgb, opts.plan_opening_rgb};
+  // The category of each mesh's elements (a slab may be a roof).
+  const std::array<const char *, 3> categories{
+      element_category::wall, element_category::slab, element_category::space};
   for (std::size_t k = 0; k < kSolidMeshNames.size(); ++k) {
     const char *name = kSolidMeshNames[k];
     if (!db.has_mesh(name))
@@ -1336,90 +1427,101 @@ void add_solids_layer(vtkRenderer *renderer, const ProjectDB &db,
     // Per-cell colours: the type's, or a reveal's kind.
     const std::vector<int> reveal =
         k == 0 ? solid_reveals(*mesh, meta.parameters) : std::vector<int>{};
-    vtkNew<vtkUnsignedCharArray> colors;
-    colors->SetName("solid_rgb");
-    colors->SetNumberOfComponents(3);
     std::size_t reveals = 0;
-    for (std::size_t f = 0; f < mesh->polygons.size(); ++f) {
-      const int r = reveal.empty() ? -1 : reveal[f];
-      const auto &c = r >= 0 ? reveal_rgb[static_cast<std::size_t>(r)] : base;
+    for (const int r : reveal)
       reveals += r >= 0 ? 1 : 0;
-      colors->InsertNextTypedTuple(c.data());
-    }
     pcl::PointCloud<pcl::PointXYZ> vertices;
     pcl::fromPCLPointCloud2(mesh->cloud, vertices);
+    // One point set, shared by every group's poly-data.
     vtkNew<vtkPoints> points;
     for (const auto &p : vertices) {
       points->InsertNextPoint(p.x, p.y, p.z);
       bounds.add(p.x, p.y, p.z);
     }
-    vtkNew<vtkCellArray> polys;
-    for (const auto &face : mesh->polygons) {
-      std::vector<vtkIdType> ids(face.vertices.begin(), face.vertices.end());
-      polys->InsertNextCell(static_cast<vtkIdType>(ids.size()), ids.data());
-    }
-    vtkNew<vtkPolyData> poly;
-    poly->SetPoints(points);
-    poly->SetPolys(polys);
-    poly->GetCellData()->SetScalars(colors);
-
-    vtkNew<vtkPolyDataMapper> mapper;
-    mapper->SetInputData(poly);
-    mapper->SetScalarModeToUseCellData();
-    mapper->SetColorModeToDirectScalars();
-    mapper->ScalarVisibilityOn();
-    vtkNew<vtkActor> actor;
-    actor->SetMapper(mapper);
     const bool space = k == 2;
-    actor->GetProperty()->SetAmbient(0.3);
-    actor->GetProperty()->SetDiffuse(0.7);
-    actor->GetProperty()->SetSpecular(0.05);
-    actor->GetProperty()->SetOpacity(space ? opts.solid_space_opacity : 1.0);
-    if (space) {
-      // A space is a tint on the room's inside: only its inner faces are
-      // drawn (front faces culled, so each pixel blends one face, not a
-      // depth-order-dependent stack of them), unlit, and a little in front
-      // of the wall and slab faces they lie on, so they do not fight those
-      // coincident faces triangle by triangle.
-      actor->GetProperty()->FrontfaceCullingOn();
-      actor->GetProperty()->SetLighting(false);
-      mapper->SetResolveCoincidentTopologyToPolygonOffset();
-      mapper->SetRelativeCoincidentTopologyPolygonOffsetParameters(-2.0, -8.0);
-    }
-    actor->SetObjectName(kSolidsActorName);
-    renderer->AddActor(actor);
-    drawn.actors.push_back(actor);
-    if (!space)
-      drawn.section_surfaces.emplace_back(poly.GetPointer(), base);
+    // One surface + edges actor pair per (category, storey), so a viewer can
+    // show one category or one storey by toggling actors.
+    for (const auto &grp :
+         solid_groups(*mesh, meta.parameters, categories[k])) {
+      vtkNew<vtkUnsignedCharArray> colors;
+      colors->SetName("solid_rgb");
+      colors->SetNumberOfComponents(3);
+      vtkNew<vtkCellArray> polys;
+      for (const std::size_t f : grp.faces) {
+        const auto &face = mesh->polygons[f];
+        std::vector<vtkIdType> ids(face.vertices.begin(), face.vertices.end());
+        polys->InsertNextCell(static_cast<vtkIdType>(ids.size()), ids.data());
+        const int r = reveal.empty() ? -1 : reveal[f];
+        const auto &c = r >= 0 ? reveal_rgb[static_cast<std::size_t>(r)] : base;
+        colors->InsertNextTypedTuple(c.data());
+      }
+      vtkNew<vtkPolyData> poly;
+      poly->SetPoints(points);
+      poly->SetPolys(polys);
+      poly->GetCellData()->SetScalars(colors);
 
-    // Feature edges in a darker shade of the type's colour: the solid's
-    // corners, and the outline of every void.
-    vtkNew<vtkFeatureEdges> edges;
-    edges->SetInputData(poly);
-    edges->BoundaryEdgesOn();
-    edges->FeatureEdgesOn();
-    edges->NonManifoldEdgesOff();
-    edges->ManifoldEdgesOff();
-    edges->ColoringOff();
-    edges->SetFeatureAngle(30.0);
-    edges->Update();
-    vtkNew<vtkPolyData> lines;
-    lines->ShallowCopy(edges->GetOutput());
-    lines->GetCellData()->SetScalars(nullptr);
-    vtkNew<vtkPolyDataMapper> emapper;
-    emapper->SetInputData(lines);
-    emapper->ScalarVisibilityOff();
-    vtkNew<vtkActor> eactor;
-    eactor->SetMapper(emapper);
-    const auto dark = lerp_rgb(base, {0, 0, 0}, 0.45);
-    eactor->GetProperty()->SetColor(dark[0] / 255.0, dark[1] / 255.0,
-                                    dark[2] / 255.0);
-    eactor->GetProperty()->SetLineWidth(space ? 1.0 : 1.5);
-    eactor->GetProperty()->SetOpacity(space ? 0.5 : 1.0);
-    eactor->GetProperty()->SetLighting(false);
-    eactor->SetObjectName(kSolidsActorName);
-    renderer->AddActor(eactor);
-    drawn.actors.push_back(eactor);
+      vtkNew<vtkPolyDataMapper> mapper;
+      mapper->SetInputData(poly);
+      mapper->SetScalarModeToUseCellData();
+      mapper->SetColorModeToDirectScalars();
+      mapper->ScalarVisibilityOn();
+      vtkNew<vtkActor> actor;
+      actor->SetMapper(mapper);
+      actor->GetProperty()->SetAmbient(0.3);
+      actor->GetProperty()->SetDiffuse(0.7);
+      actor->GetProperty()->SetSpecular(0.05);
+      actor->GetProperty()->SetOpacity(space ? opts.solid_space_opacity : 1.0);
+      if (space) {
+        // A space is a tint on the room's inside: only its inner faces are
+        // drawn (front faces culled, so each pixel blends one face, not a
+        // depth-order-dependent stack of them), unlit, and a little in front
+        // of the wall and slab faces they lie on, so they do not fight those
+        // coincident faces triangle by triangle.
+        actor->GetProperty()->FrontfaceCullingOn();
+        actor->GetProperty()->SetLighting(false);
+        mapper->SetResolveCoincidentTopologyToPolygonOffset();
+        mapper->SetRelativeCoincidentTopologyPolygonOffsetParameters(-2.0,
+                                                                     -8.0);
+      }
+      actor->SetObjectName(kSolidsActorName);
+      renderer->AddActor(actor);
+      drawn.actors.push_back(actor);
+      drawn.actor_categories.push_back(grp.category);
+      drawn.actor_storeys.push_back(grp.storey);
+      if (!space)
+        drawn.section_surfaces.emplace_back(poly.GetPointer(), base);
+
+      // Feature edges in a darker shade of the type's colour: the solid's
+      // corners, and the outline of every void.
+      vtkNew<vtkFeatureEdges> edges;
+      edges->SetInputData(poly);
+      edges->BoundaryEdgesOn();
+      edges->FeatureEdgesOn();
+      edges->NonManifoldEdgesOff();
+      edges->ManifoldEdgesOff();
+      edges->ColoringOff();
+      edges->SetFeatureAngle(30.0);
+      edges->Update();
+      vtkNew<vtkPolyData> lines;
+      lines->ShallowCopy(edges->GetOutput());
+      lines->GetCellData()->SetScalars(nullptr);
+      vtkNew<vtkPolyDataMapper> emapper;
+      emapper->SetInputData(lines);
+      emapper->ScalarVisibilityOff();
+      vtkNew<vtkActor> eactor;
+      eactor->SetMapper(emapper);
+      const auto dark = lerp_rgb(base, {0, 0, 0}, 0.45);
+      eactor->GetProperty()->SetColor(dark[0] / 255.0, dark[1] / 255.0,
+                                      dark[2] / 255.0);
+      eactor->GetProperty()->SetLineWidth(space ? 1.0 : 1.5);
+      eactor->GetProperty()->SetOpacity(space ? 0.5 : 1.0);
+      eactor->GetProperty()->SetLighting(false);
+      eactor->SetObjectName(kSolidsActorName);
+      renderer->AddActor(eactor);
+      drawn.actors.push_back(eactor);
+      drawn.actor_categories.push_back(grp.category);
+      drawn.actor_storeys.push_back(grp.storey);
+    }
 
     drawn.faces += mesh->polygons.size();
     core::info("render: solids: '{}' {} faces{}", name, mesh->polygons.size(),
@@ -1462,8 +1564,10 @@ std::vector<vtkActor *> add_openings_layer(vtkRenderer *renderer,
   frames.storeys = db.storeys();
   const bool sheet = opts.plan_placement == PlanPlacement::above_scene;
   PlanBuilder b(frames, opts.plan_placement, bounds, opts.plan_sheet_z);
-  // [kind][0 = outline, 1 = fill]: door, window, opening.
-  std::array<std::array<PlanGeometry, 2>, 3> g;
+  // [(kind, storey)][0 = outline, 1 = fill]; kind 0 door, 1 window, 2
+  // opening. One actor pair per kind and storey, so a viewer can show one
+  // category or one storey.
+  std::map<std::pair<std::size_t, int>, std::array<PlanGeometry, 2>> groups;
   std::size_t orphans = 0;
   for (const auto &o : openings) {
     const auto it = walls.find(o.wall);
@@ -1482,20 +1586,20 @@ std::vector<vtkActor *> add_openings_layer(vtkRenderer *renderer,
     const Eigen::Vector2d n(-d.y(), d.x());
     const double half = w.thickness > 0.0 ? 0.5 * w.thickness : 0.0;
     const std::size_t k = o.kind == "door" ? 0 : o.kind == "window" ? 1 : 2;
+    auto &g = groups[{k, w.storey}];
     const Eigen::Vector2d a = p0 + d * o.s_start, e = p0 + d * o.s_end;
     const auto at = [&](const Eigen::Vector2d &q, double z) {
       return b.world(w.storey, q.x(), q.y(), z);
     };
     if (sheet) {
       const double tick = half + kOpeningTickM;
-      b.segment(g[k][0], at(a, w.z_base), at(e, w.z_base));
+      b.segment(g[0], at(a, w.z_base), at(e, w.z_base));
       for (const Eigen::Vector2d &c : {a, e})
-        b.segment(g[k][0], at(c + n * tick, w.z_base),
-                  at(c - n * tick, w.z_base));
+        b.segment(g[0], at(c + n * tick, w.z_base), at(c - n * tick, w.z_base));
     } else {
       for (const double side : {1.0, -1.0}) {
         const Eigen::Vector2d off = n * (side * (half + kOpeningProudM));
-        b.ring(g[k][0], &g[k][1],
+        b.ring(g[0], &g[1],
                {at(a + off, o.z_sill), at(e + off, o.z_sill),
                 at(e + off, o.z_head), at(a + off, o.z_head)});
       }
@@ -1510,19 +1614,26 @@ std::vector<vtkActor *> add_openings_layer(vtkRenderer *renderer,
   const std::array<std::array<std::uint8_t, 3>, 3> rgb{
       opts.plan_door_rgb, opts.plan_window_rgb, opts.plan_opening_rgb};
   std::vector<vtkActor *> actors;
-  const auto add = [&](PlanGeometry &geo, const std::array<std::uint8_t, 3> &c,
+  const std::array<const char *, 3> categories{element_category::door,
+                                               element_category::window,
+                                               element_category::opening};
+  drawn.actor_categories.clear();
+  drawn.actor_storeys.clear();
+  const auto add = [&](PlanGeometry &geo, std::size_t k, int storey,
                        double width, double opacity) {
     if (geo.empty())
       return;
-    vtkActor *a = add_plan_actor(renderer, geo, c, width, opacity);
+    vtkActor *a = add_plan_actor(renderer, geo, rgb[k], width, opacity);
     if (!sheet)
       a->SetObjectName(kOpeningsActorName); // cut with the scene in 3D
     actors.push_back(a);
+    drawn.actor_categories.emplace_back(categories[k]);
+    drawn.actor_storeys.push_back(storey);
   };
-  for (std::size_t k = 0; k < 3; ++k)
-    add(g[k][1], rgb[k], 1.0, 0.35); // translucent fills first
-  for (std::size_t k = 0; k < 3; ++k)
-    add(g[k][0], rgb[k], sheet ? 5.0 : 3.0, 1.0);
+  for (auto &[key, geo] : groups) // translucent fills first
+    add(geo[1], key.first, key.second, 1.0, 0.35);
+  for (auto &[key, geo] : groups)
+    add(geo[0], key.first, key.second, sheet ? 5.0 : 3.0, 1.0);
   b.extend(bounds);
   core::info("render: openings: {} drawn", drawn.items);
   return actors;
@@ -2091,6 +2202,72 @@ double SceneBounds::diagonal() const {
   return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
+// ── Building-element counts ──────────────────────────────────────────────────
+
+std::vector<ElementCount> count_building_elements(const ProjectDB &db) {
+  std::map<std::pair<std::string, int>, std::size_t> n;
+  bool solids = false;
+  const std::array<const char *, 3> categories{
+      element_category::wall, element_category::slab, element_category::space};
+  for (std::size_t k = 0; k < kSolidMeshNames.size(); ++k) {
+    if (!db.has_mesh(kSolidMeshNames[k]))
+      continue;
+    solids = true;
+    try {
+      const auto meta = nlohmann::json::parse(
+          db.mesh_metadata(kSolidMeshNames[k]).parameters);
+      for (const auto &e : meta.at("elements")) {
+        std::string cat = categories[k];
+        if (k == 1 && e.value("predefined", std::string()) == "ROOF")
+          cat = element_category::roof;
+        ++n[{cat, e.value("storey", -1)}];
+      }
+    } catch (const std::exception &) {
+      // No element index: nothing to count (add_solids_layer warns).
+    }
+  }
+  std::unordered_map<std::string, int> wall_storey;
+  if (db.has_walls())
+    for (const auto &w : db.walls()) {
+      wall_storey.emplace(w.guid, w.storey);
+      if (!solids)
+        ++n[{element_category::wall, w.storey}];
+    }
+  if (!solids && db.has_spaces())
+    for (const auto &sp : db.spaces())
+      ++n[{element_category::space, sp.storey}];
+  bool openings = false;
+  if (db.has_openings())
+    for (const auto &o : db.openings()) {
+      const auto it = wall_storey.find(o.wall);
+      if (it == wall_storey.end())
+        continue; // not drawn either (add_openings_layer)
+      openings = true;
+      const char *cat = o.kind == "door"     ? element_category::door
+                        : o.kind == "window" ? element_category::window
+                                             : element_category::opening;
+      ++n[{cat, it->second}];
+    }
+  // Building components stand in for what the typed model does not have.
+  const bool walls = solids || !wall_storey.empty();
+  for (const auto &[type, cat] : {std::pair{"door", element_category::door},
+                                  std::pair{"window", element_category::window},
+                                  std::pair{"wall", element_category::wall}}) {
+    if (std::strcmp(cat, element_category::wall) == 0 ? walls : openings)
+      continue;
+    const auto names = db.list_building_components(type);
+    if (!names.empty())
+      n[{cat, -1}] += names.size();
+  }
+
+  std::vector<ElementCount> out;
+  for (const char *cat : kElementCategories)
+    for (const auto &[key, count] : n)
+      if (key.first == cat && count > 0)
+        out.push_back({key.first, key.second, count});
+  return out;
+}
+
 // ── populate_scene ───────────────────────────────────────────────────────────
 
 void install_vtk_log_bridge() {
@@ -2388,7 +2565,9 @@ SceneInfo populate_scene(vtkRenderer *renderer, const ProjectDB &db,
       components.reserve(names.size());
       for (const auto &name : names)
         components.push_back(geometry::building_component(db, name));
-      drawn.actors = add_component_actors(renderer, components, bounds);
+      drawn.actors = add_component_actors(renderer, components, bounds,
+                                          drawn.actor_categories);
+      drawn.actor_storeys.assign(drawn.actors.size(), -1);
       drawn.items = drawn.actors.size();
       break;
     }
@@ -2566,6 +2745,16 @@ CutPlane resolve_cut_plane(const ProjectDB &db, const SceneBounds &bounds,
                cut.z, bounds.min[2]);
   }
   return cut;
+}
+
+std::optional<double> storey_floor_z(const ProjectDB &db, int storey) {
+  for (const auto &s : db.storeys())
+    if (s.idx == storey) {
+      const Eigen::Affine3d to_world =
+          geometry::to_affine(s.level_transform).inverse(Eigen::Isometry);
+      return (to_world * Eigen::Vector3d(0, 0, s.z_floor)).z();
+    }
+  return std::nullopt;
 }
 
 namespace {
