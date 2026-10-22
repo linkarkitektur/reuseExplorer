@@ -238,6 +238,22 @@ configure_file(
     @ONLY
 )
 
+# -----------------------------------------------
+# Embed the default build-up library (Opbygninger, survey mass, reusex-uprf)
+# -----------------------------------------------
+# include/core/buildups.json is the only copy; a project overrides entries by
+# id in its `buildups` table (schema v37).
+set(REUSEX_BUILDUPS_JSON
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/core/buildups.json)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    ${REUSEX_BUILDUPS_JSON})
+file(READ ${REUSEX_BUILDUPS_JSON} REUSEX_BUILDUPS_TEXT)
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/core/buildups_default.hpp.in
+    ${CMAKE_BINARY_DIR}/generated/reusex/core/buildups_default.hpp
+    @ONLY
+)
+
 # ===============================================
 # Shared usage requirements (include dirs, flags, external deps)
 # ===============================================

@@ -35,11 +35,16 @@ struct Resource {
   /// The part's view record (schema v27), filled whatever `keys` selects —
   /// the GUI needs it even when a template leaves sys:view out.
   std::optional<ResourceView> view{};
+  /// The part is marked as an error (survey_parts.dismissed, schema v36).
+  /// Still listed so the GUI can restore it, but kept out of every delivered
+  /// output (CSV export, PDF report). Kept LAST for aggregate initializers.
+  bool dismissed = false;
 };
 /// The value stored under @p key in @p r, or nullopt (absent or unset).
 std::optional<std::string> value_of(const Resource &r, std::string_view key);
 
-/// One per survey part, by code. With @p keys, `values` holds exactly those
+/// One per survey part, by code, dismissed parts included (see
+/// Resource::dismissed). With @p keys, `values` holds exactly those
 /// keys in that order (null when unset or unknown); without, every
 /// built-in key plus each catalogue key the part's passport stores, in
 /// catalogue order. Passport fields with no catalogue key are skipped, and

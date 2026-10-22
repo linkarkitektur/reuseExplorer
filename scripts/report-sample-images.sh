@@ -26,4 +26,6 @@ shot sample-05 640x480 '#6d6f73' '#c4c6c9' 'Radiator,\nstøbejern\nRX-005'
 shot sample-06 480x640 '#e4e9ec' '#8fa3ad' 'Vindue,\nkoblede rammer\nRX-006'
 shot sample-07 800x450 '#9a9a96' '#d8d8d2' 'Facadeelement,\nsandwich\nRX-007'
 shot sample-08 640x480 '#f4f4f0' '#bfc4c0' 'Køkkenlåger\nRX-008'
-echo "wrote 8 images to $out"
+# The Forside's cover image (data.json cover_path).
+shot cover 1200x560 '#8c9aa3' '#dfe5e8' 'Forsidebillede\nSkolevej 12, Kolding'
+echo "wrote 9 images to $out"

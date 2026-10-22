@@ -236,7 +236,7 @@
         "name": "Mursten og fliser",
         "bim7aa": "211 Ydervægge",
         "eak": "17.01.02",
-        "quantity": "1336 m²",
+        "quantity": "1.336 m²",
         "mass": "148,8 t",
         "treatment": "Genbrug",
         "environment": "Ren (prøvesvar)"
@@ -694,5 +694,310 @@
         ]
       }
     ]
-  }
+  },
+  "project": {
+    "id": "sample",
+    "name": "Skolevej 12 — tidligere teknisk skole",
+    "building_address": "Skolevej 12, 6000 Kolding",
+    "year_of_construction": "1972",
+    "survey_date": "14.09.2026",
+    "survey_organisation": "Link Arkitektur, Bygningsressourcer",
+    "notes": "Bygningen er fraflyttet. Kælder ikke tilgængelig ved besigtigelsen; kortlægges ved supplerende besøg.",
+    "bbr_number": "621-123456-1",
+    "cadastral": "12ab Kolding Bygrunde",
+    "client": "Kolding Kommune, Ejendomme",
+    "client_contact": null,
+    "coordinator": "Mette Ressource-Sørensen",
+    "municipality": "Kolding",
+    "demolition_start": "02.02.2027",
+    "demolished_floor_area_m2": "2.480 m²",
+    "screening_approved_at": null
+  },
+  "sagsdata": [
+    {
+      "label": "Adresse",
+      "value": "Skolevej 12, 6000 Kolding"
+    },
+    {
+      "label": "BBR-nummer",
+      "value": "621-123456-1"
+    },
+    {
+      "label": "Matrikel",
+      "value": "12ab Kolding Bygrunde"
+    },
+    {
+      "label": "Bygherre",
+      "value": "Kolding Kommune, Ejendomme"
+    },
+    {
+      "label": "Kontaktperson",
+      "value": null
+    },
+    {
+      "label": "Miljø- og ressourcekoordinator",
+      "value": "Mette Ressource-Sørensen"
+    },
+    {
+      "label": "Kommune",
+      "value": "Kolding"
+    },
+    {
+      "label": "Nedrivning starter",
+      "value": "02.02.2027"
+    },
+    {
+      "label": "Nedrevet etageareal",
+      "value": "2.480 m²"
+    },
+    {
+      "label": "Opførelsesår",
+      "value": "1972"
+    },
+    {
+      "label": "Kortlægningsdato",
+      "value": "14.09.2026"
+    },
+    {
+      "label": "Kortlagt af",
+      "value": "Link Arkitektur, Bygningsressourcer"
+    },
+    {
+      "label": "Screening godkendt af bygherre",
+      "value": null
+    }
+  ],
+  "types": [
+    {
+      "id": 1,
+      "name": "Mursten og fliser",
+      "approved": true,
+      "eak": "17.01.02",
+      "treatment": "Genbrug",
+      "quantity": "1.336 m²",
+      "mass": "148,8 t",
+      "mass_needed": true,
+      "environment": "Ren (prøvesvar)"
+    },
+    {
+      "id": 2,
+      "name": "Træ, konstruktivt og gulve",
+      "approved": true,
+      "eak": "17.02.01",
+      "treatment": "Genanvendelse",
+      "quantity": "86 m³",
+      "mass": "43 t",
+      "mass_needed": true,
+      "environment": "Ren"
+    },
+    {
+      "id": 3,
+      "name": "Døre, vinduer og låger",
+      "approved": true,
+      "eak": "17.02.02",
+      "treatment": "Genbrug",
+      "quantity": "121 stk",
+      "mass": "5,1 t",
+      "mass_needed": true,
+      "environment": "Ren"
+    },
+    {
+      "id": 4,
+      "name": "Stål og radiatorer",
+      "approved": true,
+      "eak": "17.04.05",
+      "treatment": "Genanvendelse",
+      "quantity": "65 stk",
+      "mass": "12,6 t",
+      "mass_needed": true,
+      "environment": "Ren"
+    },
+    {
+      "id": 5,
+      "name": "Beton, huldæk og trapper",
+      "approved": true,
+      "eak": "17.01.01",
+      "treatment": "Nyttiggørelse",
+      "quantity": "412 m²",
+      "mass": "196,8 t",
+      "mass_needed": true,
+      "environment": "Ren (prøvesvar)"
+    },
+    {
+      "id": 6,
+      "name": "Fugemasse ved vinduer (mistanke om PCB) — samtlige facader inkl. gavle og gårdside, opgang A–D",
+      "approved": false,
+      "eak": "17.09.02*",
+      "treatment": "Bortskaffelse",
+      "quantity": "340 m",
+      "mass": null,
+      "mass_needed": true,
+      "environment": "Afventer prøvesvar"
+    },
+    {
+      "id": 7,
+      "name": "Trappegelænder, smedejern",
+      "approved": false,
+      "eak": null,
+      "treatment": "Bevaring",
+      "quantity": "4 stk",
+      "mass": null,
+      "mass_needed": false,
+      "environment": "Ren"
+    }
+  ],
+  "types_summary": {
+    "count": 7,
+    "approved": 5,
+    "total": "406,3 t",
+    "line": "7 typer · 406,3 t i alt · 5 godkendt"
+  },
+  "samples": [
+    {
+      "code": "P-01",
+      "title": "PCB i fugemasse",
+      "what": "Vinduesfuge, facade mod gård, 1. sal",
+      "types": "Fugemasse ved vinduer (mistanke om PCB) — samtlige facader inkl. gavle og gårdside, opgang A–D",
+      "stage": "Sendt til lab",
+      "result": null,
+      "contaminated": false
+    },
+    {
+      "code": "P-02",
+      "title": "Bly i maling",
+      "what": "Vinduesrammer, opgang B",
+      "types": "Døre, vinduer og låger",
+      "stage": "Svar modtaget",
+      "result": "Ren",
+      "contaminated": false
+    },
+    {
+      "code": "P-03",
+      "title": "Asbest i gulvbelægning",
+      "what": "Vinylfliser, kælder",
+      "types": null,
+      "stage": "Svar modtaget",
+      "result": "Forurenet",
+      "contaminated": true
+    }
+  ],
+  "appendices": [
+    {
+      "letter": "A",
+      "text": "P-01 · PCB i fugemasse",
+      "status": null
+    },
+    {
+      "letter": "B",
+      "text": "P-02 · Bly i maling",
+      "status": "Svar: Ren"
+    },
+    {
+      "letter": "C",
+      "text": "P-03 · Asbest i gulvbelægning",
+      "status": "Svar: Forurenet"
+    },
+    {
+      "letter": "D",
+      "text": "Fotodokumentation · 14 bygningsdele med foto",
+      "status": "Fra scanningen"
+    }
+  ],
+  "demolition_steps": [
+    {
+      "title": "Miljøsanering",
+      "items": [
+        "Fugemasse ved vinduer (mistanke om PCB) — samtlige facader inkl. gavle og gårdside, opgang A–D (afventer prøvesvar)"
+      ]
+    },
+    {
+      "title": "Bevares i bygningen",
+      "items": [
+        "Trappegelænder, smedejern"
+      ]
+    },
+    {
+      "title": "Udtag til genbrug",
+      "items": [
+        "Mursten og fliser",
+        "Døre, vinduer og låger"
+      ]
+    },
+    {
+      "title": "Nedtages til genanvendelse",
+      "items": [
+        "Træ, konstruktivt og gulve",
+        "Stål og radiatorer"
+      ]
+    },
+    {
+      "title": "Anden nyttiggørelse",
+      "items": [
+        "Beton, huldæk og trapper"
+      ]
+    },
+    {
+      "title": "Bortskaffelse",
+      "items": [
+        "Fugemasse ved vinduer (mistanke om PCB) — samtlige facader inkl. gavle og gårdside, opgang A–D"
+      ]
+    }
+  ],
+  "sections": [
+    {
+      "id": "forside",
+      "title": "Forside",
+      "ready": true,
+      "missing": []
+    },
+    {
+      "id": "sagsdata",
+      "title": "Sagsdata",
+      "ready": false,
+      "missing": [
+        "Bygherrens godkendelse af screeningen er ikke registreret"
+      ]
+    },
+    {
+      "id": "ressourcer",
+      "title": "Ressourcekortlægning",
+      "ready": false,
+      "missing": [
+        "2 typer ikke godkendt (5 af 7)",
+        "1 type mangler EAK eller tons"
+      ]
+    },
+    {
+      "id": "miljoe",
+      "title": "Miljøkortlægning",
+      "ready": false,
+      "missing": [
+        "1 prøve afventer svar"
+      ]
+    },
+    {
+      "id": "bilag",
+      "title": "Prøver & bilag",
+      "ready": false,
+      "missing": [
+        "1 prøve afventer svar"
+      ]
+    },
+    {
+      "id": "nedrivningsplan",
+      "title": "Nedrivningsplan",
+      "ready": false,
+      "missing": [
+        "2 typer ikke godkendt (5 af 7)",
+        "1 type mangler EAK eller tons"
+      ]
+    }
+  ],
+  "report": {
+    "version": 3,
+    "status": "kladde",
+    "date": "13.10.2026"
+  },
+  "cover_path": "images/cover.jpg",
+  "cover_source": "upload"
 }

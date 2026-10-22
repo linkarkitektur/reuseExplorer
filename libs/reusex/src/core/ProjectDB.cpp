@@ -14,6 +14,7 @@
 #include "core/materialepas_traits.hpp"
 #include "core/resource_keys.hpp"
 #include "core/resource_templates.hpp"
+#include "reusex/core/buildups.hpp"
 #include "reusex/core/pose_graph.hpp"
 #include "reusex/core/space_polygon.hpp"
 
@@ -434,9 +435,16 @@ class ProjectDB::Impl {
   bool hasOpeningsTable = false;
   /// spaces and space_boundaries exist (v35).
   bool hasSpacesTable = false;
+  /// survey_parts.dismissed exists (v36).
+  bool hasPartDismissedColumn = false;
+  /// Survey mass (v37): survey_parts.element_guid/geom_*, survey_types.
+  /// buildup_id/element_category, buildups, value_provenance.
+  bool hasSurveyMass = false;
+  /// report_assets exists (v38).
+  bool hasReportAssetsTable = false;
 
   // cppcheck-suppress unusedStructMember
-  static constexpr int LATEST_SCHEMA_VERSION = 35;
+  static constexpr int LATEST_SCHEMA_VERSION = 38;
 
   // How long one statement waits for a lock another connection holds before
   // failing with SQLITE_BUSY. sqlite's default is not to wait at all.
@@ -565,6 +573,9 @@ class ProjectDB::Impl {
     hasWallsTable = tableExists("walls") && tableExists("wall_joins");
     hasOpeningsTable = tableExists("openings");
     hasSpacesTable = tableExists("spaces") && tableExists("space_boundaries");
+    hasPartDismissedColumn = columnExists("survey_parts", "dismissed");
+    hasSurveyMass = surveyMassSchemaPresent();
+    hasReportAssetsTable = tableExists("report_assets");
   }
 
   /// True the first time this process opens dbPath read-only at schema
@@ -888,6 +899,18 @@ class ProjectDB::Impl {
 
     if (current < 35) {
       migrateToV35();
+    }
+
+    if (current < 36) {
+      migrateToV36();
+    }
+
+    if (current < 37) {
+      migrateToV37();
+    }
+
+    if (current < 38) {
+      migrateToV38();
     }
 
     reusex::trace("Schema version: {}", getCurrentSchemaVersion());
@@ -4282,6 +4305,214 @@ class ProjectDB::Impl {
     insertSchemaVersion(35, "Solid model: spaces and space_boundaries tables");
     sp.release();
     reusex::info("Migration to schema version 35 complete");
+  }
+
+  void migrateToV36() {
+    reusex::info("Migrating database to schema version 36");
+    // Non-destructive dismissal of one survey part ("Markér som fejl" /
+    // "Gendan"): the part stays, keeps its code, passport and links, and is
+    // listed, but core/survey_service leaves it out of its type's quantity
+    // and of rooms_without_parts. Unlike survey_dismissed_instances (v26, a
+    // deleted part's tombstone) it is reversible. Guarded so a test that
+    // rolls the version back re-runs it safely.
+    Savepoint sp(db, "migrate_v36");
+    if (!columnExists("survey_parts", "dismissed"))
+      execOrThrow("ALTER TABLE survey_parts ADD COLUMN dismissed INTEGER NOT "
+                  "NULL DEFAULT 0 CHECK (dismissed IN (0, 1));");
+    insertSchemaVersion(36, "survey_parts.dismissed: non-destructive part "
+                            "dismissal");
+    sp.release();
+    reusex::info("Migration to schema version 36 complete");
+  }
+
+  void migrateToV37() {
+    reusex::info("Migrating database to schema version 37");
+    // Survey quantities and mass grounded in the model (reusex-uprf):
+    //  - survey_parts.element_guid / geom_quantity / geom_unit / geom_source:
+    //    the wall, opening or slab piece a part is measured on, and what was
+    //    measured (core::measure_survey). element_guid is unique (an
+    //    element-backed part is keyed on it), plain TEXT: walls / openings
+    //    re-runs replace rows but keep their guids.
+    //  - survey_types.buildup_id (an id of core::buildup_library) and
+    //    element_category (the type core::measure_survey seeded from the
+    //    typed model). mass_t stays and now means the user's override.
+    //  - buildups: project build-ups overriding / adding library entries.
+    //  - value_provenance: where each survey value came from (gap 2). No
+    //    foreign key (scope + id name a type or a part); ProjectDB deletes
+    //    the rows with their type / part.
+    // The frontend kept the chosen build-up as the user column "Opbygning"
+    // (one value per part passport); each type takes the name most of its
+    // parts carry, when it names a library build-up.
+    Savepoint sp(db, "migrate_v37");
+    ensureSurveyMassSchemaV37();
+    insertSchemaVersion(37, "survey mass: part geometry, build-ups, "
+                            "value provenance");
+    sp.release();
+    reusex::info("Migration to schema version 37 complete");
+  }
+
+  /// The survey-mass shape of v37 is all present.
+  bool surveyMassSchemaPresent() {
+    return columnExists("survey_parts", "element_guid") &&
+           columnExists("survey_parts", "geom_quantity") &&
+           columnExists("survey_parts", "geom_unit") &&
+           columnExists("survey_parts", "geom_source") &&
+           columnExists("survey_types", "buildup_id") &&
+           columnExists("survey_types", "element_category") &&
+           tableExists("buildups") && tableExists("value_provenance");
+  }
+
+  /// v37 DDL + the "Opbygning" backfill; every step is guarded, so v38 can
+  /// re-run it on a database whose v37 was a different branch's.
+  void ensureSurveyMassSchemaV37() {
+    if (!columnExists("survey_parts", "element_guid"))
+      execOrThrow("ALTER TABLE survey_parts ADD COLUMN element_guid TEXT;");
+    if (!columnExists("survey_parts", "geom_quantity"))
+      execOrThrow("ALTER TABLE survey_parts ADD COLUMN geom_quantity REAL;");
+    if (!columnExists("survey_parts", "geom_unit"))
+      execOrThrow("ALTER TABLE survey_parts ADD COLUMN geom_unit TEXT NOT "
+                  "NULL DEFAULT '';");
+    if (!columnExists("survey_parts", "geom_source"))
+      execOrThrow(
+          "ALTER TABLE survey_parts ADD COLUMN geom_source TEXT NOT NULL "
+          "DEFAULT '' CHECK (geom_source IN ('', 'solid_volume', "
+          "'wall_area', 'opening_area', 'slab_area', 'plane_area', "
+          "'count'));");
+    execOrThrow("CREATE UNIQUE INDEX IF NOT EXISTS idx_survey_parts_element "
+                "ON survey_parts(element_guid) WHERE element_guid IS NOT "
+                "NULL;");
+    if (!columnExists("survey_types", "buildup_id"))
+      execOrThrow("ALTER TABLE survey_types ADD COLUMN buildup_id TEXT;");
+    if (!columnExists("survey_types", "element_category"))
+      execOrThrow("ALTER TABLE survey_types ADD COLUMN element_category TEXT "
+                  "CHECK (element_category IS NULL OR element_category IN "
+                  "('ydervaeg', 'indervaeg', 'daek', 'tag'));");
+    execOrThrow(R"(
+      CREATE TABLE IF NOT EXISTS buildups (
+        id         TEXT PRIMARY KEY,
+        definition TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+          DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+      );
+      CREATE TABLE IF NOT EXISTS value_provenance (
+        scope      TEXT NOT NULL CHECK (scope IN ('type', 'part')),
+        id         TEXT NOT NULL,
+        field      TEXT NOT NULL,
+        kind       TEXT NOT NULL CHECK (kind IN ('scan', 'measured',
+                     'calculated', 'entered', 'suggested')),
+        source     TEXT NOT NULL DEFAULT '',
+        confidence REAL CHECK (confidence IS NULL OR
+                     (confidence >= 0 AND confidence <= 1)),
+        updated_at TEXT NOT NULL
+          DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        PRIMARY KEY (scope, id, field)
+      );
+    )");
+    backfillBuildupsFromUserColumnV37();
+  }
+
+  /// v37: the frontend's "Opbygning" user column -> survey_types.buildup_id.
+  void backfillBuildupsFromUserColumnV37() {
+    // A fresh database runs the migrations before createTables() gives the
+    // passport tables their current shape (see the v29 guard above).
+    if (!columnExists("survey_parts", "passport_guid") ||
+        !columnExists("passport_property_values", "value") ||
+        !columnExists("passport_property_values", "property_id") ||
+        !columnExists("property_definitions", "name_en") ||
+        !columnExists("material_passports", "document_guid"))
+      return;
+    sqlite3_stmt *s = nullptr;
+    if (sqlite3_prepare_v2(
+            db,
+            "SELECT p.type_id, CAST(v.value AS TEXT) FROM survey_parts p "
+            "JOIN material_passports mp ON mp.document_guid = "
+            "p.passport_guid JOIN passport_property_values v ON "
+            "v.passport_id = mp.id JOIN property_definitions d ON d.id = "
+            "v.property_id WHERE lower(trim(d.name_en)) = 'opbygning' AND "
+            "v.value IS NOT NULL;",
+            -1, &s, nullptr) != SQLITE_OK)
+      throw std::runtime_error("migrate_v37: " +
+                               std::string(sqlite3_errmsg(db)));
+    std::map<int64_t, std::map<std::string, int>> votes;
+    while (sqlite3_step(s) == SQLITE_ROW) {
+      const auto *txt = sqlite3_column_text(s, 1);
+      if (txt)
+        ++votes[sqlite3_column_int64(s, 0)]
+               [reinterpret_cast<const char *>(txt)];
+    }
+    sqlite3_finalize(s);
+    if (votes.empty())
+      return;
+    const auto &lib = core::default_buildups();
+    std::size_t set = 0, unknown = 0;
+    for (const auto &[type_id, names] : votes) {
+      // Most parts' name; ties go to the first name in sort order.
+      const auto best = std::max_element(
+          names.begin(), names.end(),
+          [](const auto &a, const auto &b) { return a.second < b.second; });
+      const auto b = core::find_buildup_by_name(lib, best->first);
+      if (!b) {
+        ++unknown;
+        continue;
+      }
+      const std::string id = std::to_string(type_id);
+      for (const char *sql :
+           {"UPDATE survey_types SET buildup_id = ?1 WHERE id = ?2 AND "
+            "buildup_id IS NULL;",
+            "INSERT OR IGNORE INTO value_provenance (scope, id, field, kind, "
+            "source) VALUES ('type', ?2, 'buildup_id', 'entered', "
+            "'migrated:Opbygning');"}) {
+        sqlite3_stmt *u = nullptr;
+        if (sqlite3_prepare_v2(db, sql, -1, &u, nullptr) != SQLITE_OK)
+          throw std::runtime_error("migrate_v37: " +
+                                   std::string(sqlite3_errmsg(db)));
+        sqlite3_bind_text(u, 1, b->id.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(u, 2, id.c_str(), -1, SQLITE_TRANSIENT);
+        const int rc = sqlite3_step(u);
+        sqlite3_finalize(u);
+        if (rc != SQLITE_DONE)
+          throw std::runtime_error("migrate_v37: " +
+                                   std::string(sqlite3_errmsg(db)));
+      }
+      ++set;
+    }
+    reusex::info("migrate_v37: {} survey type(s) took their build-up from the "
+                 "'Opbygning' user column",
+                 set);
+    if (unknown > 0)
+      reusex::warn("migrate_v37: {} survey type(s) carry an 'Opbygning' value "
+                   "that names no library build-up; left without one",
+                   unknown);
+  }
+
+  void migrateToV38() {
+    reusex::info("Migrating database to schema version 38");
+    // Named images the PDF report uses that are not a sensor frame or a
+    // panorama: today only the uploaded cover image ("cover",
+    // core/report_cover.hpp).
+    //
+    // Two branches each shipped a v37 before they were merged: survey mass
+    // (this file's migrateToV37) and report_assets (now this v38). A project
+    // migrated by either one alone is stamped v37 but lacks the other half,
+    // so both halves are re-applied here behind existence checks.
+    Savepoint sp(db, "migrate_v38");
+    if (!surveyMassSchemaPresent()) {
+      reusex::warn("migrate_v38: schema v37 lacks the survey-mass columns "
+                   "(a report_assets-only v37); adding them");
+      ensureSurveyMassSchemaV37();
+    }
+    execOrThrow(R"(
+      CREATE TABLE IF NOT EXISTS report_assets (
+        name       TEXT PRIMARY KEY,
+        mime_type  TEXT NOT NULL,
+        data       BLOB NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+      );
+    )");
+    insertSchemaVersion(38, "report_assets: uploaded report images (cover)");
+    sp.release();
+    hasReportAssetsTable = true;
+    reusex::info("Migration to schema version 38 complete");
   }
 
   // ── Spaces (v35) ─────────────────────────────────────────────────────────
@@ -10884,6 +11115,77 @@ std::vector<ProjectDB::ReportPdfRecord> ProjectDB::list_report_pdfs() const {
   return out;
 }
 
+// --- Report assets (schema v38) ---
+
+void ProjectDB::set_report_asset(std::string_view name,
+                                 const std::vector<std::uint8_t> &data,
+                                 std::string_view mime_type) {
+  impl_->checkWritable();
+  if (!impl_->hasReportAssetsTable)
+    throw std::runtime_error("set_report_asset: project schema predates v38 "
+                             "(open it read-write once to migrate)");
+  if (name.empty())
+    throw std::invalid_argument("set_report_asset: empty name");
+  if (data.empty())
+    throw std::invalid_argument("set_report_asset: empty data");
+  sqlite3_stmt *s = prepare_or_throw(
+      impl_->db,
+      "INSERT INTO report_assets (name, mime_type, data) VALUES (?1, ?2, ?3) "
+      "ON CONFLICT (name) DO UPDATE SET mime_type = excluded.mime_type, "
+      "data = excluded.data, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', "
+      "'now');",
+      "set_report_asset");
+  StmtGuard guard(s);
+  const std::string n(name), m(mime_type);
+  sqlite3_bind_text(s, 1, n.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(s, 2, m.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_blob(s, 3, data.data(), static_cast<int>(data.size()),
+                    SQLITE_TRANSIENT);
+  if (sqlite3_step(s) != SQLITE_DONE)
+    throw std::runtime_error("set_report_asset: " +
+                             std::string(sqlite3_errmsg(impl_->db)));
+}
+
+std::optional<std::pair<std::vector<std::uint8_t>, std::string>>
+ProjectDB::report_asset(std::string_view name) const {
+  if (!impl_->hasReportAssetsTable)
+    return std::nullopt;
+  sqlite3_stmt *s = prepare_or_throw(
+      impl_->db, "SELECT data, mime_type FROM report_assets WHERE name = ?;",
+      "report_asset");
+  StmtGuard guard(s);
+  const std::string n(name);
+  sqlite3_bind_text(s, 1, n.c_str(), -1, SQLITE_TRANSIENT);
+  if (sqlite3_step(s) != SQLITE_ROW)
+    return std::nullopt;
+  const auto *blob =
+      reinterpret_cast<const std::uint8_t *>(sqlite3_column_blob(s, 0));
+  const int bytes = sqlite3_column_bytes(s, 0);
+  std::vector<std::uint8_t> data;
+  if (blob && bytes > 0)
+    data.assign(blob, blob + bytes);
+  std::string mime;
+  if (const auto *t = reinterpret_cast<const char *>(sqlite3_column_text(s, 1)))
+    mime = t;
+  return std::make_pair(std::move(data), std::move(mime));
+}
+
+bool ProjectDB::delete_report_asset(std::string_view name) {
+  impl_->checkWritable();
+  if (!impl_->hasReportAssetsTable)
+    return false;
+  sqlite3_stmt *s =
+      prepare_or_throw(impl_->db, "DELETE FROM report_assets WHERE name = ?;",
+                       "delete_report_asset");
+  StmtGuard guard(s);
+  const std::string n(name);
+  sqlite3_bind_text(s, 1, n.c_str(), -1, SQLITE_TRANSIENT);
+  if (sqlite3_step(s) != SQLITE_DONE)
+    throw std::runtime_error("delete_report_asset: " +
+                             std::string(sqlite3_errmsg(impl_->db)));
+  return sqlite3_changes(impl_->db) > 0;
+}
+
 std::optional<std::vector<std::uint8_t>>
 ProjectDB::report_pdf(int64_t id) const {
   const char *sql = "SELECT pdf_blob FROM report_pdfs WHERE id = ?;";
@@ -11115,8 +11417,15 @@ constexpr const char *kSurveyTypeColumns =
     "id, name, eak_code, bim7aa_code, unit, treatment, review_status, "
     "confidence, mass_t, "
     "note, starred, semantic_class, created_at, updated_at";
+/// Columns 14-15, appended when the project is at v37.
+constexpr const char *kSurveyTypeMassColumns = ", buildup_id, element_category";
 
-ProjectDB::SurveyTypeRecord read_survey_type(sqlite3_stmt *s) {
+std::string survey_type_select(bool has_mass) {
+  return std::string("SELECT ") + kSurveyTypeColumns +
+         (has_mass ? kSurveyTypeMassColumns : "") + " FROM survey_types ";
+}
+
+ProjectDB::SurveyTypeRecord read_survey_type(sqlite3_stmt *s, bool has_mass) {
   ProjectDB::SurveyTypeRecord r;
   r.id = sqlite3_column_int64(s, 0);
   r.name = column_text(s, 1);
@@ -11134,6 +11443,12 @@ ProjectDB::SurveyTypeRecord read_survey_type(sqlite3_stmt *s) {
   r.semantic_class = sqlite3_column_int(s, 11);
   r.created_at = column_text(s, 12);
   r.updated_at = column_text(s, 13);
+  if (has_mass) {
+    if (sqlite3_column_type(s, 14) != SQLITE_NULL)
+      r.buildup_id = column_text(s, 14);
+    if (sqlite3_column_type(s, 15) != SQLITE_NULL)
+      r.element_category = column_text(s, 15);
+  }
   return r;
 }
 } // namespace
@@ -11141,14 +11456,24 @@ ProjectDB::SurveyTypeRecord read_survey_type(sqlite3_stmt *s) {
 ProjectDB::SurveyTypeRecord
 ProjectDB::add_survey_type(const SurveyTypeRecord &rec) {
   impl_->checkWritable();
-  sqlite3_stmt *stmt =
-      prepare_or_throw(impl_->db,
-                       "INSERT INTO survey_types (name, eak_code, bim7aa_code, "
-                       "unit, treatment, review_status, "
-                       "confidence, mass_t, note, starred, semantic_class) "
-                       "VALUES (?,?,?,?,?,?,?,?,?,?,?) "
-                       "RETURNING id;",
-                       "add_survey_type");
+  const bool mass = impl_->hasSurveyMass;
+  if (!mass && (rec.buildup_id || rec.element_category))
+    throw std::runtime_error("add_survey_type: buildup_id / element_category "
+                             "need schema v37 (open the project read-write "
+                             "once to migrate)");
+  sqlite3_stmt *stmt = prepare_or_throw(
+      impl_->db,
+      mass ? "INSERT INTO survey_types (name, eak_code, bim7aa_code, "
+             "unit, treatment, review_status, "
+             "confidence, mass_t, note, starred, semantic_class, buildup_id, "
+             "element_category) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
+             "RETURNING id;"
+           : "INSERT INTO survey_types (name, eak_code, bim7aa_code, "
+             "unit, treatment, review_status, "
+             "confidence, mass_t, note, starred, semantic_class) "
+             "VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+             "RETURNING id;",
+      "add_survey_type");
   StmtGuard guard(stmt);
   bind_text(stmt, 1, rec.name);
   bind_text(stmt, 2, rec.eak_code);
@@ -11161,6 +11486,16 @@ ProjectDB::add_survey_type(const SurveyTypeRecord &rec) {
   bind_text(stmt, 9, rec.note);
   sqlite3_bind_int(stmt, 10, rec.starred ? 1 : 0);
   sqlite3_bind_int(stmt, 11, rec.semantic_class);
+  if (mass) {
+    if (rec.buildup_id)
+      bind_text(stmt, 12, *rec.buildup_id);
+    else
+      sqlite3_bind_null(stmt, 12);
+    if (rec.element_category)
+      bind_text(stmt, 13, *rec.element_category);
+    else
+      sqlite3_bind_null(stmt, 13);
+  }
   if (sqlite3_step(stmt) != SQLITE_ROW)
     throw std::runtime_error("add_survey_type: insert failed: " +
                              std::string(sqlite3_errmsg(impl_->db)));
@@ -11169,26 +11504,26 @@ ProjectDB::add_survey_type(const SurveyTypeRecord &rec) {
 }
 
 std::vector<ProjectDB::SurveyTypeRecord> ProjectDB::survey_types() const {
-  const std::string sql = std::string("SELECT ") + kSurveyTypeColumns +
-                          " FROM survey_types ORDER BY id;";
+  const std::string sql =
+      survey_type_select(impl_->hasSurveyMass) + "ORDER BY id;";
   sqlite3_stmt *stmt = prepare_or_throw(impl_->db, sql.c_str(), "survey_types");
   StmtGuard guard(stmt);
   std::vector<SurveyTypeRecord> out;
   while (sqlite3_step(stmt) == SQLITE_ROW)
-    out.push_back(read_survey_type(stmt));
+    out.push_back(read_survey_type(stmt, impl_->hasSurveyMass));
   return out;
 }
 
 std::optional<ProjectDB::SurveyTypeRecord>
 ProjectDB::survey_type(int64_t id) const {
-  const std::string sql = std::string("SELECT ") + kSurveyTypeColumns +
-                          " FROM survey_types WHERE id = ?;";
+  const std::string sql =
+      survey_type_select(impl_->hasSurveyMass) + "WHERE id = ?;";
   sqlite3_stmt *stmt = prepare_or_throw(impl_->db, sql.c_str(), "survey_type");
   StmtGuard guard(stmt);
   sqlite3_bind_int64(stmt, 1, id);
   if (sqlite3_step(stmt) != SQLITE_ROW)
     return std::nullopt;
-  return read_survey_type(stmt);
+  return read_survey_type(stmt, impl_->hasSurveyMass);
 }
 
 ProjectDB::SurveyTypeRecord
@@ -11219,6 +11554,13 @@ ProjectDB::update_survey_type(int64_t id, const SurveyTypePatch &p) {
     sets.emplace_back("mass_t = ?");
   if (p.starred)
     sets.emplace_back("starred = ?");
+  if (p.buildup_id) {
+    if (!impl_->hasSurveyMass)
+      throw std::runtime_error("update_survey_type: buildup_id needs schema "
+                               "v37 (open the project read-write once to "
+                               "migrate)");
+    sets.emplace_back("buildup_id = ?");
+  }
   if (sets.empty())
     return *survey_type(id);
   std::string sql = "UPDATE survey_types SET ";
@@ -11249,6 +11591,12 @@ ProjectDB::update_survey_type(int64_t id, const SurveyTypePatch &p) {
     bind_opt_double(stmt, i++, *p.mass_t);
   if (p.starred)
     sqlite3_bind_int(stmt, i++, *p.starred ? 1 : 0);
+  if (p.buildup_id) {
+    if (*p.buildup_id)
+      bind_text(stmt, i++, **p.buildup_id);
+    else
+      sqlite3_bind_null(stmt, i++);
+  }
   sqlite3_bind_int64(stmt, i, id);
   if (sqlite3_step(stmt) != SQLITE_DONE)
     throw std::runtime_error("update_survey_type: " +
@@ -11268,8 +11616,9 @@ namespace {
 /// instance's link — but only when no other part owns that passport, so two
 /// parts never write through one passport (a part reads as passport-less
 /// instead; ensure_resource_passport gives it its own on first write).
-std::string survey_part_select(bool has_passport_column,
-                               bool has_view_columns) {
+std::string survey_part_select(bool has_passport_column, bool has_view_columns,
+                               bool has_dismissed_column,
+                               bool has_mass_columns) {
   std::string sql = "SELECT p.code, p.type_id, pc.name, i.instance_id, "
                     "p.room_id, p.room_name, p.quantity, p.starred, p.note, ";
   sql += has_passport_column
@@ -11286,6 +11635,13 @@ std::string survey_part_select(bool has_passport_column,
            "FROM sensor_frames f WHERE f.node_id = p.view_id) "
            "WHEN 'panorama' THEN EXISTS (SELECT 1 FROM panoramic_images pi "
            "WHERE pi.id = p.view_id) ELSE 0 END";
+  // Last column (11, or 18 with the view columns): survey_parts.dismissed.
+  if (has_dismissed_column)
+    sql += ", p.dismissed";
+  // Columns 19-22 (v37 implies the view and dismissed columns): the part's
+  // measured geometry.
+  if (has_mass_columns)
+    sql += ", p.element_guid, p.geom_quantity, p.geom_unit, p.geom_source";
   sql += " FROM survey_parts p "
          "LEFT JOIN instances i ON i.guid = p.instance_guid "
          "LEFT JOIN point_clouds pc ON pc.id = i.cloud_id "
@@ -11295,7 +11651,9 @@ std::string survey_part_select(bool has_passport_column,
 }
 
 ProjectDB::SurveyPartRecord read_survey_part(sqlite3_stmt *s,
-                                             bool has_view_columns) {
+                                             bool has_view_columns,
+                                             bool has_dismissed_column,
+                                             bool has_mass_columns) {
   ProjectDB::SurveyPartRecord r;
   r.code = column_text(s, 0);
   r.type_id = sqlite3_column_int64(s, 1);
@@ -11331,6 +11689,15 @@ ProjectDB::SurveyPartRecord read_survey_part(sqlite3_stmt *s,
       r.view = v;
     }
   }
+  if (has_dismissed_column)
+    r.dismissed = sqlite3_column_int(s, has_view_columns ? 18 : 11) != 0;
+  if (has_mass_columns) {
+    if (sqlite3_column_type(s, 19) != SQLITE_NULL)
+      r.element_guid = column_text(s, 19);
+    r.geom_quantity = column_opt_double(s, 20);
+    r.geom_unit = column_text(s, 21);
+    r.geom_source = column_text(s, 22);
+  }
   return r;
 }
 } // namespace
@@ -11365,10 +11732,18 @@ void ProjectDB::add_survey_part(const SurveyPartRecord &rec) {
                               *rec.cloud_name + "'");
     instance_guid = column_text(lookup, 0);
   }
+  if (rec.dismissed && !impl_->hasPartDismissedColumn)
+    throw std::runtime_error("add_survey_part '" + rec.code +
+                             "': dismissed needs schema v36 (open the project "
+                             "read-write once to migrate)");
   sqlite3_stmt *stmt = prepare_or_throw(
       impl_->db,
-      "INSERT INTO survey_parts (code, type_id, instance_guid, room_id, "
-      "room_name, quantity, starred, note) VALUES (?,?,?,?,?,?,?,?);",
+      impl_->hasPartDismissedColumn
+          ? "INSERT INTO survey_parts (code, type_id, instance_guid, room_id, "
+            "room_name, quantity, starred, note, dismissed) "
+            "VALUES (?,?,?,?,?,?,?,?,?);"
+          : "INSERT INTO survey_parts (code, type_id, instance_guid, room_id, "
+            "room_name, quantity, starred, note) VALUES (?,?,?,?,?,?,?,?);",
       "add_survey_part");
   StmtGuard guard(stmt);
   bind_text(stmt, 1, rec.code);
@@ -11383,34 +11758,258 @@ void ProjectDB::add_survey_part(const SurveyPartRecord &rec) {
   sqlite3_bind_double(stmt, 6, rec.quantity);
   sqlite3_bind_int(stmt, 7, rec.starred ? 1 : 0);
   bind_text(stmt, 8, rec.note);
+  if (impl_->hasPartDismissedColumn)
+    sqlite3_bind_int(stmt, 9, rec.dismissed ? 1 : 0);
   if (sqlite3_step(stmt) != SQLITE_DONE)
     throw std::runtime_error("add_survey_part '" + rec.code +
                              "': " + sqlite3_errmsg(impl_->db));
+  if (rec.element_guid) {
+    // An element-backed part (schema v37): keyed on its element's guid.
+    set_survey_part_geometry(rec.code, rec.element_guid, rec.geom_quantity,
+                             rec.geom_unit, rec.geom_source);
+  }
+}
+
+bool ProjectDB::has_survey_mass_columns() const { return impl_->hasSurveyMass; }
+
+void ProjectDB::set_survey_part_geometry(
+    std::string_view code, const std::optional<std::string> &element_guid,
+    std::optional<double> geom_quantity, std::string_view geom_unit,
+    std::string_view geom_source) {
+  impl_->checkWritable();
+  if (!impl_->hasSurveyMass)
+    throw std::runtime_error("set_survey_part_geometry: needs schema v37 "
+                             "(open the project read-write once to migrate)");
+  static const std::set<std::string_view> sources = {
+      "",          "solid_volume", "wall_area", "opening_area",
+      "slab_area", "plane_area",   "count"};
+  if (!sources.contains(geom_source))
+    throw std::invalid_argument("set_survey_part_geometry: unknown source '" +
+                                std::string(geom_source) + "'");
+  if (geom_quantity && geom_unit.empty())
+    throw std::invalid_argument(
+        "set_survey_part_geometry: a quantity needs a unit");
+  sqlite3_stmt *stmt = prepare_or_throw(
+      impl_->db,
+      "UPDATE survey_parts SET element_guid = ?, geom_quantity = ?, "
+      "geom_unit = ?, geom_source = ? WHERE code = ?;",
+      "set_survey_part_geometry");
+  StmtGuard guard(stmt);
+  if (element_guid)
+    bind_text(stmt, 1, *element_guid);
+  else
+    sqlite3_bind_null(stmt, 1);
+  bind_opt_double(stmt, 2, geom_quantity);
+  bind_text(stmt, 3, geom_quantity ? geom_unit : std::string_view(""));
+  bind_text(stmt, 4, geom_quantity ? geom_source : std::string_view(""));
+  bind_text(stmt, 5, code);
+  if (sqlite3_step(stmt) != SQLITE_DONE)
+    throw std::runtime_error("set_survey_part_geometry '" + std::string(code) +
+                             "': " + sqlite3_errmsg(impl_->db));
+  if (sqlite3_changes(impl_->db) == 0)
+    throw std::out_of_range("no survey part '" + std::string(code) + "'");
+}
+
+std::optional<ProjectDB::SurveyPartRecord>
+ProjectDB::survey_part_for_element(std::string_view element_guid) const {
+  if (!impl_->hasSurveyMass)
+    return std::nullopt;
+  const std::string sql =
+      survey_part_select(impl_->hasPassportColumn, impl_->hasViewColumns,
+                         impl_->hasPartDismissedColumn, true) +
+      "WHERE p.element_guid = ?;";
+  sqlite3_stmt *stmt =
+      prepare_or_throw(impl_->db, sql.c_str(), "survey_part_for_element");
+  StmtGuard guard(stmt);
+  bind_text(stmt, 1, element_guid);
+  if (sqlite3_step(stmt) != SQLITE_ROW)
+    return std::nullopt;
+  return read_survey_part(stmt, impl_->hasViewColumns,
+                          impl_->hasPartDismissedColumn, true);
+}
+
+// --- Build-up overrides (schema v37) ---
+
+std::vector<ProjectDB::ProjectBuildupRecord>
+ProjectDB::project_buildups() const {
+  std::vector<ProjectBuildupRecord> out;
+  if (!impl_->hasSurveyMass)
+    return out;
+  sqlite3_stmt *stmt = prepare_or_throw(
+      impl_->db, "SELECT id, definition, updated_at FROM buildups ORDER BY id;",
+      "project_buildups");
+  StmtGuard guard(stmt);
+  while (sqlite3_step(stmt) == SQLITE_ROW)
+    out.push_back(
+        {column_text(stmt, 0), column_text(stmt, 1), column_text(stmt, 2)});
+  return out;
+}
+
+void ProjectDB::set_project_buildup(std::string_view id,
+                                    std::string_view definition) {
+  impl_->checkWritable();
+  if (!impl_->hasSurveyMass)
+    throw std::runtime_error("set_project_buildup: needs schema v37");
+  if (id.empty())
+    throw std::invalid_argument("set_project_buildup: empty id");
+  sqlite3_stmt *stmt = prepare_or_throw(
+      impl_->db,
+      "INSERT INTO buildups (id, definition) VALUES (?, ?) ON CONFLICT(id) "
+      "DO UPDATE SET definition = excluded.definition, updated_at = "
+      "strftime('%Y-%m-%dT%H:%M:%SZ','now');",
+      "set_project_buildup");
+  StmtGuard guard(stmt);
+  bind_text(stmt, 1, id);
+  bind_text(stmt, 2, definition);
+  if (sqlite3_step(stmt) != SQLITE_DONE)
+    throw std::runtime_error("set_project_buildup: " +
+                             std::string(sqlite3_errmsg(impl_->db)));
+}
+
+bool ProjectDB::delete_project_buildup(std::string_view id) {
+  impl_->checkWritable();
+  if (!impl_->hasSurveyMass)
+    return false;
+  sqlite3_stmt *stmt =
+      prepare_or_throw(impl_->db, "DELETE FROM buildups WHERE id = ?;",
+                       "delete_project_buildup");
+  StmtGuard guard(stmt);
+  bind_text(stmt, 1, id);
+  if (sqlite3_step(stmt) != SQLITE_DONE)
+    throw std::runtime_error("delete_project_buildup: " +
+                             std::string(sqlite3_errmsg(impl_->db)));
+  return sqlite3_changes(impl_->db) > 0;
+}
+
+// --- Value provenance (schema v37) ---
+
+namespace {
+ProjectDB::ValueProvenanceRecord read_provenance(sqlite3_stmt *s) {
+  return {column_text(s, 0), column_text(s, 1), column_text(s, 2),
+          column_text(s, 3), column_text(s, 4), column_opt_double(s, 5),
+          column_text(s, 6)};
+}
+constexpr const char *kProvenanceSelect =
+    "SELECT scope, id, field, kind, source, confidence, updated_at FROM "
+    "value_provenance ";
+} // namespace
+
+void ProjectDB::set_value_provenance(const ValueProvenanceRecord &rec) {
+  impl_->checkWritable();
+  if (!impl_->hasSurveyMass)
+    throw std::runtime_error("set_value_provenance: needs schema v37");
+  if (rec.scope != "type" && rec.scope != "part")
+    throw std::invalid_argument("set_value_provenance: scope must be 'type' "
+                                "or 'part', not '" +
+                                rec.scope + "'");
+  static const std::set<std::string_view> kinds = {
+      "scan", "measured", "calculated", "entered", "suggested"};
+  if (!kinds.contains(rec.kind))
+    throw std::invalid_argument("set_value_provenance: unknown kind '" +
+                                rec.kind + "'");
+  if (rec.confidence && (*rec.confidence < 0.0 || *rec.confidence > 1.0))
+    throw std::invalid_argument(
+        "set_value_provenance: confidence must be in [0, 1]");
+  sqlite3_stmt *stmt = prepare_or_throw(
+      impl_->db,
+      "INSERT INTO value_provenance (scope, id, field, kind, source, "
+      "confidence) VALUES (?,?,?,?,?,?) ON CONFLICT(scope, id, field) DO "
+      "UPDATE SET kind = excluded.kind, source = excluded.source, "
+      "confidence = excluded.confidence, updated_at = "
+      "strftime('%Y-%m-%dT%H:%M:%SZ','now');",
+      "set_value_provenance");
+  StmtGuard guard(stmt);
+  bind_text(stmt, 1, rec.scope);
+  bind_text(stmt, 2, rec.id);
+  bind_text(stmt, 3, rec.field);
+  bind_text(stmt, 4, rec.kind);
+  bind_text(stmt, 5, rec.source);
+  bind_opt_double(stmt, 6, rec.confidence);
+  if (sqlite3_step(stmt) != SQLITE_DONE)
+    throw std::runtime_error("set_value_provenance: " +
+                             std::string(sqlite3_errmsg(impl_->db)));
+}
+
+bool ProjectDB::delete_value_provenance(std::string_view scope,
+                                        std::string_view id,
+                                        std::string_view field) {
+  impl_->checkWritable();
+  if (!impl_->hasSurveyMass)
+    return false;
+  sqlite3_stmt *stmt = prepare_or_throw(
+      impl_->db,
+      "DELETE FROM value_provenance WHERE scope = ? AND id = ? AND field = ?;",
+      "delete_value_provenance");
+  StmtGuard guard(stmt);
+  bind_text(stmt, 1, scope);
+  bind_text(stmt, 2, id);
+  bind_text(stmt, 3, field);
+  if (sqlite3_step(stmt) != SQLITE_DONE)
+    throw std::runtime_error("delete_value_provenance: " +
+                             std::string(sqlite3_errmsg(impl_->db)));
+  return sqlite3_changes(impl_->db) > 0;
+}
+
+std::vector<ProjectDB::ValueProvenanceRecord>
+ProjectDB::value_provenance(std::string_view scope, std::string_view id) const {
+  std::vector<ValueProvenanceRecord> out;
+  if (!impl_->hasSurveyMass)
+    return out;
+  const std::string sql = std::string(kProvenanceSelect) +
+                          "WHERE scope = ? AND id = ? ORDER BY field;";
+  sqlite3_stmt *stmt =
+      prepare_or_throw(impl_->db, sql.c_str(), "value_provenance");
+  StmtGuard guard(stmt);
+  bind_text(stmt, 1, scope);
+  bind_text(stmt, 2, id);
+  while (sqlite3_step(stmt) == SQLITE_ROW)
+    out.push_back(read_provenance(stmt));
+  return out;
+}
+
+std::vector<ProjectDB::ValueProvenanceRecord>
+ProjectDB::all_value_provenance() const {
+  std::vector<ValueProvenanceRecord> out;
+  if (!impl_->hasSurveyMass)
+    return out;
+  const std::string sql =
+      std::string(kProvenanceSelect) + "ORDER BY scope, id, field;";
+  sqlite3_stmt *stmt =
+      prepare_or_throw(impl_->db, sql.c_str(), "all_value_provenance");
+  StmtGuard guard(stmt);
+  while (sqlite3_step(stmt) == SQLITE_ROW)
+    out.push_back(read_provenance(stmt));
+  return out;
 }
 
 std::vector<ProjectDB::SurveyPartRecord> ProjectDB::survey_parts() const {
   const std::string sql =
-      survey_part_select(impl_->hasPassportColumn, impl_->hasViewColumns) +
+      survey_part_select(impl_->hasPassportColumn, impl_->hasViewColumns,
+                         impl_->hasPartDismissedColumn, impl_->hasSurveyMass) +
       "ORDER BY p.code;";
   sqlite3_stmt *stmt = prepare_or_throw(impl_->db, sql.c_str(), "survey_parts");
   StmtGuard guard(stmt);
   std::vector<SurveyPartRecord> out;
   while (sqlite3_step(stmt) == SQLITE_ROW)
-    out.push_back(read_survey_part(stmt, impl_->hasViewColumns));
+    out.push_back(read_survey_part(stmt, impl_->hasViewColumns,
+                                   impl_->hasPartDismissedColumn,
+                                   impl_->hasSurveyMass));
   return out;
 }
 
 std::optional<ProjectDB::SurveyPartRecord>
 ProjectDB::survey_part(std::string_view code) const {
   const std::string sql =
-      survey_part_select(impl_->hasPassportColumn, impl_->hasViewColumns) +
+      survey_part_select(impl_->hasPassportColumn, impl_->hasViewColumns,
+                         impl_->hasPartDismissedColumn, impl_->hasSurveyMass) +
       "WHERE p.code = ?;";
   sqlite3_stmt *stmt = prepare_or_throw(impl_->db, sql.c_str(), "survey_part");
   StmtGuard guard(stmt);
   bind_text(stmt, 1, code);
   if (sqlite3_step(stmt) != SQLITE_ROW)
     return std::nullopt;
-  return read_survey_part(stmt, impl_->hasViewColumns);
+  return read_survey_part(stmt, impl_->hasViewColumns,
+                          impl_->hasPartDismissedColumn, impl_->hasSurveyMass);
 }
 
 ProjectDB::SurveyPartRecord
@@ -11431,6 +12030,13 @@ ProjectDB::update_survey_part(std::string_view code, const SurveyPartPatch &p) {
     sets.emplace_back("note = ?");
   if (p.room_name)
     sets.emplace_back("room_name = ?");
+  if (p.dismissed) {
+    if (!impl_->hasPartDismissedColumn)
+      throw std::runtime_error("update_survey_part '" + std::string(code) +
+                               "': dismissed needs schema v36 (open the "
+                               "project read-write once to migrate)");
+    sets.emplace_back("dismissed = ?");
+  }
   if (!sets.empty()) {
     std::string sql = "UPDATE survey_parts SET ";
     for (std::size_t k = 0; k < sets.size(); ++k)
@@ -11450,6 +12056,8 @@ ProjectDB::update_survey_part(std::string_view code, const SurveyPartPatch &p) {
       bind_text(stmt, i++, *p.note);
     if (p.room_name)
       bind_text(stmt, i++, *p.room_name);
+    if (p.dismissed)
+      sqlite3_bind_int(stmt, i++, *p.dismissed ? 1 : 0);
     bind_text(stmt, i, code);
     if (sqlite3_step(stmt) != SQLITE_DONE)
       throw std::runtime_error("update_survey_part: " +
@@ -11642,6 +12250,17 @@ std::string ProjectDB::ensure_resource_passport(std::string_view code) {
 
 void ProjectDB::delete_survey_part(std::string_view code) {
   impl_->checkWritable();
+  if (impl_->hasSurveyMass) {
+    sqlite3_stmt *p = prepare_or_throw(
+        impl_->db,
+        "DELETE FROM value_provenance WHERE scope = 'part' AND id = ?;",
+        "delete_survey_part");
+    StmtGuard pg(p);
+    bind_text(p, 1, code);
+    if (sqlite3_step(p) != SQLITE_DONE)
+      throw std::runtime_error("delete_survey_part: " +
+                               std::string(sqlite3_errmsg(impl_->db)));
+  }
   sqlite3_stmt *s =
       prepare_or_throw(impl_->db, "DELETE FROM survey_parts WHERE code = ?;",
                        "delete_survey_part");
@@ -11701,6 +12320,21 @@ void ProjectDB::set_survey_part_view(
 
 void ProjectDB::delete_survey_type(int64_t id) {
   impl_->checkWritable();
+  if (impl_->hasSurveyMass) {
+    // The type's own rows and those of the parts that cascade with it.
+    for (const char *sql :
+         {"DELETE FROM value_provenance WHERE scope = 'type' AND id = "
+          "CAST(?1 AS TEXT);",
+          "DELETE FROM value_provenance WHERE scope = 'part' AND id IN "
+          "(SELECT code FROM survey_parts WHERE type_id = ?1);"}) {
+      sqlite3_stmt *p = prepare_or_throw(impl_->db, sql, "delete_survey_type");
+      StmtGuard pg(p);
+      sqlite3_bind_int64(p, 1, id);
+      if (sqlite3_step(p) != SQLITE_DONE)
+        throw std::runtime_error("delete_survey_type: " +
+                                 std::string(sqlite3_errmsg(impl_->db)));
+    }
+  }
   sqlite3_stmt *s =
       prepare_or_throw(impl_->db, "DELETE FROM survey_types WHERE id = ?;",
                        "delete_survey_type");
@@ -12226,12 +12860,17 @@ std::vector<ProjectDB::SampleRecord>
 ProjectDB::samples_for_type(int64_t type_id) const {
   // A part link bears on the type the part is filed under now, so the join
   // is resolved at read time rather than stored.
+  // A dismissed part (v36) is a misdetection and bears on nothing.
   const char *sql =
-      impl_->hasSamplePartLinks
+      !impl_->hasSamplePartLinks
+          ? "SELECT sample_id FROM sample_links WHERE type_id = ?1;"
+      : impl_->hasPartDismissedColumn
           ? "SELECT sample_id FROM sample_links WHERE type_id = ?1 UNION "
             "SELECT l.sample_id FROM sample_part_links l JOIN survey_parts p "
-            "ON p.code = l.part_code WHERE p.type_id = ?1;"
-          : "SELECT sample_id FROM sample_links WHERE type_id = ?1;";
+            "ON p.code = l.part_code WHERE p.type_id = ?1 AND p.dismissed = 0;"
+          : "SELECT sample_id FROM sample_links WHERE type_id = ?1 UNION "
+            "SELECT l.sample_id FROM sample_part_links l JOIN survey_parts p "
+            "ON p.code = l.part_code WHERE p.type_id = ?1;";
   sqlite3_stmt *stmt = prepare_or_throw(impl_->db, sql, "samples_for_type");
   StmtGuard guard(stmt);
   sqlite3_bind_int64(stmt, 1, type_id);

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <map>
 #include <set>
+#include <vector>
 
 namespace reusex::core {
 namespace {
@@ -104,8 +105,10 @@ std::string build_resource_csv(const std::vector<ResourceKey> &columns,
 std::string export_resources_csv(const ProjectDB &db, int64_t template_id) {
   const auto view = template_view(db, template_id);
   const auto columns = columns_of(view.resolved.keys, key_catalogue(db));
-  return build_resource_csv(columns, list_resources(db, view.resolved.keys),
-                            view.csv);
+  // A dismissed part is a misdetection: listed for the GUI, never delivered.
+  auto rows = list_resources(db, view.resolved.keys);
+  std::erase_if(rows, [](const Resource &r) { return r.dismissed; });
+  return build_resource_csv(columns, rows, view.csv);
 }
 
 std::vector<ResourceTable>
@@ -158,7 +161,7 @@ ResourceReportSection resource_report_section(const ProjectDB &db,
       rejected.insert(t.id);
   std::vector<Resource> rows;
   for (auto &r : list_resources(db, keys))
-    if (rejected.count(r.type_id) == 0)
+    if (rejected.count(r.type_id) == 0 && !r.dismissed)
       rows.push_back(std::move(r));
   return {view.record.name, resource_tables(columns, rows)};
 }

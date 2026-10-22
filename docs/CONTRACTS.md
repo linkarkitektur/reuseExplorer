@@ -693,9 +693,9 @@ instance.
 
 | | |
 |---|---|
-| Consumes | `instances`, `survey_dismissed_instances` (schema v26 tombstones), cloud positions and posed sensor frames (for views, optional) |
-| Produces | `survey_types`, `survey_parts`, `survey_parts.view_*` (schema v27) |
-| Options  | `rux create survey` CLI options (`--instances`, `--semantic`, `--rooms`) |
+| Consumes | `instances`, `survey_dismissed_instances` (schema v26 tombstones), cloud positions and posed sensor frames (for views, optional); the typed model for the measure step (optional, see below) |
+| Produces | `survey_types`, `survey_parts`, `survey_parts.view_*` (schema v27); never writes `survey_parts.dismissed` (schema v36); the measure step writes `survey_parts.element_guid` / `geom_*`, element types (`survey_types.element_category`), suggested `survey_types.buildup_id`, `value_provenance` (schema v37) |
+| Options  | `rux create survey` CLI options (`--instances`, `--semantic`, `--rooms`, `--no-measure`) |
 | Checks   | `instances` cloud present |
 
 Processes instances in ascending `instance_id`. Each unmapped `semantic_class`
@@ -716,6 +716,49 @@ instance guid in `survey_dismissed_instances`. `sync_survey` skips every
 tombstoned instance, so a deleted part is not re-created, and reports how
 many it skipped as `parts_dismissed`. `rux create materials` skips them too,
 so a deleted part's instance does not get a new passport.
+
+Marking a part as an error instead ("Markér som fejl") sets
+`survey_parts.dismissed` (schema v36): non-destructive and reversible
+("Gendan"). The part keeps its row, code, passport and instance link and is
+still listed, so `sync_survey` counts its instance as `parts_existing` and
+never re-creates or un-dismisses it; `core/survey_service` leaves it out of
+its type's quantity (`type_quantity`, `set_type_quantity`,
+`report_survey_rows`) and of `rooms_without_parts`.
+
+After the instance pass `sync_survey` runs `core::measure_survey`
+(`core/survey_measure.hpp`, schema v37) unless `--no-measure`: each part is
+grounded in the typed model, read when present — the walls, openings and
+storeys tables and the element index of the solid_walls / solid_slabs
+meshes; none of them is required. A door / window part whose instance an opening
+was detected from (`openings.source_instance_guid`) gets that opening's
+area (`geom_source = opening_area`, m²); every wall and every slab piece of
+the `solid_slabs` index becomes an element-backed part (keyed on
+`survey_parts.element_guid`, no instance) in a type per element category
+(`Ydervæg` / `Indervæg` from `walls.is_external` and `Etagedæk` / `Tag`,
+`survey_types.element_category`): a wall's net area is length × height
+minus its openings (`wall_area`, height from its solid), a floor slab its
+volume (`solid_volume`, m³), a roof its area = volume / thickness
+(`slab_area`, m²); every other instance part is one counted item (`count`).
+A part's quantity is seeded from the measurement when the units agree and
+no user entered it; an element type without a build-up gets one suggested
+(closest layered thickness to the median measured wall thickness, else the
+category's first), and its empty EAK the build-up's main layer code. A
+deleted element part's guid is tombstoned in `survey_dismissed_instances`,
+so it is not re-created; a part whose element left the model keeps its row
+and loses its measured quantity (warned). Every quantity, build-up and EAK
+the step writes is recorded in `value_provenance` (`measured` /
+`suggested`); user edits through `core::update_survey_type_entered` /
+`update_survey_part_entered` / `patch_resource` / `set_type_quantity`
+record `entered`, and an entered value is never overwritten.
+
+Tonnes (`core/survey_mass.hpp`): a part's mass is its type's build-up
+(`core/buildups.hpp`: the embedded `core/buildups.json` library, overridden
+or extended per project in the `buildups` table) over the part's quantity,
+main layer only; a type's calculated mass is the sum over its non-dismissed
+parts. `survey_types.mass_t` is the user's override: the effective mass is
+the override when set, else the calculation, and it is what `type_totals`,
+`fractions_by_eak`, `report_survey_rows` (the PDF report) and `sys:mass_t`
+read.
 
 An instance cloud written before schema v10 can have labels but no
 `instances` rows: the v10 migration backfilled rows only for clouds that had

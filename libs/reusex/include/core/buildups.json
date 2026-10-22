@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "description": "Opbygninger: typical Danish wall, slab and roof build-ups (moved from rux-frontend src/bygning/buildups.ts, the v8 prototype BUILDS). The main layer gives the EAK suggestion and the tonnes of a survey type: area x t x rho, area x kg_m2, or volume x rho for a massive layer (t >= 1) counted in m3. The other layers can each become a type of their own. A project overrides or adds entries by id (ProjectDB buildups table, schema v37). Categories: ydervaeg, indervaeg, daek, tag.",
+  "buildups": [
+    {
+      "id": "b1",
+      "category": "ydervaeg",
+      "name": "Hulmur, 1960'erne, 30 cm",
+      "main": { "material": "tegl (2 × 108 mm)", "t": 0.216, "rho": 1800, "eak": "17.01.02" },
+      "others": [
+        { "material": "mineraluld", "t": 0.075, "rho": 100, "eak": "17.06.04", "name": "Isolering, mineraluld" }
+      ]
+    },
+    {
+      "id": "b2",
+      "category": "ydervaeg",
+      "name": "Massiv mur, 1½ sten, 36 cm",
+      "main": { "material": "tegl", "t": 0.348, "rho": 1800, "eak": "17.01.02" },
+      "others": []
+    },
+    {
+      "id": "b3",
+      "category": "ydervaeg",
+      "name": "Hulmur med letbeton, 30 cm",
+      "main": { "material": "tegl", "t": 0.108, "rho": 1800, "eak": "17.01.02" },
+      "others": [
+        { "material": "mineraluld", "t": 0.075, "rho": 100, "eak": "17.06.04", "name": "Isolering, mineraluld" },
+        { "material": "letbeton", "t": 0.1, "rho": 600, "eak": "17.01.01", "name": "Bagmur, letbeton" }
+      ]
+    },
+    {
+      "id": "b4",
+      "category": "indervaeg",
+      "name": "Let skillevæg, gips, 10 cm",
+      "main": { "material": "gips (2 × 13 mm)", "t": 0.026, "rho": 900, "eak": "17.08.02" },
+      "others": [
+        { "material": "mineraluld", "t": 0.07, "rho": 40, "eak": "17.06.04", "name": "Isolering i skillevægge" }
+      ],
+      "note": "Stålskelettet er ikke regnet med."
+    },
+    {
+      "id": "b5",
+      "category": "daek",
+      "name": "Betondæk, armeret",
+      "main": { "material": "beton", "t": 1, "rho": 2400, "eak": "17.01.01" },
+      "others": [],
+      "note": "Mængden er i m³."
+    },
+    {
+      "id": "b6",
+      "category": "daek",
+      "name": "Huldæk, beton",
+      "main": { "material": "beton", "t": 1, "rho": 2300, "eak": "17.01.01" },
+      "others": [],
+      "note": "Mængden er i m³."
+    },
+    {
+      "id": "b7",
+      "category": "tag",
+      "name": "Tagpap, 2 lag",
+      "main": { "material": "tagpap", "kg_m2": 5, "eak": "17.03.02" },
+      "others": []
+    },
+    {
+      "id": "b8",
+      "category": "tag",
+      "name": "Tagpap på træunderlag",
+      "main": { "material": "tagpap", "kg_m2": 5, "eak": "17.03.02" },
+      "others": [
+        { "material": "træ", "t": 0.022, "rho": 500, "eak": "17.02.01", "name": "Underlag, brædder" }
+      ]
+    },
+    {
+      "id": "b11",
+      "category": "tag",
+      "name": "Betontagdæk med tagpap",
+      "main": { "material": "beton", "t": 0.2, "rho": 2400, "eak": "17.01.01" },
+      "others": [
+        { "material": "tagpap", "kg_m2": 5, "eak": "17.03.02", "name": "Tagpap" }
+      ],
+      "note": "Tagdækket er hovedlaget; tagpappen kan oprettes som egen type."
+    },
+    {
+      "id": "b9",
+      "category": "indervaeg",
+      "name": "Skillevæg, tegl, ½ sten, 11 cm",
+      "main": { "material": "tegl", "t": 0.108, "rho": 1800, "eak": "17.01.02" },
+      "others": []
+    },
+    {
+      "id": "b10",
+      "category": "indervaeg",
+      "name": "Bærende indervæg, beton, 20 cm",
+      "main": { "material": "beton", "t": 0.2, "rho": 2400, "eak": "17.01.01" },
+      "others": []
+    }
+  ]
+}

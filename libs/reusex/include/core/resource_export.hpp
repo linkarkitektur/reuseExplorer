@@ -45,8 +45,9 @@ std::vector<std::string> csv_labels(const std::vector<ResourceKey> &columns);
 std::string build_resource_csv(const std::vector<ResourceKey> &columns,
                                const std::vector<Resource> &rows,
                                const CsvOptions &options);
-/// The CSV for one template: its resolved keys, every resource by code,
-/// its CSV options. @throws std::out_of_range when the template is unknown.
+/// The CSV for one template: its resolved keys, every non-dismissed resource
+/// by code, its CSV options. @throws std::out_of_range when the template is
+/// unknown.
 std::string export_resources_csv(const ProjectDB &db, int64_t template_id);
 
 struct ResourceTable {
@@ -65,8 +66,9 @@ struct ResourceReportSection {
   std::string template_name;
   std::vector<ResourceTable> tables;
 };
-/// The PDF's Ressourcetabel for one template: every resource whose type is
-/// not rejected, by code. @throws std::out_of_range for an unknown template.
+/// The PDF's Ressourcetabel for one template: every non-dismissed resource
+/// whose type is not rejected, by code. @throws std::out_of_range for an
+/// unknown template.
 ResourceReportSection resource_report_section(const ProjectDB &db,
                                               int64_t template_id);
 

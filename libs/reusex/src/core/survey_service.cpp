@@ -11,6 +11,8 @@
 #include "reusex/core/label_semantics.hpp"
 #include "reusex/core/logging.hpp"
 #include "reusex/core/resource_view.hpp"
+#include "reusex/core/survey_mass.hpp"
+#include "reusex/core/survey_measure.hpp"
 
 #include <Eigen/Core>
 
@@ -25,10 +27,11 @@ namespace reusex::core {
 std::map<int64_t, EnvironmentStatus> environment_statuses(const ProjectDB &db) {
   // A sample bears on the types it links directly and on the type each of
   // its parts is filed under now (same rule as ProjectDB::samples_for_type),
-  // counted once per type.
+  // counted once per type. A dismissed part bears on nothing.
   std::map<std::string, int64_t> part_type;
   for (const auto &p : db.survey_parts())
-    part_type.emplace(p.code, p.type_id);
+    if (!p.dismissed)
+      part_type.emplace(p.code, p.type_id);
   std::map<int64_t, std::vector<SampleState>> linked;
   for (const auto &s : db.samples()) {
     std::set<int64_t> types(s.type_ids.begin(), s.type_ids.end());
@@ -74,13 +77,16 @@ std::vector<ProjectDB::SurveyPartRecord>
 set_type_quantity(ProjectDB &db, int64_t type_id, double total) {
   if (total < 0.0)
     throw std::invalid_argument("quantity must not be negative");
+  // Dismissed parts (schema v36) are not part of the type's quantity: they
+  // keep theirs untouched and get no share of the new total.
   std::vector<ProjectDB::SurveyPartRecord> parts;
   for (auto &p : db.survey_parts())
-    if (p.type_id == type_id)
+    if (p.type_id == type_id && !p.dismissed)
       parts.push_back(std::move(p));
   if (parts.empty())
     throw std::invalid_argument("survey type " + std::to_string(type_id) +
-                                " has no parts to distribute a quantity over");
+                                " has no (non-dismissed) parts to distribute "
+                                "a quantity over");
   std::vector<double> current;
   for (const auto &p : parts)
     current.push_back(p.quantity);
@@ -89,6 +95,15 @@ set_type_quantity(ProjectDB &db, int64_t type_id, double total) {
   for (std::size_t i = 0; i < parts.size(); ++i)
     code_quantities.emplace_back(parts[i].code, next[i]);
   db.set_survey_part_quantities(code_quantities);
+  if (db.has_survey_mass_columns()) {
+    // The user set the type's total: every share is entered, so
+    // measure_survey no longer seeds these quantities.
+    ProjectDB::Transaction tx(db);
+    for (const auto &[code, q] : code_quantities)
+      db.set_value_provenance({"part", code, "quantity", "entered",
+                               "type_total", std::nullopt, ""});
+    tx.commit();
+  }
   std::vector<ProjectDB::SurveyPartRecord> out;
   for (const auto &p : db.survey_parts())
     if (p.type_id == type_id)
@@ -98,10 +113,13 @@ set_type_quantity(ProjectDB &db, int64_t type_id, double total) {
 
 std::vector<TypeTotals> type_totals(const ProjectDB &db) {
   const auto env = environment_statuses(db);
+  // The effective mass (schema v37): the user's override, else the mass
+  // calculated from the build-up and the parts' quantities.
+  const auto masses = survey_masses(db);
   std::vector<TypeTotals> out;
   for (const auto &t : db.survey_types())
-    out.push_back({t.treatment, t.review_status, t.mass_t, t.eak_code,
-                   env.at(t.id), t.id, t.name});
+    out.push_back({t.treatment, t.review_status, masses.at(t.id).effective_t,
+                   t.eak_code, env.at(t.id), t.id, t.name});
   return out;
 }
 
@@ -110,20 +128,58 @@ std::vector<ReportSurveyRow> report_survey_rows(const ProjectDB &db) {
   // Whatever blocks the waste report is withheld here as well, so the PDF's
   // survey rows and its fractions never disagree about what is reported.
   std::set<int64_t> blocked;
-  for (const auto &b : fractions_by_eak(type_totals(db)).blocking)
+  const auto totals = type_totals(db);
+  std::map<int64_t, std::optional<double>> mass;
+  for (const auto &t : totals)
+    mass[t.type_id] = t.mass_t; // effective mass
+  for (const auto &b : fractions_by_eak(totals).blocking)
     blocked.insert(b.type_id);
   std::map<int64_t, double> quantity;
   for (const auto &p : db.survey_parts())
-    quantity[p.type_id] += p.quantity;
+    if (!p.dismissed)
+      quantity[p.type_id] += p.quantity;
   std::vector<ReportSurveyRow> rows;
   for (const auto &t : db.survey_types()) {
     const auto e = env.at(t.id);
     if (!reportable(t.review_status, e) || blocked.count(t.id) != 0)
       continue;
     rows.push_back({t.name, t.bim7aa_code, t.eak_code, t.unit, quantity[t.id],
-                    t.mass_t, t.treatment, e});
+                    mass[t.id], t.treatment, e});
   }
   return rows;
+}
+
+double type_quantity(const ProjectDB &db, int64_t type_id) {
+  double sum = 0.0;
+  for (const auto &p : db.survey_parts())
+    if (p.type_id == type_id && !p.dismissed)
+      sum += p.quantity;
+  return sum;
+}
+
+std::vector<std::string> rooms_without_parts(const ProjectDB &db,
+                                             std::string_view rooms_cloud) {
+  std::vector<std::string> out;
+  if (!db.has_point_cloud(rooms_cloud))
+    return out;
+  const auto cloud = db.point_cloud_label(rooms_cloud);
+  if (!cloud)
+    return out;
+  std::set<std::uint32_t> present;
+  for (const auto &p : *cloud)
+    if (p.label != 0)
+      present.insert(p.label);
+  std::set<std::uint32_t> covered;
+  for (const auto &p : db.survey_parts())
+    if (p.room_id && !p.dismissed)
+      covered.insert(*p.room_id);
+  const auto names = db.label_definitions(rooms_cloud);
+  for (auto r : present)
+    if (!covered.contains(r)) {
+      const auto n = names.find(static_cast<int>(r));
+      out.push_back(n != names.end() ? n->second : "Rum " + std::to_string(r));
+    }
+  return out;
 }
 
 ProjectDB::SampleRecord
@@ -403,11 +459,21 @@ SurveySyncReport sync_survey(ProjectDB &db, const SurveySyncOptions &opts) {
   // over (e.g. `rux create instances --clear`). They keep their code and
   // quantity and still count toward their type's total — report, don't hide
   // or delete (that is a Phase 3 product decision).
+  // A dismissed part is already marked as an error and counts toward nothing,
+  // so it is not reported again here.
   for (const auto &p : db.survey_parts())
-    if (p.instance_guid && !p.instance_id) {
+    if (p.instance_guid && !p.instance_id && !p.dismissed) {
       ++report.parts_orphaned;
       report.orphaned_codes.push_back(p.code);
     }
+  if (opts.measure) {
+    if (db.has_survey_mass_columns())
+      report.measure = measure_survey(db);
+    else
+      reusex::warn("sync_survey: the project is below schema v37; parts are "
+                   "not measured on the model");
+  }
+
   if (report.parts_orphaned > 0) {
     std::string codes;
     const std::size_t shown =

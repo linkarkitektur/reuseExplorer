@@ -8,6 +8,9 @@
 
 #include <reusex/core/ProjectDB.hpp>
 #include <reusex/core/report_generator.hpp>
+#include <reusex/visualize/render_view.hpp>
+
+#include <opencv2/imgcodecs.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -37,6 +40,8 @@ EXAMPLES:
 NOTES:
   - Template: --template, else $REUSEX_REPORT_TEMPLATE, else the built-in one
   - Data format: docs/guides/report-template.md
+  - Cover image: the project's report/cover_image (a photo, 360° or upload,
+    set through ruxd's /reports/cover), else an orbit render of the cloud
 )");
 
   auto *out = sub->add_option("-o,--output", opt->output_path,
@@ -59,12 +64,32 @@ NOTES:
   });
 }
 
+namespace {
+/// The Forside's fallback image: the whole cloud from the orbit ring, wide —
+/// the same shot the GUI preview showed (PagePreview's COVER_RENDER).
+std::vector<std::uint8_t> render_cover(const reusex::ProjectDB &db) {
+  namespace viz = reusex::visualize;
+  viz::RenderOptions o;
+  o.layers = {viz::Layer::cloud};
+  o.view = viz::ViewPreset::orbit;
+  o.orbit_index = 1;
+  o.width = 1200;
+  o.height = 560;
+  const cv::Mat image = viz::render_view(db, o);
+  std::vector<std::uint8_t> png;
+  if (image.empty() || !cv::imencode(".png", image, png))
+    return {};
+  return png;
+}
+} // namespace
+
 int run_subcommand_export_pdf(SubcommandExportPdfOptions const &opt,
                               const RuxOptions &global_opt) {
   try {
     reusex::ReportOptions report;
     report.resource_template_id = opt.resource_template_id;
     report.template_path = opt.template_path;
+    report.cover_fallback = render_cover;
 
     if (opt.dump_dir.empty()) {
       // Fail before the (slow) typst run, not after it.
