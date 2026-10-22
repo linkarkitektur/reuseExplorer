@@ -436,9 +436,11 @@ class ProjectDB::Impl {
   bool hasSpacesTable = false;
   /// survey_parts.dismissed exists (v36).
   bool hasPartDismissedColumn = false;
+  /// report_assets exists (v37).
+  bool hasReportAssetsTable = false;
 
   // cppcheck-suppress unusedStructMember
-  static constexpr int LATEST_SCHEMA_VERSION = 36;
+  static constexpr int LATEST_SCHEMA_VERSION = 37;
 
   // How long one statement waits for a lock another connection holds before
   // failing with SQLITE_BUSY. sqlite's default is not to wait at all.
@@ -568,6 +570,7 @@ class ProjectDB::Impl {
     hasOpeningsTable = tableExists("openings");
     hasSpacesTable = tableExists("spaces") && tableExists("space_boundaries");
     hasPartDismissedColumn = columnExists("survey_parts", "dismissed");
+    hasReportAssetsTable = tableExists("report_assets");
   }
 
   /// True the first time this process opens dbPath read-only at schema
@@ -895,6 +898,10 @@ class ProjectDB::Impl {
 
     if (current < 36) {
       migrateToV36();
+    }
+
+    if (current < 37) {
+      migrateToV37();
     }
 
     reusex::trace("Schema version: {}", getCurrentSchemaVersion());
@@ -4307,6 +4314,27 @@ class ProjectDB::Impl {
                             "dismissal");
     sp.release();
     reusex::info("Migration to schema version 36 complete");
+  }
+
+  void migrateToV37() {
+    reusex::info("Migrating database to schema version 37");
+    // Named images the PDF report uses that are not a sensor frame or a
+    // panorama: today only the uploaded cover image ("cover",
+    // core/report_cover.hpp). Guarded so a test that rolls the version back
+    // re-runs it safely.
+    Savepoint sp(db, "migrate_v37");
+    execOrThrow(R"(
+      CREATE TABLE IF NOT EXISTS report_assets (
+        name       TEXT PRIMARY KEY,
+        mime_type  TEXT NOT NULL,
+        data       BLOB NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+      );
+    )");
+    insertSchemaVersion(37, "report_assets: uploaded report images (cover)");
+    sp.release();
+    hasReportAssetsTable = true;
+    reusex::info("Migration to schema version 37 complete");
   }
 
   // ── Spaces (v35) ─────────────────────────────────────────────────────────
@@ -10907,6 +10935,77 @@ std::vector<ProjectDB::ReportPdfRecord> ProjectDB::list_report_pdfs() const {
     out.push_back(std::move(rec));
   }
   return out;
+}
+
+// --- Report assets (schema v37) ---
+
+void ProjectDB::set_report_asset(std::string_view name,
+                                 const std::vector<std::uint8_t> &data,
+                                 std::string_view mime_type) {
+  impl_->checkWritable();
+  if (!impl_->hasReportAssetsTable)
+    throw std::runtime_error("set_report_asset: project schema predates v37 "
+                             "(open it read-write once to migrate)");
+  if (name.empty())
+    throw std::invalid_argument("set_report_asset: empty name");
+  if (data.empty())
+    throw std::invalid_argument("set_report_asset: empty data");
+  sqlite3_stmt *s = prepare_or_throw(
+      impl_->db,
+      "INSERT INTO report_assets (name, mime_type, data) VALUES (?1, ?2, ?3) "
+      "ON CONFLICT (name) DO UPDATE SET mime_type = excluded.mime_type, "
+      "data = excluded.data, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', "
+      "'now');",
+      "set_report_asset");
+  StmtGuard guard(s);
+  const std::string n(name), m(mime_type);
+  sqlite3_bind_text(s, 1, n.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(s, 2, m.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_blob(s, 3, data.data(), static_cast<int>(data.size()),
+                    SQLITE_TRANSIENT);
+  if (sqlite3_step(s) != SQLITE_DONE)
+    throw std::runtime_error("set_report_asset: " +
+                             std::string(sqlite3_errmsg(impl_->db)));
+}
+
+std::optional<std::pair<std::vector<std::uint8_t>, std::string>>
+ProjectDB::report_asset(std::string_view name) const {
+  if (!impl_->hasReportAssetsTable)
+    return std::nullopt;
+  sqlite3_stmt *s = prepare_or_throw(
+      impl_->db, "SELECT data, mime_type FROM report_assets WHERE name = ?;",
+      "report_asset");
+  StmtGuard guard(s);
+  const std::string n(name);
+  sqlite3_bind_text(s, 1, n.c_str(), -1, SQLITE_TRANSIENT);
+  if (sqlite3_step(s) != SQLITE_ROW)
+    return std::nullopt;
+  const auto *blob =
+      reinterpret_cast<const std::uint8_t *>(sqlite3_column_blob(s, 0));
+  const int bytes = sqlite3_column_bytes(s, 0);
+  std::vector<std::uint8_t> data;
+  if (blob && bytes > 0)
+    data.assign(blob, blob + bytes);
+  std::string mime;
+  if (const auto *t = reinterpret_cast<const char *>(sqlite3_column_text(s, 1)))
+    mime = t;
+  return std::make_pair(std::move(data), std::move(mime));
+}
+
+bool ProjectDB::delete_report_asset(std::string_view name) {
+  impl_->checkWritable();
+  if (!impl_->hasReportAssetsTable)
+    return false;
+  sqlite3_stmt *s =
+      prepare_or_throw(impl_->db, "DELETE FROM report_assets WHERE name = ?;",
+                       "delete_report_asset");
+  StmtGuard guard(s);
+  const std::string n(name);
+  sqlite3_bind_text(s, 1, n.c_str(), -1, SQLITE_TRANSIENT);
+  if (sqlite3_step(s) != SQLITE_DONE)
+    throw std::runtime_error("delete_report_asset: " +
+                             std::string(sqlite3_errmsg(impl_->db)));
+  return sqlite3_changes(impl_->db) > 0;
 }
 
 std::optional<std::vector<std::uint8_t>>

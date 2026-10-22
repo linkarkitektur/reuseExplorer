@@ -717,7 +717,14 @@ tree — if a doc mentions `RTABMapDatabase`, that doc is stale.
   (`SurveyPartRecord::dismissed` / `SurveyPartPatch::dismissed`): a part
   marked as an error stays listed but `core/survey_service` leaves it out
   of its type's quantity (`type_quantity`, `set_type_quantity`) and of
-  `rooms_without_parts`; reversible, and `sync_survey` leaves it alone
+  `rooms_without_parts`; reversible, and `sync_survey` leaves it alone.
+  Schema v37 adds `report_assets` (named report images,
+  `set_report_asset` / `report_asset`): the uploaded cover of the PDF
+  report. The cover choice itself is project setting `report/cover_image`
+  (`core/report_cover.hpp`: a frame or panorama + region, or the upload);
+  the BEK 496 Sagsdata fields are project settings
+  `sagsdata/<project id>/<field>` (`core/sagsdata.hpp`), shared by ruxd and
+  `write_report_data`
 - Migrating schema; `LATEST_SCHEMA_VERSION` is defined in
   `src/core/ProjectDB.cpp` — read it there rather than trusting a doc (it moves
   most releases)

@@ -1379,6 +1379,21 @@ class ProjectDB {
   [[nodiscard]] std::optional<std::vector<std::uint8_t>>
   report_pdf(int64_t id) const;
 
+  // --- Report assets (schema v37) ---
+
+  /// Insert or replace a named report image (today only "cover", the
+  /// uploaded cover image, core/report_cover.hpp).
+  /// @throws std::runtime_error on a read-only or pre-v37 project;
+  ///         std::invalid_argument for an empty name or empty data.
+  void set_report_asset(std::string_view name,
+                        const std::vector<std::uint8_t> &data,
+                        std::string_view mime_type);
+  /// {bytes, MIME type}, or nullopt when absent (or pre-v37).
+  [[nodiscard]] std::optional<std::pair<std::vector<std::uint8_t>, std::string>>
+  report_asset(std::string_view name) const;
+  /// False when absent. @throws std::runtime_error on a read-only project.
+  bool delete_report_asset(std::string_view name);
+
   // --- Resource templates (schema v25) ---
   /// One row of `templates` (resources/templates spec §5.1). members_json
   /// and csv_json are parsed by core/resource_templates.hpp.
