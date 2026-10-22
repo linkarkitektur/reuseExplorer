@@ -440,9 +440,11 @@ class ProjectDB::Impl {
   /// Survey mass (v37): survey_parts.element_guid/geom_*, survey_types.
   /// buildup_id/element_category, buildups, value_provenance.
   bool hasSurveyMass = false;
+  /// report_assets exists (v38).
+  bool hasReportAssetsTable = false;
 
   // cppcheck-suppress unusedStructMember
-  static constexpr int LATEST_SCHEMA_VERSION = 37;
+  static constexpr int LATEST_SCHEMA_VERSION = 38;
 
   // How long one statement waits for a lock another connection holds before
   // failing with SQLITE_BUSY. sqlite's default is not to wait at all.
@@ -572,9 +574,8 @@ class ProjectDB::Impl {
     hasOpeningsTable = tableExists("openings");
     hasSpacesTable = tableExists("spaces") && tableExists("space_boundaries");
     hasPartDismissedColumn = columnExists("survey_parts", "dismissed");
-    hasSurveyMass = columnExists("survey_parts", "geom_source") &&
-                    columnExists("survey_types", "element_category") &&
-                    tableExists("buildups") && tableExists("value_provenance");
+    hasSurveyMass = surveyMassSchemaPresent();
+    hasReportAssetsTable = tableExists("report_assets");
   }
 
   /// True the first time this process opens dbPath read-only at schema
@@ -906,6 +907,10 @@ class ProjectDB::Impl {
 
     if (current < 37) {
       migrateToV37();
+    }
+
+    if (current < 38) {
+      migrateToV38();
     }
 
     reusex::trace("Schema version: {}", getCurrentSchemaVersion());
@@ -4339,6 +4344,27 @@ class ProjectDB::Impl {
     // (one value per part passport); each type takes the name most of its
     // parts carry, when it names a library build-up.
     Savepoint sp(db, "migrate_v37");
+    ensureSurveyMassSchemaV37();
+    insertSchemaVersion(37, "survey mass: part geometry, build-ups, "
+                            "value provenance");
+    sp.release();
+    reusex::info("Migration to schema version 37 complete");
+  }
+
+  /// The survey-mass shape of v37 is all present.
+  bool surveyMassSchemaPresent() {
+    return columnExists("survey_parts", "element_guid") &&
+           columnExists("survey_parts", "geom_quantity") &&
+           columnExists("survey_parts", "geom_unit") &&
+           columnExists("survey_parts", "geom_source") &&
+           columnExists("survey_types", "buildup_id") &&
+           columnExists("survey_types", "element_category") &&
+           tableExists("buildups") && tableExists("value_provenance");
+  }
+
+  /// v37 DDL + the "Opbygning" backfill; every step is guarded, so v38 can
+  /// re-run it on a database whose v37 was a different branch's.
+  void ensureSurveyMassSchemaV37() {
     if (!columnExists("survey_parts", "element_guid"))
       execOrThrow("ALTER TABLE survey_parts ADD COLUMN element_guid TEXT;");
     if (!columnExists("survey_parts", "geom_quantity"))
@@ -4383,10 +4409,6 @@ class ProjectDB::Impl {
       );
     )");
     backfillBuildupsFromUserColumnV37();
-    insertSchemaVersion(37, "survey mass: part geometry, build-ups, "
-                            "value provenance");
-    sp.release();
-    reusex::info("Migration to schema version 37 complete");
   }
 
   /// v37: the frontend's "Opbygning" user column -> survey_types.buildup_id.
@@ -4461,6 +4483,36 @@ class ProjectDB::Impl {
       reusex::warn("migrate_v37: {} survey type(s) carry an 'Opbygning' value "
                    "that names no library build-up; left without one",
                    unknown);
+  }
+
+  void migrateToV38() {
+    reusex::info("Migrating database to schema version 38");
+    // Named images the PDF report uses that are not a sensor frame or a
+    // panorama: today only the uploaded cover image ("cover",
+    // core/report_cover.hpp).
+    //
+    // Two branches each shipped a v37 before they were merged: survey mass
+    // (this file's migrateToV37) and report_assets (now this v38). A project
+    // migrated by either one alone is stamped v37 but lacks the other half,
+    // so both halves are re-applied here behind existence checks.
+    Savepoint sp(db, "migrate_v38");
+    if (!surveyMassSchemaPresent()) {
+      reusex::warn("migrate_v38: schema v37 lacks the survey-mass columns "
+                   "(a report_assets-only v37); adding them");
+      ensureSurveyMassSchemaV37();
+    }
+    execOrThrow(R"(
+      CREATE TABLE IF NOT EXISTS report_assets (
+        name       TEXT PRIMARY KEY,
+        mime_type  TEXT NOT NULL,
+        data       BLOB NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+      );
+    )");
+    insertSchemaVersion(38, "report_assets: uploaded report images (cover)");
+    sp.release();
+    hasReportAssetsTable = true;
+    reusex::info("Migration to schema version 38 complete");
   }
 
   // ── Spaces (v35) ─────────────────────────────────────────────────────────
@@ -11061,6 +11113,77 @@ std::vector<ProjectDB::ReportPdfRecord> ProjectDB::list_report_pdfs() const {
     out.push_back(std::move(rec));
   }
   return out;
+}
+
+// --- Report assets (schema v38) ---
+
+void ProjectDB::set_report_asset(std::string_view name,
+                                 const std::vector<std::uint8_t> &data,
+                                 std::string_view mime_type) {
+  impl_->checkWritable();
+  if (!impl_->hasReportAssetsTable)
+    throw std::runtime_error("set_report_asset: project schema predates v38 "
+                             "(open it read-write once to migrate)");
+  if (name.empty())
+    throw std::invalid_argument("set_report_asset: empty name");
+  if (data.empty())
+    throw std::invalid_argument("set_report_asset: empty data");
+  sqlite3_stmt *s = prepare_or_throw(
+      impl_->db,
+      "INSERT INTO report_assets (name, mime_type, data) VALUES (?1, ?2, ?3) "
+      "ON CONFLICT (name) DO UPDATE SET mime_type = excluded.mime_type, "
+      "data = excluded.data, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', "
+      "'now');",
+      "set_report_asset");
+  StmtGuard guard(s);
+  const std::string n(name), m(mime_type);
+  sqlite3_bind_text(s, 1, n.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(s, 2, m.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_blob(s, 3, data.data(), static_cast<int>(data.size()),
+                    SQLITE_TRANSIENT);
+  if (sqlite3_step(s) != SQLITE_DONE)
+    throw std::runtime_error("set_report_asset: " +
+                             std::string(sqlite3_errmsg(impl_->db)));
+}
+
+std::optional<std::pair<std::vector<std::uint8_t>, std::string>>
+ProjectDB::report_asset(std::string_view name) const {
+  if (!impl_->hasReportAssetsTable)
+    return std::nullopt;
+  sqlite3_stmt *s = prepare_or_throw(
+      impl_->db, "SELECT data, mime_type FROM report_assets WHERE name = ?;",
+      "report_asset");
+  StmtGuard guard(s);
+  const std::string n(name);
+  sqlite3_bind_text(s, 1, n.c_str(), -1, SQLITE_TRANSIENT);
+  if (sqlite3_step(s) != SQLITE_ROW)
+    return std::nullopt;
+  const auto *blob =
+      reinterpret_cast<const std::uint8_t *>(sqlite3_column_blob(s, 0));
+  const int bytes = sqlite3_column_bytes(s, 0);
+  std::vector<std::uint8_t> data;
+  if (blob && bytes > 0)
+    data.assign(blob, blob + bytes);
+  std::string mime;
+  if (const auto *t = reinterpret_cast<const char *>(sqlite3_column_text(s, 1)))
+    mime = t;
+  return std::make_pair(std::move(data), std::move(mime));
+}
+
+bool ProjectDB::delete_report_asset(std::string_view name) {
+  impl_->checkWritable();
+  if (!impl_->hasReportAssetsTable)
+    return false;
+  sqlite3_stmt *s =
+      prepare_or_throw(impl_->db, "DELETE FROM report_assets WHERE name = ?;",
+                       "delete_report_asset");
+  StmtGuard guard(s);
+  const std::string n(name);
+  sqlite3_bind_text(s, 1, n.c_str(), -1, SQLITE_TRANSIENT);
+  if (sqlite3_step(s) != SQLITE_DONE)
+    throw std::runtime_error("delete_report_asset: " +
+                             std::string(sqlite3_errmsg(impl_->db)));
+  return sqlite3_changes(impl_->db) > 0;
 }
 
 std::optional<std::vector<std::uint8_t>>

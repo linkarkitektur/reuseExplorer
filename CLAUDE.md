@@ -728,7 +728,14 @@ tree — if a doc mentions `RTABMapDatabase`, that doc is stale.
   `value_provenance` (scan / measured / calculated / entered / suggested
   per type or part field). `survey_types.mass_t` is now the user's
   override; `core/survey_mass.hpp` computes the effective mass (override,
-  else build-up × quantity) that `type_totals` and the report read
+  else build-up × quantity) that `type_totals` and the report read.
+  Schema v38 adds `report_assets` (named report images,
+  `set_report_asset` / `report_asset`): the uploaded cover of the PDF
+  report. The cover choice itself is project setting `report/cover_image`
+  (`core/report_cover.hpp`: a frame or panorama + region, or the upload);
+  the BEK 496 Sagsdata fields are project settings
+  `sagsdata/<project id>/<field>` (`core/sagsdata.hpp`), shared by ruxd and
+  `write_report_data`
 - Migrating schema; `LATEST_SCHEMA_VERSION` is defined in
   `src/core/ProjectDB.cpp` — read it there rather than trusting a doc (it moves
   most releases)

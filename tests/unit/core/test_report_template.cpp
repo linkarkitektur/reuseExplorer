@@ -431,12 +431,40 @@ TEST_CASE("ReportSample_DataJson_ExercisesTheTemplate", "[report][sample]") {
   CHECK(without_image >= 2);
   CHECK(longest_name >= 100); // one very long name (bytes, UTF-8)
 
+  // The Forside's cover image (reusex-ufcm).
+  const auto cover = data.at("cover_path").get<std::string>();
+  REQUIRE_FALSE(cover.empty());
+  REQUIRE(fs::is_regular_file(kSampleDir / cover));
+  CHECK(fs::file_size(kSampleDir / cover) <= 60 * 1024);
+  referenced.insert(cover);
+
   // No unreferenced images: every file in images/ is used.
   for (const auto &e : fs::directory_iterator(kSampleDir / "images"))
     CHECK(referenced.count("images/" + e.path().filename().string()) == 1);
 
   CHECK(data.at("survey").at("rows").size() >= 5);
   CHECK(data.at("survey").at("blocking").get<int>() > 0); // draft state
+
+  // The sectioned layout's data: Sagsdata with a gap, types approved and
+  // not, a sample awaiting its answer and one contaminated, every step.
+  CHECK(data.at("project").at("bbr_number").is_string());
+  bool sagsdata_gap = false;
+  for (const auto &r : data.at("sagsdata"))
+    sagsdata_gap = sagsdata_gap || r.at("value").is_null();
+  CHECK(sagsdata_gap);
+  bool unapproved = false;
+  for (const auto &t : data.at("types"))
+    unapproved = unapproved || !t.at("approved").get<bool>();
+  CHECK(unapproved);
+  bool awaiting = false, contaminated = false;
+  for (const auto &smp : data.at("samples")) {
+    awaiting = awaiting || smp.at("result").is_null();
+    contaminated = contaminated || smp.at("contaminated").get<bool>();
+  }
+  CHECK(awaiting);
+  CHECK(contaminated);
+  CHECK(data.at("demolition_steps").size() >= 5);
+  CHECK(data.at("sections").size() == 6);
 
   // One template with many fields: Betegnelse + >= 15 others.
   std::set<std::string> keys;
