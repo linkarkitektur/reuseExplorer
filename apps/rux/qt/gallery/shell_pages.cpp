@@ -333,6 +333,38 @@ QWidget *make_3d_labels(const PageContext &ctx) {
   return shell;
 }
 
+/// The building elements alone: no points, no cut, every storey whole.
+AppShell *make_3d_elements(const PageContext &ctx,
+                           const std::vector<std::string> &only) {
+  auto *shell = make_3d(ctx);
+  shell->viewer()->set_layer_visible(reusex::visualize::Layer::cloud, false);
+  shell->viewer()->set_cut(false);
+  shell->viewer()->show_only_elements(only);
+  return shell;
+}
+
+/// Only the walls of the building elements (the "Bygningsdele" group).
+QWidget *make_3d_walls(const PageContext &ctx) {
+  return make_3d_elements(ctx, {"wall"});
+}
+
+/// Only the doors and windows: the solid walls hidden, so the openings
+/// layer's frames stand in for their reveals.
+QWidget *make_3d_doors_windows(const PageContext &ctx) {
+  return make_3d_elements(ctx, {"door", "window"});
+}
+
+/// One storey of the building elements: the second of several (else the
+/// only one), cut above its own floor.
+QWidget *make_3d_storey(const PageContext &ctx) {
+  auto *shell = make_3d(ctx);
+  const auto storeys = shell->viewer()->element_filter().storeys();
+  if (!storeys.empty())
+    shell->viewer()->set_storey_filter(storeys.size() > 1 ? storeys[1]
+                                                          : storeys.front());
+  return shell;
+}
+
 /// The graph with A and B marked and a few staged loop closures.
 AppShell *make_pg(const PageContext &ctx, Open open = Open::project) {
   auto *shell = sized(make_shell(ctx, open));
@@ -1712,6 +1744,12 @@ void register_shell_pages() {
                  "syntetisk panorama til projektkopien)",
                  make_db_panorama});
   register_page({"3d", "3D: punktskyen i perspektiv med snit", make_3d_page});
+  register_page(
+      {"3d-walls", "3D: kun væggene, uden punkter og snit", make_3d_walls});
+  register_page({"3d-doors-windows",
+                 "3D: kun døre og vinduer, uden punkter og snit",
+                 make_3d_doors_windows});
+  register_page({"3d-storey", "3D: bygningsdele på én etage", make_3d_storey});
   register_page({"3d-pick",
                  "3D: farvet efter rum, med forklaring og et valgt punkt",
                  make_3d_pick});

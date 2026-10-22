@@ -230,6 +230,12 @@ void Theme::add_generated_tokens() {
                   colour("--color-on-accent"),
                   {{0.24, 0.52}, {0.42, 0.70}, {0.76, 0.32}}, 0.12)
           .toStdString();
+  // The dash of a partly checked (tri-state) check box.
+  tokens_["--qt-icon-dash"] =
+      paint_glyph(icon_dir_->filePath("dash-" + tag + ".png"),
+                  colour("--color-on-accent"), {{0.28, 0.50}, {0.72, 0.50}},
+                  0.12)
+          .toStdString();
   tokens_["--qt-icon-chevron"] =
       paint_glyph(icon_dir_->filePath("chevron-" + tag + ".png"),
                   colour("--color-text-muted"),
