@@ -717,7 +717,18 @@ tree — if a doc mentions `RTABMapDatabase`, that doc is stale.
   (`SurveyPartRecord::dismissed` / `SurveyPartPatch::dismissed`): a part
   marked as an error stays listed but `core/survey_service` leaves it out
   of its type's quantity (`type_quantity`, `set_type_quantity`) and of
-  `rooms_without_parts`; reversible, and `sync_survey` leaves it alone
+  `rooms_without_parts`; reversible, and `sync_survey` leaves it alone.
+  Schema v37 grounds survey quantities and mass in the model (reusex-uprf):
+  `survey_parts.element_guid` / `geom_quantity` / `geom_unit` /
+  `geom_source` (written by `core::measure_survey`,
+  `core/survey_measure.hpp`, run at the end of `sync_survey`: wall / slab /
+  roof element parts, opening areas, counts), `survey_types.buildup_id` /
+  `element_category`, the `buildups` table (project overrides of the
+  embedded `core/buildups.json` library, `core/buildups.hpp`) and
+  `value_provenance` (scan / measured / calculated / entered / suggested
+  per type or part field). `survey_types.mass_t` is now the user's
+  override; `core/survey_mass.hpp` computes the effective mass (override,
+  else build-up × quantity) that `type_totals` and the report read
 - Migrating schema; `LATEST_SCHEMA_VERSION` is defined in
   `src/core/ProjectDB.cpp` — read it there rather than trusting a doc (it moves
   most releases)

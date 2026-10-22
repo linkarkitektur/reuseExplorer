@@ -11,6 +11,8 @@
 #include "reusex/core/label_semantics.hpp"
 #include "reusex/core/logging.hpp"
 #include "reusex/core/resource_view.hpp"
+#include "reusex/core/survey_mass.hpp"
+#include "reusex/core/survey_measure.hpp"
 
 #include <Eigen/Core>
 
@@ -93,6 +95,15 @@ set_type_quantity(ProjectDB &db, int64_t type_id, double total) {
   for (std::size_t i = 0; i < parts.size(); ++i)
     code_quantities.emplace_back(parts[i].code, next[i]);
   db.set_survey_part_quantities(code_quantities);
+  if (db.has_survey_mass_columns()) {
+    // The user set the type's total: every share is entered, so
+    // measure_survey no longer seeds these quantities.
+    ProjectDB::Transaction tx(db);
+    for (const auto &[code, q] : code_quantities)
+      db.set_value_provenance({"part", code, "quantity", "entered",
+                               "type_total", std::nullopt, ""});
+    tx.commit();
+  }
   std::vector<ProjectDB::SurveyPartRecord> out;
   for (const auto &p : db.survey_parts())
     if (p.type_id == type_id)
@@ -102,10 +113,13 @@ set_type_quantity(ProjectDB &db, int64_t type_id, double total) {
 
 std::vector<TypeTotals> type_totals(const ProjectDB &db) {
   const auto env = environment_statuses(db);
+  // The effective mass (schema v37): the user's override, else the mass
+  // calculated from the build-up and the parts' quantities.
+  const auto masses = survey_masses(db);
   std::vector<TypeTotals> out;
   for (const auto &t : db.survey_types())
-    out.push_back({t.treatment, t.review_status, t.mass_t, t.eak_code,
-                   env.at(t.id), t.id, t.name});
+    out.push_back({t.treatment, t.review_status, masses.at(t.id).effective_t,
+                   t.eak_code, env.at(t.id), t.id, t.name});
   return out;
 }
 
@@ -114,7 +128,11 @@ std::vector<ReportSurveyRow> report_survey_rows(const ProjectDB &db) {
   // Whatever blocks the waste report is withheld here as well, so the PDF's
   // survey rows and its fractions never disagree about what is reported.
   std::set<int64_t> blocked;
-  for (const auto &b : fractions_by_eak(type_totals(db)).blocking)
+  const auto totals = type_totals(db);
+  std::map<int64_t, std::optional<double>> mass;
+  for (const auto &t : totals)
+    mass[t.type_id] = t.mass_t; // effective mass
+  for (const auto &b : fractions_by_eak(totals).blocking)
     blocked.insert(b.type_id);
   std::map<int64_t, double> quantity;
   for (const auto &p : db.survey_parts())
@@ -126,7 +144,7 @@ std::vector<ReportSurveyRow> report_survey_rows(const ProjectDB &db) {
     if (!reportable(t.review_status, e) || blocked.count(t.id) != 0)
       continue;
     rows.push_back({t.name, t.bim7aa_code, t.eak_code, t.unit, quantity[t.id],
-                    t.mass_t, t.treatment, e});
+                    mass[t.id], t.treatment, e});
   }
   return rows;
 }
@@ -448,6 +466,14 @@ SurveySyncReport sync_survey(ProjectDB &db, const SurveySyncOptions &opts) {
       ++report.parts_orphaned;
       report.orphaned_codes.push_back(p.code);
     }
+  if (opts.measure) {
+    if (db.has_survey_mass_columns())
+      report.measure = measure_survey(db);
+    else
+      reusex::warn("sync_survey: the project is below schema v37; parts are "
+                   "not measured on the model");
+  }
+
   if (report.parts_orphaned > 0) {
     std::string codes;
     const std::size_t shown =

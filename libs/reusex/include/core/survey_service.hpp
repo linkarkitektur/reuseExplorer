@@ -10,6 +10,7 @@
 
 #include "reusex/core/ProjectDB.hpp"
 #include "reusex/core/survey.hpp"
+#include "reusex/core/survey_measure.hpp"
 
 #include <cstddef>
 #include <map>
@@ -44,8 +45,9 @@ double type_quantity(const ProjectDB &db, int64_t type_id);
 std::vector<std::string>
 rooms_without_parts(const ProjectDB &db,
                     std::string_view rooms_cloud = "rooms");
-std::vector<TypeTotals>
-type_totals(const ProjectDB &db); // one per survey type, same order
+/// One per survey type, same order; mass_t is the type's effective mass
+/// (core::survey_masses: the user's override, else the calculation).
+std::vector<TypeTotals> type_totals(const ProjectDB &db);
 /// Sample edit with the stage/result rule enforced (validate_sample_state on
 /// the merged state).
 ProjectDB::SampleRecord
@@ -55,8 +57,8 @@ update_sample_checked(ProjectDB &db, int64_t id,
 /// One survey type as the PDF report's Kortlægning section lists it.
 struct ReportSurveyRow {
   std::string name, bim7aa_code, eak_code, unit;
-  double quantity = 0.0; // sum of the type's non-dismissed parts
-  std::optional<double> mass_t;
+  double quantity = 0.0;        // sum of the type's non-dismissed parts
+  std::optional<double> mass_t; // effective mass (core::survey_masses)
   Treatment treatment = Treatment::genanvendelse;
   EnvironmentStatus environment = EnvironmentStatus::ren_screening;
 };
@@ -79,6 +81,9 @@ struct SurveySyncOptions {
   /// Positions of the instance cloud's points (index-aligned), for placing
   /// instances in sensor frames when attaching views.
   std::string positions_cloud = "cloud";
+  /// Then ground every part in the model (core::measure_survey, schema
+  /// v37): wall / slab / roof element parts, opening areas, counts.
+  bool measure = true;
 };
 /// Counts of what `sync_survey` changed.
 struct SurveySyncReport {
@@ -117,6 +122,9 @@ struct SurveySyncReport {
   /// frame sees the instance, or the project has no sensor frames, no
   /// positions cloud, or misaligned clouds.
   std::size_t views_unavailable = 0;
+  /// What measure_survey did (empty when SurveySyncOptions::measure is off
+  /// or the project is below v37).
+  SurveyMeasureReport measure{};
 };
 /// Fill survey_types / survey_parts from the instances table: one type per
 /// semantic class, one bygningsdel (survey part) per instance, placed in the

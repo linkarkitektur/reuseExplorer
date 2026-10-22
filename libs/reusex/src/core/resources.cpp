@@ -7,6 +7,7 @@
 #include "reusex/core/frame_projection.hpp"
 #include "reusex/core/logging.hpp"
 #include "reusex/core/survey.hpp"
+#include "reusex/core/survey_mass.hpp"
 #include "reusex/core/survey_service.hpp"
 
 #include <algorithm>
@@ -27,8 +28,13 @@ Context load(const ProjectDB &db,
              std::optional<std::vector<ResourceKey>> catalogue = std::nullopt) {
   Context c;
   c.catalogue = catalogue ? std::move(*catalogue) : key_catalogue(db);
-  for (auto &t : db.survey_types())
+  // sys:mass_t reads the type's effective mass (schema v37): the user's
+  // override, else the calculation; a write sets the override.
+  const auto masses = survey_masses(db);
+  for (auto &t : db.survey_types()) {
+    t.mass_t = masses.at(t.id).effective_t;
     c.types.emplace(t.id, std::move(t));
+  }
   c.env = environment_statuses(db);
   return c;
 }
@@ -258,9 +264,12 @@ patch_resource(ProjectDB &db, std::string_view code,
 
   {
     ProjectDB::Transaction tx(db);
-    if (type_written)
+    if (type_written) {
       db.update_survey_type(part->type_id, tp);
+      record_entered(db, part->type_id, tp);
+    }
     db.update_survey_part(code, pp); // no-op when the patch is empty
+    record_entered(db, code, pp);
     if (view_write)
       db.set_survey_part_view(code, *view_write);
     if (!passport.empty()) {
@@ -321,6 +330,10 @@ namespace {
 void delete_part_in_tx(ProjectDB &db, const ProjectDB::SurveyPartRecord &part) {
   if (part.instance_guid)
     db.dismiss_instance(*part.instance_guid);
+  else if (part.element_guid)
+    // An element-backed part (schema v37): its wall / slab guid is
+    // tombstoned the same way, so measure_survey does not re-create it.
+    db.dismiss_instance(*part.element_guid);
   // The part's own instance link goes with it; a link to another passport
   // is not the part's to drop.
   if (part.cloud_name && part.instance_id && part.material_guid &&

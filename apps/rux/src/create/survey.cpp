@@ -26,6 +26,10 @@ DESCRIPTION:
   the room most of its points fall in. Idempotent — re-running only adds
   instances that have no part yet and never overwrites edits made in the GUI.
   Each part without a resource image gets the sensor frame that sees it best.
+  Then every part is measured on the typed model (schema v37): each wall and
+  slab piece becomes a part of its own (Ydervæg / Indervæg in m², Etagedæk in
+  m³, Tag in m²), doors and windows get their opening's area, and a type's
+  tonnes are calculated from its build-up (Opbygning) unless one is typed in.
 
 EXAMPLES:
   rux create survey
@@ -47,6 +51,8 @@ WORKFLOW:
   sub->add_option("--rooms", opt->sync.rooms_cloud,
                   "Rooms-label cloud name (for room assignment)")
       ->default_val(SurveySyncOptions{}.rooms_cloud);
+  sub->add_flag("!--no-measure", opt->sync.measure,
+                "Do not measure parts on the walls / openings / solids");
 
   sub->callback([opt, global_opt]() {
     spdlog::trace("calling create survey subcommand");
@@ -86,6 +92,15 @@ int run_subcommand_create_survey(SubcommandCreateSurveyOptions const &opt,
         report.types_created, report.parts_created, report.parts_existing,
         report.rooms_assigned ? "" : " (no rooms assigned)", orphan_note,
         dismissed_note, views_note);
+    if (opt.sync.measure) {
+      const auto &m = report.measure;
+      spdlog::info("Measured: {} wall, {} slab, {} roof, {} opening and {} "
+                   "counted part(s); {} element part(s) created, {} "
+                   "quantit(ies) seeded, {} build-up(s) suggested",
+                   m.wall_parts, m.slab_parts, m.roof_parts, m.opening_parts,
+                   m.count_parts, m.parts_created, m.quantities_seeded,
+                   m.buildups_suggested);
+    }
     return RuxError::SUCCESS;
   } catch (const std::exception &e) {
     spdlog::error("create survey failed: {}", e.what());
