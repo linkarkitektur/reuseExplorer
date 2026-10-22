@@ -4,24 +4,33 @@
 
 // survey_parts.dismissed (schema v36, reusex-co6): a part marked as an error
 // stays listed but counts toward neither its type's quantity nor room
-// coverage, survives sync_survey, and can be restored.
+// coverage nor its type's miljøstatus, reaches no delivered output (CSV
+// export, PDF report data), survives sync_survey, and can be restored.
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <core/ProjectDB.hpp>
+#include <core/report_generator.hpp>
+#include <core/resource_export.hpp>
+#include <core/resource_templates.hpp>
+#include <core/resources.hpp>
 #include <core/survey_service.hpp>
 
 #include "../../support/temp_path.hpp"
 
+#include <nlohmann/json.hpp>
 #include <pcl/point_types.h>
 #include <sqlite3.h>
 
 #include <filesystem>
+#include <fstream>
 #include <initializer_list>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 
 using reusex::ProjectDB;
+using reusex::test_support::TempDir;
 using reusex::test_support::TempPath;
 using namespace reusex::core;
 namespace fs = std::filesystem;
@@ -217,4 +226,97 @@ TEST_CASE("SurveyPartDismissed_SyncLeavesItDismissed", "[survey][sync]") {
   CHECK(db.survey_part("RX-002")->dismissed);
   CHECK(db.survey_part("RX-002")->instance_id == 2u);
   CHECK_FALSE(db.survey_part("RX-001")->dismissed);
+}
+
+TEST_CASE("SurveyPartDismissed_ListedWithFlag_ButNotExported",
+          "[survey][resources][csv][pdf]") {
+  TempPath tmp("test_survey_part_dismissed_export");
+  ProjectDB db(tmp.path);
+  const auto type = add_type(db);
+  add_part(db, "RX-001", type, 1.0);
+  add_part(db, "RX-002", type, 2.0, /*dismissed=*/true);
+
+  const auto listed = list_resources(db);
+  REQUIRE(listed.size() == 2); // the GUI lists it for "Gendan"
+  CHECK_FALSE(listed[0].dismissed);
+  CHECK(listed[1].dismissed);
+  CHECK(resource(db, "RX-002").dismissed);
+
+  TemplateInput in;
+  in.name = "Kort";
+  in.members = nlohmann::json::parse(R"([{"key":"sys:quantity"}])");
+  in.csv = nlohmann::json::parse(R"({"encoding":"utf-8"})");
+  const auto id = create_template(db, in).record.id;
+  CHECK(export_resources_csv(db, id) == "Kode;Mængde\r\nRX-001;1\r\n");
+  const auto section = resource_report_section(db, id);
+  REQUIRE(section.tables.size() == 1);
+  REQUIRE(section.tables[0].rows.size() == 1);
+  CHECK(section.tables[0].rows[0][0].find("RX-001") != std::string::npos);
+}
+
+TEST_CASE("SurveyPartDismissed_ReportData_LeavesOutItsPassport",
+          "[survey][report][dump]") {
+  TempPath tmp("test_survey_part_dismissed_report");
+  ProjectDB db(tmp.path);
+  const auto type = add_type(db);
+  add_part(db, "RX-001", type, 1.0);
+  add_part(db, "RX-002", type, 2.0, /*dismissed=*/true);
+  std::string kept, dropped;
+  {
+    ProjectDB::Transaction tx(db);
+    kept = db.ensure_resource_passport("RX-001");
+    dropped = db.ensure_resource_passport("RX-002");
+    tx.commit();
+  }
+  REQUIRE(kept != dropped);
+  ProjectDB::SurveyTypePatch approve;
+  approve.review_status = ReviewStatus::approved;
+  db.update_survey_type(type, approve);
+
+  TempDir out("test_survey_part_dismissed_report_dir");
+  reusex::dump_report_data(db, {}, out.path);
+  std::ifstream f(out.path / "data.json");
+  const auto data =
+      nlohmann::json::parse(std::string(std::istreambuf_iterator<char>(f), {}));
+  std::vector<std::string> guids;
+  for (const auto &m : data.at("materials"))
+    guids.push_back(m.at("guid").get<std::string>());
+  CHECK(guids == std::vector<std::string>{kept});
+  const auto &rows = data.at("survey").at("rows");
+  REQUIRE(rows.size() == 1);
+  CHECK(rows[0].at("quantity").get<std::string>().rfind("1 ", 0) == 0); // not 3
+
+  // Restored, the part is delivered again.
+  ProjectDB::SurveyPartPatch restore;
+  restore.dismissed = false;
+  db.update_survey_part("RX-002", restore);
+  TempDir again("test_survey_part_dismissed_report_dir");
+  reusex::dump_report_data(db, {}, again.path);
+  std::ifstream g(again.path / "data.json");
+  const auto data2 =
+      nlohmann::json::parse(std::string(std::istreambuf_iterator<char>(g), {}));
+  CHECK(data2.at("materials").size() == 2);
+}
+
+TEST_CASE("SurveyPartDismissed_PartLinkedSample_BearsOnNothing",
+          "[survey][service][sample_part_links]") {
+  TempPath tmp("test_survey_part_dismissed_samples");
+  ProjectDB db(tmp.path);
+  const auto type = add_type(db);
+  add_part(db, "RX-001", type, 1.0);
+  db.add_sample("Bly i maling", "", {}, SampleStage::udtaget, {"RX-001"});
+  CHECK(db.samples_for_type(type).size() == 1);
+  CHECK(environment_status_of(db, type) == EnvironmentStatus::afventer);
+
+  ProjectDB::SurveyPartPatch dismiss;
+  dismiss.dismissed = true;
+  db.update_survey_part("RX-001", dismiss);
+  CHECK(db.samples_for_type(type).empty());
+  CHECK(environment_status_of(db, type) == EnvironmentStatus::ren_screening);
+  CHECK(environment_statuses(db).at(type) == EnvironmentStatus::ren_screening);
+  // The link itself is kept, so restoring brings the sample back.
+  CHECK(db.samples().at(0).part_codes == std::vector<std::string>{"RX-001"});
+  dismiss.dismissed = false;
+  db.update_survey_part("RX-001", dismiss);
+  CHECK(environment_statuses(db).at(type) == EnvironmentStatus::afventer);
 }

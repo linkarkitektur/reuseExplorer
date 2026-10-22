@@ -1612,7 +1612,9 @@ class ProjectDB {
   void set_sample_part_links(int64_t id,
                              const std::vector<std::string> &part_codes);
   /// Samples that bear on @p type_id: linked to it directly, or linked to a
-  /// survey part currently filed under it. By id, each sample once.
+  /// non-dismissed survey part currently filed under it (a dismissed part,
+  /// schema v36, is a misdetection and bears on nothing). By id, each sample
+  /// once.
   [[nodiscard]] std::vector<SampleRecord>
   samples_for_type(int64_t type_id) const;
 

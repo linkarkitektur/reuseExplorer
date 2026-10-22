@@ -12280,12 +12280,17 @@ std::vector<ProjectDB::SampleRecord>
 ProjectDB::samples_for_type(int64_t type_id) const {
   // A part link bears on the type the part is filed under now, so the join
   // is resolved at read time rather than stored.
+  // A dismissed part (v36) is a misdetection and bears on nothing.
   const char *sql =
-      impl_->hasSamplePartLinks
+      !impl_->hasSamplePartLinks
+          ? "SELECT sample_id FROM sample_links WHERE type_id = ?1;"
+      : impl_->hasPartDismissedColumn
           ? "SELECT sample_id FROM sample_links WHERE type_id = ?1 UNION "
             "SELECT l.sample_id FROM sample_part_links l JOIN survey_parts p "
-            "ON p.code = l.part_code WHERE p.type_id = ?1;"
-          : "SELECT sample_id FROM sample_links WHERE type_id = ?1;";
+            "ON p.code = l.part_code WHERE p.type_id = ?1 AND p.dismissed = 0;"
+          : "SELECT sample_id FROM sample_links WHERE type_id = ?1 UNION "
+            "SELECT l.sample_id FROM sample_part_links l JOIN survey_parts p "
+            "ON p.code = l.part_code WHERE p.type_id = ?1;";
   sqlite3_stmt *stmt = prepare_or_throw(impl_->db, sql, "samples_for_type");
   StmtGuard guard(stmt);
   sqlite3_bind_int64(stmt, 1, type_id);

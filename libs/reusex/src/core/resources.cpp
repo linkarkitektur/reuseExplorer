@@ -81,6 +81,7 @@ Resource build(const ProjectDB &db, const Context &c,
                const std::optional<std::vector<std::string>> &keys) {
   Resource r{p.code, p.type_id, !p.instance_guid.has_value(), {}};
   r.view = p.view;
+  r.dismissed = p.dismissed;
   const auto &t = c.types.at(p.type_id);
   const auto e = c.env.at(p.type_id);
   const auto stored = p.material_guid

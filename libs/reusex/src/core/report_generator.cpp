@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -198,9 +199,21 @@ write_report_data(ProjectDB &db,
   const auto image_dir = dir / "images";
   std::filesystem::create_directories(image_dir);
 
+  // A dismissed part (survey_parts.dismissed, schema v36) is a misdetection:
+  // its passport is not delivered, unless a counted part shares it.
+  std::set<std::string> dismissed_passports, counted_passports;
+  for (const auto &p : db.survey_parts())
+    if (p.material_guid)
+      (p.dismissed ? dismissed_passports : counted_passports)
+          .insert(*p.material_guid);
+  for (const auto &g : counted_passports)
+    dismissed_passports.erase(g);
+
   nlohmann::json mats = nlohmann::json::array();
   for (std::size_t index = 0; index < summary.materials.size(); ++index) {
     const auto &guid = summary.materials[index].guid;
+    if (dismissed_passports.count(guid) != 0)
+      continue;
 
     auto thumb_opt = db.material_thumbnail(guid);
     bool has_thumb = thumb_opt.has_value();
