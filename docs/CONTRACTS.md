@@ -694,7 +694,7 @@ instance.
 | | |
 |---|---|
 | Consumes | `instances`, `survey_dismissed_instances` (schema v26 tombstones), cloud positions and posed sensor frames (for views, optional) |
-| Produces | `survey_types`, `survey_parts`, `survey_parts.view_*` (schema v27) |
+| Produces | `survey_types`, `survey_parts`, `survey_parts.view_*` (schema v27); never writes `survey_parts.dismissed` (schema v36) |
 | Options  | `rux create survey` CLI options (`--instances`, `--semantic`, `--rooms`) |
 | Checks   | `instances` cloud present |
 
@@ -716,6 +716,14 @@ instance guid in `survey_dismissed_instances`. `sync_survey` skips every
 tombstoned instance, so a deleted part is not re-created, and reports how
 many it skipped as `parts_dismissed`. `rux create materials` skips them too,
 so a deleted part's instance does not get a new passport.
+
+Marking a part as an error instead ("Markér som fejl") sets
+`survey_parts.dismissed` (schema v36): non-destructive and reversible
+("Gendan"). The part keeps its row, code, passport and instance link and is
+still listed, so `sync_survey` counts its instance as `parts_existing` and
+never re-creates or un-dismisses it; `core/survey_service` leaves it out of
+its type's quantity (`type_quantity`, `set_type_quantity`,
+`report_survey_rows`) and of `rooms_without_parts`.
 
 An instance cloud written before schema v10 can have labels but no
 `instances` rows: the v10 migration backfilled rows only for clouds that had

@@ -1463,15 +1463,26 @@ class ProjectDB {
     /// The resource's chosen image (schema v27: survey_parts.view_*).
     /// nullopt when none was chosen, before v27, or when the frame/panorama
     /// it names no longer exists (logged at warn). Read-only on add/patch:
-    /// set through set_survey_part_view. Kept LAST so positional aggregate
-    /// initializers still compile.
+    /// set through set_survey_part_view. Kept before dismissed so positional
+    /// aggregate initializers still compile.
     std::optional<core::ResourceView> view{};
+    /// Marked as an error ("Markér som fejl", schema v36:
+    /// survey_parts.dismissed). Non-destructive and reversible: the part is
+    /// still listed and keeps its code, passport and links, but
+    /// core/survey_service leaves it out of its type's quantity
+    /// (set_type_quantity, report_survey_rows) and of rooms_without_parts.
+    /// sync_survey never re-creates or un-dismisses it. Always false before
+    /// v36. Kept LAST so positional aggregate initializers still compile.
+    bool dismissed = false;
   };
   struct SurveyPartPatch {
     std::optional<int64_t> type_id;
     std::optional<double> quantity;
     std::optional<bool> starred;
     std::optional<std::string> note, room_name;
+    /// Dismiss / restore the part (schema v36). Throws std::runtime_error on
+    /// a project below v36 (opened read-only, so not migrated). Kept LAST.
+    std::optional<bool> dismissed{};
   };
 
   SurveyTypeRecord

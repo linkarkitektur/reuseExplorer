@@ -434,9 +434,11 @@ class ProjectDB::Impl {
   bool hasOpeningsTable = false;
   /// spaces and space_boundaries exist (v35).
   bool hasSpacesTable = false;
+  /// survey_parts.dismissed exists (v36).
+  bool hasPartDismissedColumn = false;
 
   // cppcheck-suppress unusedStructMember
-  static constexpr int LATEST_SCHEMA_VERSION = 35;
+  static constexpr int LATEST_SCHEMA_VERSION = 36;
 
   // How long one statement waits for a lock another connection holds before
   // failing with SQLITE_BUSY. sqlite's default is not to wait at all.
@@ -565,6 +567,7 @@ class ProjectDB::Impl {
     hasWallsTable = tableExists("walls") && tableExists("wall_joins");
     hasOpeningsTable = tableExists("openings");
     hasSpacesTable = tableExists("spaces") && tableExists("space_boundaries");
+    hasPartDismissedColumn = columnExists("survey_parts", "dismissed");
   }
 
   /// True the first time this process opens dbPath read-only at schema
@@ -888,6 +891,10 @@ class ProjectDB::Impl {
 
     if (current < 35) {
       migrateToV35();
+    }
+
+    if (current < 36) {
+      migrateToV36();
     }
 
     reusex::trace("Schema version: {}", getCurrentSchemaVersion());
@@ -4282,6 +4289,24 @@ class ProjectDB::Impl {
     insertSchemaVersion(35, "Solid model: spaces and space_boundaries tables");
     sp.release();
     reusex::info("Migration to schema version 35 complete");
+  }
+
+  void migrateToV36() {
+    reusex::info("Migrating database to schema version 36");
+    // Non-destructive dismissal of one survey part ("Markér som fejl" /
+    // "Gendan"): the part stays, keeps its code, passport and links, and is
+    // listed, but core/survey_service leaves it out of its type's quantity
+    // and of rooms_without_parts. Unlike survey_dismissed_instances (v26, a
+    // deleted part's tombstone) it is reversible. Guarded so a test that
+    // rolls the version back re-runs it safely.
+    Savepoint sp(db, "migrate_v36");
+    if (!columnExists("survey_parts", "dismissed"))
+      execOrThrow("ALTER TABLE survey_parts ADD COLUMN dismissed INTEGER NOT "
+                  "NULL DEFAULT 0 CHECK (dismissed IN (0, 1));");
+    insertSchemaVersion(36, "survey_parts.dismissed: non-destructive part "
+                            "dismissal");
+    sp.release();
+    reusex::info("Migration to schema version 36 complete");
   }
 
   // ── Spaces (v35) ─────────────────────────────────────────────────────────
@@ -11268,8 +11293,8 @@ namespace {
 /// instance's link — but only when no other part owns that passport, so two
 /// parts never write through one passport (a part reads as passport-less
 /// instead; ensure_resource_passport gives it its own on first write).
-std::string survey_part_select(bool has_passport_column,
-                               bool has_view_columns) {
+std::string survey_part_select(bool has_passport_column, bool has_view_columns,
+                               bool has_dismissed_column) {
   std::string sql = "SELECT p.code, p.type_id, pc.name, i.instance_id, "
                     "p.room_id, p.room_name, p.quantity, p.starred, p.note, ";
   sql += has_passport_column
@@ -11286,6 +11311,9 @@ std::string survey_part_select(bool has_passport_column,
            "FROM sensor_frames f WHERE f.node_id = p.view_id) "
            "WHEN 'panorama' THEN EXISTS (SELECT 1 FROM panoramic_images pi "
            "WHERE pi.id = p.view_id) ELSE 0 END";
+  // Last column (11, or 18 with the view columns): survey_parts.dismissed.
+  if (has_dismissed_column)
+    sql += ", p.dismissed";
   sql += " FROM survey_parts p "
          "LEFT JOIN instances i ON i.guid = p.instance_guid "
          "LEFT JOIN point_clouds pc ON pc.id = i.cloud_id "
@@ -11295,7 +11323,8 @@ std::string survey_part_select(bool has_passport_column,
 }
 
 ProjectDB::SurveyPartRecord read_survey_part(sqlite3_stmt *s,
-                                             bool has_view_columns) {
+                                             bool has_view_columns,
+                                             bool has_dismissed_column) {
   ProjectDB::SurveyPartRecord r;
   r.code = column_text(s, 0);
   r.type_id = sqlite3_column_int64(s, 1);
@@ -11331,6 +11360,8 @@ ProjectDB::SurveyPartRecord read_survey_part(sqlite3_stmt *s,
       r.view = v;
     }
   }
+  if (has_dismissed_column)
+    r.dismissed = sqlite3_column_int(s, has_view_columns ? 18 : 11) != 0;
   return r;
 }
 } // namespace
@@ -11365,10 +11396,18 @@ void ProjectDB::add_survey_part(const SurveyPartRecord &rec) {
                               *rec.cloud_name + "'");
     instance_guid = column_text(lookup, 0);
   }
+  if (rec.dismissed && !impl_->hasPartDismissedColumn)
+    throw std::runtime_error("add_survey_part '" + rec.code +
+                             "': dismissed needs schema v36 (open the project "
+                             "read-write once to migrate)");
   sqlite3_stmt *stmt = prepare_or_throw(
       impl_->db,
-      "INSERT INTO survey_parts (code, type_id, instance_guid, room_id, "
-      "room_name, quantity, starred, note) VALUES (?,?,?,?,?,?,?,?);",
+      impl_->hasPartDismissedColumn
+          ? "INSERT INTO survey_parts (code, type_id, instance_guid, room_id, "
+            "room_name, quantity, starred, note, dismissed) "
+            "VALUES (?,?,?,?,?,?,?,?,?);"
+          : "INSERT INTO survey_parts (code, type_id, instance_guid, room_id, "
+            "room_name, quantity, starred, note) VALUES (?,?,?,?,?,?,?,?);",
       "add_survey_part");
   StmtGuard guard(stmt);
   bind_text(stmt, 1, rec.code);
@@ -11383,6 +11422,8 @@ void ProjectDB::add_survey_part(const SurveyPartRecord &rec) {
   sqlite3_bind_double(stmt, 6, rec.quantity);
   sqlite3_bind_int(stmt, 7, rec.starred ? 1 : 0);
   bind_text(stmt, 8, rec.note);
+  if (impl_->hasPartDismissedColumn)
+    sqlite3_bind_int(stmt, 9, rec.dismissed ? 1 : 0);
   if (sqlite3_step(stmt) != SQLITE_DONE)
     throw std::runtime_error("add_survey_part '" + rec.code +
                              "': " + sqlite3_errmsg(impl_->db));
@@ -11390,27 +11431,31 @@ void ProjectDB::add_survey_part(const SurveyPartRecord &rec) {
 
 std::vector<ProjectDB::SurveyPartRecord> ProjectDB::survey_parts() const {
   const std::string sql =
-      survey_part_select(impl_->hasPassportColumn, impl_->hasViewColumns) +
+      survey_part_select(impl_->hasPassportColumn, impl_->hasViewColumns,
+                         impl_->hasPartDismissedColumn) +
       "ORDER BY p.code;";
   sqlite3_stmt *stmt = prepare_or_throw(impl_->db, sql.c_str(), "survey_parts");
   StmtGuard guard(stmt);
   std::vector<SurveyPartRecord> out;
   while (sqlite3_step(stmt) == SQLITE_ROW)
-    out.push_back(read_survey_part(stmt, impl_->hasViewColumns));
+    out.push_back(read_survey_part(stmt, impl_->hasViewColumns,
+                                   impl_->hasPartDismissedColumn));
   return out;
 }
 
 std::optional<ProjectDB::SurveyPartRecord>
 ProjectDB::survey_part(std::string_view code) const {
   const std::string sql =
-      survey_part_select(impl_->hasPassportColumn, impl_->hasViewColumns) +
+      survey_part_select(impl_->hasPassportColumn, impl_->hasViewColumns,
+                         impl_->hasPartDismissedColumn) +
       "WHERE p.code = ?;";
   sqlite3_stmt *stmt = prepare_or_throw(impl_->db, sql.c_str(), "survey_part");
   StmtGuard guard(stmt);
   bind_text(stmt, 1, code);
   if (sqlite3_step(stmt) != SQLITE_ROW)
     return std::nullopt;
-  return read_survey_part(stmt, impl_->hasViewColumns);
+  return read_survey_part(stmt, impl_->hasViewColumns,
+                          impl_->hasPartDismissedColumn);
 }
 
 ProjectDB::SurveyPartRecord
@@ -11431,6 +11476,13 @@ ProjectDB::update_survey_part(std::string_view code, const SurveyPartPatch &p) {
     sets.emplace_back("note = ?");
   if (p.room_name)
     sets.emplace_back("room_name = ?");
+  if (p.dismissed) {
+    if (!impl_->hasPartDismissedColumn)
+      throw std::runtime_error("update_survey_part '" + std::string(code) +
+                               "': dismissed needs schema v36 (open the "
+                               "project read-write once to migrate)");
+    sets.emplace_back("dismissed = ?");
+  }
   if (!sets.empty()) {
     std::string sql = "UPDATE survey_parts SET ";
     for (std::size_t k = 0; k < sets.size(); ++k)
@@ -11450,6 +11502,8 @@ ProjectDB::update_survey_part(std::string_view code, const SurveyPartPatch &p) {
       bind_text(stmt, i++, *p.note);
     if (p.room_name)
       bind_text(stmt, i++, *p.room_name);
+    if (p.dismissed)
+      sqlite3_bind_int(stmt, i++, *p.dismissed ? 1 : 0);
     bind_text(stmt, i, code);
     if (sqlite3_step(stmt) != SQLITE_DONE)
       throw std::runtime_error("update_survey_part: " +

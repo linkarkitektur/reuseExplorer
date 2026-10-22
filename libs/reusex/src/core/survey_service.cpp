@@ -74,13 +74,16 @@ std::vector<ProjectDB::SurveyPartRecord>
 set_type_quantity(ProjectDB &db, int64_t type_id, double total) {
   if (total < 0.0)
     throw std::invalid_argument("quantity must not be negative");
+  // Dismissed parts (schema v36) are not part of the type's quantity: they
+  // keep theirs untouched and get no share of the new total.
   std::vector<ProjectDB::SurveyPartRecord> parts;
   for (auto &p : db.survey_parts())
-    if (p.type_id == type_id)
+    if (p.type_id == type_id && !p.dismissed)
       parts.push_back(std::move(p));
   if (parts.empty())
     throw std::invalid_argument("survey type " + std::to_string(type_id) +
-                                " has no parts to distribute a quantity over");
+                                " has no (non-dismissed) parts to distribute "
+                                "a quantity over");
   std::vector<double> current;
   for (const auto &p : parts)
     current.push_back(p.quantity);
@@ -114,7 +117,8 @@ std::vector<ReportSurveyRow> report_survey_rows(const ProjectDB &db) {
     blocked.insert(b.type_id);
   std::map<int64_t, double> quantity;
   for (const auto &p : db.survey_parts())
-    quantity[p.type_id] += p.quantity;
+    if (!p.dismissed)
+      quantity[p.type_id] += p.quantity;
   std::vector<ReportSurveyRow> rows;
   for (const auto &t : db.survey_types()) {
     const auto e = env.at(t.id);
@@ -124,6 +128,39 @@ std::vector<ReportSurveyRow> report_survey_rows(const ProjectDB &db) {
                     t.mass_t, t.treatment, e});
   }
   return rows;
+}
+
+double type_quantity(const ProjectDB &db, int64_t type_id) {
+  double sum = 0.0;
+  for (const auto &p : db.survey_parts())
+    if (p.type_id == type_id && !p.dismissed)
+      sum += p.quantity;
+  return sum;
+}
+
+std::vector<std::string> rooms_without_parts(const ProjectDB &db,
+                                             std::string_view rooms_cloud) {
+  std::vector<std::string> out;
+  if (!db.has_point_cloud(rooms_cloud))
+    return out;
+  const auto cloud = db.point_cloud_label(rooms_cloud);
+  if (!cloud)
+    return out;
+  std::set<std::uint32_t> present;
+  for (const auto &p : *cloud)
+    if (p.label != 0)
+      present.insert(p.label);
+  std::set<std::uint32_t> covered;
+  for (const auto &p : db.survey_parts())
+    if (p.room_id && !p.dismissed)
+      covered.insert(*p.room_id);
+  const auto names = db.label_definitions(rooms_cloud);
+  for (auto r : present)
+    if (!covered.contains(r)) {
+      const auto n = names.find(static_cast<int>(r));
+      out.push_back(n != names.end() ? n->second : "Rum " + std::to_string(r));
+    }
+  return out;
 }
 
 ProjectDB::SampleRecord
@@ -403,8 +440,10 @@ SurveySyncReport sync_survey(ProjectDB &db, const SurveySyncOptions &opts) {
   // over (e.g. `rux create instances --clear`). They keep their code and
   // quantity and still count toward their type's total — report, don't hide
   // or delete (that is a Phase 3 product decision).
+  // A dismissed part is already marked as an error and counts toward nothing,
+  // so it is not reported again here.
   for (const auto &p : db.survey_parts())
-    if (p.instance_guid && !p.instance_id) {
+    if (p.instance_guid && !p.instance_id && !p.dismissed) {
       ++report.parts_orphaned;
       report.orphaned_codes.push_back(p.code);
     }
