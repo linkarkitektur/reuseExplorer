@@ -38,7 +38,7 @@ refused and left untouched, rather than guessed at.
 | `project_name` | string | First project's name, else the `.rux` file stem |
 | `generated_at` | string | UTC ISO 8601 (`2026-10-13T09:30:00Z`) |
 | `columns[]` | `{id, name, type}` | User-defined passport property columns |
-| `materials[]` | `{guid, has_thumbnail, thumbnail_path, properties}` | One per material passport; `thumbnail_path` is relative to the data dir (`images/<guid>.jpg`) or `""`; `properties` is keyed by **column name** |
+| `materials[]` | `{guid, has_thumbnail, thumbnail_path, properties}` | One per material passport; `thumbnail_path` is relative to the data dir (`images/<guid>.jpg`) or `""`; `properties` is keyed by **column name** and holds only the `columns[]` (the template prints nothing else) |
 | `survey.rows[]` | `{name, bim7aa, eak, quantity, mass, treatment, environment}` | Reportable (approved, not withheld) survey types; all values preformatted Danish strings (`"620 m²"`, `"190 t"`, `"—"`) |
 | `survey.circularity[]` | `{label, tonnes}` | Tonnes per treatment over exactly those rows |
 | `survey.blocking` | int | Types keeping the report a draft (> 0 = draft) |

@@ -563,8 +563,11 @@ nlohmann::json write_report_data(
   data["generated_at"] = now_iso8601_rg();
 
   nlohmann::json cols = nlohmann::json::array();
-  for (const auto &d : defs)
+  std::set<std::string> column_names;
+  for (const auto &d : defs) {
     cols.push_back({{"id", d.id}, {"name", d.name}, {"type", d.type}});
+    column_names.insert(d.name);
+  }
   data["columns"] = std::move(cols);
 
   const auto image_dir = dir / "images";
@@ -613,10 +616,14 @@ nlohmann::json write_report_data(
       }
     }
 
+    // Only the user-defined columns: the template prints nothing else, and
+    // a full passport is ~75 kB of JSON (126 MB for 1672 passports), which
+    // the preview would otherwise write, hash and parse on every request.
     const auto props_map = db.passport_stored_properties(guid);
     nlohmann::json props = nlohmann::json::object();
     for (const auto &[k, v] : props_map)
-      props[k] = v;
+      if (column_names.count(k) != 0)
+        props[k] = v;
 
     mats.push_back({{"guid", guid},
                     {"has_thumbnail", has_thumb},
