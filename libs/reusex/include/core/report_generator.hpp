@@ -19,7 +19,11 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
+#include <memory>
 #include <optional>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace reusex {
@@ -34,6 +38,69 @@ struct ReportOptions {
   /// Typst template to use instead of the embedded one. Empty: the
   /// $REUSEX_REPORT_TEMPLATE environment variable, else embedded.
   std::filesystem::path template_path;
+  /// The cover image when the project has none chosen
+  /// (core/report_cover.hpp): PNG or JPEG bytes, empty for none. Called at
+  /// most once per run, and only then. Core cannot render the model itself
+  /// (`visualize` is Layer 4), so rux and ruxd pass a visualize::render_view
+  /// orbit shot here; without it the Forside shows a placeholder.
+  using CoverFallback =
+      std::function<std::vector<std::uint8_t>(const ProjectDB &)>;
+  CoverFallback cover_fallback;
+};
+
+/// One section (≈ page group) of the report and whether its data is
+/// complete — the readiness the GUI's page strip shows next to the preview.
+/// Mirrors the "Før indberetning" checklist rows each section rests on.
+struct ReportSection {
+  std::string id;    ///< forside, sagsdata, ressourcer, miljoe, bilag,
+                     ///< nedrivningsplan
+  std::string title; ///< "Forside", "Sagsdata", ...
+  bool ready = false;
+  std::vector<std::string> missing; ///< why not, in Danish; empty when ready
+};
+
+/// The report's input, assembled once into an owned temporary directory
+/// (data.json, images/, report.typ) and removed with the object. Compiling
+/// needs no ProjectDB, so a server can prepare on the request thread (a
+/// fraction of a second) and compile elsewhere. Move-only.
+class PreparedReport {
+    public:
+  /// Assembles the data and resolves the template.
+  /// @throws as generate_ressourcekortlaegning_pdf does before typst runs.
+  PreparedReport(ProjectDB &db, const ReportOptions &options);
+  ~PreparedReport();
+  PreparedReport(PreparedReport &&) noexcept;
+  PreparedReport &operator=(PreparedReport &&) noexcept;
+  PreparedReport(const PreparedReport &) = delete;
+  PreparedReport &operator=(const PreparedReport &) = delete;
+
+  /// 16 hex digits over the template text, data.json without its
+  /// `generated_at` stamp, and every image: equal digests compile to the
+  /// same pages, so it is a cache key for compiled output.
+  [[nodiscard]] const std::string &digest() const;
+  [[nodiscard]] const std::vector<ReportSection> &sections() const;
+  /// The data directory (data.json + images/).
+  [[nodiscard]] const std::filesystem::path &dir() const;
+
+  /// typst compile to PDF. @throws std::runtime_error with typst's error.
+  [[nodiscard]] std::vector<std::uint8_t> compile_pdf() const;
+  /// typst compile --format png --ppi @p ppi: one PNG per page, in order.
+  /// Safe to call concurrently with compile_pdf() on the same object.
+  /// @throws std::invalid_argument for ppi outside 10..600;
+  ///         std::runtime_error with typst's error.
+  [[nodiscard]] std::vector<std::vector<std::uint8_t>>
+  compile_png(int ppi = 96) const;
+
+  /// The first page (1-based) of each section the template labels
+  /// `<section>`, in document order ({"forside", 1}, {"sagsdata", 2}, ...),
+  /// from `typst eval` over the laid-out document (≈ one more layout pass).
+  /// Empty, with a warning, when typst cannot answer (an older typst
+  /// without `eval --in`, or a template without the labels).
+  [[nodiscard]] std::vector<std::pair<std::string, int>> section_pages() const;
+
+    private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 /// Generate a Ressourcekortlægning PDF for the given project.
