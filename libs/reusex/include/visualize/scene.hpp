@@ -283,6 +283,47 @@ inline constexpr const char *kSolidsActorName = "reusex.solids";
 inline constexpr std::array<const char *, 3> kSolidMeshNames{
     "solid_walls", "solid_slabs", "solid_spaces"};
 
+/// The building-element categories a viewer can show and hide one by one
+/// (SceneLayer::actor_categories, count_building_elements()). One vocabulary
+/// across the layers that draw building elements, so one toggle acts on
+/// every representation of a category:
+///  - `wall`: solid_walls elements, `walls` rows, wall components;
+///  - `slab`: solid_slabs elements with predefined FLOOR;
+///  - `roof`: solid_slabs elements with predefined ROOF;
+///  - `space`: solid_spaces elements, `spaces` rows;
+///  - `door`, `window`, `opening`: `openings` rows by kind, door / window
+///    components. (A solid wall's opening reveals belong to the wall.)
+namespace element_category {
+inline constexpr const char *wall = "wall";
+inline constexpr const char *slab = "slab";
+inline constexpr const char *roof = "roof";
+inline constexpr const char *space = "space";
+inline constexpr const char *door = "door";
+inline constexpr const char *window = "window";
+inline constexpr const char *opening = "opening";
+} // namespace element_category
+
+/// Every element category, in the order a viewer lists them.
+inline constexpr std::array<const char *, 7> kElementCategories{
+    element_category::wall,   element_category::slab, element_category::roof,
+    element_category::space,  element_category::door, element_category::window,
+    element_category::opening};
+
+/// How many building elements of one category one storey holds.
+struct ElementCount {
+  std::string category; ///< one of kElementCategories
+  int storey = -1;      ///< core::StoreyRecord::idx; -1 = not on a storey
+  std::size_t count = 0;
+};
+
+/// The building elements of @p db by category and storey, counted as the
+/// layers that draw them do: walls, slabs, roofs and spaces from the solids
+/// meshes' element index when there are solids (else the walls and spaces
+/// tables), doors, windows and other openings from the openings table (else
+/// from the building components). Rows with a zero count are left out; the
+/// order is kElementCategories', then storey.
+std::vector<ElementCount> count_building_elements(const ProjectDB &db);
+
 /// vtkObject name of a mesh section line (add_mesh_section_line()); exempt
 /// from the cut and the section slab like the plan overlay.
 inline constexpr const char *kSectionLineActorName = "reusex.section_line";
@@ -317,9 +358,18 @@ struct SceneLayer {
                           ///< openings / solid elements drawn
   /// Walls layer only: walls drawn dimmer (assumed, or seen_share < 0.5).
   std::size_t dim = 0;
-  /// `drift` layer only: the storey of each actor in @ref actors (-1 = world
-  /// cells), so a viewer can show one storey.
+  /// The storey (core::StoreyRecord::idx) of each actor in @ref actors,
+  /// index-aligned, or empty: the `drift` layer (-1 = world cells) and the
+  /// building-element layers (`solids`, `walls`, `openings`, `spaces`; -1 =
+  /// not on one storey, e.g. a space label shared by none), so a viewer can
+  /// show one storey.
   std::vector<int> actor_storeys;
+  /// The building-element layers (`solids`, `walls`, `openings`, `spaces`,
+  /// `components`): the element category (kElementCategories) of each actor
+  /// in @ref actors, index-aligned; empty for other layers. Each actor holds
+  /// one category of one storey, so a viewer can show and hide categories
+  /// and storeys by toggling actors.
+  std::vector<std::string> actor_categories;
   /// Mesh layer only: the mesh's surface poly-data, the source of
   /// add_mesh_section_line(). Owned by a surface actor in the renderer (a
   /// hidden one, not in @ref actors, under MeshStyle::edges).
@@ -406,6 +456,12 @@ struct CutPlane {
 /// Warns when the cut is above or below everything drawn (STANDARDS §5).
 CutPlane resolve_cut_plane(const ProjectDB &db, const SceneBounds &bounds,
                            std::optional<double> height);
+
+/// The world z of storey @p storey's floor (StoreyRecord::z_floor at its
+/// level frame's origin), so a viewer showing one storey can cut its plan
+/// above that floor rather than above the lowest one; nullopt when the
+/// project has no such storey.
+std::optional<double> storey_floor_z(const ProjectDB &db, int storey);
 
 /// Clip every actor of @p renderer to the half-space below z = @p z, except
 /// the plan overlay's (kPlanOverlayActorName): a plan is a drawing laid over

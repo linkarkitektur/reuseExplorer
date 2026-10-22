@@ -136,6 +136,10 @@ struct Viewer3DWorkspace::LayerState {
   bool loading = false;
   QString error;
   std::vector<vtkSmartPointer<vtkActor>> actors;
+  /// Per actor: its building-element category ("" = none) and storey (-1 =
+  /// none), from SceneLayer::actor_categories / actor_storeys.
+  std::vector<std::string> categories;
+  std::vector<int> storeys;
   vtkSmartPointer<vtkActor> coarse;
   vis::SceneInfo info;
   std::vector<std::pair<std::uint32_t, std::size_t>> counts; ///< by count
@@ -360,6 +364,17 @@ void Viewer3DWorkspace::reset() {
     visible_[static_cast<int>(Layer::walls)] = false;
     visible_[static_cast<int>(Layer::openings)] = false;
   }
+  elements_.reset();
+  std::vector<ElementTally> tallies;
+  if (const reusex::ProjectDB *db = session_.db(); db && session_.is_open()) {
+    try {
+      for (auto &c : vis::count_building_elements(*db))
+        tallies.push_back({std::move(c.category), c.storey, c.count});
+    } catch (const std::exception &) {
+      // A project whose element tables do not read: no element rows.
+    }
+  }
+  elements_.set_tallies(std::move(tallies));
   rebuild_panel();
   if (!session_.is_open()) {
     view_->set_message(session_.state() == ProjectSession::State::loading
@@ -390,7 +405,7 @@ void Viewer3DWorkspace::activate() {
   for (Layer l : {Layer::mesh, Layer::solids, Layer::spaces, Layer::walls,
                   Layer::openings, Layer::components, Layer::frustums,
                   Layer::panoramas, Layer::passes, Layer::graph})
-    if (visible_.value(static_cast<int>(l)) && has_data(l))
+    if (layer_shown(static_cast<int>(l)) && has_data(l))
       ensure_layer(l);
   view_->request_render();
 }
@@ -414,6 +429,10 @@ void Viewer3DWorkspace::rebuild_panel() {
     delete it;
   }
   layer_boxes_.clear();
+  element_boxes_.clear();
+  element_counts_.clear();
+  elements_all_ = nullptr;
+  storey_ = nullptr;
   legend_ = nullptr;
   panel_layout_->setContentsMargins(t.px("--space-4"), t.px("--space-3"),
                                     t.px("--space-4"), t.px("--space-4"));
@@ -427,31 +446,17 @@ void Viewer3DWorkspace::rebuild_panel() {
   for (const auto &c : s.clouds)
     if (c.name == "cloud")
       cloud_points = c.point_count;
-  std::size_t db_walls = 0, db_openings = 0, db_spaces = 0, db_solids = 0;
-  if (open && session_.db()) {
-    db_walls = session_.db()->walls().size();
-    db_openings = session_.db()->openings().size();
-    db_spaces = session_.db()->spaces().size();
-    // Elements in the solids meshes' index (docs/CONTRACTS.md `solids`).
-    for (const char *name : vis::kSolidMeshNames)
-      if (session_.db()->has_mesh(name))
-        try {
-          db_solids += nlohmann::json::parse(
-                           session_.db()->mesh_metadata(name).parameters)
-                           .at("elements")
-                           .size();
-        } catch (const std::exception &) {
-        }
-  }
-
-  auto row = [&](Layer l, const QString &name, const QString &count) {
+  auto row = [&](Layer l, const QString &name, const QString &count,
+                 bool only_with_data = false) {
+    const bool avail = open && has_data(l);
+    if (only_with_data && !avail)
+      return;
     auto *w = new QWidget;
     w->setObjectName("layerRow");
     auto *h = new QHBoxLayout(w);
     h->setContentsMargins(0, 0, 0, 0);
     h->setSpacing(t.px("--space-2"));
     auto *box = new QCheckBox(NavItem::escape_mnemonic(name));
-    const bool avail = open && has_data(l);
     box->setEnabled(avail);
     box->setChecked(avail && visible_.value(static_cast<int>(l)));
     h->addWidget(box);
@@ -461,6 +466,10 @@ void Viewer3DWorkspace::rebuild_panel() {
     h->addWidget(hint);
     connect(box, &QCheckBox::toggled, this,
             [this, l](bool on) { set_layer_visible(l, on); });
+    if (l == Layer::openings)
+      box->setToolTip("Døre og vinduer som rammer. Vises også, når "
+                      "væggene er skjult: solidernes åbninger følger "
+                      "væggene.");
     layer_boxes_[static_cast<int>(l)] = box;
     panel_layout_->addWidget(w);
   };
@@ -504,19 +513,35 @@ void Viewer3DWorkspace::rebuild_panel() {
   rule->setFixedHeight(1);
   panel_layout_->addWidget(rule);
 
+  // The building elements: which categories and storey (the element
+  // filter), then how they are drawn (layers).
+  add_elements_group();
+  auto *as = new QWidget;
+  as->setObjectName("layerRow");
+  auto *asl = new QVBoxLayout(as);
+  asl->setContentsMargins(0, t.px("--space-2"), 0, 0);
+  asl->addWidget(new CapsLabel("Vis som", "fieldLabel"));
+  panel_layout_->addWidget(as);
+  const int before = panel_layout_->count();
+  row(Layer::solids, "Solider (typede)", QString(), true);
+  row(Layer::walls, "Vægbokse", QString(), true);
+  row(Layer::openings, "Åbningsrammer", QString(), true);
+  row(Layer::spaces, "Rumflader", QString(), true);
+  row(Layer::components, "Komponenter", QString(), true);
+  if (panel_layout_->count() == before) {
+    auto *none = new QLabel("Ingen endnu — kør rux create walls og solids");
+    none->setObjectName("layerHint");
+    none->setWordWrap(true);
+    panel_layout_->addWidget(none);
+  }
+
+  auto *rule_other = new QFrame;
+  rule_other->setObjectName("rule");
+  rule_other->setFixedHeight(1);
+  panel_layout_->addWidget(rule_other);
+
   std::size_t meshes = s.meshes.size();
   row(Layer::mesh, "Mesh", meshes ? QString::number(meshes) : QString());
-  row(Layer::solids, "Solider (typede)",
-      db_solids ? format_count(static_cast<qulonglong>(db_solids)) : QString());
-  row(Layer::walls, "Vægge",
-      db_walls ? format_count(static_cast<qulonglong>(db_walls)) : QString());
-  row(Layer::openings, "Åbninger",
-      db_openings ? format_count(static_cast<qulonglong>(db_openings))
-                  : QString());
-  row(Layer::spaces, "Rum (polygoner)",
-      db_spaces ? format_count(static_cast<qulonglong>(db_spaces)) : QString());
-  row(Layer::components, "Bygningsdele",
-      format_count(static_cast<qulonglong>(s.components.total_count)));
   row(Layer::frustums, "Kamerafrustummer",
       format_count(static_cast<qulonglong>(s.sensor_frames.total_count)));
   row(Layer::panoramas, "Panoramaer",
@@ -568,6 +593,172 @@ void Viewer3DWorkspace::rebuild_panel() {
 
   panel_layout_->addStretch(1);
   update_legend();
+}
+
+void Viewer3DWorkspace::add_elements_group() {
+  const Theme &t = theme();
+  // Heading with the master switch on the same line: one click shows or
+  // hides every building element.
+  auto *head = new QWidget;
+  head->setObjectName("layerRow");
+  auto *hh = new QHBoxLayout(head);
+  hh->setContentsMargins(0, 0, 0, 0);
+  hh->setSpacing(t.px("--space-2"));
+  hh->addWidget(
+      new CapsLabel("Bygningsdele", "eyebrowSurface", "--tracking-wide"));
+  hh->addStretch(1);
+  panel_layout_->addWidget(head);
+
+  if (!session_.is_open() || !elements_.has_elements()) {
+    auto *none = new QLabel(session_.is_open()
+                                ? "Ingen bygningsdele endnu — kør rux create "
+                                  "walls, openings og solids"
+                                : "Intet projekt åbent");
+    none->setObjectName("layerHint");
+    none->setWordWrap(true);
+    panel_layout_->addWidget(none);
+    return;
+  }
+
+  elements_all_ = new QCheckBox(NavItem::escape_mnemonic("Vis alle"));
+  elements_all_->setObjectName("elementsAll");
+  elements_all_->setToolTip("Vis eller skjul alle bygningsdele");
+  elements_all_->setCursor(Qt::PointingHandCursor);
+  hh->addWidget(elements_all_);
+  connect(elements_all_, &QCheckBox::clicked, this, [this] {
+    // Partly or not shown -> all shown; all shown -> none.
+    set_all_elements_shown(elements_.all_state() != CheckState::on);
+  });
+
+  // One row per category the project has, indented under the heading.
+  auto *list = new QWidget;
+  list->setObjectName("layerRow");
+  auto *lv = new QVBoxLayout(list);
+  lv->setContentsMargins(t.px("--space-5"), 0, 0, 0);
+  lv->setSpacing(t.px("--space-2"));
+  for (const auto &r : elements_.rows()) {
+    auto *w = new QWidget;
+    w->setObjectName("layerRow");
+    auto *h = new QHBoxLayout(w);
+    h->setContentsMargins(0, 0, 0, 0);
+    h->setSpacing(t.px("--space-2"));
+    auto *box = new QCheckBox(NavItem::escape_mnemonic(qs(r.label)));
+    box->setCursor(Qt::PointingHandCursor);
+    h->addWidget(box);
+    h->addStretch(1);
+    auto *count = new QLabel;
+    count->setObjectName("layerCount");
+    h->addWidget(count);
+    const std::string key = r.key;
+    connect(box, &QCheckBox::toggled, this,
+            [this, key](bool on) { set_element_shown(key, on); });
+    element_boxes_[key] = box;
+    element_counts_[key] = count;
+    lv->addWidget(w);
+  }
+  panel_layout_->addWidget(list);
+
+  // One storey at a time: plans of a multi-storey building are cluttered.
+  const auto storeys = elements_.storeys();
+  if (storeys.size() > 1) {
+    std::map<int, std::string> names;
+    if (const reusex::ProjectDB *db = session_.db())
+      try {
+        for (const auto &st : db->storeys())
+          names[st.idx] = st.name;
+      } catch (const std::exception &) {
+      }
+    auto *sw = new QWidget;
+    sw->setObjectName("layerRow");
+    auto *sv = new QVBoxLayout(sw);
+    sv->setContentsMargins(0, t.px("--space-1"), 0, 0);
+    sv->setSpacing(t.px("--space-1"));
+    sv->addWidget(new CapsLabel("Etage", "fieldLabel"));
+    storey_ = new QComboBox;
+    storey_->setObjectName("storeyFilter");
+    storey_->addItem("Alle etager", QVariant());
+    for (const int idx : storeys) {
+      const auto it = names.find(idx);
+      storey_->addItem(it != names.end() && !it->second.empty()
+                           ? qs(it->second)
+                           : QString("Etage %1").arg(idx),
+                       idx);
+    }
+    connect(storey_, &QComboBox::currentIndexChanged, this, [this](int i) {
+      const QVariant v = storey_->itemData(i);
+      set_storey_filter(v.isValid() ? std::optional<int>(v.toInt())
+                                    : std::nullopt);
+    });
+    sv->addWidget(storey_);
+    panel_layout_->addWidget(sw);
+  }
+  sync_element_boxes();
+}
+
+void Viewer3DWorkspace::sync_element_boxes() {
+  if (elements_all_) {
+    const QSignalBlocker b(elements_all_);
+    const CheckState st = elements_.all_state();
+    elements_all_->setTristate(st == CheckState::partial);
+    elements_all_->setCheckState(st == CheckState::on ? Qt::Checked
+                                 : st == CheckState::partial
+                                     ? Qt::PartiallyChecked
+                                     : Qt::Unchecked);
+  }
+  for (const auto &r : elements_.rows()) {
+    if (const auto it = element_boxes_.find(r.key);
+        it != element_boxes_.end()) {
+      const QSignalBlocker b(it->second);
+      it->second->setChecked(elements_.shown(r.key));
+    }
+    if (const auto it = element_counts_.find(r.key);
+        it != element_counts_.end())
+      it->second->setText(format_count(static_cast<qulonglong>(r.count)));
+  }
+  if (storey_) {
+    const QSignalBlocker b(storey_);
+    int index = 0;
+    if (const auto s = elements_.storey())
+      for (int i = 1; i < storey_->count(); ++i)
+        if (storey_->itemData(i).toInt() == *s)
+          index = i;
+    storey_->setCurrentIndex(index);
+  }
+}
+
+void Viewer3DWorkspace::elements_changed() {
+  sync_element_boxes();
+  apply_visibility();
+  if (active_)
+    activate(); // the opening frames may be needed now
+}
+
+void Viewer3DWorkspace::set_element_shown(const std::string &category,
+                                          bool on) {
+  elements_.set_shown(category, on);
+  elements_changed();
+}
+
+void Viewer3DWorkspace::set_all_elements_shown(bool on) {
+  elements_.set_all(on);
+  elements_changed();
+}
+
+void Viewer3DWorkspace::show_only_elements(
+    const std::vector<std::string> &only) {
+  elements_.show_only(only);
+  elements_changed();
+}
+
+void Viewer3DWorkspace::set_storey_filter(std::optional<int> storey) {
+  elements_.set_storey(storey);
+  elements_changed();
+  // The cut follows the storey's floor.
+  if (camera_placed_ && !camera_moved_)
+    frame_camera();
+  else
+    apply_cut();
+  update_status();
 }
 
 void Viewer3DWorkspace::ensure_layer(Layer layer) {
@@ -649,9 +840,14 @@ void Viewer3DWorkspace::layer_built(std::shared_ptr<BuildResult> r) {
     vtkRenderer *target = view_->renderer();
     st.info = r->info;
     for (const auto &sl : r->info.layers) {
-      for (vtkActor *a : sl.actors) {
-        st.actors.emplace_back(a);
-        target->AddActor(a);
+      for (std::size_t i = 0; i < sl.actors.size(); ++i) {
+        st.actors.emplace_back(sl.actors[i]);
+        st.categories.push_back(i < sl.actor_categories.size()
+                                    ? sl.actor_categories[i]
+                                    : std::string());
+        st.storeys.push_back(i < sl.actor_storeys.size() ? sl.actor_storeys[i]
+                                                         : -1);
+        target->AddActor(sl.actors[i]);
       }
       if (sl.coarse) {
         st.coarse = sl.coarse;
@@ -689,17 +885,29 @@ void Viewer3DWorkspace::layer_built(std::shared_ptr<BuildResult> r) {
   update_status();
 }
 
+bool Viewer3DWorkspace::layer_shown(int k) const {
+  if (is_point_layer(static_cast<Layer>(k))) {
+    const int colour = colour_ ? colour_->currentData().toInt()
+                               : static_cast<int>(Layer::cloud);
+    return visible_.value(static_cast<int>(Layer::cloud)) && k == colour;
+  }
+  if (k == static_cast<int>(Layer::openings))
+    return opening_frames_shown(
+        visible_.value(k),
+        visible_.value(static_cast<int>(Layer::solids)) &&
+            has_data(Layer::solids),
+        elements_);
+  return visible_.value(k);
+}
+
 void Viewer3DWorkspace::apply_visibility() {
-  const int colour =
-      colour_ ? colour_->currentData().toInt() : static_cast<int>(Layer::cloud);
   for (const auto &[k, s] : layers_) {
-    bool on;
-    if (is_point_layer(static_cast<Layer>(k)))
-      on = visible_.value(static_cast<int>(Layer::cloud)) && k == colour;
-    else
-      on = visible_.value(k);
-    for (const auto &a : s->actors)
-      a->SetVisibility(on);
+    const bool on = layer_shown(k);
+    for (std::size_t i = 0; i < s->actors.size(); ++i)
+      s->actors[i]->SetVisibility(
+          on && elements_.actor_visible(
+                    i < s->categories.size() ? s->categories[i] : "",
+                    i < s->storeys.size() ? s->storeys[i] : -1));
     if (s->coarse)
       s->coarse->SetVisibility(false);
   }
@@ -814,8 +1022,14 @@ void Viewer3DWorkspace::apply_cut() {
   if (!b.valid)
     return;
   try {
-    const vis::CutPlane c = vis::resolve_cut_plane(
+    vis::CutPlane c = vis::resolve_cut_plane(
         *session_.db(), b, cut_height_m_.value_or(vis::kDefaultCutHeightM));
+    // One storey shown: its plan, cut above its own floor.
+    if (const auto st = elements_.storey())
+      if (const auto f = vis::storey_floor_z(*session_.db(), *st)) {
+        c.floor_z = *f;
+        c.z = *f + c.height;
+      }
     cut_z_ = c.z;
     cut_from_planes_ = c.from_planes;
     vis::apply_cut_plane(r, c.z);
@@ -960,8 +1174,11 @@ void Viewer3DWorkspace::update_status() {
   if (loading)
     parts << "henter …";
   if (cut_ || preset_ == vis::ViewPreset::plan)
-    parts << QString("snit %1 over gulvet")
-                 .arg(metres(cut_height_m_.value_or(vis::kDefaultCutHeightM)));
+    parts << QString("snit %1 over gulvet%2")
+                 .arg(metres(cut_height_m_.value_or(vis::kDefaultCutHeightM)))
+                 .arg(storey_ && elements_.storey()
+                          ? QString(" på %1").arg(storey_->currentText())
+                          : QString());
   if (view_->last_render_ms() > 0 && !view_->interactive())
     parts << QString("tegnet på %1 ms").arg(view_->last_render_ms());
   status_->setText(parts.join("  ·  "));
