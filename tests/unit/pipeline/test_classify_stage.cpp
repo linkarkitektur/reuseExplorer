@@ -139,7 +139,9 @@ TEST_CASE("ClassifyStage_Parameters_AreClassifyPlanesOptionsDefaults",
     FAIL("no parameter " << key);
     return {};
   };
-  CHECK(params.size() == 15);
+  CHECK(params.size() == 16);
+  CHECK(std::get<double>(value("min_floating_wall_run_m")) ==
+        d.min_floating_wall_run_m);
   CHECK(std::get<double>(value("horizontal_cos")) == d.horizontal_cos);
   CHECK(std::get<double>(value("vertical_cos")) == d.vertical_cos);
   CHECK(std::get<double>(value("min_large_area_m2")) == d.min_large_area_m2);

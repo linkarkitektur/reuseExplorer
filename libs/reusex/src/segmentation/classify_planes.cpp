@@ -19,6 +19,7 @@
 #include <map>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -129,6 +130,8 @@ struct PlaneGeometry {
   double area = 0.0;
   double z_med = 0.0, z_lo = 0.0, z_hi = 0.0; ///< robust, plane's frame
   double z_min = 0.0, z_max = 0.0;
+  /// Vertical planes: robust horizontal extent along the plane [m].
+  double run = 0.0;
   [[nodiscard]] bool may_face_up() const { return facing >= 0; }
   [[nodiscard]] bool may_face_down() const { return facing <= 0; }
 };
@@ -173,6 +176,24 @@ PlaneRole horizontal_rule(const PlaneGeometry &g, const Reference &ref,
   return PlaneRole::clutter;
 }
 
+/// Does a vertical plane reach within @p band of the floor, the ceiling or a
+/// split level of its storey? @p base, when given, becomes the floor it stands
+/// on (the storey's, or the split level it touches).
+bool touches_floor_or_ceiling(const PlaneGeometry &g, const Reference &ref,
+                              double band, double *base = nullptr) {
+  bool touches = (!ref.has_floor() && !ref.has_ceiling()) ||
+                 (ref.has_floor() && g.z_lo <= ref.floor + band) ||
+                 (ref.has_ceiling() && g.z_hi >= ref.ceiling - band);
+  for (double f : ref.split_floors)
+    if (std::abs(g.z_lo - f) <= band) {
+      touches = true;
+      if (base)
+        *base = f;
+      break;
+    }
+  return touches;
+}
+
 /// The geometric rules (Poux 2019/2020).
 PlaneRole rule_role(const PlaneGeometry &g, const Reference &ref,
                     bool in_storey, const ClassifyPlanesOptions &opt) {
@@ -182,17 +203,8 @@ PlaneRole rule_role(const PlaneGeometry &g, const Reference &ref,
   case Orientation::horizontal:
     return horizontal_rule(g, ref, opt);
   case Orientation::vertical: {
-    bool touches = (!ref.has_floor() && !ref.has_ceiling()) ||
-                   (ref.has_floor() && g.z_lo <= ref.floor + opt.band_m) ||
-                   (ref.has_ceiling() && g.z_hi >= ref.ceiling - opt.band_m);
-    // The floor it stands on: the storey's, or a split level it touches.
     double base = ref.floor;
-    for (double f : ref.split_floors)
-      if (std::abs(g.z_lo - f) <= opt.band_m) {
-        touches = true;
-        base = f;
-        break;
-      }
+    const bool touches = touches_floor_or_ceiling(g, ref, opt.band_m, &base);
     double min_height = opt.min_wall_height_m;
     if (!std::isnan(base) && ref.has_ceiling())
       min_height = std::min(min_height,
@@ -216,7 +228,15 @@ bool class_role_fits(PlaneRole role, PlaneRole rules, const PlaneGeometry &g,
   const bool horizontal = g.orientation == Orientation::horizontal;
   switch (role) {
   case PlaneRole::wall:
-    return g.orientation == Orientation::vertical;
+    // A wall stands on a floor or meets the ceiling; a "wall"-labelled
+    // sheet floating free of both is a cupboard side or a reveal
+    // (reusex-rqn.4). It need not be full height: walls seen to door height
+    // keep their class.
+    // The band is twice the rules' one: skirting, a radiator or a desk can
+    // hide a wall's foot, a soffit its head.
+    return g.orientation == Orientation::vertical &&
+           (touches_floor_or_ceiling(g, ref, 2.0 * opt.band_m) ||
+            g.run >= opt.min_floating_wall_run_m);
   case PlaneRole::floor:
     return horizontal && g.may_face_up() &&
            (!ref.has_floor() || rules == PlaneRole::floor ||
@@ -243,6 +263,55 @@ bool class_role_fits(PlaneRole role, PlaneRole rules, const PlaneGeometry &g,
   return true;
 }
 
+/// The role most of a plane's labelled points vote for through their class,
+/// when it holds at least @p min_share of the @p labelled votes; ties go to
+/// the lower PlaneRole value (deterministic). Points of a class with no name
+/// or no role vote for nothing but still count in @p labelled.
+std::optional<PlaneRole>
+majority_role(const std::vector<std::pair<uint32_t, int>> &votes,
+              const std::map<uint32_t, std::string> &class_names,
+              const core::ClassRoleMap &role_map, int labelled,
+              double min_share) {
+  if (labelled <= 0)
+    return std::nullopt;
+  std::map<uint32_t, int> per_class;
+  for (const auto &[label, n] : votes)
+    per_class[label] += n;
+  std::map<PlaneRole, int> per_role;
+  for (const auto &[label, n] : per_class) {
+    const auto name = class_names.find(label);
+    if (name == class_names.end())
+      continue;
+    if (const auto role = role_map.role_of(name->second))
+      per_role[*role] += n;
+  }
+  std::optional<PlaneRole> best;
+  int best_n = 0;
+  for (const auto &[role, n] : per_role)
+    if (n > best_n) {
+      best = role;
+      best_n = n;
+    }
+  const auto share = [labelled](int n) {
+    return static_cast<double>(n) / static_cast<double>(labelled);
+  };
+  if (best && share(best_n) >= min_share)
+    return best;
+  // No single role has the majority, but the object roles together may: a
+  // pier or cupboard box votes "column" and "cabinet" (clutter + furniture)
+  // over a little "wall". Then it is an object, whichever of the two has
+  // more votes (ties: furniture).
+  const auto votes_for = [&per_role](PlaneRole role) {
+    const auto it = per_role.find(role);
+    return it == per_role.end() ? 0 : it->second;
+  };
+  const int furniture = votes_for(PlaneRole::furniture);
+  const int clutter = votes_for(PlaneRole::clutter);
+  if (share(furniture + clutter) >= min_share)
+    return furniture >= clutter ? PlaneRole::furniture : PlaneRole::clutter;
+  return std::nullopt;
+}
+
 void check_options(const ClassifyPlanesOptions &o) {
   const auto bad = [](const char *what) {
     throw std::invalid_argument(
@@ -266,6 +335,8 @@ void check_options(const ClassifyPlanesOptions &o) {
     bad("min_class_share");
   if (!(o.min_labelled_share >= 0.0 && o.min_labelled_share <= 1.0))
     bad("min_labelled_share");
+  if (!(o.min_floating_wall_run_m >= 0.0))
+    bad("min_floating_wall_run_m");
 }
 
 } // namespace
@@ -377,6 +448,19 @@ ClassifyPlanesResult classify_planes(
     g.z_hi = quantile(h.sorted, 1.0 - opt.extent_quantile);
     g.z_min = h.sorted.front();
     g.z_max = h.sorted.back();
+    if (g.orientation == Orientation::vertical) {
+      // Along the plane, horizontally: up x n (world frame).
+      const Eigen::Vector3d t = up.cross(n).normalized();
+      std::vector<double> s;
+      s.reserve(inliers[k].size());
+      for (size_t i : inliers[k]) {
+        const auto &p = cloud.points[i];
+        s.push_back(t.x() * p.x + t.y() * p.y + t.z() * p.z);
+      }
+      std::sort(s.begin(), s.end());
+      g.run = quantile(s, 1.0 - opt.extent_quantile) -
+              quantile(s, opt.extent_quantile);
+    }
   }
 
   // No storeys: one implicit storey from the large horizontal planes.
@@ -485,11 +569,13 @@ ClassifyPlanesResult classify_planes(
             static_cast<double>(won) / static_cast<double>(labelled);
         const double labelled_share = static_cast<double>(labelled) /
                                       static_cast<double>(inliers[k].size());
-        const auto name = semantic.class_names.find(winner);
-        if (labelled_share >= opt.min_labelled_share &&
-            r.class_confidence >= opt.min_class_share &&
-            name != semantic.class_names.end())
-          class_role = role_map.role_of(name->second);
+        // The role is voted by role, not by class (reusex-rqn.4): a richer
+        // class list splits one object over near-synonyms ("cabinet" and
+        // "shelf" on one cupboard front) that share a role. A labelled point
+        // whose class has no name or no role votes for no role.
+        if (labelled_share >= opt.min_labelled_share)
+          class_role = majority_role(votes, semantic.class_names, role_map,
+                                     labelled, opt.min_class_share);
       }
     }
 

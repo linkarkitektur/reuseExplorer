@@ -923,6 +923,8 @@ StageResult run_classify(ProjectDB &db, const json &params, int log_id) {
   o.min_labelled_share =
       param_or(params, "min_labelled_share", o.min_labelled_share);
   o.min_class_share = param_or(params, "min_class_share", o.min_class_share);
+  o.min_floating_wall_run_m =
+      param_or(params, "min_floating_wall_run_m", o.min_floating_wall_run_m);
 
   // The class -> role map: a file path (rux create classify --role-map), an
   // inline role-map object (a job built by hand), or the built-in map.
@@ -1124,6 +1126,22 @@ StageResult run_walls(ProjectDB &db, const json &params, int log_id) {
     path.push_back(world.translation());
   }
 
+  // Closed doors are part of their wall's line (reusex-mc6): door-class
+  // planes are wall support. The class names come from the semantic cloud
+  // (keyed by point label = API class + 1).
+  std::set<int> door_planes;
+  if (db.has_point_cloud(kDefaultSemanticCloud)) {
+    std::map<int, std::string> names;
+    for (const auto &[label, name] :
+         db.label_definitions(kDefaultSemanticCloud))
+      if (label >= 1)
+        names[core::point_label_to_api(static_cast<uint32_t>(label))] = name;
+    door_planes = geometry::door_support_planes(classes, names);
+    if (!door_planes.empty())
+      info("walls: {} door plane(s) support their wall's line",
+           door_planes.size());
+  }
+
   std::vector<core::WallRecord> walls;
   std::vector<core::WallJoinRecord> joins;
   int families = 0, faces = 0, pairs = 0, low_seen = 0;
@@ -1131,7 +1149,7 @@ StageResult run_walls(ProjectDB &db, const json &params, int log_id) {
     geometry::WallsResult r;
     try {
       r = geometry::detect_walls(*cloud, *planes, *normals, classes, st,
-                                 o.walls, path);
+                                 o.walls, path, door_planes);
     } catch (const std::invalid_argument &e) {
       return StageResult::invalid(e.what());
     }

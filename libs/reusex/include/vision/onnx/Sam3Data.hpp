@@ -4,6 +4,7 @@
 
 #pragma once
 #include "reusex/vision/IData.hpp"
+#include "reusex/vision/default_prompts.hpp"
 #include "reusex/vision/onnx/Sam3Type.hpp"
 
 #include <opencv2/core/mat.hpp>
@@ -19,22 +20,15 @@ namespace reusex::vision::onnx {
 struct ONNXSam3Data : IData {
   cv::Mat image; ///< Input image (BGR, HWC) / Output label image (CV_32S)
 
-  /// @brief Text prompts for semantic segmentation classes.
-  std::vector<Sam3PromptUnit> prompts = {
-      Sam3PromptUnit("ceiling"),
-      Sam3PromptUnit("floor"),
-      Sam3PromptUnit("wall"),
-      Sam3PromptUnit("door frame"),
-      Sam3PromptUnit("window"),
-      Sam3PromptUnit("radiator"),
-      Sam3PromptUnit("table"),
-      Sam3PromptUnit("chair"),
-      Sam3PromptUnit("shelf"),
-      Sam3PromptUnit("bench"),
-      Sam3PromptUnit("ceiling lamp"),
-      Sam3PromptUnit("desk lamp"),
-      Sam3PromptUnit("electrical outlet"),
-  };
+  /// @brief Text prompts for semantic segmentation classes: the built-in
+  /// default list (vision/default_prompts.hpp), shared with TensorRT.
+  std::vector<Sam3PromptUnit> prompts = [] {
+    std::vector<Sam3PromptUnit> units;
+    units.reserve(default_prompt_texts().size());
+    for (const auto &text : default_prompt_texts())
+      units.emplace_back(text);
+    return units;
+  }();
 
   float confidence_threshold = 0.5f; ///< Minimum confidence for detections
 };

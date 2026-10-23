@@ -250,3 +250,140 @@ TEST_CASE("WallPoints_FromClouds_SplitsWallEvidenceInTheLevelFrame",
       reusex::geometry::wall_points(cloud, planes, normals, {w, f}, s),
       std::invalid_argument);
 }
+
+TEST_CASE("WallPoints_FurnitureAndColumnPlanes_AreNotWallEvidence",
+          "[walls][wall_faces]") {
+  // reusex-rqn.4: a cupboard side or desk screen (role furniture) and a
+  // column face (role clutter) are vertical planes like a wall, but only
+  // role "wall" planes are wall evidence, so no wall is built on them.
+  using reusex::core::PlaneClassRecord;
+  reusex::Cloud cloud;
+  reusex::CloudL planes;
+  pcl::PointCloud<pcl::Normal> normals;
+  for (int k = 0; k < 3; ++k) {
+    pcl::Normal n;
+    n.normal_x = 1.0f;
+    normals.push_back(n);
+  }
+  for (uint32_t label = 1; label <= 3; ++label)
+    for (int i = 0; i < 10; ++i) {
+      reusex::PointT p;
+      p.x = static_cast<float>(label);
+      p.y = 0.1f * static_cast<float>(i);
+      p.z = 1.0f;
+      cloud.push_back(p);
+      pcl::Label l;
+      l.label = label;
+      planes.push_back(l);
+    }
+  PlaneClassRecord w, f, c;
+  w.plane_label = 1;
+  w.role = "wall";
+  f.plane_label = 2;
+  f.role = "furniture";
+  c.plane_label = 3;
+  c.role = "clutter";
+  reusex::core::StoreyRecord s;
+  s.z_floor = 0.0;
+  s.z_ceiling = 2.6;
+  s.level_transform = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  const auto wp =
+      reusex::geometry::wall_points(cloud, planes, normals, {w, f, c}, s);
+  CHECK(wp.points.size() == 10);
+  CHECK(std::all_of(wp.plane.begin(), wp.plane.end(),
+                    [](int l) { return l == 1; }));
+  CHECK(wp.others.size() == 20);
+}
+
+TEST_CASE("WallFaces_ClosedDoorInTheLine_BridgesTheRunButIsNoFaceAlone",
+          "[walls][wall_faces]") {
+  // reusex-mc6: a closed door leaf labelled "door" sits flush in its wall's
+  // line. Its points are support: they keep the run going across the
+  // doorway, but a sheet of support points alone (an open leaf standing in
+  // the room) is not a face.
+  auto wp = storey_points();
+  add_face(wp, {1, 0}, {1, 2}, {1, 0}, 0.0, 2.5);
+  add_face(wp, {1, 3}, {1, 5}, {1, 0}, 0.0, 2.5);
+  wp.support.assign(wp.points.size(), 0);
+  add_face(wp, {1, 2}, {1, 3}, {1, 0}, 0.0, 2.05);   // the closed door
+  add_face(wp, {4, 1}, {4, 1.9}, {1, 0}, 0.0, 2.05); // an open leaf
+  // A 3 m sheet labelled "door": wider than any door, the label bled over
+  // a wall, so it is a face.
+  add_face(wp, {7, 0}, {7, 3}, {1, 0}, 0.0, 2.5);
+  wp.support.resize(wp.points.size(), 1);
+
+  const auto all = wall_faces(wp, grid_families());
+  REQUIRE(all.size() == 2);
+  CHECK_THAT(all[1].offset, WithinAbs(7.0, 1e-9));
+  const std::vector<WallFace> faces{all[0]};
+  CHECK_THAT(faces[0].s0, WithinAbs(0.0, 0.05));
+  CHECK_THAT(faces[0].s1, WithinAbs(5.0, 0.05));
+  CHECK_THAT(faces[0].offset, WithinAbs(1.0, 1e-9));
+}
+
+TEST_CASE("WallPoints_SupportPlanes_AreFlaggedWallEvidence",
+          "[walls][wall_faces]") {
+  using reusex::core::PlaneClassRecord;
+  reusex::Cloud cloud;
+  reusex::CloudL planes;
+  pcl::PointCloud<pcl::Normal> normals;
+  for (int k = 0; k < 2; ++k) {
+    pcl::Normal n;
+    n.normal_x = 1.0f;
+    normals.push_back(n);
+  }
+  for (uint32_t label = 1; label <= 2; ++label)
+    for (int i = 0; i < 10; ++i) {
+      reusex::PointT p;
+      p.x = 1.0f;
+      p.y = static_cast<float>(label) + 0.05f * static_cast<float>(i);
+      p.z = 1.0f;
+      cloud.push_back(p);
+      pcl::Label l;
+      l.label = label;
+      planes.push_back(l);
+    }
+  PlaneClassRecord w, d;
+  w.plane_label = 1;
+  w.role = "wall";
+  d.plane_label = 2;
+  d.role = "clutter";
+  reusex::core::StoreyRecord s;
+  s.z_floor = 0.0;
+  s.z_ceiling = 2.6;
+  s.level_transform = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  const auto wp =
+      reusex::geometry::wall_points(cloud, planes, normals, {w, d}, s, {}, {2});
+  REQUIRE(wp.points.size() == 20);
+  REQUIRE(wp.support.size() == 20);
+  int support = 0;
+  for (size_t i = 0; i < wp.points.size(); ++i) {
+    support += wp.support[i];
+    CHECK((wp.support[i] != 0) == (wp.plane[i] == 2));
+  }
+  CHECK(support == 10);
+  CHECK(wp.others.empty());
+}
+
+TEST_CASE("DoorSupportPlanes_VerticalDoorClassNotWall_AreSupport",
+          "[walls][wall_faces]") {
+  using reusex::core::PlaneClassRecord;
+  auto rec = [](int label, const char *orientation, int cls, const char *role) {
+    PlaneClassRecord r;
+    r.plane_label = label;
+    r.orientation = orientation;
+    r.semantic_class = cls;
+    r.role = role;
+    return r;
+  };
+  // API class 0 wall, 1 door, 2 "Door frame", 3 cabinet.
+  const std::map<int, std::string> names{
+      {0, "wall"}, {1, "door"}, {2, "Door frame"}, {3, "cabinet"}};
+  const auto s = reusex::geometry::door_support_planes(
+      {rec(1, "vertical", 1, "clutter"), rec(2, "horizontal", 1, "clutter"),
+       rec(3, "vertical", 2, "furniture"), rec(4, "vertical", 1, "wall"),
+       rec(5, "vertical", 3, "furniture"), rec(6, "vertical", -1, "clutter"),
+       rec(7, "vertical", 9, "clutter")},
+      names);
+  CHECK(s == std::set<int>{1, 3});
+}

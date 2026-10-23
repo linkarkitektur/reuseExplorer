@@ -34,6 +34,8 @@
 
 #include <limits>
 #include <map>
+#include <set>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -99,6 +101,11 @@ struct WallOptions {
   /// ...and runs shorter than this [m] or with fewer points are dropped.
   double min_run_m = 0.5;
   int min_run_points = 30;
+  /// Support points (a door-class plane, WallPoints::support) carry a run
+  /// across a doorway but make no run alone -- unless the run is longer
+  /// than this, wider than any door: then the "door" label bled over a wall
+  /// (reusex-mc6) [m].
+  double door_max_width_m = 1.5;
   /// Side of the (s, z) occupancy cells [m], anchored at the frame origin.
   double cell_m = 0.25;
   /// wall_points(): points this far below the storey's floor / above its
@@ -280,6 +287,12 @@ struct WallPoints {
   /// ...and their plane label (index-aligned, or empty: no plane ids). Points
   /// of one plane are squared together (WallOptions::square_deg); -1 = none.
   std::vector<int> plane;
+  /// Support flag per point (index-aligned, or empty: none is support). A
+  /// support point (a closed door leaf in its wall's line, reusex-mc6) is
+  /// wall evidence that carries a face's run across its gap, but a face run
+  /// needs min_run_m / min_run_points of non-support points to exist (or
+  /// to be longer than WallOptions::door_max_width_m).
+  std::vector<char> support;
   /// Every other point of the storey (floors, furniture, unsegmented): what
   /// the valley and external tests (W3.3) look at.
   std::vector<Eigen::Vector3d> others;
@@ -293,6 +306,7 @@ struct WallPoints {
 /// (t = d rotated +90 deg), z, and the offset o = p . d.
 struct FaceSample {
   double s = 0.0, z = 0.0, o = 0.0;
+  bool support = false; ///< from a support plane (WallPoints::support)
 };
 
 /// A cell of the (s, z) occupancy grid: (floor(s / cell_m), floor(z / cell_m))
@@ -530,7 +544,8 @@ detect_walls(const Cloud &cloud, const CloudL &planes,
              const CloudN &plane_normals,
              const std::vector<core::PlaneClassRecord> &plane_classes,
              const core::StoreyRecord &storey, const WallOptions &opt = {},
-             const std::vector<Eigen::Vector3d> &camera_path = {});
+             const std::vector<Eigen::Vector3d> &camera_path = {},
+             const std::set<int> &support_planes = {});
 
 /// The walls and joins of @p graph as core records in @p storey's level
 /// frame. The guid is the stable key W3.5 hashes into a deterministic GUID:
@@ -544,13 +559,24 @@ detect_walls(const Cloud &cloud, const CloudL &planes,
 std::pair<std::vector<core::WallRecord>, std::vector<core::WallJoinRecord>>
 wall_records(const WallGraph &graph, const core::StoreyRecord &storey);
 
+/// The planes whose points are wall support (reusex-mc6): vertical, not
+/// role "wall", and their majority semantic class (PlaneClassRecord::
+/// semantic_class, an API class id; @p class_names is keyed by it) names a
+/// door (contains "door", any case). A closed door is part of its wall's
+/// line; an open leaf is not, and a support plane alone makes no face.
+std::set<int>
+door_support_planes(const std::vector<core::PlaneClassRecord> &plane_classes,
+                    const std::map<int, std::string> &class_names);
+
 /// The evidence of one storey from the clouds: every finite point of
 /// @p cloud whose level-frame height lies within the storey (with
 /// WallOptions::storey_margin_m), taken into @p storey's level frame; a point
 /// whose plane (@p planes, label = plane_label) has role "wall" in
 /// @p plane_classes is wall evidence with its plane's normal
 /// (@p plane_normals, index = label - 1), any other point goes to
-/// WallPoints::others.
+/// WallPoints::others. A plane in @p support_planes that is not a wall
+/// (a closed door, reusex-mc6) is wall evidence too, flagged in
+/// WallPoints::support.
 ///
 /// @throws std::invalid_argument when @p planes is not index-aligned with
 ///         @p cloud, a wall plane has no normal, or the storey's
@@ -559,6 +585,7 @@ WallPoints wall_points(const Cloud &cloud, const CloudL &planes,
                        const CloudN &plane_normals,
                        const std::vector<core::PlaneClassRecord> &plane_classes,
                        const core::StoreyRecord &storey,
-                       const WallOptions &opt = {});
+                       const WallOptions &opt = {},
+                       const std::set<int> &support_planes = {});
 
 } // namespace reusex::geometry

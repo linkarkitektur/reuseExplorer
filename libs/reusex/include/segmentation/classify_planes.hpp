@@ -12,10 +12,19 @@
 /// vote share, a role (wall / floor / ceiling / slab / furniture / clutter /
 /// unknown), the storey it belongs to, its area and its height range.
 ///
-/// The role comes from the semantic class through a core::ClassRoleMap when
-/// the class is trusted (enough labelled inliers, a clear majority) and the
-/// geometry does not contradict it; otherwise from the geometric rules
-/// (Poux 2019/2020), which also run with no labels cloud at all. "Large" is
+/// The role comes from the semantic classes through a core::ClassRoleMap when
+/// they are trusted and the geometry does not contradict it; otherwise from
+/// the geometric rules (Poux 2019/2020), which also run with no labels cloud
+/// at all. Trusted: enough of the inliers are labelled (min_labelled_share)
+/// and one role holds min_class_share of the labelled votes, each point
+/// voting for its class's role -- so "cabinet" and "shelf" votes add up to
+/// furniture (reusex-rqn.4). When no single role does but furniture and
+/// clutter together do (a pier voted "column", "cabinet" and some "wall"),
+/// the plane is the one of those two with more votes. The record still
+/// carries the majority class and its own share. The class role "wall"
+/// needs a vertical plane that reaches within 2 x band_m of the floor, the
+/// ceiling or a split level (not the full height), or runs at least
+/// min_floating_wall_run_m along the wall. "Large" is
 /// min_large_area_m2, "too big for furniture" is max_furniture_area_m2, the
 /// storey's floor / ceiling heights come from its row (with no storeys: the
 /// lowest large horizontal plane facing up, and the highest facing down at
@@ -94,17 +103,24 @@ struct ClassifyPlanesOptions {
   /// rules); the record's z_min / z_max are the true extremes.
   double extent_quantile = 0.02;
 
-  /// The semantic class decides the role only if at least this share of the
+  /// The semantic classes decide the role only if at least this share of the
   /// plane's inliers carries a label...
   double min_labelled_share = 0.1;
-  /// ...and the majority class holds at least this share of those votes.
+  /// ...and one role (furniture and clutter together, failing that) holds at
+  /// least this share of those votes, each point voting for its class's role.
   double min_class_share = 0.5;
+  /// The class role "wall" needs a vertical plane that reaches within
+  /// 2 x band_m of the floor, the ceiling or a split level, or runs at least
+  /// this far along the wall (a backsplash between cabinets); a short
+  /// "wall"-labelled sheet floating free of both (a cupboard side, a window
+  /// reveal) is overruled [m] (reusex-rqn.4).
+  double min_floating_wall_run_m = 1.5;
 };
 
 /// Who decided a plane's role.
 enum class RoleSource {
   none,      ///< no points: role unknown
-  semantic,  ///< the majority class, through the class -> role map
+  semantic,  ///< the labelled points' majority role, via the class map
   rules,     ///< the geometric rules (no usable class)
   overruled, ///< the class gave a role the geometry contradicts; rules won
 };

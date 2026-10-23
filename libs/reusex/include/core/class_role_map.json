@@ -1,15 +1,20 @@
 {
   "version": 1,
-  "description": "Semantic class name -> structural role of a plane (rux create classify --role-map). Names match case-insensitively. A class not listed here gives no role; the geometric rules decide. Roles: wall, floor, ceiling, slab, furniture, clutter, unknown.",
+  "description": "Semantic class name -> structural role of a plane (rux create classify --role-map). Names match case-insensitively. A class not listed here gives no role; the geometric rules decide. Roles: wall, floor, ceiling, slab, furniture, clutter, unknown. A column is clutter (not a wall; there is no column role yet). Every default annotate prompt (vision/default_prompts.hpp) must be listed; names of older default lists stay listed so projects annotated with them keep their roles.",
   "classes": {
     "wall": "wall",
     "floor": "floor",
     "ceiling": "ceiling",
     "slab": "slab",
     "window": "wall",
+    "glass partition": "wall",
     "door frame": "wall",
     "door": "clutter",
+    "column": "clutter",
+    "pillar": "clutter",
+    "staircase": "clutter",
     "railing": "clutter",
+    "beam": "clutter",
     "radiator": "clutter",
     "pipe": "clutter",
     "duct": "clutter",
@@ -17,6 +22,8 @@
     "ceiling light": "clutter",
     "ceiling lamp": "clutter",
     "desk lamp": "clutter",
+    "plant": "clutter",
+    "whiteboard": "clutter",
     "sink": "furniture",
     "cabinet": "furniture",
     "shelf": "furniture",
@@ -25,6 +32,9 @@
     "chair": "furniture",
     "bench": "furniture",
     "sofa": "furniture",
-    "bed": "furniture"
+    "bed": "furniture",
+    "desk divider": "furniture",
+    "office partition": "furniture",
+    "monitor": "furniture"
   }
 }
